@@ -17,9 +17,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * a replayed launch key must acknowledge the original and start NOTHING.
  */
 
-const { createRunMock, startRunMock } = vi.hoisted(() => ({
+const { createRunMock, startRunMock, rolloutMock, queryMock, localMock, ensureMock } = vi.hoisted(() => ({
   createRunMock: vi.fn(),
   startRunMock: vi.fn(),
+  rolloutMock: vi.fn(), queryMock: vi.fn(), localMock: vi.fn(), ensureMock: vi.fn(),
 }));
 
 vi.mock("../../swarm-agent.js", async (importOriginal) => {
@@ -31,8 +32,25 @@ vi.mock("../../../routes/web/auth.js", () => ({
   createAuthorizedManager: vi.fn(),
 }));
 vi.mock("../../evals/route-helpers.js", () => ({
-  createConvexClient: vi.fn(),
+  createConvexClient: () => ({ query: queryMock }),
 }));
+vi.mock("../../../utils/computers/browser-rollout.js", () => ({
+  rolloutEnabled: rolloutMock,
+}));
+
+// Per harness, as the real helper decides it: `localMock(harness)` stands in
+// for "this harness is eligible for unattended local work here".
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  eligibleUnattendedLocalHarnesses: async (bearer: string, projectId: string, harnesses: Array<string | undefined> = []) => {
+    const eligible: string[] = [];
+    for (const harness of new Set(harnesses)) {
+      if ((harness === "claude-code" || harness === "codex") && await localMock(harness, bearer, projectId)) eligible.push(harness);
+    }
+    return eligible;
+  },
+}));
+vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: ensureMock }));
+vi.mock("../../../utils/harness/local/acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ userId: "user-1" }) }));
 
 import { launchJourneyRun } from "../launch-journey-run.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
@@ -65,6 +83,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   startRunMock.mockResolvedValue(undefined);
+  rolloutMock.mockResolvedValue(false);
+  localMock.mockResolvedValue(true);
+  queryMock.mockImplementation(async (name: string) => {
+    if (name === "journeys:getJourney") return { hostIds: ["h1"] };
+    if (name === "projectEnvironments:getEnvironment") return { hostId: "h1" };
+    if (name === "hosts:getHost") return { config: {} };
+  });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -87,6 +112,85 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes expectedSponsored to the create and returns the funding it reports", async () => {
+    createRunMock.mockResolvedValue(
+      created({ funding: { sponsored: 1, credits: 0, total: 1 } }),
+    );
+
+    const result = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 1,
+    });
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).toMatchObject({
+      expectedSponsored: 1,
+    });
+    expect(result).toEqual({
+      runId: "run_1",
+      funding: { sponsored: 1, credits: 0, total: 1 },
+    });
+  });
+
+  it("omits expectedSponsored when the caller did not supply one", async () => {
+    createRunMock.mockResolvedValue(created());
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("hands the runner the per-conversation funding the backend allocated", async () => {
+    const sessions = [{ targetId: "t1", sessionIdx: 0, funding: "starter" }];
+    createRunMock.mockResolvedValue(created({ sessions }));
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(startRunMock.mock.calls[0]![0]).toMatchObject({
+      sessionFunding: sessions,
+    });
+  });
+
+  it("surfaces a funding mismatch as a typed 409 with its details, before any runner starts", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "swarm_funding_changed",
+          message: "changed",
+          details: {
+            expectedSponsored: 5,
+            actualSponsored: 3,
+            totalConversations: 15,
+          },
+        }),
+        "swarm-agent failed (409)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("hands the runner a THUNK, not a captured token", async () => {
     // The run outlives the JWT that authorized it — a delegated token lives
     // about two hours and a wide fan-out runs longer. A captured string here
@@ -101,6 +205,83 @@ describe("launchJourneyRun", () => {
     };
     expect(typeof opts.getBearer).toBe("function");
     await expect(opts.getBearer()).resolves.toBe("run-jwt");
+  });
+
+  describe("hosted-browser rollout", () => {
+    const browserHosts = created({
+      snapshot: {
+        hosts: [
+          {
+            hostId: "h1",
+            targetId: "t1",
+            serverIds: [],
+            modelId: "m",
+            builtInToolIds: ["bash", "browser"],
+          },
+          { hostId: "h2", targetId: "t2", serverIds: [], modelId: "m" },
+        ],
+        sessionsPerTarget: 1,
+        maxTurns: 4,
+      },
+    });
+    const startedToolIds = () =>
+      (
+        startRunMock.mock.calls[0]![0] as {
+          hosts: Array<{ builtInToolIds?: string[] }>;
+        }
+      ).hosts.map((host) => host.builtInToolIds);
+
+    it("drops `browser` for a member outside the rollout", async () => {
+      // The flag was only read by the client, so a member without it whose
+      // client still had `browser` saved got a notice on every session about
+      // a tool they cannot see.
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(rolloutMock).toHaveBeenCalledWith(false, "user_1");
+      expect(startedToolIds()).toEqual([["bash"], undefined]);
+    });
+
+    it("keeps `browser` for a member in the rollout", async () => {
+      rolloutMock.mockResolvedValue(true);
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(startedToolIds()).toEqual([["bash", "browser"], undefined]);
+    });
+
+    it("drops `browser` when the caller has no member identity", async () => {
+      createRunMock.mockResolvedValue(browserHosts);
+
+      await launchJourneyRun(DEPS, INPUT);
+      await settle();
+
+      expect(rolloutMock).not.toHaveBeenCalled();
+      expect(startedToolIds()).toEqual([["bash"], undefined]);
+    });
+
+    it("skips the flag read when no host asks for a browser", async () => {
+      createRunMock.mockResolvedValue(created());
+
+      await launchJourneyRun(
+        { ...DEPS, callerContext: { workosUserId: "user_1" } },
+        INPUT,
+      );
+      await settle();
+
+      expect(rolloutMock).not.toHaveBeenCalled();
+      expect(startRunMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("starts NOTHING when the launch key deduped onto an existing run", async () => {
@@ -163,8 +344,8 @@ describe("launchJourneyRun", () => {
     ],
     [
       "Convex structured data",
-      '{"code":"ENV_MODEL_REQUIRED","message":"Environment \\"Prod\\" has no model to run."}',
-      'Environment "Prod" has no model to run.',
+      '{"code":"SPEND_CAP","message":"Organization spend cap reached."}',
+      "Organization spend cap reached.",
     ],
   ])(
     "unwraps a structured backend body (%s)",
@@ -179,6 +360,90 @@ describe("launchJourneyRun", () => {
       });
     }
   );
+
+  it("translates a no-model refusal to the same 409 Evals returns", async () => {
+    // The shape the Convex HTTP action actually sends: its blanket catch wraps
+    // the ConvexError data in an `invalid_request` 400. Swarm used to report
+    // that as a VALIDATION_ERROR while Evals — through the same translator —
+    // reports a 409 whose reason a caller can branch on.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "ENV_MODEL_REQUIRED",
+            message: 'Environment "Prod" has no model to run.',
+            details: { environmentId: "env-1", hostId: "host-1" },
+          },
+        }),
+        "nope"
+      )
+    );
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      message: 'Environment "Prod" has no model to run.',
+      details: {
+        code: "ENV_MODEL_REQUIRED",
+        reason: "environment_model_required",
+        environmentId: "env-1",
+        hostId: "host-1",
+      },
+    });
+  });
+
+  describe("a hosted harness target whose pinned image cannot boot", () => {
+    // The backend refuses the whole launch (BB-56) through the same
+    // `invalid_request` 400 wrapper as every other ConvexError.
+    const refusal = (message: string) =>
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+            message,
+            details: {
+              environmentId: "env-1",
+              hostName: "Claude Code",
+              reason: "The selected computer environment is a personal draft.",
+            },
+          },
+        }),
+        "nope"
+      );
+
+    it("shows the backend's sentence, which names the target and the fix", async () => {
+      const message =
+        'Client "Claude Code" can\'t launch: The selected computer environment is a personal draft. Fix that computer image or remove this target, then launch again.';
+      createRunMock.mockRejectedValue(refusal(message));
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message,
+        details: {
+          code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+          environmentId: "env-1",
+        },
+      });
+      expect(startRunMock).not.toHaveBeenCalled();
+    });
+
+    it("still names the fix when a long name pushes the sentence past the bound", async () => {
+      createRunMock.mockRejectedValue(
+        refusal(`Client "${"x".repeat(400)}" can't launch: draft.`)
+      );
+      const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
+        message: string;
+      };
+      expect(err.message).not.toBe("This journey can't be launched.");
+      expect(err.message).toMatch(/computer image that can't boot/);
+      expect(err.message).toMatch(/remove the target/);
+    });
+  });
 
   it("preserves structured backend details without trusting them as the message", async () => {
     createRunMock.mockRejectedValue(
@@ -386,6 +651,17 @@ describe("launchJourneyRun", () => {
     await settle();
   });
 
+  it.each([undefined, "", "wave_9"])(
+    "bills a launch with wave %s by run kind",
+    async (waveId) => {
+      createRunMock.mockResolvedValue(created());
+      await launchJourneyRun(DEPS, { ...INPUT, waveId });
+      expect(createRunMock.mock.calls[0][2]).toMatchObject({
+        kind: waveId ? "swarm" : "user_testing",
+      });
+    },
+  );
+
   it("passes the wave id and environment fan-out through to the create", async () => {
     createRunMock.mockResolvedValue(created());
 
@@ -402,4 +678,32 @@ describe("launchJourneyRun", () => {
       environmentIds: ["env_1", "env_2"],
     });
   });
+});
+
+it.each([undefined, "codex", "claude-code"].flatMap(harness => [false, true].map(environment => ({ harness, environment }))))("only checks local readiness for $harness with environment=$environment", async ({ harness, environment }) => {
+  const original = queryMock.getMockImplementation()!;
+  queryMock.mockImplementation(async (name: string, ...args: any[]) => name === "hosts:getHost" ? { config: { harness } } : original(name, ...args));
+  createRunMock.mockResolvedValue(created());
+  await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", ...(environment ? { environmentIds: ["env_1"] } : {}) });
+  const local = harness === "claude-code" || harness === "codex";
+  expect(localMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  expect(ensureMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  if (local) expect(ensureMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: harness }));
+  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(local ? "local" : "hosted");
+  // The launch declares exactly the harnesses it will run locally.
+  expect(createRunMock.mock.calls[0][2].localHarnessIds).toEqual(local ? [harness] : undefined);
+  await settle();
+});
+
+it("keeps a harness this runner cannot run unattended out of the local set", async () => {
+  const original = queryMock.getMockImplementation()!;
+  let call = 0;
+  queryMock.mockImplementation(async (name: string, ...args: any[]) =>
+    name === "hosts:getHost" ? { config: { harness: call++ === 0 ? "claude-code" : "codex" } } : original(name, ...args));
+  localMock.mockImplementation(async (harness: string) => harness === "claude-code");
+  createRunMock.mockResolvedValue(created());
+  await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", environmentIds: ["env_1", "env_2"] });
+  expect(createRunMock.mock.calls[0][2]).toMatchObject({ runtimeVenue: "local", localHarnessIds: ["claude-code"] });
+  localMock.mockResolvedValue(true);
+  await settle();
 });

@@ -1,15 +1,25 @@
-import {
-  isConvexProvisioningUnavailable,
-  provisionGuestAuthConfigToConvex,
-} from "./convex-guest-auth-sync.js";
+import type { GuestSessionFailureReason } from "@/shared/guest-session-failure";
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
+import { getFetchErrorCause, isFetchTimeout } from "./fetch-error-cause.js";
 import { logger } from "./logger.js";
 import {
   GUEST_SESSION_SECRET_HEADER,
-  getGuestSessionSharedSecret,
-} from "./guest-session-secret.js";
+  getGuestAuthority,
+  type GuestAuthority,
+} from "./guest-authority.js";
 
-const DEFAULT_REMOTE_GUEST_SESSION_URL =
-  "https://app.mcpjam.com/api/web/guest-session";
+/**
+ * Every guest call this Inspector makes, routed to the ONE resolved guest
+ * authority (`guest-authority.ts`).
+ *
+ * Nothing here writes configuration anywhere. Earlier versions provisioned
+ * the guest signing keys and shared secret into the configured Convex
+ * deployment from inside these helpers — on startup, on the first guest
+ * request, on document bootstrap, even on a JWKS read — and silently fell back
+ * to a different backend's mint when that write was refused. Ordinary
+ * Inspector use now performs zero remote configuration writes; a developer
+ * deployment is initialized once, explicitly, by `npm run dev:setup-guest-auth`.
+ */
 
 export type RemoteGuestSession = {
   guestId?: string;
@@ -18,6 +28,12 @@ export type RemoteGuestSession = {
 };
 
 export type GuestSessionFetchContext = {
+  /**
+   * The ONE upstream guest cookie to forward, already in
+   * `__Host-mcpjam_guest_session=<value>` form. Never a whole `Cookie` header:
+   * forwarding everything would leak unrelated auth/CSRF cookies from this
+   * origin to the authority.
+   */
   cookie?: string | null;
   userAgent?: string | null;
   body?: GuestSessionRequestBody | null;
@@ -48,37 +64,56 @@ export type GuestSessionFetchResult =
       kind: "error";
       status: number;
       setCookies: string[];
+      /** Seconds from the upstream `Retry-After` header on a 429. */
+      retryAfterSeconds?: number;
+      /** Why the upstream hop failed. Sent to the browser on the 503. */
+      reason: GuestSessionFailureReason;
+      /** The upstream's status, when it answered with a non-ok response. */
+      upstreamStatus?: number;
+      /** The network error code, e.g. `ENOTFOUND`, when the fetch threw. */
+      networkCode?: string;
     };
 
-function getConvexHttpUrl(): string {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) {
-    throw new Error("CONVEX_HTTP_URL is required for guest auth");
+/** Which kind of authority answered, for log lines. Never a URL or secret. */
+function sourceLabel(authority: GuestAuthority): string {
+  return authority.kind === "backend" ? "backend" : "hosted";
+}
+
+/**
+ * Resolve the authority for one call. A configuration error is logged once per
+ * call with its (credential-free) message and surfaces to the caller as a
+ * `configuration` failure — never as a silent switch to another authority.
+ */
+function authorityOrNull(): GuestAuthority | null {
+  try {
+    return getGuestAuthority();
+  } catch (error) {
+    logger.warn("[guest-auth] Guest authority is not configured", {
+      event: "guest_auth.authority_config_error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
-  return convexHttpUrl;
 }
 
-function buildConvexGuestUrl(pathname: string): string {
-  return new URL(pathname, getConvexHttpUrl()).toString();
+/**
+ * Name a thrown fetch or body-read failure. The request's signal carries only
+ * our timeout, so an aborted signal means the timeout fired even when the error
+ * itself does not say so.
+ */
+function classifyThrown(
+  error: unknown,
+  signal: AbortSignal | null | undefined,
+  fallback: GuestSessionFailureReason,
+): { reason: GuestSessionFailureReason; networkCode?: string } {
+  if (isFetchTimeout(error)) return { reason: "timeout" };
+  const networkCode = getFetchErrorCause(error);
+  if (networkCode) return { reason: "network", networkCode };
+  if (signal?.aborted) return { reason: "timeout" };
+  return { reason: fallback };
 }
 
-function getConvexGuestSessionUrl(): string {
-  return buildConvexGuestUrl("/guest/session");
-}
-
-export function getRemoteGuestSessionUrl(): string {
-  return (
-    process.env.MCPJAM_GUEST_SESSION_URL || DEFAULT_REMOTE_GUEST_SESSION_URL
-  );
-}
-
-export function getRemoteGuestJwksUrl(): string {
-  return (
-    process.env.MCPJAM_GUEST_JWKS_URL || buildConvexGuestUrl("/guest/jwks")
-  );
-}
-
-function readSetCookies(headers: Headers): string[] {
+export function readSetCookies(headers: Headers): string[] {
   const fnHeaders = headers as Headers & {
     getSetCookie?: () => string[];
   };
@@ -90,27 +125,33 @@ function readSetCookies(headers: Headers): string[] {
 }
 
 function buildForwardedHeaders(
+  authority: GuestAuthority,
   context: GuestSessionFetchContext | undefined,
-  extra: Record<string, string>
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...extra,
   };
+  if (authority.kind === "backend" && authority.sharedSecret) {
+    headers[GUEST_SESSION_SECRET_HEADER] = authority.sharedSecret;
+  }
   if (context?.cookie) {
     headers["Cookie"] = context.cookie;
   }
   if (context?.userAgent) {
     headers["User-Agent"] = context.userAgent;
   }
-  if (context?.ipHash) {
-    headers["x-mcpjam-guest-ip-hash"] = context.ipHash;
+  // The IP-hash attestation rides with `INSPECTOR_SERVICE_TOKEN`, a credential
+  // for the selected profile's OWN backend. It is sent to the backend
+  // authority only — never to a hosted authority, which neither needs nor
+  // should receive this deployment's service token.
+  if (authority.kind === "backend") {
+    Object.assign(headers, guestIpForwardHeaders(context?.ipHash));
   }
   return headers;
 }
 
 function buildRequestBody(
-  context: GuestSessionFetchContext | undefined
+  context: GuestSessionFetchContext | undefined,
 ): string {
   const body: GuestSessionRequestBody = {};
   if (context?.body?.mode) body.mode = context.body.mode;
@@ -134,14 +175,46 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
   };
 }
 
-async function performGuestSessionFetch(
-  url: string,
-  init: RequestInit,
-  source: "Convex" | "MCPJam",
-  mode: "lookup_or_create" | "lookup_only" | undefined
+function parseRetryAfterSeconds(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+// Default per-fetch timeout. Callers may shorten this (e.g. the document
+// bootstrap path) as defense-in-depth so the inner fetch can't outlive a
+// shorter whole-helper deadline.
+const DEFAULT_GUEST_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Resolve (lookup, migrate, or mint) a guest session at the selected
+ * authority. `lookup_only` never creates a guest: the authority answers 204
+ * when nothing matches, and that is returned as a `miss`.
+ */
+export async function fetchGuestSession(
+  context?: GuestSessionFetchContext,
+  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS,
 ): Promise<GuestSessionFetchResult> {
+  const authority = authorityOrNull();
+  if (!authority) {
+    return {
+      kind: "error",
+      status: 503,
+      setCookies: [],
+      reason: "configuration",
+    };
+  }
+  const source = sourceLabel(authority);
+  const mode = context?.body?.mode;
+  const init: RequestInit = {
+    method: "POST",
+    headers: buildForwardedHeaders(authority, context),
+    body: buildRequestBody(context),
+    signal: AbortSignal.timeout(timeoutMs),
+  };
+
   try {
-    const response = await fetch(url, init);
+    const response = await fetch(authority.sessionUrl, init);
     const setCookies = readSetCookies(response.headers);
 
     // 204 is the upstream's explicit "no guest exists" signal and is always
@@ -158,95 +231,56 @@ async function performGuestSessionFetch(
 
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] Failed to fetch ${source} guest session: ${response.status} ${response.statusText}`
+        `[guest-auth] Failed to fetch ${source} guest session: ${response.status} ${response.statusText}`,
       );
-      return { kind: "error", status: response.status, setCookies };
+      const retryAfterSeconds =
+        response.status === 429
+          ? parseRetryAfterSeconds(response.headers.get("retry-after"))
+          : undefined;
+      return {
+        kind: "error",
+        status: response.status,
+        setCookies,
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        reason: "upstream_status",
+        upstreamStatus: response.status,
+      };
     }
 
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
-      return { kind: "error", status: 503, setCookies };
+    } catch (error) {
+      // A timeout that fires mid-body lands here too, not only a non-JSON page.
+      const failure = classifyThrown(error, init.signal, "bad_json");
+      logger.warn(
+        `[guest-auth] Failed to read ${source} guest session response`,
+        failure,
+      );
+      return { kind: "error", status: 503, setCookies, ...failure };
     }
 
     const session = parseSessionPayload(body);
     if (!session) {
       logger.warn(
-        `[guest-auth] ${source} guest session response was missing token or expiresAt`
+        `[guest-auth] ${source} guest session response was missing token or expiresAt`,
       );
-      return { kind: "error", status: 503, setCookies };
+      return { kind: "error", status: 503, setCookies, reason: "bad_payload" };
     }
 
     logger.info(
-      `[guest-auth] Fetched guest token from ${source} guest session`
+      `[guest-auth] Fetched guest token from ${source} guest session`,
     );
     return { kind: "session", session, setCookies };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    const failure = classifyThrown(error, init.signal, "network");
     logger.warn(
-      `[guest-auth] Failed to fetch ${source} guest session: ${errMsg}`
+      `[guest-auth] Failed to fetch ${source} guest session: ${errMsg}`,
+      failure,
     );
-    return { kind: "error", status: 503, setCookies: [] };
+    return { kind: "error", status: 503, setCookies: [], ...failure };
   }
-}
-
-// Default per-fetch timeout. Callers may shorten this (e.g. the document
-// bootstrap path) as defense-in-depth so the inner fetch can't outlive a
-// shorter whole-helper deadline. NOT a substitute for racing the whole mint.
-const DEFAULT_GUEST_FETCH_TIMEOUT_MS = 10_000;
-
-export async function fetchRemoteGuestSession(
-  context?: GuestSessionFetchContext,
-  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
-): Promise<GuestSessionFetchResult> {
-  return performGuestSessionFetch(
-    getRemoteGuestSessionUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {}),
-      body: buildRequestBody(context),
-      signal: AbortSignal.timeout(timeoutMs),
-    },
-    "MCPJam",
-    context?.body?.mode
-  );
-}
-
-export async function fetchConvexGuestSession(
-  context?: GuestSessionFetchContext,
-  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
-): Promise<GuestSessionFetchResult> {
-  try {
-    await provisionGuestAuthConfigToConvex();
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
-    );
-    return { kind: "error", status: 503, setCookies: [] };
-  }
-
-  // Can't administer the deployment (OSS/local dev against MCPJam's shared
-  // deployment): our locally-generated shared secret was never written to it,
-  // so a direct Convex mint would be rejected. Use the hosted mint instead.
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestSession(context, timeoutMs);
-  }
-
-  return performGuestSessionFetch(
-    getConvexGuestSessionUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {
-        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
-      }),
-      body: buildRequestBody(context),
-      signal: AbortSignal.timeout(timeoutMs),
-    },
-    "Convex",
-    context?.body?.mode
-  );
 }
 
 /**
@@ -255,44 +289,8 @@ export async function fetchConvexGuestSession(
  * just the session JSON or null. Always uses lookup_or_create.
  */
 export async function fetchGuestSessionForServerSideAuth(): Promise<RemoteGuestSession | null> {
-  const useRemote =
-    process.env.MCPJAM_GUEST_SESSION_URL ||
-    process.env.NODE_ENV === "production";
-
-  const result = useRemote
-    ? await fetchRemoteGuestSession()
-    : await fetchConvexGuestSession();
-
+  const result = await fetchGuestSession();
   return result.kind === "session" ? result.session : null;
-}
-
-function getConvexGuestSessionRevokeUrl(): string {
-  return buildConvexGuestUrl("/guest/session/revoke");
-}
-
-function getConvexGuestPromotionProofUrl(): string {
-  return buildConvexGuestUrl("/guest/promotion-proof");
-}
-
-function getRemoteGuestPromotionProofUrl(): string {
-  const override = process.env.MCPJAM_GUEST_PROMOTION_PROOF_URL;
-  if (override) return override;
-  const baseUrl = getRemoteGuestSessionUrl();
-  if (baseUrl.endsWith("/guest-session")) {
-    return `${baseUrl}/promotion-proof`;
-  }
-  return `${baseUrl.replace(/\/$/, "")}/promotion-proof`;
-}
-
-function getRemoteGuestSessionRevokeUrl(): string {
-  const override = process.env.MCPJAM_GUEST_SESSION_REVOKE_URL;
-  if (override) return override;
-  // Derive from the lookup URL when only the lookup URL is overridden.
-  const baseUrl = getRemoteGuestSessionUrl();
-  if (baseUrl.endsWith("/guest-session")) {
-    return `${baseUrl}/revoke`;
-  }
-  return `${baseUrl.replace(/\/$/, "")}/revoke`;
 }
 
 export type GuestSessionRevokeResult = {
@@ -301,13 +299,18 @@ export type GuestSessionRevokeResult = {
   body: { revoked: boolean } | null;
 };
 
-async function performGuestSessionRevoke(
-  url: string,
-  init: RequestInit,
-  source: "Convex" | "MCPJam"
+export async function fetchGuestSessionRevoke(
+  context?: GuestSessionFetchContext,
 ): Promise<GuestSessionRevokeResult> {
+  const authority = authorityOrNull();
+  if (!authority) return { status: 503, setCookies: [], body: null };
+  const source = sourceLabel(authority);
   try {
-    const response = await fetch(url, init);
+    const response = await fetch(authority.revokeUrl, {
+      method: "POST",
+      headers: buildForwardedHeaders(authority, context),
+      signal: AbortSignal.timeout(10_000),
+    });
     const setCookies = readSetCookies(response.headers);
     let body: { revoked: boolean } | null = null;
     try {
@@ -320,61 +323,17 @@ async function performGuestSessionRevoke(
     }
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] ${source} guest session revoke returned ${response.status} ${response.statusText}`
+        `[guest-auth] ${source} guest session revoke returned ${response.status} ${response.statusText}`,
       );
     }
     return { status: response.status, setCookies, body };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to revoke guest session via ${source}: ${errMsg}`
+      `[guest-auth] Failed to revoke guest session via ${source}: ${errMsg}`,
     );
     return { status: 503, setCookies: [], body: null };
   }
-}
-
-export async function fetchConvexGuestSessionRevoke(
-  context?: GuestSessionFetchContext
-): Promise<GuestSessionRevokeResult> {
-  try {
-    await provisionGuestAuthConfigToConvex();
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
-    );
-    return { status: 503, setCookies: [], body: null };
-  }
-
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestSessionRevoke(context);
-  }
-
-  return performGuestSessionRevoke(
-    getConvexGuestSessionRevokeUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {
-        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    },
-    "Convex"
-  );
-}
-
-export async function fetchRemoteGuestSessionRevoke(
-  context?: GuestSessionFetchContext
-): Promise<GuestSessionRevokeResult> {
-  return performGuestSessionRevoke(
-    getRemoteGuestSessionRevokeUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {}),
-      signal: AbortSignal.timeout(10_000),
-    },
-    "MCPJam"
-  );
 }
 
 export type GuestPromotionProofResult =
@@ -386,13 +345,18 @@ export type GuestPromotionProofResult =
   | { kind: "revoked"; setCookies: string[] }
   | { kind: "error"; status: number };
 
-async function performGuestPromotionProofFetch(
-  url: string,
-  init: RequestInit,
-  source: "Convex" | "MCPJam"
+export async function fetchGuestPromotionProof(
+  context?: GuestSessionFetchContext,
 ): Promise<GuestPromotionProofResult> {
+  const authority = authorityOrNull();
+  if (!authority) return { kind: "error", status: 503 };
+  const source = sourceLabel(authority);
   try {
-    const response = await fetch(url, init);
+    const response = await fetch(authority.promotionProofUrl, {
+      method: "POST",
+      headers: buildForwardedHeaders(authority, context),
+      signal: AbortSignal.timeout(10_000),
+    });
     if (response.status === 204) {
       return { kind: "miss" };
     }
@@ -409,13 +373,13 @@ async function performGuestPromotionProofFetch(
         // fall through
       }
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof returned 403 ${response.statusText}`
+        `[guest-auth] ${source} guest promotion proof returned 403 ${response.statusText}`,
       );
       return { kind: "error", status: 403 };
     }
     if (!response.ok) {
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof returned ${response.status} ${response.statusText}`
+        `[guest-auth] ${source} guest promotion proof returned ${response.status} ${response.statusText}`,
       );
       return { kind: "error", status: response.status };
     }
@@ -434,7 +398,7 @@ async function performGuestPromotionProofFetch(
       typeof (body as Record<string, unknown>).expiresAt !== "number"
     ) {
       logger.warn(
-        `[guest-auth] ${source} guest promotion proof response was missing token or expiresAt`
+        `[guest-auth] ${source} guest promotion proof response was missing token or expiresAt`,
       );
       return { kind: "error", status: 503 };
     }
@@ -455,70 +419,29 @@ async function performGuestPromotionProofFetch(
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.warn(
-      `[guest-auth] Failed to fetch ${source} guest promotion proof: ${errMsg}`
+      `[guest-auth] Failed to fetch ${source} guest promotion proof: ${errMsg}`,
     );
     return { kind: "error", status: 503 };
   }
 }
 
-export async function fetchConvexGuestPromotionProof(
-  context?: GuestSessionFetchContext
-): Promise<GuestPromotionProofResult> {
+/**
+ * The selected authority's guest JWKS (or `jwksUrl`, a URL already resolved
+ * from it). A read — it never provisions anything.
+ */
+export async function fetchGuestJwks(
+  jwksUrl: string | undefined = authorityOrNull()?.jwksUrl,
+): Promise<Response | null> {
+  if (!jwksUrl) return null;
   try {
-    await provisionGuestAuthConfigToConvex();
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(
-      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
-    );
-    return { kind: "error", status: 503 };
-  }
-
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestPromotionProof(context);
-  }
-
-  return performGuestPromotionProofFetch(
-    getConvexGuestPromotionProofUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {
-        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    },
-    "Convex"
-  );
-}
-
-export async function fetchRemoteGuestPromotionProof(
-  context?: GuestSessionFetchContext
-): Promise<GuestPromotionProofResult> {
-  return performGuestPromotionProofFetch(
-    getRemoteGuestPromotionProofUrl(),
-    {
-      method: "POST",
-      headers: buildForwardedHeaders(context, {}),
-      signal: AbortSignal.timeout(10_000),
-    },
-    "MCPJam"
-  );
-}
-
-export async function fetchRemoteGuestJwks(): Promise<Response | null> {
-  try {
-    if (!process.env.MCPJAM_GUEST_JWKS_URL) {
-      await provisionGuestAuthConfigToConvex();
-    }
-
-    return await fetch(getRemoteGuestJwksUrl(), {
+    return await fetch(jwksUrl, {
       method: "GET",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[guest-auth] Failed to fetch MCPJam guest JWKS: ${errMsg}`);
+    logger.warn(`[guest-auth] Failed to fetch guest JWKS: ${errMsg}`);
     return null;
   }
 }

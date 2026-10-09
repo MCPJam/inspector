@@ -57,13 +57,7 @@ export function getSubsectionsForGroup(
         },
         {
           id: "checks",
-          // The manifest label, which #5088 brought back into agreement with
-          // the section heading by renaming both to "Checks by stage". This
-          // entry had briefly read an exported heading constant instead,
-          // because the row said "Assertions" while the section said something
-          // else and the jump link named one thing and scrolled to another.
-          // Fixing the manifest is the better fix and it is the one that
-          // landed, so the indirection goes away.
+          // Keep the jump link aligned with the section heading.
           label: manifestLabel("checks"),
           target: { type: "passOrFailChecks" },
         },
@@ -84,6 +78,39 @@ export function getSubsectionsForGroup(
         });
       }
       return subs;
+    }
+    case "limits": {
+      // One rail entry per clock, in the same nesting order the rows render:
+      // turn inside tool call inside iteration inside run, then the retry
+      // count. Unconditional — every suite has budgets, because a suite that
+      // authors none still runs under the platform defaults.
+      return [
+        {
+          id: "turnTimeoutMs",
+          label: manifestLabel("turnTimeoutMs"),
+          target: { type: "row", key: "turnTimeoutMs" },
+        },
+        {
+          id: "toolCallTimeoutMs",
+          label: manifestLabel("toolCallTimeoutMs"),
+          target: { type: "row", key: "toolCallTimeoutMs" },
+        },
+        {
+          id: "iterationTimeoutMs",
+          label: manifestLabel("iterationTimeoutMs"),
+          target: { type: "row", key: "iterationTimeoutMs" },
+        },
+        {
+          id: "runTimeoutMs",
+          label: manifestLabel("runTimeoutMs"),
+          target: { type: "row", key: "runTimeoutMs" },
+        },
+        {
+          id: "turnRetries",
+          label: manifestLabel("turnRetries"),
+          target: { type: "row", key: "turnRetries" },
+        },
+      ];
     }
     case "triggers": {
       const subs: SuiteSettingsSubsection[] = [];
@@ -122,16 +149,16 @@ export function subsectionForSettingKey(
   }
   if (
     groupId === "grading" &&
-    (key === "passOrFail" ||
-      key === "checks" ||
-      key === "matchOptions" ||
-      key === "assertionBacktest")
+    (key === "passOrFail" || key === "checks" || key === "matchOptions")
   ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
   }
   if (
     groupId === "grading" &&
-    (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
+    (key === "judge" ||
+      key === "judgeRubric" ||
+      key === "judgeGroundedness" ||
+      key === "judgeRubricChecks")
   ) {
     return subsections.find((sub) => sub.id === "checks");
   }

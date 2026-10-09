@@ -12,13 +12,18 @@ import { RequiredMark } from "@/components/shared/required-mark";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
 import type { CloudServerBlockCopy } from "@/lib/cloud-server-readiness";
 import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  SWARM_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import {
   isComposeMode,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
+import { SwarmProductionNotice } from "@/components/swarms/swarm-production-notice";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
@@ -58,6 +63,9 @@ export function SwarmTargetComposer({
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
+  // The draft's image pin rides its own flag; the cloud-run badge and the
+  // unreachable notice below stay on `computers-enabled`.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
   // `false` only from a real server answer — loading / fetch failure never
@@ -75,7 +83,7 @@ export function SwarmTargetComposer({
       hostIds: value.stack.hostIds,
       serverAttachmentId: value.stack.serverAttachmentId,
       skillSelection: skillsEnabled ? value.stack.skillSelection : null,
-      computerEnvironmentId: computersEnabled
+      computerEnvironmentId: sandboxImagesEnabled
         ? value.stack.computerEnvironmentId
         : null,
     });
@@ -85,8 +93,8 @@ export function SwarmTargetComposer({
     }
     toast.success("Draft saved — open Environments to finish it.");
   }, [
-    computersEnabled,
     projectId,
+    sandboxImagesEnabled,
     skillsEnabled,
     stackName,
     value.stack.computerEnvironmentId,
@@ -146,7 +154,10 @@ export function SwarmTargetComposer({
         />
       ) : null}
 
+      <SwarmProductionNotice data-testid="new-swarm-production-notice" />
+
       <EnvironmentComposer
+        slots={SWARM_COMPOSER_SLOTS}
         projectId={projectId}
         environments={environments}
         value={value}

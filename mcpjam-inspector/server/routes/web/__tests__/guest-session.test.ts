@@ -1,6 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
+import { resetGuestAuthorityForTests } from "../../../utils/guest-authority.js";
+
+// Pass-through semantics on a deployment reached by its own hostname. A
+// loopback Inspector keeps guests in namespace-scoped cookies instead; that is
+// `guest-session.scoped-cookies.test.ts`.
+const HOSTED = "https://app.mcpjam.com";
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
@@ -31,6 +45,7 @@ describe("POST /guest-session", () => {
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
       "test-guest-session-secret";
+    resetGuestAuthorityForTests();
     global.fetch = vi.fn().mockImplementation(async () => {
       sessionCounter += 1;
       return new Response(
@@ -74,6 +89,7 @@ describe("POST /guest-session", () => {
       process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SHARED_SECRET;
     }
     global.fetch = ORIGINAL_FETCH;
+    resetGuestAuthorityForTests();
   });
 
   describe("token issuance", () => {
@@ -118,40 +134,49 @@ describe("POST /guest-session", () => {
     });
   });
 
+  it("returns 429 with Retry-After and RATE_LIMITED when the upstream refuses creation (per-IP cap)", async () => {
+    vi.mocked(global.fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "Too many guest sessions from this network",
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "retry-after": "3600",
+            },
+          },
+        ),
+    );
+
+    // Distinct IP so this request does not spend the shared local window
+    // the later 503/limit tests rely on.
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.9" },
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("3600");
+    const body = await res.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.message).toMatch(/Sign in to continue/);
+  });
+
   it("forwards Set-Cookie from Convex to the browser", async () => {
-    const res = await app.request("/guest-session", { method: "POST" });
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+    });
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain(
       "__Host-mcpjam_guest_session=cookie-set-by-convex",
     );
   });
 
-  it("also sets a local HTTP-compatible guest cookie", async () => {
-    const res = await app.request("/guest-session", { method: "POST" });
-    expect(res.status).toBe(200);
-
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    expect(setCookie).toContain(
-      "__Host-mcpjam_guest_session=cookie-set-by-convex",
-    );
-    expect(setCookie).toContain("mcpjam_guest_session=cookie-set-by-convex");
-    expect(setCookie).toContain(
-      "mcpjam_guest_session=cookie-set-by-convex; HttpOnly; SameSite=Lax",
-    );
-  });
-
-  it("sets the local HTTP-compatible guest cookie on 127.0.0.1", async () => {
-    const res = await app.request("http://127.0.0.1/guest-session", {
-      method: "POST",
-    });
-    expect(res.status).toBe(200);
-
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    expect(setCookie).toContain("mcpjam_guest_session=cookie-set-by-convex");
-  });
-
-  it("does not set the local HTTP-compatible guest cookie for HTTPS origins", async () => {
-    const res = await app.request("https://app.mcpjam.com/guest-session", {
+  it("passes the authority's cookie through unchanged on a deployed origin", async () => {
+    const res = await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
     });
     expect(res.status).toBe(200);
@@ -164,7 +189,7 @@ describe("POST /guest-session", () => {
   });
 
   it("forwards browser Cookie/User-Agent but not spoofable IP headers upstream", async () => {
-    await app.request("/guest-session", {
+    await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
       headers: {
         cookie: "__Host-mcpjam_guest_session=raw-cookie-id",
@@ -186,41 +211,8 @@ describe("POST /guest-session", () => {
     expect(headers["X-Real-IP"]).toBeUndefined();
   });
 
-  it("maps the local HTTP-compatible guest cookie back to the upstream cookie name", async () => {
-    await app.request("/guest-session", {
-      method: "POST",
-      headers: {
-        cookie: "mcpjam_guest_session=local-cookie-id",
-      },
-    });
-
-    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
-    const init = upstreamCall[1] as RequestInit;
-    const headers = init.headers as Record<string, string>;
-    expect(headers["Cookie"]).toBe(
-      "__Host-mcpjam_guest_session=local-cookie-id",
-    );
-  });
-
-  it("prefers the local HTTP-compatible guest cookie when both cookie names are present", async () => {
-    await app.request("/guest-session", {
-      method: "POST",
-      headers: {
-        cookie:
-          "__Host-mcpjam_guest_session=stale-cookie-id; mcpjam_guest_session=fresh-cookie-id",
-      },
-    });
-
-    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
-    const init = upstreamCall[1] as RequestInit;
-    const headers = init.headers as Record<string, string>;
-    expect(headers["Cookie"]).toBe(
-      "__Host-mcpjam_guest_session=fresh-cookie-id",
-    );
-  });
-
   it("forwards only the guest-session cookie upstream, not other origin cookies", async () => {
-    await app.request("/guest-session", {
+    await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
       headers: {
         "x-forwarded-for": "10.0.99.1",
@@ -239,7 +231,7 @@ describe("POST /guest-session", () => {
   });
 
   it("omits Cookie header upstream when guest-session cookie is absent", async () => {
-    await app.request("/guest-session", {
+    await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
       headers: {
         "x-forwarded-for": "10.0.99.2",
@@ -299,36 +291,13 @@ describe("POST /guest-session", () => {
       ),
     ) as typeof fetch;
 
-    const res = await app.request("/guest-session", { method: "POST" });
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+    });
     expect(res.status).toBe(403);
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
     const data = await res.json();
     expect(data.code).toBe("FORBIDDEN");
-  });
-
-  it("clears both upstream and local guest cookies on local HTTP revoke", async () => {
-    const expiredCookie =
-      "__Host-mcpjam_guest_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ revoked: true }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Set-Cookie": expiredCookie,
-        },
-      }),
-    ) as typeof fetch;
-
-    const res = await app.request("http://127.0.0.1/guest-session/revoke", {
-      method: "POST",
-    });
-    expect(res.status).toBe(200);
-
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    expect(setCookie).toContain(expiredCookie);
-    expect(setCookie).toContain(
-      "mcpjam_guest_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
-    );
   });
 
   describe("HTTP method handling", () => {
@@ -353,6 +322,16 @@ describe("POST /guest-session", () => {
       process.env.NODE_ENV = "production";
       delete process.env.VITE_MCPJAM_HOSTED_MODE;
       delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+      // Assert the REAL default authority (the test setup points it at an
+      // unresolvable origin so no test mints a production guest by accident).
+      const savedOrigin = process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      onTestFinished(() => {
+        if (savedOrigin !== undefined) {
+          process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN = savedOrigin;
+        }
+      });
+      resetGuestAuthorityForTests();
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({

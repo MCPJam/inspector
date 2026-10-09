@@ -29,6 +29,11 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 vi.mock("../../../utils/guest-spend-ip.js", () => ({
   hashGuestSpendIp: vi.fn(async () => "guest-ip-hash"),
+  // The route forwards the hash through this helper. A mock that omits it
+  // makes every transcription throw, which surfaced only as a 502.
+  guestIpForwardHeaders: vi.fn((hash: string | null | undefined) =>
+    hash ? { "x-mcpjam-guest-ip-hash": hash } : {},
+  ),
 }));
 
 const ORIGINAL_ENV = {

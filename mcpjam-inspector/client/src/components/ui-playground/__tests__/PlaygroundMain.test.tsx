@@ -16,6 +16,10 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
+import {
+  resetShownPluginNotices,
+  showPluginNotice,
+} from "@/lib/plugins/plugin-notice-display";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -41,6 +45,23 @@ const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
 }));
+
+const mockEnvironmentReadiness = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/use-playground-environment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-playground-environment")>();
+  return {
+    ...actual,
+    usePlaygroundEnvironment: (...args: Parameters<typeof actual.usePlaygroundEnvironment>) => {
+      const state = actual.usePlaygroundEnvironment(...args);
+      return mockEnvironmentReadiness.enabled ? {
+        ...state, isEnvironmentMode: true, environmentId: "disposable-environment",
+        preview: { host: { hostId: null }, servers: [], plugins: [] },
+        isPreviewLoading: false, isResolutionPending: false,
+        executionTarget: { kind: "environment", environmentId: "disposable-environment" },
+      } : state;
+    },
+  };
+});
 
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 const mockDefaultHostConfig = vi.hoisted(() => ({ result: null as unknown }));
@@ -190,6 +211,35 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
+// The project's installed plugins, as the hidden environment reads them.
+// Nothing installed unless a test installs one.
+const mockHiddenEnvironment = vi.hoisted(() => ({
+  calls: [] as any[],
+  state: {
+    plugins: [] as any[],
+    pluginServers: [] as any[],
+    wanted: false,
+    environmentId: null as string | null,
+    pluginServerIds: [] as string[],
+    failed: false,
+    recover: async () => ({ ok: false as const }),
+  },
+}));
+// Spied, not replaced: the real dedupe decides what is said.
+vi.mock("@/lib/plugins/plugin-notice-display", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/plugins/plugin-notice-display")
+    >();
+  return { ...actual, showPluginNotice: vi.fn(actual.showPluginNotice) };
+});
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: (input: unknown) => {
+    mockHiddenEnvironment.calls.push(input);
+    return mockHiddenEnvironment.state;
+  },
+}));
+
 // Mock convex/react
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -265,6 +315,9 @@ const mockUseChatSession = {
     supportsStreaming: true,
   },
   setSelectedModel: vi.fn(),
+  seedReasoningEffort: vi.fn(),
+  reasoningEffortLevelsFor: vi.fn(() => ["low", "medium", "high"]),
+  setReasoningEffortForModel: vi.fn(),
   // The steady state: the persisted lead id has matched `availableModels`.
   // Leaving this undefined would silently disable the selected-model sanitize
   // effect for every case below. See BACK2-628.
@@ -304,6 +357,8 @@ const mockUseChatSession = {
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
+  hiddenEnvironmentActive: false,
+  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -555,6 +610,29 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   },
 }));
 
+// The org provider config the tab root resolves for its own `useChatSession`.
+// Every compare column must receive this same object: a column composes its
+// own model list from it, and a "Your providers" model is only in that list
+// when the column sees the org providers too.
+const mockHostedOrgModelConfig = {
+  providers: [{ providerKey: "anthropic", enabled: true, hasSecret: true }],
+};
+
+// The live hosted catalog the compare line-up's v1 → v2 migration reads.
+// `loading` by default: no migration, so suites that set `selectedModelIds`
+// keep exercising the v1 line-up exactly as before.
+const mockHostedCatalogState: {
+  status: "loading" | "live" | "fallback";
+  hostedCatalog: unknown[];
+} = { status: "loading", hostedCatalog: [] };
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => mockHostedCatalogState,
+}));
+
+vi.mock("@/hooks/use-hosted-org-model-config", () => ({
+  useHostedOrgModelConfig: () => mockHostedOrgModelConfig,
+}));
+
 // Mock ConfirmChatResetDialog
 vi.mock(
   "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog",
@@ -757,6 +835,7 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
     vi.clearAllMocks();
+    mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
@@ -816,6 +895,283 @@ describe("PlaygroundMain", () => {
     mockMultiModelPlaygroundCard.mockClear();
   });
 
+  describe("installed plugins (hidden environment)", () => {
+    const bitsServer = {
+      serverId: "srv_bits",
+      name: "bits-cad",
+      pluginId: "plg_bits",
+      pluginLabel: "Bits & Bolts",
+    };
+    const bitsRow = {
+      pluginId: "plg_bits",
+      pluginVersionId: "ver_bits",
+      name: "bits-and-bolts",
+      displayName: "Bits & Bolts",
+      status: "active",
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-cad",
+          componentKey: "cad",
+          placement: "remote",
+        },
+      ],
+      skills: [],
+    };
+    const nothing = { ...mockHiddenEnvironment.state };
+    const recover = vi.fn(async () => ({ ok: false as const }));
+
+    function installBits(environmentId: string | null = "env_hidden") {
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [bitsRow],
+        pluginServers: [bitsServer],
+        wanted: true,
+        environmentId,
+        pluginServerIds: ["srv_bits"],
+        recover,
+      };
+    }
+
+    afterEach(() => {
+      mockHiddenEnvironment.state = { ...nothing };
+      mockHiddenEnvironment.calls = [];
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = null;
+      resetShownPluginNotices();
+    });
+
+    it("composes for the previewed client only while the environments UI is hidden", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(mockHiddenEnvironment.calls.at(-1)).toMatchObject({
+        eligible: true,
+      });
+    });
+
+    it("hands the chat hook the composition beside the ordinary client-turn context", () => {
+      installBits();
+      render(<PlaygroundMain {...defaultProps} />);
+      const hosted = capturedChatSessionOptions.hostedContext;
+      expect(hosted.hiddenEnvironment).toEqual({
+        environmentId: "env_hidden",
+        pluginServerIds: ["srv_bits"],
+        recover,
+      });
+      // Not an explicit environment: the chat hook decides per turn whether
+      // the web route can carry it, so the client-turn fields stay.
+      expect(hosted).not.toHaveProperty("executionTarget");
+      expect(hosted).not.toHaveProperty("environmentOverrides");
+      // The plugin's server never enters the chat's own selection.
+      expect(capturedChatSessionOptions.selectedServers).not.toContain(
+        "bits-cad",
+      );
+      expect(hosted.selectedServerIds).not.toContain("srv_bits");
+    });
+
+    it("leaves the chat-hook context exactly as it was without a runnable plugin", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      const plain = capturedChatSessionOptions.hostedContext;
+      expect(plain).not.toHaveProperty("hiddenEnvironment");
+      expect(plain.requiresWebChatApi).toBeUndefined();
+    });
+
+    it("shows the plugin's servers as on and read-only while the chat carries them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = true;
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([bitsServer]);
+      // No environment chrome: the environments UI is hidden.
+      expect(composer.environmentServers).toBeUndefined();
+      expect(composer.executionTarget).toBeUndefined();
+    });
+
+    it("says once per chat, when a message is sent, which plugins were skipped and why", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      // Opening a chat says nothing.
+      expect(showPluginNotice).not.toHaveBeenCalled();
+
+      // Two sends: the status enters "submitted" each time.
+      for (let send = 0; send < 2; send += 1) {
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "ready";
+        rerender(<PlaygroundMain {...defaultProps} />);
+      }
+
+      const skipped = {
+        kind: "skipped",
+        plugins: [
+          {
+            pluginId: "plg_bits",
+            name: "bits-and-bolts",
+            displayName: "Bits & Bolts",
+            reason: "needs_auth",
+          },
+        ],
+      };
+      // Asked on each send; the real dedupe says it once for the chat.
+      expect(showPluginNotice).toHaveBeenCalledTimes(2);
+      expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", skipped);
+      expect(
+        vi.mocked(showPluginNotice).mock.results.map((r) => r.value),
+      ).toEqual([true, false]);
+    });
+
+    it("names a plugin it did not start because it runs on this computer", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [
+          {
+            ...bitsRow,
+            status: "skipped",
+            reason: "placement",
+            componentKey: "cad",
+            servers: [{ ...bitsRow.servers[0], placement: "local" }],
+          },
+        ],
+      };
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", {
+          kind: "skipped",
+          plugins: [
+            {
+              pluginId: "plg_bits",
+              name: "bits-and-bolts",
+              displayName: "Bits & Bolts",
+              reason: "placement",
+              placement: "local",
+            },
+          ],
+        });
+      } finally {
+        mockUseChatSession.status = "ready";
+      }
+    });
+
+    it("says nothing when a restored chat is opened, however many turns it has", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const userTurn = (id: string) => ({
+        id,
+        role: "user",
+        parts: [{ type: "text", text: id }],
+      });
+      mockUseChatSession.messages = [userTurn("u1")];
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        // Another session opens: its id changes first, then its transcript
+        // (more user turns than the last one) lands. Neither is a send.
+        mockUseChatSession.chatSessionId = "chat-session-restored";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.messages = [
+          userTurn("r1"),
+          userTurn("r2"),
+          userTurn("r3"),
+        ];
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).not.toHaveBeenCalled();
+
+        // A send in it does.
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith(
+          "chat-session-restored",
+          expect.objectContaining({ kind: "skipped" }),
+        );
+      } finally {
+        mockUseChatSession.status = "ready";
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.messages = [];
+      }
+    });
+
+    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+      vi.mocked(showPluginNotice).mockClear();
+      installBits();
+      const models = [
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      ];
+      mockUseChatSession.availableModels = models as any;
+      mockUseChatSession.multiModelEnabled = true;
+      try {
+        const props = { ...defaultProps, enableMultiModelChat: true };
+        // Through the composer's own handlers: in compare mode there is one
+        // input per column.
+        const compareSend = async (text: string) => {
+          await act(async () => {
+            (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onChange(text);
+          });
+          await act(async () => {
+            await (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onSubmit({
+              preventDefault: () => {},
+            });
+          });
+        };
+        const { rerender } = render(<PlaygroundMain {...props} />);
+        // Entering a comparison says nothing; its first send does.
+        expect(showPluginNotice).not.toHaveBeenCalled();
+        await compareSend("first");
+        const compare = { kind: "off", reason: "compare" };
+        expect(showPluginNotice).toHaveBeenCalledTimes(1);
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-1"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+        // Not again in the same comparison.
+        await compareSend("second");
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          false,
+        );
+
+        // A later comparison in the same tab is a new chat: it says so again.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        rerender(<PlaygroundMain {...props} />);
+        await compareSend("third");
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-2"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
+    it("shows no plugin servers on a turn that runs without them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([]);
+    });
+  });
+
   describe("rendering", () => {
     it("sends the project default's browser capability when no host is selected", () => {
       mockConvexAuthState.isAuthenticated = true;
@@ -849,6 +1205,452 @@ describe("PlaygroundMain", () => {
       };
       rerender(<PlaygroundMain {...props} />);
       expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
+    });
+
+    describe("per-card compare keyed by comparisonKey", () => {
+      const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+      const sonnet = {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+        hosted: true,
+        supportedReasoningEfforts: ["low", "medium", "high"],
+      };
+      const gpt = {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai",
+        hosted: true,
+        supportedReasoningEfforts: ["low", "high"],
+      };
+      const hosted = (modelId: string, effort?: string) => ({
+        modelId,
+        source: "hosted",
+        fallback: { provider: "openrouter", model: "none" },
+        ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+      });
+      const renderedCardProps = () => {
+        // Props of the cards in the most recent grid render, in order.
+        const calls = mockMultiModelPlaygroundCard.mock.calls.map(
+          ([props]) => props,
+        );
+        const count = screen.getAllByTestId(
+          "multi-model-playground-card",
+        ).length;
+        return calls.slice(-count);
+      };
+
+      beforeEach(() => {
+        mockUseChatSession.availableModels = [sonnet, gpt] as any;
+        mockUseChatSession.selectedModel = sonnet as any;
+        mockUseChatSession.multiModelEnabled = true;
+        mockHostedCatalogState.status = "loading";
+        mockHostedCatalogState.hostedCatalog = [];
+      });
+      afterEach(() => {
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.selectedModel = {
+          id: "gpt-4",
+          name: "GPT-4",
+          provider: "openai",
+        } as any;
+        mockHostedCatalogState.status = "loading";
+      });
+
+      it("restores two cards of one model at two efforts after a reload, each sending its own effort", () => {
+        // What a previous session saved (storage v2): Sonnet at Low and High.
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "high"),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        const cards = renderedCardProps();
+        expect(cards).toHaveLength(2);
+        expect(cards.map((props) => props.compareLabel)).toEqual([
+          "Claude Sonnet 4.5 · Low",
+          "Claude Sonnet 4.5 · High",
+        ]);
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "high",
+        ]);
+        // Two cards, two identities: keyed by comparisonKey, not model id.
+        expect(new Set(cards.map((props) => props.compareId)).size).toBe(2);
+        expect(cards.every((props) => props.model.id === sonnet.id)).toBe(true);
+        // Each card has its own chip.
+        expect(cards.map((props) => props.effort?.value)).toEqual([
+          "low",
+          "high",
+        ]);
+      });
+
+      it("adds a card of the same model at another level from the model menu, and changes one card's effort alone", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        let [lead] = renderedCardProps();
+        expect(lead.reasoningEffort).toBeUndefined();
+        const menu = (mockChatInputProps.mock.calls.at(-1)?.[0] as any)
+          .modelEfforts;
+        // The menu shows Sonnet's Default as picked, High as not.
+        const sonnetEfforts = menu.rowEfforts(sonnet);
+        expect(sonnetEfforts.isPicked(undefined)).toBe(true);
+        expect(sonnetEfforts.isPicked("high")).toBe(false);
+        act(() => {
+          menu.onModelEffortSelect(sonnet, "high");
+        });
+        let cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          undefined,
+          "high",
+        ]);
+        expect(cards.map((props) => props.compareLabel)).toEqual([
+          "Claude Sonnet 4.5 · Default",
+          "Claude Sonnet 4.5 · High",
+        ]);
+
+        // The lead card's chip changes only the lead card.
+        [lead] = cards;
+        act(() => {
+          lead.effort.onChange("low");
+        });
+        cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "high",
+        ]);
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual([
+          hosted(sonnet.id, "low"),
+          hosted(sonnet.id, "high"),
+        ]);
+
+        // The composer chip is shown in compare and edits the lead card.
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        expect(composer.reasoningEffort).toBe("low");
+        expect(composer.onReasoningEffortChange).toBeTypeOf("function");
+      });
+
+      it("caps the line-up at three cards", () => {
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "medium"),
+            hosted(sonnet.id, "high"),
+            hosted(gpt.id),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        const cards = renderedCardProps();
+        expect(cards.map((props) => props.reasoningEffort)).toEqual([
+          "low",
+          "medium",
+          "high",
+        ]);
+        // At the cap neither the model menu's efforts nor its model rows
+        // can add a fourth card.
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        act(() => {
+          composer.modelEfforts.onModelEffortSelect(gpt, "high");
+        });
+        expect(renderedCardProps()).toHaveLength(3);
+        act(() => {
+          composer.onSelectedModelsChange([sonnet, gpt]);
+        });
+        expect(renderedCardProps()).toHaveLength(3);
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toHaveLength(3);
+      });
+
+      it("keeps both efforts of a model when the picker adds another model", () => {
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            hosted(sonnet.id, "low"),
+            hosted(sonnet.id, "high"),
+          ]),
+        );
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+        const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        act(() => {
+          composer.onSelectedModelsChange([sonnet, gpt]);
+        });
+        const cards = renderedCardProps();
+        expect(
+          cards.map((props) => [props.model.id, props.reasoningEffort]),
+        ).toEqual([
+          [sonnet.id, "low"],
+          [sonnet.id, "high"],
+          [gpt.id, undefined],
+        ]);
+      });
+
+      it("migrates a v1 line-up once the live catalog loaded, never before", () => {
+        mockUseChatSession.selectedModelIds = [sonnet.id, gpt.id];
+        localStorage.setItem(
+          "mcp-inspector-selected-models",
+          JSON.stringify([sonnet.id, gpt.id]),
+        );
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        // Catalog loading: v1 behaviour, nothing written.
+        expect(localStorage.getItem(V2_KEY)).toBeNull();
+        expect(renderedCardProps().map((props) => props.compareId)).toEqual([
+          sonnet.id,
+          gpt.id,
+        ]);
+
+        mockHostedCatalogState.status = "live";
+        mockHostedCatalogState.hostedCatalog = [sonnet, gpt];
+        rerender(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "null")).toEqual([
+          { ...hosted(sonnet.id), fallback: { provider: "none", model: "none" } },
+          { ...hosted(gpt.id), fallback: { provider: "none", model: "none" } },
+        ]);
+        // Default selections key as the bare id: same cards as before.
+        expect(renderedCardProps().map((props) => props.compareId)).toEqual([
+          sonnet.id,
+          gpt.id,
+        ]);
+        mockUseChatSession.selectedModelIds = [];
+      });
+    });
+
+    describe("host model and effort seeding", () => {
+      const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+      const hostedGpt5 = {
+        id: "openai/gpt-5",
+        name: "GPT-5",
+        provider: "openai",
+        hosted: true,
+      };
+      const byokGpt5 = { id: "gpt-5", name: "GPT-5", provider: "openai" };
+      const selection = (effort?: string) => ({
+        modelId: "openai/gpt-5",
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "openai" },
+        nativeModelId: "gpt-5",
+        fallback: { provider: "none", model: "none" },
+        ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+      });
+      const previewHost = (modelSelection: unknown) => {
+        mockConvexAuthState.isAuthenticated = true;
+        localStorage.setItem(
+          "mcp-previewed-host-id",
+          JSON.stringify({ "project-1": hostId })
+        );
+        mockHostQueryState.result = {
+          hostId,
+          name: "Host",
+          config: {
+            id: "cfg",
+            modelId: "openai/gpt-5",
+            modelSelection,
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+      };
+
+      it("keeps a BYOK host on its own row, never the hosted row of the same id", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        const picked = mockUseChatSession.setSelectedModel.mock.calls.at(-1)![0];
+        expect(picked.hosted).not.toBe(true);
+        expect(mockUseChatSession.seedReasoningEffort).toHaveBeenCalledWith(
+          picked,
+          "high"
+        );
+        mockUseChatSession.availableModels = [];
+      });
+
+      // A host SWITCH in the session (a new config id on the previewed host).
+      const switchHost = (configId: string, modelSelection: unknown) => {
+        mockHostQueryState.result = {
+          hostId,
+          name: `Host ${configId}`,
+          config: {
+            id: configId,
+            modelId: "openai/gpt-5",
+            modelSelection,
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+      };
+
+      it("keeps pane 1 on a reload: the host does not replace a saved compare pane", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        const saved = [
+          {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            settings: { reasoningEffort: "low" },
+            fallback: { provider: "openrouter", model: "none" },
+          },
+          {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            settings: { reasoningEffort: "high" },
+            fallback: { provider: "openrouter", model: "none" },
+          },
+        ];
+        localStorage.setItem(V2_KEY, JSON.stringify(saved));
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        // The single chat still takes the host's model, as it always has…
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        // …but the compare panes are exactly what the user saved.
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual(saved);
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("puts a BYOK host's High on the lead compare card on the user's key, and clears it on a switch to a host with none", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            {
+              modelId: "openai/gpt-5",
+              source: "hosted",
+              fallback: { provider: "openrouter", model: "none" },
+            },
+          ]),
+        );
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(undefined);
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+
+        // Switch to a BYOK host saved at High: pane 1 follows it.
+        switchHost("cfg-a", selection("high"));
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual([
+            {
+              modelId: "openai/gpt-5",
+              source: "local",
+              connectionRef: { kind: "localProvider", providerKey: "openai" },
+              nativeModelId: "gpt-5",
+              settings: { reasoningEffort: "high" },
+              fallback: { provider: "openrouter", model: "none" },
+            },
+          ]);
+        });
+
+        switchHost("cfg-b", selection());
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          const [lead] = JSON.parse(localStorage.getItem(V2_KEY) ?? "[]");
+          expect(lead.source).toBe("local");
+          expect(lead.settings).toBeUndefined();
+        });
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("keeps a saved compare card whose row has not loaded yet when a host switch seeds the lead", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        // The second card runs on an org connection whose row arrives later
+        // (the org-provider query resolves after the host).
+        const orgCard = {
+          modelId: "anthropic/claude-sonnet-4.5",
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "orgprov_late" },
+          fallback: { provider: "none", model: "none" },
+        };
+        localStorage.setItem(
+          V2_KEY,
+          JSON.stringify([
+            {
+              modelId: "openai/gpt-5",
+              source: "hosted",
+              fallback: { provider: "openrouter", model: "none" },
+            },
+            orgCard,
+          ])
+        );
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(undefined);
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        switchHost("cfg-a", selection("high"));
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          const [lead] = JSON.parse(localStorage.getItem(V2_KEY) ?? "[]");
+          expect(lead?.settings).toEqual({ reasoningEffort: "high" });
+        });
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toContainEqual(
+          orgCard
+        );
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("clears a previous host's effort when the next host saved none", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.seedReasoningEffort).toHaveBeenCalledTimes(1);
+        });
+        mockHostQueryState.result = {
+          hostId,
+          name: "Host B",
+          config: {
+            id: "cfg-b",
+            modelId: "openai/gpt-5",
+            modelSelection: selection(),
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.seedReasoningEffort).toHaveBeenLastCalledWith(
+            expect.anything(),
+            undefined
+          );
+        });
+        mockUseChatSession.availableModels = [];
+      });
     });
 
     it("renders the component", () => {
@@ -935,6 +1737,8 @@ describe("PlaygroundMain", () => {
           session: sharedSessionLocal,
           widgetSnapshots: [],
         });
+      // The opened thread is the current chat, so its refreshed detail binds.
+      mockUseChatSession.chatSessionId = privateSessionLocal.chatSessionId;
 
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -2402,6 +3206,23 @@ describe("PlaygroundMain", () => {
       });
     });
 
+    it("does not reconnect an unrelated standalone server for an environment-owned widget message", async () => {
+      mockEnvironmentReadiness.enabled = true;
+      mockUseChatSession.messages = [{ id: "existing", role: "assistant", parts: [{ type: "text", text: "Disposable thread" }] }];
+      mockSharedAppState.servers["test-server"] = { connectionStatus: "disconnected" };
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [], missingServerNames: ["test-server"],
+        failedServerNames: [], reauthServerNames: [],
+      });
+      render(<PlaygroundMain {...defaultProps} ensureServersReady={ensureServersReady} />);
+      const props = mockThread.mock.calls.at(-1)![0];
+      await act(async () => { props.sendFollowUpMessage("Environment-owned App follow-up"); });
+      await waitFor(() => expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Environment-owned App follow-up" }),
+      ));
+      expect(ensureServersReady).not.toHaveBeenCalled();
+    });
+
     it("injects an explicitly attached skill into the turn (INS-4)", async () => {
       // An attached skill is turn CONTENT. Playground built no skill messages,
       // so the skill silently evaporated on send — and a skill-only send did
@@ -3679,4 +4500,65 @@ describe("PlaygroundMain", () => {
       expect(notice.textContent).toContain("env_recorded");
     });
   });
+
+describe("multi-model columns", () => {
+  const snapshot: Record<string, unknown> = {};
+  const fields = [
+    "isSelectedModelResolved",
+    "selectedModel",
+    "availableModels",
+    "selectedModelIds",
+    "multiModelEnabled",
+  ] as const;
+
+  beforeEach(() => {
+    for (const field of fields) {
+      snapshot[field] = (mockUseChatSession as Record<string, unknown>)[field];
+    }
+    mockMultiModelPlaygroundCard.mockClear();
+  });
+
+  afterEach(() => {
+    Object.assign(mockUseChatSession, snapshot);
+  });
+
+  // The multi-host columns always received the org config; the multi-model
+  // columns did not. A "Your providers" model (bare id, e.g. `claude-fable-5`)
+  // was then missing from the column's model list, its provider was guessed
+  // from the bare id as Ollama, and the turn failed with "ollama is not
+  // enabled for this workspace's organization".
+  it("hands every multi-model column the org provider config the tab resolves", () => {
+    const hosted = {
+      id: "anthropic/claude-haiku-4.5",
+      name: "Claude Haiku 4.5",
+      provider: "anthropic",
+      hosted: true,
+    };
+    const ownKey = {
+      id: "claude-fable-5",
+      name: "Claude Fable 5",
+      provider: "anthropic",
+    };
+    Object.assign(mockUseChatSession, {
+      isSelectedModelResolved: true,
+      selectedModel: hosted,
+      availableModels: [hosted, ownKey],
+      selectedModelIds: [hosted.id, ownKey.id],
+      multiModelEnabled: true,
+    });
+
+    render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+    const cardProps = mockMultiModelPlaygroundCard.mock.calls.map(
+      (call) => call[0] as { compareKind: string; model: { id: string }; hostedOrgModelConfig?: unknown },
+    );
+    const modelColumns = cardProps.filter((props) => props.compareKind === "model");
+    expect(modelColumns.map((props) => String(props.model.id))).toEqual(
+      expect.arrayContaining([hosted.id, ownKey.id]),
+    );
+    for (const props of modelColumns) {
+      expect(props.hostedOrgModelConfig).toBe(mockHostedOrgModelConfig);
+    }
+  });
+});
 });

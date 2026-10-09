@@ -1,10 +1,14 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { useEffect, useMemo } from "react";
+import { useSoftQuery } from "@/hooks/use-soft-query";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
+  platformPaidFallback?: boolean;
+  platformFreeBudgetExhausted?: boolean;
+  platformFreeBudgetResetAt?: number | null;
   /** Shared paid top-up credits currently available to the organization. */
   paidCreditsRemaining: number;
   /**
@@ -34,6 +38,8 @@ export interface CreditBalanceState {
    */
   billingModel: "daily" | "monthly_per_seat" | "monthly_flat";
   topUpEligible?: boolean;
+  outstandingDeficitCredits?: number;
+  rolloverCreditsRemaining?: number;
   rolloverCapCredits?: number | null;
   /** Team monthly allowance granted this period. Only set when monthly. */
   monthlyAllowanceTotal?: number;
@@ -74,7 +80,16 @@ export const normalizeBalance = (
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
+    platformPaidFallback: r.platformPaidFallback === true,
+    platformFreeBudgetExhausted: r.platformFreeBudgetExhausted === true,
+    platformFreeBudgetResetAt: optionalNumberOrUndefined(r.platformFreeBudgetResetAt) ?? null,
     paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
+    outstandingDeficitCredits: optionalNumberOrUndefined(
+      r.outstandingDeficitCredits,
+    ),
+    rolloverCreditsRemaining: optionalNumberOrUndefined(
+      r.rolloverCreditsRemaining,
+    ),
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
@@ -126,10 +141,12 @@ export function useCreditBalance({
     hasConvexIdentity &&
     (hasWorkOsUser ? !!organizationId : includeGuests);
   const queryArgs = organizationId ? { organizationId } : {};
-  const raw = useQuery(
-    "billing:getCreditBalance" as any,
-    shouldFetchBalance ? (queryArgs as any) : "skip",
-  ) as unknown | undefined;
+  // Soft: the sidebar and the chat input read this on every page, and a
+  // failed balance must not replace the app. A failure reads as no balance.
+  const { data: raw, error } = useSoftQuery<unknown>(
+    "billing:getCreditBalance",
+    shouldFetchBalance ? queryArgs : "skip",
+  );
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized object stays
   // referentially stable across renders. Keeps downstream effects/memos
@@ -138,7 +155,9 @@ export function useCreditBalance({
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading =
-    enabled && (isAuthLoading || (shouldFetchBalance && raw === undefined));
+    enabled &&
+    (isAuthLoading ||
+      (shouldFetchBalance && raw === undefined && error === undefined));
   return {
     balance,
     isLoading,
@@ -212,4 +231,40 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
   ]);
 
   return balanceOutOfCredits || locallyLimited;
+}
+
+/**
+ * True when a GUEST's MCPJam-provided usage would be paid from the FREE daily
+ * bucket: the population the backend's free-allowance model gate applies to
+ * (`free_tier_model_restricted`). Signed-in users are never gated, with or
+ * without purchased credits. Kept conservative so it never locks a model the
+ * backend would serve: only the daily billing model counts (monthly teams are
+ * billed differently), and an unknown balance is not free-tier-only.
+ */
+export function isFreeTierOnly(
+  balance: CreditBalanceState | undefined,
+  signedIn: boolean,
+): boolean {
+  if (signedIn) return false;
+  if (!balance) return false;
+  if (balance.billingModel !== "daily") return false;
+  if (balance.platformPaidFallback) return false;
+  return balance.paidCreditsRemaining <= 0;
+}
+
+/**
+ * {@link isFreeTierOnly} for the active organization (or guest), resolved the
+ * same way as {@link useOutOfCredits}. Feeds `applyFreeTierLocks`. "Signed in"
+ * means a WorkOS user: Convex also authenticates guests (guest JWT), so its
+ * `isAuthenticated` cannot tell the two apart.
+ */
+export function useFreeTierOnly(organizationId?: string | null): boolean {
+  const { user } = useAuth();
+  const resolvedOrganizationId =
+    organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null);
+  const { balance, hasWorkOsUser } = useCreditBalance({
+    organizationId: resolvedOrganizationId,
+    includeGuests: true,
+  });
+  return isFreeTierOnly(balance, hasWorkOsUser);
 }

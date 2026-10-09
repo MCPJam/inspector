@@ -1,3 +1,4 @@
+import { navigateApp } from "@/lib/app-navigation";
 import { useEffect } from "react";
 
 export function useElectronOAuth() {
@@ -11,6 +12,12 @@ export function useElectronOAuth() {
       try {
         // Parse the callback URL to extract tokens/parameters
         const urlObj = new URL(url);
+        if (
+          urlObj.protocol !== "mcpjam:" ||
+          urlObj.host !== "oauth" ||
+          urlObj.pathname !== "/callback"
+        )
+          return;
         const flow = urlObj.searchParams.get("flow");
         const params = new URLSearchParams(urlObj.search);
 
@@ -20,7 +27,16 @@ export function useElectronOAuth() {
           }),
         );
 
-        if (flow === "mcp" || flow === "debug") {
+        if (flow === "debug") return;
+        if (
+          flow === "mcp" ||
+          params.get("state")?.startsWith("electron_mcp:")
+        ) {
+          params.delete("flow");
+          navigateApp(`/oauth/callback?${params}`, {
+            replace: true,
+            unscoped: true,
+          });
           return;
         }
 
@@ -46,8 +62,8 @@ export function useElectronOAuth() {
           // Navigate to the callback URL to trigger AuthKit's processing
           window.location.href = callbackUrl.toString();
         }
-      } catch (error) {
-        console.error("Failed to parse OAuth callback URL:", error);
+      } catch {
+        console.error("Failed to parse OAuth callback");
       }
     };
 

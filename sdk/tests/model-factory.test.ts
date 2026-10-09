@@ -52,7 +52,7 @@ vi.mock("@ai-sdk/deepseek", () => ({
 }));
 
 vi.mock("@ai-sdk/google", () => ({
-  createGoogleGenerativeAI: vi.fn(() => {
+  createGoogle: vi.fn(() => {
     const modelFn = vi.fn((modelId: string) => ({
       provider: "google",
       modelId,
@@ -132,7 +132,7 @@ vi.mock("@ai-sdk/amazon-bedrock", () => ({
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createAzure } from "@ai-sdk/azure";
 import { createMistral } from "@ai-sdk/mistral";
 import { createXai } from "@ai-sdk/xai";
@@ -176,6 +176,7 @@ describe("model-factory", () => {
         "mistral",
         "openrouter",
         "xai",
+        "mcpjam",
       ];
 
       for (const provider of providers) {
@@ -341,13 +342,13 @@ describe("model-factory", () => {
           provider: "openai",
           model: "",
         });
-        expect(parseLLMString("openrouter//anthropic/claude-haiku-4.5")).toEqual(
-          {
-            type: "builtin",
-            provider: "openrouter",
-            model: "/anthropic/claude-haiku-4.5",
-          }
-        );
+        expect(
+          parseLLMString("openrouter//anthropic/claude-haiku-4.5")
+        ).toEqual({
+          type: "builtin",
+          provider: "openrouter",
+          model: "/anthropic/claude-haiku-4.5",
+        });
       });
 
       it("still throws for a bare id with no vendor segment", () => {
@@ -429,6 +430,30 @@ describe("model-factory", () => {
           baseURL: "https://custom.anthropic.com",
         });
       });
+
+      it("sends the reviewed native id for a canonical spelling", () => {
+        // `claude-sonnet-4.5` is the catalog's dotted spelling; api.anthropic.com
+        // serves the dashed `claude-sonnet-4-5`.
+        expect(
+          createModelFromString("anthropic/claude-sonnet-4.5", defaultOptions)
+        ).toMatchObject({ modelId: "claude-sonnet-4-5" });
+        expect(
+          createModelFromString("anthropic/claude-haiku-4.5", defaultOptions)
+        ).toMatchObject({ modelId: "claude-haiku-4-5" });
+      });
+
+      it("passes native, snapshot and unknown ids through unchanged", () => {
+        for (const id of [
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-5-20250929",
+          "claude-3-opus",
+          "claude-opus-9",
+        ]) {
+          expect(
+            createModelFromString(`anthropic/${id}`, defaultOptions)
+          ).toMatchObject({ modelId: id });
+        }
+      });
     });
 
     describe("openai provider", () => {
@@ -469,7 +494,7 @@ describe("model-factory", () => {
       it("should create google model with api key", () => {
         createModelFromString("google/gemini-pro", defaultOptions);
 
-        expect(createGoogleGenerativeAI).toHaveBeenCalledWith({
+        expect(createGoogle).toHaveBeenCalledWith({
           apiKey: "test-api-key",
         });
       });
@@ -704,6 +729,87 @@ describe("model-factory", () => {
     });
   });
 
+  describe("mcpjam provider (MCPJam-hosted inference)", () => {
+    const options = { apiKey: "sk_test_key" };
+
+    it("parses the vendor id that follows the prefix", () => {
+      // `mcpjam` is not a vendor: the model it names is still a full vendor id,
+      // which is what has to reach the proxy's allowlist.
+      expect(parseLLMString("mcpjam/anthropic/claude-sonnet-4.5")).toEqual({
+        type: "builtin",
+        provider: "mcpjam",
+        model: "anthropic/claude-sonnet-4.5",
+      });
+    });
+
+    it("builds an Anthropic provider pointed at the lease placeholder", () => {
+      const model = createModelFromString(
+        "mcpjam/anthropic/claude-sonnet-4.5",
+        options
+      );
+      expect(createAnthropic).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: expect.stringContaining("mcpjam-lease.invalid"),
+          fetch: expect.any(Function),
+        })
+      );
+      // The `sk_` key is for MINTING, and must not be handed to a provider
+      // that would send it upstream as a vendor credential.
+      const passed = vi.mocked(createAnthropic).mock.calls.at(-1)![0] as {
+        apiKey: string;
+      };
+      expect(passed.apiKey).not.toBe("sk_test_key");
+      // The full vendor id reaches the model, not the bare model name.
+      expect(model).toMatchObject({ modelId: "anthropic/claude-sonnet-4.5" });
+    });
+
+    it("keeps the canonical id on the hosted route — no native mapping", () => {
+      // The proxy's allowlist is keyed by the canonical id; the BYOK native
+      // mapping must never leak onto this path.
+      expect(
+        createModelFromString("mcpjam/anthropic/claude-haiku-4.5", options)
+      ).toMatchObject({ modelId: "anthropic/claude-haiku-4.5" });
+    });
+
+    it("builds an OpenAI provider for a gpt model", () => {
+      const model = createModelFromString("mcpjam/openai/gpt-5-mini", options);
+      expect(createOpenAI).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: expect.stringContaining("mcpjam-lease.invalid"),
+          fetch: expect.any(Function),
+        })
+      );
+      expect(model).toMatchObject({ modelId: "openai/gpt-5-mini" });
+    });
+
+    it("refuses a vendor MCPJam does not host", () => {
+      expect(() =>
+        createModelFromString("mcpjam/google/gemini-2.5-pro", options)
+      ).toThrow(/anthropic\/\* and openai\/\*/);
+    });
+
+    it("requires an MCPJam API key", () => {
+      vi.stubEnv("MCPJAM_API_KEY", "");
+      expect(() =>
+        createModelFromString("mcpjam/anthropic/claude-sonnet-4.5", {
+          apiKey: "",
+        })
+      ).toThrow(/MCPJAM_API_KEY/);
+      vi.unstubAllEnvs();
+    });
+
+    it("falls back to MCPJAM_API_KEY so CI needs no other secret", () => {
+      // The whole point of the provider: one secret in the repository.
+      vi.stubEnv("MCPJAM_API_KEY", "sk_from_env");
+      expect(() =>
+        createModelFromString("mcpjam/anthropic/claude-sonnet-4.5", {
+          apiKey: "",
+        })
+      ).not.toThrow();
+      vi.unstubAllEnvs();
+    });
+  });
+
   describe("BaseUrls interface", () => {
     it("should allow partial base URLs", () => {
       const baseUrls: BaseUrls = {
@@ -845,9 +951,9 @@ describe("buildOrgModelFromResolvedConfig", () => {
 
   it("ollama: throws when baseUrl is missing", () => {
     const config: OrgProviderResolvedConfig = { providerKey: "ollama" };
-    expect(() =>
-      buildOrgModelFromResolvedConfig(config, "llama3")
-    ).toThrow(OrgProviderConfigError);
+    expect(() => buildOrgModelFromResolvedConfig(config, "llama3")).toThrow(
+      OrgProviderConfigError
+    );
   });
 
   it("custom openai-compatible: strips providerKey prefix from modelId", () => {
@@ -882,16 +988,16 @@ describe("buildOrgModelFromResolvedConfig", () => {
     const config: OrgProviderResolvedConfig = {
       providerKey: "unknown-provider" as any,
     };
-    expect(() =>
-      buildOrgModelFromResolvedConfig(config, "model")
-    ).toThrow(OrgProviderConfigError);
+    expect(() => buildOrgModelFromResolvedConfig(config, "model")).toThrow(
+      OrgProviderConfigError
+    );
   });
 
   it("missing apiKey for cloud provider: throws OrgProviderConfigError", () => {
     const config: OrgProviderResolvedConfig = { providerKey: "openai" };
-    expect(() =>
-      buildOrgModelFromResolvedConfig(config, "gpt-4o")
-    ).toThrow(OrgProviderConfigError);
+    expect(() => buildOrgModelFromResolvedConfig(config, "gpt-4o")).toThrow(
+      OrgProviderConfigError
+    );
   });
 });
 
@@ -921,9 +1027,7 @@ describe("assertOrgModelAllowed", () => {
       providerKey: "openrouter",
       selectedModels: [],
     };
-    expect(() =>
-      assertOrgModelAllowed(config, "anything/model")
-    ).not.toThrow();
+    expect(() => assertOrgModelAllowed(config, "anything/model")).not.toThrow();
   });
 
   it("bedrock: allows model in selectedModels", () => {
@@ -973,8 +1077,6 @@ describe("assertOrgModelAllowed", () => {
     const config: OrgProviderResolvedConfig = {
       providerKey: "anthropic",
     };
-    expect(() =>
-      assertOrgModelAllowed(config, "any-model-id")
-    ).not.toThrow();
+    expect(() => assertOrgModelAllowed(config, "any-model-id")).not.toThrow();
   });
 });

@@ -21,10 +21,43 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
-import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
+import type {
+  RefreshTokenOAuthProvider,
+  RefreshTokensRotatedHandler,
+} from "./refresh-token-auth-provider.js";
+
+// Re-exported so a caller configuring `onTokensRotated` can name its type
+// without reaching into the provider module.
+export type { RefreshTokensRotatedHandler } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
+
+import type {
+  ManagedMcpClientRequestHandler,
+  ManagedMcpClientRequestSchemas,
+} from "./managed-mcp-client.js";
+
+/** Host-owned extension handlers. Schemas and authority stay at the adapter boundary. */
+export interface ExtensionRequestBinding {
+  method: string;
+  schemas: ManagedMcpClientRequestSchemas;
+  handler: ManagedMcpClientRequestHandler;
+  /** Human input uses the same bounded timeout suspension as ordinary elicitation. */
+  waitsForInput?: boolean;
+  /**
+   * The `extensions` capability key this handler is the only answer for
+   * (e.g. `"openai/elicitation"` for `openai/elicitation/create`).
+   *
+   * A server-to-client request exists only on a 2025-era (stateful)
+   * connection. An unpinned connection advertises the key at connect time,
+   * because its `initialize` (if it lands on a 2025 era) is the only place
+   * the claim can travel; once the connection classifies as 2026-era the key
+   * is withheld from the capabilities every later request carries, since
+   * nothing could ever deliver the request this handler answers.
+   */
+  legacyClaim?: string;
+}
 
 // Re-export ElicitResult for convenience
 export type { ElicitResult };
@@ -436,6 +469,7 @@ export type StdioServerConfig = BaseServerConfig & {
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
+  onTokensRotated?: never;
   onUnauthorized?: never;
 };
 
@@ -471,6 +505,25 @@ export type HttpServerConfig = BaseServerConfig & {
   clientId?: string;
   /** OAuth client secret. Optional, used with refreshToken. */
   clientSecret?: string;
+  /**
+   * Called when the authorization server rotates the refresh token, so a
+   * long-lived caller can persist the replacement.
+   *
+   * Most authorization servers issue single-use refresh tokens, so the value
+   * passed as `refreshToken` stops working once it has been exchanged. For the
+   * life of the connection the SDK keeps using the newest token and this is
+   * invisible. Beyond it is not: a reconnect, and any later run, starts from
+   * the `refreshToken` this config was built with, so a CI job configured from
+   * a secret authorizes once and fails afterwards with nothing to say why.
+   * Persist what this hook hands you, back to wherever `refreshToken` came
+   * from.
+   *
+   * Only fires when the token actually changed. It is awaited before the
+   * connection completes, so keep the write bounded. It never fails a
+   * connection that has already authorized, and a handler error is swallowed
+   * without being logged — log it yourself if you need to know.
+   */
+  onTokensRotated?: RefreshTokensRotatedHandler;
   /**
    * Optional 401 recovery hook. When provided for access-token based HTTP
    * configs, MCPClientManager calls it once after an operation fails with a
@@ -566,9 +619,7 @@ export interface BaseClientState {
  * Retained for compatibility with external type consumers.
  */
 export interface ManagedClientState extends BaseClientState {
-  promise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  promise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
 }
 
 /**
@@ -584,12 +635,8 @@ export interface RegisteredServerState {
  */
 export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  connectPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
-  retryPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  connectPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
+  retryPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   initializedClientCapabilities?: ClientCapabilityOptions;
 }
 
@@ -639,6 +686,10 @@ export type ProgressHandler = (event: ProgressEvent) => void;
  * Options for MCPClientManager constructor
  */
 export interface MCPClientManagerOptions {
+  /** Installed before connect; registering alone advertises no capability. */
+  extensionRequestHandlers?: Readonly<
+    Record<string, readonly ExtensionRequestBinding[]>
+  >;
   /** Default client name to report to servers */
   defaultClientName?: string;
   /** Default client version to report */
@@ -753,6 +804,8 @@ export type TaskOptions = {
  * Preferred executeTool options shape.
  */
 export interface ExecuteToolRequest {
+  /** Complete tools/call metadata; host adapters sanitize reserved keys. */
+  metadata?: Record<string, unknown>;
   /** Request options for the tool call */
   request?: ClientRequestOptions;
   /** Task options for task-augmented tool calls (2025-11-25 legacy wire only) */

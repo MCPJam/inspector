@@ -211,16 +211,9 @@ export function ClientConfigEditor({
       {showExecutionSection ? (
         <>
           <section className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor={`${reactId}-modelId`}>Model</Label>
-              <Input
-                id={`${reactId}-modelId`}
-                value={value.modelId}
-                onChange={(e) => update({ modelId: e.target.value })}
-                placeholder="claude-sonnet-4-5"
-              />
-            </div>
-
+            {/* No model input: a raw id here would rewrite `modelId` without its
+                saved `modelSelection` (and reasoning effort). The model is
+                chosen in the host's Agent tab. */}
             <div className="grid gap-2">
               <Label htmlFor={`${reactId}-systemPrompt`}>System prompt</Label>
               <Textarea
@@ -2212,7 +2205,9 @@ function JsonRecordEditor({
       try {
         const parsed = JSON.parse(next || "{}");
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          setError("Must be a JSON object");
+          setError(
+          'Enter a JSON object enclosed in { }, such as {"key": "value"}.',
+        );
           return;
         }
         setError(null);
@@ -2226,7 +2221,13 @@ function JsonRecordEditor({
         );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Invalid JSON");
+        setError(
+        err instanceof SyntaxError
+          ? "This is not valid JSON. Check the quotes, commas and brackets, then try again."
+          : err instanceof Error
+            ? err.message
+            : "The JSON could not be read. Check its format and try again.",
+      );
       }
     },
     [onChange, setError],

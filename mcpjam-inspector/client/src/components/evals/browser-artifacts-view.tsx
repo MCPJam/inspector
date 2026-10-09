@@ -1,3 +1,4 @@
+import { RecordedPluginWorkspace } from "@/components/plugin-workspace/PluginWorkspaceReplay";
 import {
   AlertTriangle,
   Ban,
@@ -8,6 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
@@ -37,10 +39,8 @@ import {
 type Tone = "success" | "warning" | "danger" | "neutral";
 
 const TONE_CLASS: Record<Tone, string> = {
-  success:
-    "border-success/30 bg-success/10 text-success",
-  warning:
-    "border-warning/30 bg-warning/10 text-warning",
+  success: "border-success/30 bg-success/10 text-success",
+  warning: "border-warning/30 bg-warning/10 text-warning",
   danger: "border-destructive/30 bg-destructive/10 text-destructive",
   neutral: "border-border/50 bg-muted/40 text-muted-foreground",
 };
@@ -134,8 +134,7 @@ function Screenshot({ url, alt }: { url?: string | null; alt: string }) {
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <ArtifactImage
       src={url}
       alt={alt}
       loading="lazy"
@@ -192,10 +191,17 @@ export function RenderObservationCard({
         </p>
       ) : null}
 
-      <Screenshot
-        url={observation.screenshotUrl}
-        alt={`${observation.toolName} render`}
-      />
+      {observation.pluginWorkspace ? (
+        <RecordedPluginWorkspace
+          recording={observation.pluginWorkspace}
+          screenshotUrl={observation.screenshotUrl}
+        />
+      ) : (
+        <Screenshot
+          url={observation.screenshotUrl}
+          alt={`${observation.toolName} render`}
+        />
+      )}
 
       {observation.resourceUri ? (
         <div className="truncate font-mono text-[11px] text-muted-foreground">
@@ -211,10 +217,7 @@ export function RenderObservationCard({
           </summary>
           <ul className="mt-1 flex flex-col gap-0.5 pl-3">
             {observation.consoleErrors.map((err, i) => (
-              <li
-                key={i}
-                className="break-all font-mono text-muted-foreground"
-              >
+              <li key={i} className="break-all font-mono text-muted-foreground">
                 {err}
               </li>
             ))}

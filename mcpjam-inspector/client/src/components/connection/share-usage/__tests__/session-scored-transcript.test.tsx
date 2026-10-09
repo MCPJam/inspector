@@ -9,7 +9,7 @@
  *   - A turn carrying rows under BOTH keys shows the latest revision — what
  *     the tester currently means.
  */
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockScores, mockTurnRating } = vi.hoisted(() => ({
@@ -21,35 +21,29 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatTurnScores: () => ({ scores: mockScores.rows }),
 }));
 
-vi.mock("@mcpjam/chat-ui", () => ({
-  // Identity: the fixture messages below are already the renderable set.
-  getRenderableConversationMessages: (messages: unknown[]) => messages,
-  // Drive the footer callback for every message, which is what the real
-  // transcript does per rendered turn.
-  ReadOnlyTranscript: ({
-    messages,
-    renderTurnFooter,
-  }: {
-    messages: unknown[];
-    renderTurnFooter?: (message: unknown, index: number) => unknown;
-  }) => (
-    <div>
-      {messages.map((message, index) => (
-        <div key={index}>{renderTurnFooter?.(message, index) as never}</div>
-      ))}
-    </div>
-  ),
+vi.mock("@mcpjam/chat-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@mcpjam/chat-ui")>()),
   TurnRating: (props: unknown) => {
     mockTurnRating(props);
-    return null;
+    return <span>rating</span>;
   },
+}));
+
+vi.mock("@/components/evals/trace-viewer", () => ({
+  TraceViewer: ({ adaptedTrace, renderAssistantTurnFooter }: any) => (
+    <div>{adaptedTrace.messages.map((message: any) => (
+      <div key={message.id} data-testid={message.id}>
+        {message.role === "assistant" && renderAssistantTurnFooter?.(message)}
+      </div>
+    ))}</div>
+  ),
 }));
 
 import { SessionScoredTranscript } from "../session-scored-transcript";
 
 const MESSAGES = [
-  { role: "user", content: "hi" },
-  { role: "assistant", content: "hello" },
+  { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+  { id: "a1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
 ] as never;
 
 function score(overrides: Record<string, unknown>) {
@@ -64,10 +58,10 @@ function score(overrides: Record<string, unknown>) {
   };
 }
 
-function renderTranscript() {
+function renderTranscript(messages = MESSAGES) {
   // The remaining `ReadOnlyTranscriptProps` are the real transcript's concern;
   // the mock above ignores them.
-  const props = { threadId: "t1", messages: MESSAGES } as React.ComponentProps<
+  const props = { threadId: "t1", adaptedTrace: { messages, toolRenderOverrides: {} } } as React.ComponentProps<
     typeof SessionScoredTranscript
   >;
   render(<SessionScoredTranscript {...props} />);
@@ -77,6 +71,23 @@ describe("SessionScoredTranscript", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockScores.rows = [];
+  });
+
+  it("anchors ratings to adapted IDs across hidden rows and multiple assistant messages", () => {
+    mockScores.rows = [score({ value: 4 }), score({ value: 0, key: "user_thumb", promptIndex: 1 })];
+    renderTranscript([
+      { id: "u1", role: "user", parts: [] },
+      { id: "model-context-1", role: "user", parts: [] },
+      { id: "a1", role: "assistant", parts: [] },
+      { id: "a1-more", role: "assistant", parts: [] },
+      { id: "widget-state-1", role: "user", parts: [] },
+      { id: "u2", role: "user", parts: [] },
+      { id: "a2", role: "assistant", parts: [] },
+    ] as never);
+    expect(screen.getByTestId("a1")).toHaveTextContent("rating");
+    expect(screen.getByTestId("a1-more")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("a2")).toHaveTextContent("rating");
+    expect(mockTurnRating).toHaveBeenCalledTimes(2);
   });
 
   it("renders a star row as stars", () => {

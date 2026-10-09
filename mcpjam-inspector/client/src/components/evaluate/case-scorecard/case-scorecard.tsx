@@ -26,7 +26,7 @@ import {
 } from "./case-scorecard-model";
 import { ScorecardGroupSection } from "./scorecard-group";
 import { ScorecardRowView } from "./scorecard-row";
-import { RouteRow } from "./route-row";
+import { RouteRow, type ToolCatalogStatus } from "./route-row";
 import { JudgeBlock } from "./judge-block";
 
 const legendMeaning = (role: keyof typeof ROLE_LEGEND) =>
@@ -37,6 +37,8 @@ export const ROLE_LEGEND_LINE = `Required ${legendMeaning("required")} · Adviso
 export function CaseScorecard({
   input,
   availableTools,
+  toolsStatus,
+  onRetryTools,
   readOnly = false,
   checkPolicy = false,
   authorableKinds,
@@ -60,6 +62,8 @@ export function CaseScorecard({
 }: {
   input: CaseScorecardInput;
   availableTools?: string[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   readOnly?: boolean;
   checkPolicy?: boolean;
   /**
@@ -130,12 +134,16 @@ export function CaseScorecard({
           question={group.question}
         >
           {group.rows.map((row) => {
-            if (row.provenance === "route") {
+            // The route question itself. Its arguments row is authored through
+            // it and renders as an ordinary locked row.
+            if (row.provenance === "route" && row.route) {
               return (
                 <RouteRow
                   key={row.key}
                   row={row}
                   availableTools={availableTools}
+                  toolsStatus={toolsStatus}
+                  onRetryTools={onRetryTools}
                   readOnly={readOnly}
                   overlay={overlay}
                   showUnsetError={showUnsetError}

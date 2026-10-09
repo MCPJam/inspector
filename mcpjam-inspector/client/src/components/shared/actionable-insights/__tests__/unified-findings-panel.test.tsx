@@ -124,6 +124,12 @@ const openDetails = () =>
   fireEvent.click(screen.getByRole("button", { name: "See details" }));
 
 describe("walkthrough findings layout", () => {
+  it("keeps findings in the existing slot instead of duplicating the recorded summary", () => {
+    renderPanel({ fallback: <p>Recorded diagnostic summary</p> });
+    expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+    expect(screen.queryByText("Recorded diagnostic summary")).toBeNull();
+  });
+
   it("shows the problem and fix without experiment controls or expanded diagnostics", () => {
     const { analyze } = renderPanel();
     expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();
@@ -138,8 +144,7 @@ describe("walkthrough findings layout", () => {
     ).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(analyze.onRun).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Analyze findings" }));
-    expect(analyze.onRun).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /Analyze/ })).toBeNull();
   });
 
   it("opens the details sheet without recorded evidence or a successful comparison", () => {
@@ -490,7 +495,7 @@ describe("analysis states and provenance", () => {
         "data-analysis-phase",
         phase,
       );
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
+      expect(screen.getByText(label)).toBeVisible();
       expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
     },
   );
@@ -511,18 +516,58 @@ describe("analysis states and provenance", () => {
       finding().observed,
     );
   });
-  it("uses a single pending action and retains the current finding", () => {
+  it("shows pending status and retains the current finding", () => {
     renderPanel({
       analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
     });
-    expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
   });
+  it.each(["run", "analysis", "build"])(
+    "shows a skeleton while %s is pending, then shows settled incomplete evidence",
+    (pendingSource) => {
+      const { unmount } = renderPanel({
+        findings: [],
+        observationState: "partial",
+        runPending: pendingSource === "run",
+        ...(pendingSource === "analysis"
+          ? {
+              analyze: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+        ...(pendingSource === "build"
+          ? {
+              build: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+      });
+      expect(screen.getByLabelText("Loading findings")).toBeVisible();
+      expect(
+        screen.queryByTestId("unified-findings-empty"),
+      ).not.toBeInTheDocument();
+      unmount();
+      renderPanel({ findings: [], observationState: "partial" });
+      expect(
+        screen.queryByLabelText("Loading findings"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
+    },
+  );
   it("distinguishes not analyzed, incomplete, and known-empty results", () => {
     const { unmount } = renderPanel({ snapshot: null, findings: [] });
     expect(
-      screen.getByTestId("unified-findings-no-snapshot"),
-    ).toHaveTextContent("Analyze this run");
+      screen.queryByTestId("unified-findings-no-snapshot"),
+    ).not.toBeInTheDocument();
     unmount();
     renderPanel({ findings: [], observationState: "partial" });
     expect(screen.getByTestId("unified-findings-empty")).toHaveTextContent(
@@ -594,7 +639,7 @@ describe("analysis states and provenance", () => {
     ).toBeVisible();
     expect(
       screen.getByTestId("unified-findings-stale-enrichment"),
-    ).toHaveTextContent("Analyze again");
+    ).toHaveTextContent("The evidence changed after this analysis ran.");
     expect(screen.queryByRole("tablist")).toBeNull();
   });
   it("does not label the fix as standard guidance or AI explanation", () => {
@@ -640,6 +685,119 @@ describe("analysis states and provenance", () => {
     expect(screen.getByTestId("unified-finding-caveat")).toHaveTextContent(
       "No run-wide rate",
     );
+  });
+  it("renders suite recurrence without describing missing history as new", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          recurrence: {
+            claimId: "claim",
+            occurrences: 2,
+            analyzedRuns: 3,
+            firstSeenAt: Date.UTC(2026, 8, 16),
+            firstSourceId: "run1",
+            novelty: "measured",
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(screen.getByTestId("unified-finding-recurrence")).toHaveTextContent(
+      "Seen in 2 of this suite’s last 3 analyzed runs, first on Sep 16, 2026.",
+    );
+  });
+  it("omits recurrence for results from an older backend", () => {
+    renderPanel({ mode: "ai", provenance: [provenance()] });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-recurrence")).toBeNull();
+  });
+  it("discloses proposed trials that were not verified, and stays quiet when all were", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          groupKind: "ai_discovery",
+          mechanismBasis: "complete",
+          verification: {
+            proposed: 6,
+            confirmed: 4,
+            unsupported: 1,
+            inconclusive: 1,
+            unchecked: 0,
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(
+      screen.getByTestId("unified-finding-verification"),
+    ).toHaveTextContent(
+      "Verified 4 of 6 proposed trials (1 did not show it, 1 could not be verified); only verified trials are counted.",
+    );
+  });
+  it("prints nothing about verification when every proposed trial was confirmed or the backend sent none", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          groupKind: "ai_discovery",
+          verification: {
+            proposed: 6,
+            confirmed: 6,
+            unsupported: 0,
+            inconclusive: 0,
+            unchecked: 0,
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-verification")).toBeNull();
+    expect(screen.queryByTestId("unified-finding-caveat")).toBeNull();
+  });
+  it("names the measured error groups a consolidated finding was built from", () => {
+    const merged = finding({
+      id: "merged:mechanism:1",
+      title: "6 of 40 trials failed to save the server.",
+      observed: "6 of 40 trials failed to save the server.",
+      affected: { count: 6, total: 40, unit: "iterations" },
+    });
+    renderPanel({
+      mode: "ai",
+      findings: [merged],
+      provenance: [
+        provenance({
+          candidateId: merged.id,
+          groupKind: "ai_discovery",
+          sourceCandidateIds: ["rf_src1", "rf_src2"],
+        }),
+      ],
+      snapshot: snapshot({
+        deterministicFindings: [
+          finding({
+            id: "rf_src1",
+            observed:
+              "`save_project_servers` returned an error in 3 of 40 iterations.",
+          }),
+          finding({
+            id: "rf_src2",
+            observed:
+              "`save_project_servers` rejected the arguments in 3 of 40 iterations.",
+          }),
+        ],
+      }),
+    });
+    openDetails();
+    const sources = screen.getByTestId("unified-finding-sources");
+    expect(sources).toHaveTextContent("Consolidated from 2 error groups");
+    expect(sources).toHaveTextContent("returned an error in 3 of 40");
+    expect(sources).toHaveTextContent("rejected the arguments in 3 of 40");
+  });
+  it("shows no consolidation section on a finding that was not merged", () => {
+    renderPanel({ mode: "ai" });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-sources")).toBeNull();
   });
   it("does not print a coverage footer under the findings panel", () => {
     renderPanel({
@@ -712,4 +870,97 @@ describe("analysis states and provenance", () => {
     ).toBeNull();
     expect(screen.queryByText("AI explanation")).toBeNull();
   });
+});
+
+describe("automatic analysis failure note", () => {
+  it("explains analyzer version changes", () => {
+    renderPanel({ analysisFailure: { errorCode: "superseded" } });
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed"),
+    ).toHaveTextContent(
+      "AI analysis did not complete. The analyzer was updated during analysis.",
+    );
+  });
+  it.each(["evidence_changed", "unknown_failure", undefined])(
+    "keeps findings visible for %s",
+    (errorCode) => {
+      renderPanel({ analysisFailure: { errorCode } });
+      const note = screen.getByTestId("unified-findings-analysis-failed");
+      expect(note).toHaveTextContent("AI analysis did not complete.");
+      expect(note).not.toHaveAttribute("role", "alert");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+      if (errorCode === "unknown_failure") {
+        expect(note.textContent).toBe("AI analysis did not complete.");
+      }
+    },
+  );
+});
+
+it.each(["findings", "fallback"])(
+  "shows a safe report failure and retry beside existing %s",
+  (surface) => {
+    const onRun = vi.fn();
+    renderPanel({
+      ...(surface === "fallback"
+        ? {
+            snapshot: null,
+            findings: [],
+            fallback: <p>Recorded eval results</p>,
+          }
+        : {}),
+      build: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        errorCode: "build_retries_exhausted",
+        onRun,
+      },
+      analyze: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        onRun: vi.fn(),
+      },
+    });
+    expect(
+      screen.getByTestId("unified-findings-build-error"),
+    ).toHaveTextContent("Couldn’t generate the report");
+    expect(screen.queryByText(/Internal detail/)).toBeNull();
+    expect(screen.queryByTestId("unified-findings-analysis-error")).toBeNull();
+    expect(screen.queryByTestId("unified-findings-loading")).toBeNull();
+    if (surface === "fallback") {
+      expect(screen.getByText("Recorded eval results")).toBeVisible();
+    } else {
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("disables the report retry during an active request", () => {
+  const onRun = vi.fn();
+  renderPanel({
+    build: { available: true, pending: true, error: "Failed", onRun },
+  });
+  const retry = screen.getByRole("button", { name: "Try again" });
+  expect(retry).toBeDisabled();
+  fireEvent.click(retry);
+  expect(onRun).not.toHaveBeenCalled();
+});
+
+it("keeps an expected build limit refusal specific", () => {
+  renderPanel({
+    build: {
+      available: true,
+      pending: false,
+      error: "This run exceeds the analysis limit.",
+      errorCode: "run_too_large",
+      onRun: vi.fn(),
+    },
+  });
+  expect(screen.getByTestId("unified-findings-build-error")).toHaveTextContent(
+    "This run exceeds the analysis limit.",
+  );
 });

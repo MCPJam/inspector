@@ -26,6 +26,7 @@ export type {
   LiveClientState,
   UnauthorizedRefreshHandler,
   UnauthorizedRefreshResult,
+  RefreshTokensRotatedHandler,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -104,11 +105,13 @@ export {
   MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -401,6 +404,61 @@ export type {
   SuiteFileLocation,
 } from "./suite-file-loader.js";
 
+// ── local suite-file execution ──────────────────────────────────────────────
+/**
+ * `runSuiteFile` executes a suite file locally against explicitly bound MCP
+ * servers and decides it with the v2 verdict policy — the engine behind
+ * `mcpjam test <file>`. Node-only (it connects servers and runs models), so it
+ * is exported here and never from the browser or contract entries.
+ * `createSuiteFileRunner` is the internal seam the SDK's and CLI's own tests
+ * inject model doubles through.
+ */
+export {
+  LOCAL_EVAL_RUN_REPORT_KIND,
+  LOCAL_VERDICT_AUTHORITY,
+  SUITE_FILE_RUN_DEFAULT_CONCURRENCY,
+  SUITE_FILE_RUN_DEFAULT_ITERATION_TIMEOUT_MS,
+  SUITE_FILE_RUN_DEFAULT_MAX_STEPS,
+  SUITE_FILE_RUN_DEFAULT_SETUP_TIMEOUT_MS,
+  SUITE_FILE_RUN_ERROR_CODES,
+  SuiteFileRunError,
+  createSuiteFileRunner,
+  formatLocalEvalRunSummary,
+  isLocalEvalRunReport,
+  isSuiteFileRunError,
+  localEvalRunMetadataSchema,
+  platformCaseFromSuiteFileCase,
+  runSuiteFile,
+  suiteFileSourceHash,
+} from "./suite-file-run/index.js";
+export type {
+  LocalEvalRunMetadata,
+  LocalEvalRunReport,
+  McpjamInferenceConnection,
+  RunSuiteFileOptions,
+  SuiteFileCaseRun,
+  SuiteFileImportApproval,
+  SuiteFileInferenceMode,
+  SuiteFileInferenceOptions,
+  SuiteFileInferenceRail,
+  SuiteFileIterationEvidence,
+  SuiteFileJudgeState,
+  SuiteFileRefusalAttribution,
+  SuiteFileRunErrorCategory,
+  SuiteFileRunErrorCode,
+  SuiteFileRunErrorDetails,
+  SuiteFileRunIssue,
+  SuiteFileRunnerRuntime,
+  SuiteFileRunPhase,
+  SuiteFileRunProblem,
+  SuiteFileRunProgressEvent,
+  SuiteFileRunResult,
+  SuiteFileRunTermination,
+  SuiteFileRunVerdict,
+  SuiteFileServerBinding,
+  SuiteFileToolPolicyBlock,
+} from "./suite-file-run/index.js";
+
 // ── the one grading policy: SDK integration seam ────────────────────────────
 /**
  * How a suite file, a hosted suite read and a reported run each reach the
@@ -658,6 +716,12 @@ export {
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// Muse (Meta) connector readiness. The barrel is pure data and grading; the
+// gatherer dials, so it is exported only from this Node entry.
+export * from "./muse-readiness/index.js";
+export { gatherMuseReadinessEvidence } from "./muse-readiness/gather.js";
+export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather.js";
 
 // The OpenAI readiness modules that touch the network, exported only from the
 // Node entry. They are deliberately absent from `openai-readiness/index.ts` so
@@ -924,8 +988,9 @@ export type {
 } from "./EvalTest.js";
 
 // EvalSuite - Groups multiple EvalTests
-export { EvalSuite } from "./EvalSuite.js";
+export { EvalSuite, UnsupportedModelSelectionError } from "./EvalSuite.js";
 export type {
+  EvalSuiteClientOptions,
   EvalSuiteConfig,
   EvalSuiteResult,
   TestResult,
@@ -960,6 +1025,7 @@ export type {
   EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPServerReplayConfig,
+  SelectedEvalClient,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -971,6 +1037,14 @@ export {
   traceIndicatesToolExecutionFailure,
   traceMessagePartIndicatesToolFailure,
 } from "./eval-tool-execution.js";
+
+// `executeTool` returns `CallToolResult | Record<string, unknown>`, so reading
+// `.content` off it does not type-check. These are the narrowings the manager
+// itself uses; a caller in TypeScript needs one of them to get past the union.
+export {
+  assertCallToolResult,
+  isCallToolResult,
+} from "./mcp-client-manager/result-guards.js";
 export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
@@ -1012,6 +1086,14 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Reviewed canonical ↔ native model ids (the BYOK Anthropic path sends the
+// native one). Also on `@mcpjam/sdk/model-factory`.
+export {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+} from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Which sampling parameters a model accepts. Also exported from
 // `@mcpjam/sdk/browser` so client code can gate a temperature control without
@@ -1606,6 +1688,90 @@ export type {
   MrtrSupport,
 } from "./host-config/index.js";
 
+// Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
+// browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./host-config/index.js";
+export {
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
+  supportedReasoningEfforts,
+  harnessReasoningEfforts,
+} from "./host-config/index.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
+} from "./host-config/index.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./host-config/index.js";
+
+// Execution record: what a run or turn actually ran on (also at
+// `@mcpjam/sdk/host-config`). Pure and browser-safe.
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./host-config/index.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
+} from "./host-config/index.js";
+
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
 // capability. Exported so the surfaces that resolve a mode can do so without
 // reaching into a subpath, and so `taskModeForSurface` stays the single place
@@ -1739,6 +1905,24 @@ export type { EvalVariantEntry } from "./eval-variants.js";
 export type { EvalSelectionManifest } from "./eval-selection.js";
 export { formatRunSummaryTable } from "./eval-summary.js";
 export { buildRunUrl } from "./report-eval-results.js";
+
+// MCPJam-hosted inference for `mcpjam/…` models — the eval that needs no
+// provider key. `EvalSuite.run` already revokes at teardown; export the
+// release so a suite built by hand (a vitest `afterAll`, say) can too.
+export {
+  releaseMcpjamModelLeases,
+  McpjamLeaseClient,
+  McpjamLeaseError,
+  McpjamModelLeaseScope,
+  classifyMcpjamLeaseError,
+} from "./mcpjam-model-lease.js";
+export type {
+  McpjamModelLease,
+  McpjamLeaseClientOptions,
+  McpjamAuthContext,
+  McpjamGetAuth,
+  McpjamLeaseRefusalKind,
+} from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {
   EvalExecutionContext,
@@ -1773,3 +1957,24 @@ export type {
   PairwiseJudge,
   PairwisePreferenceResult,
 } from "./eval-execution-variants.js";
+
+export {
+  captureOpenAIProfile,
+  findOpenAIProfileTool,
+  isOpenAIProfile,
+} from "./openai-profile/capture.js";
+export type {
+  OpenAIProfile,
+  OpenAIProfileCapture,
+} from "./openai-profile/capture.js";
+export {
+  connectionKey,
+  parseConnectionKey,
+} from "./mcp-client-manager/connection-key.js";
+export { mergeConnectionToolsets } from "./mcp-client-manager/multi-connection-tools.js";
+export type {
+  McpToolConnection,
+  ConnectionsByServerId,
+  ConnectionRoutingSnapshot,
+  ConnectionToolMetadata,
+} from "./mcp-client-manager/multi-connection-tools.js";

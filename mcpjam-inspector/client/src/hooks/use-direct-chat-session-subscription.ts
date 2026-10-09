@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
   ChatHistoryDetailSession,
@@ -16,20 +16,22 @@ export function useDirectChatSessionSubscription({
 }) {
   const isUserReady = useDbUserReady();
   const canQuery = enabled && isUserReady;
-  const session = useQuery(
-    "directChatHistory:getCurrentSession" as any,
+  // Both results carry short-lived artifact links (the transcript and each
+  // widget's HTML / tool output), so they re-run when a link expires.
+  const session = useArtifactQuery<ChatHistoryDetailSession | null>(
+    "directChatHistory:getCurrentSession",
     canQuery && sessionId
-      ? ({
+      ? {
           sessionId,
-          projectId: projectId ?? undefined,
-        } as const)
+          ...(projectId ? { projectId } : {}),
+        }
       : "skip",
-  ) as ChatHistoryDetailSession | null | undefined;
+  );
 
-  const widgetSnapshots = useQuery(
-    "directChatHistory:getCurrentSessionWidgetSnapshots" as any,
-    canQuery && sessionId ? ({ sessionId } as const) : "skip",
-  ) as ChatHistoryWidgetSnapshot[] | undefined;
+  const widgetSnapshots = useArtifactQuery<ChatHistoryWidgetSnapshot[]>(
+    "directChatHistory:getCurrentSessionWidgetSnapshots",
+    canQuery && sessionId ? { sessionId } : "skip",
+  );
 
   // Note: turnTraces are intentionally NOT subscribed here. They're fetched
   // once per thread via the REST /chat-history/detail seed path and retained

@@ -11,6 +11,7 @@
  * backend rename forces an edit rather than silently rendering blanks.
  */
 // Type-only imports — one declaration of each backend contract, not two.
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { SessionCriteria, SessionGoalScore } from "@/lib/swarm-api";
 import type { SessionReadiness } from "@/components/scenarios/session-readiness";
 
@@ -92,6 +93,8 @@ export interface SessionFeedItem {
   startedAt: number;
   lastActivityAt: number;
   modelId?: string | null;
+  /** The last turn's model selection, effort included; null on older sessions. */
+  modelSelection?: RequestedModelSelection | null;
   messageCount: number;
   cumulativeUserMessageCount?: number;
   cumulativeToolCallCount?: number;
@@ -149,7 +152,7 @@ export function sessionParentChipLabel(
     case "journeyRun":
       return "Swarm run";
     case "scenario":
-      return "Scenario";
+      return "User Testing";
     default:
       // Future parent kinds render nothing rather than a wrong guess.
       return null;

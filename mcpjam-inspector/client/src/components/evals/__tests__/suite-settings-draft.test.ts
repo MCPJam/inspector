@@ -1,13 +1,17 @@
 import { describe, expect, test } from "vitest";
+import { evalExecutionBudgetsSchema } from "@mcpjam/sdk/contract";
 import {
   canCommit,
+  EXECUTION_BUDGET_DRAFT_BOUNDS,
   committedSuiteSettingsValues,
   describeChange,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
+  suiteImageSetting,
   SUITE_SETTINGS_KEYS,
   suiteSettingsReducer,
   toUpdateArgs,
@@ -43,6 +47,11 @@ const BASE: SuiteSettingsValues = {
   verdictPolicyVersion: undefined,
   verdictPolicyDefaults: undefined,
   gatePolicy: undefined,
+  turnTimeoutMs: undefined,
+  toolCallTimeoutMs: undefined,
+  iterationTimeoutMs: undefined,
+  runTimeoutMs: undefined,
+  turnRetries: undefined,
 };
 
 const SUITE_ID = "suite-a";
@@ -199,6 +208,104 @@ describe("clearing a setting is not the same as omitting it", () => {
     };
     expect(args.environment.servers).toEqual(["alpha"]);
     expect("computerEnvironmentId" in args.environment).toBe(false);
+  });
+
+  test("an environment suite sets its environments' image, and a clear is explicit", () => {
+    const pinned = edit(draftOf(), "computerEnvironmentId", "env_1");
+    const set = toUpdateArgs(
+      pinned,
+      "s",
+      { servers: ["alpha"] },
+      {
+        environmentSuite: true,
+      },
+    );
+    expect(set.environmentSettings).toEqual({ computerEnvironmentId: "env_1" });
+    expect(set.environment).toBeUndefined();
+
+    const cleared = edit(
+      draftOf({ computerEnvironmentId: "env_1" }),
+      "computerEnvironmentId",
+      undefined,
+    );
+    expect(
+      toUpdateArgs(cleared, "s", undefined, { environmentSuite: true })
+        .environmentSettings,
+    ).toEqual({ computerEnvironmentId: null });
+  });
+});
+
+describe("suiteImageSetting", () => {
+  test("a legacy suite shows its own pin", () => {
+    expect(
+      suiteImageSetting({ environment: { computerEnvironmentId: "img" } }),
+    ).toEqual({ value: "img", mixed: false });
+  });
+
+  test("an environment suite shows its environments' shared image, never the stale pin", () => {
+    expect(
+      suiteImageSetting({
+        environment: { computerEnvironmentId: "stale" },
+        environmentIds: ["a", "b"],
+        environmentTargets: [
+          { computerEnvironmentId: "img" },
+          { computerEnvironmentId: "img" },
+          { unavailable: "archived" },
+        ],
+      }),
+    ).toEqual({ value: "img", mixed: false });
+    expect(
+      suiteImageSetting({
+        environmentIds: ["a", "b"],
+        environmentTargets: [{ computerEnvironmentId: "img" }, {}],
+      }),
+    ).toEqual({ value: undefined, mixed: true });
+  });
+});
+
+describe("environmentImageSaveBlock", () => {
+  const image = new Set(["computerEnvironmentId"] as const);
+
+  test("holds an environment suite's image edit until the backend confirms", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: undefined,
+      }),
+    ).toMatch(/Still checking/);
+    // A failed probe is not a legacy suite: the legacy pin never applies.
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toMatch(/cannot set a sandbox image/);
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: { environmentSuiteSettings: true },
+      }),
+    ).toBeNull();
+  });
+
+  test("never holds a legacy suite or a save that leaves the image alone", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: false,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toBeNull();
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: new Set(["name"] as const),
+        capabilities: null,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -614,5 +721,161 @@ describe("describeChange — verdict policy defaults", () => {
       key: "gatePolicy",
       after: "None",
     });
+  });
+});
+
+describe("execution budgets save as one object", () => {
+  // The mutation REPLACES `executionBudgets`; it does not merge into it. So
+  // the interesting property is not "the edited clock is sent" but "the ones
+  // nobody touched are sent too" — the failure this pins is a save that
+  // silently clears four budgets because someone changed the fifth.
+  test("an edit to one clock resends the four beside it", () => {
+    const draft = edit(
+      draftOf({
+        turnTimeoutMs: 300_000,
+        toolCallTimeoutMs: 45_000,
+        iterationTimeoutMs: 900_000,
+        runTimeoutMs: 2_400_000,
+        turnRetries: 1,
+      }),
+      "turnRetries",
+      3,
+    );
+
+    expect(toUpdateArgs(draft, SUITE_ID).executionBudgets).toEqual({
+      turnTimeoutMs: 300_000,
+      toolCallTimeoutMs: 45_000,
+      iterationTimeoutMs: 900_000,
+      runTimeoutMs: 2_400_000,
+      turnRetries: 3,
+    });
+  });
+
+  test("clearing the last authored clock sends null, not omission", () => {
+    // `null` CLEARS back to the platform defaults, which is what emptying the
+    // field meant. Omitting the key would keep the budget just deleted.
+    const draft = edit(
+      draftOf({ runTimeoutMs: 2_400_000 }),
+      "runTimeoutMs",
+      undefined,
+    );
+    const args = toUpdateArgs(draft, SUITE_ID);
+
+    expect("executionBudgets" in args).toBe(true);
+    expect(args.executionBudgets).toBeNull();
+  });
+
+  test("an untouched suite sends no budgets at all", () => {
+    expect("executionBudgets" in toUpdateArgs(draftOf(), SUITE_ID)).toBe(false);
+  });
+
+  test("reads the stored object into one draft key per clock", () => {
+    const values = readSuiteSettingsValues({
+      name: "Checkout suite",
+      executionBudgets: { turnTimeoutMs: 300_000, turnRetries: 0 },
+    });
+
+    expect(values.turnTimeoutMs).toBe(300_000);
+    // Authored zero survives: `0` retries is a choice, and `?? undefined`
+    // anywhere on this path would turn it back into an inheritance.
+    expect(values.turnRetries).toBe(0);
+    expect(values.iterationTimeoutMs).toBeUndefined();
+  });
+
+  test("describes an un-authored clock as the default, not as a number", () => {
+    const before = { ...BASE };
+    const after = { ...BASE, turnTimeoutMs: 300_000 };
+
+    expect(describeChange("turnTimeoutMs", before, after)).toMatchObject({
+      label: "Per-turn timeout",
+      before: "Platform default",
+      after: "5 minutes",
+    });
+  });
+
+  test("a clock past its platform ceiling cannot be saved", () => {
+    // The input's `max` is an affordance, not a guarantee — typing and pasting
+    // both get past it. Refusing at the save button turns a server round-trip
+    // ending in EXECUTION_BUDGET_EXCEEDS_CEILING into immediate feedback.
+    const tooLong = edit(draftOf(), "turnTimeoutMs", 31 * 60_000);
+    expect(canCommit(tooLong, alwaysValid)).toBe(false);
+
+    const negative = edit(draftOf(), "turnRetries", -1);
+    expect(canCommit(negative, alwaysValid)).toBe(false);
+
+    const atTheCeiling = edit(draftOf(), "turnTimeoutMs", 30 * 60_000);
+    expect(canCommit(atTheCeiling, alwaysValid)).toBe(true);
+  });
+
+  test("an org-lowered ceiling is left to the server", () => {
+    // The client does not know that number. Guessing it would either block a
+    // legal value or promise one the server will refuse.
+    const underPlatformCeiling = edit(draftOf(), "runTimeoutMs", 6 * 3_600_000);
+    expect(canCommit(underPlatformCeiling, alwaysValid)).toBe(true);
+  });
+
+  test("describes each clock in the unit it was authored in", () => {
+    // 45s is not "0.75 minutes", and one retry is not "1 retries".
+    expect(
+      describeChange("toolCallTimeoutMs", BASE, {
+        ...BASE,
+        toolCallTimeoutMs: 45_000,
+      }).after,
+    ).toBe("45 seconds");
+    expect(
+      describeChange("turnRetries", BASE, { ...BASE, turnRetries: 1 }).after,
+    ).toBe("1 retry");
+  });
+
+  // Each clock has a FLOOR as well as a ceiling, and the floor is the half
+  // that is easy to lose: a table carrying only the ceiling still looks
+  // single-sourced, and `value < 0` still looks like a bounds check. It is
+  // not one. A tool call may not be given under a second, an iteration under
+  // thirty, a run under a minute — and every one of those is reachable by
+  // typing, precisely because an authored `0` is a real value on this surface
+  // rather than a way of spelling "unset".
+  test.each([
+    ["toolCallTimeoutMs" as const, 0],
+    ["runTimeoutMs" as const, 30_000],
+    ["iterationTimeoutMs" as const, 12_000],
+    ["turnTimeoutMs" as const, 5_000],
+  ])("a clock under its platform floor cannot be saved: %s", (key, value) => {
+    expect(canCommit(edit(draftOf(), key, value), alwaysValid)).toBe(false);
+  });
+
+  test("the floor itself saves, and zero retries is not a floor breach", () => {
+    // The boundary is inclusive on both sides, and `turnRetries` genuinely
+    // floors at 0 — refusing it would make "never retry" unsayable.
+    expect(
+      canCommit(edit(draftOf(), "toolCallTimeoutMs", 1_000), alwaysValid),
+    ).toBe(true);
+    expect(canCommit(edit(draftOf(), "turnRetries", 0), alwaysValid)).toBe(
+      true,
+    );
+  });
+
+  test("the bounds the form offers are the bounds the route parses", () => {
+    // The point of reading bounds off `evalExecutionBudgetsSchema` is that
+    // there is nothing to keep in step. This proves it rather than trusting
+    // it: for every clock, one step below the floor and one above the ceiling
+    // must be refused by the schema, and both bounds accepted by it. A table
+    // that drifted from the schema fails here before a person can be offered
+    // a number the server was always going to reject.
+    for (const [key, bounds] of Object.entries(EXECUTION_BUDGET_DRAFT_BOUNDS)) {
+      expect(Number.isFinite(bounds.min)).toBe(true);
+      expect(Number.isFinite(bounds.max)).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.min }).success,
+      ).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.max }).success,
+      ).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.min - 1 }).success,
+      ).toBe(false);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.max + 1 }).success,
+      ).toBe(false);
+    }
   });
 });

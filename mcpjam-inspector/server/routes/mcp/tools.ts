@@ -1,3 +1,4 @@
+import { listBaseServers } from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import type {
   ElicitRequest,
@@ -125,7 +126,7 @@ tools.post("/list", async (c) => {
     // fails. Match against all registered servers (not just live-clients) so
     // a server that's still mid-connect can still be resolved.
     let normalizedServerId = serverId;
-    const registeredServers = c.mcpClientManager.listServers();
+    const registeredServers = listBaseServers(c.mcpClientManager);
 
     if (!registeredServers.includes(serverId)) {
       const match = registeredServers.find(

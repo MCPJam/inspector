@@ -1,9 +1,19 @@
+import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import {
   ErrorCode,
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { boundOriginsFromReveal } from "./credential-header-binding.js";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+  requireServiceCredential,
+  ServiceCredentialUnavailableError,
+  WORKOS_API_KEY_FEATURE,
+} from "../services/service-credential.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
 let warnedMissingServiceTokenForIp = false;
@@ -11,6 +21,41 @@ let warnedMissingServiceTokenForIp = false;
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
   headers: Record<string, string> | null;
+  /**
+   * The origins the backend bound these credentials to. The transport attaches
+   * the revealed headers ONLY to requests whose origin is in this list
+   * (`bindCredentialHeaders`) — the decision itself is the backend's.
+   */
+  boundOrigins: string[];
+  /** Stored credential headers only; plugin-declared public literals are excluded. */
+  credentialHeaderNames?: string[];
+}
+
+/**
+ * The backend's refusal details for a credential it would not release — the
+ * shape `/web/server/reveal-secrets` and its siblings answer with. Forwarded
+ * onto the WebRouteError so the client can say why and open the right form.
+ */
+function credentialRefusalDetails(
+  body: any
+): Record<string, unknown> | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const details: Record<string, unknown> = {};
+  if (body.secretOriginMismatch === true) {
+    details.secretOriginMismatch = true;
+    details.boundOrigin =
+      typeof body.boundOrigin === "string" ? body.boundOrigin : null;
+    details.targetOrigin =
+      typeof body.targetOrigin === "string" ? body.targetOrigin : null;
+  }
+  if (body.exportDenied === true) {
+    details.exportDenied = true;
+    if (typeof body.policy === "string") details.policy = body.policy;
+  }
+  if (typeof body.code === "string" && !isErrorCode(body.code)) {
+    details.credentialRefusal = body.code;
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
 }
 
 function parseRecord(value: unknown): Record<string, string> | null {
@@ -21,6 +66,26 @@ function parseRecord(value: unknown): Record<string, string> | null {
     (entry): entry is [string, string] => typeof entry[1] === "string"
   );
   return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+/** The backend classifies values; malformed names must never weaken binding. */
+function parseCredentialHeaderNames(
+  value: unknown,
+  headers: Record<string, string> | null
+): string[] {
+  const allNames = Object.keys(headers ?? {});
+  const normalizedNames = new Set(allNames.map((name) => name.toLowerCase()));
+  // HTTP field names are tokens. Whitespace must not leave a credential
+  // outside the transport's case-insensitive strip set.
+  const token = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+  return Array.isArray(value) &&
+    value.every((name) =>
+      typeof name === "string" &&
+      token.test(name) &&
+      normalizedNames.has(name.toLowerCase())
+    )
+    ? value
+    : allNames;
 }
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -83,15 +148,11 @@ export async function postToConvexAuthorized(args: {
   );
 
   // Only forward the client IP when we can also prove Inspector provenance
-  // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  // (the service credential); the backend ignores an unauthenticated IP.
+  const inspectorServiceToken = getServiceCredential();
   if (args.requireInspectorServiceToken && !inspectorServiceToken) {
     clearTimeout(timeoutId);
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing INSPECTOR_SERVICE_TOKEN for XAA DCR persistence"
-    );
+    throw new ServiceCredentialUnavailableError("XAA client registration");
   }
   const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
   const sendServiceToken = Boolean(
@@ -121,7 +182,7 @@ export async function postToConvexAuthorized(args: {
         Authorization: `Bearer ${args.bearerToken}`,
         ...(sendServiceToken
           ? {
-              "x-inspector-service-token": inspectorServiceToken as string,
+              [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken as string,
               ...(forwardIp
                 ? { "x-mcpjam-client-ip": args.clientIp as string }
                 : {}),
@@ -129,7 +190,7 @@ export async function postToConvexAuthorized(args: {
           : {}),
       },
       body: JSON.stringify(args.body),
-      signal: controller.signal,
+      signal: withLocalCheckSignal(controller.signal),
     });
     // Read the body while the abort signal is still armed: a Convex action
     // that flushes headers and then stalls the body would otherwise hang here
@@ -157,14 +218,17 @@ export async function postToConvexAuthorized(args: {
   }
 
   if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `The ${args.serviceName} request failed (${response.status})`;
+    const message = backendFailureText({
+      source: "server-secrets",
+      status: response.ok ? 500 : response.status,
+      detail: body?.error,
+      fallback: `The ${args.serviceName} request failed (${response.status})`,
+    });
     throw new WebRouteError(
       response.ok ? 500 : response.status,
       statusToErrorCode(response.ok ? 500 : response.status),
-      message
+      message,
+      credentialRefusalDetails(body)
     );
   }
   return body;
@@ -174,6 +238,8 @@ export async function fetchRuntimeServerSecrets(args: {
   bearerToken: string;
   projectId: string;
   serverId: string;
+  /** HTTP destination from authorize; null only for stdio. Missing HTTP URLs fail closed. */
+  expectedTargetUrl: string | null | undefined;
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
@@ -200,6 +266,17 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
   const RUNTIME_REVEAL_TIMEOUT_MS = 10_000;
+  // A scenario grant authorizes using an MCP server, not downloading its
+  // credentials. Convex requires infrastructure authentication in addition
+  // to the viewer's bearer before delivering scenario secrets to this process.
+  const scenarioServiceToken = args.scenarioId
+    ? requireServiceCredential("Shared scenario secrets")
+    : undefined;
+  // Resolved BEFORE the request's try: a missing credential is the
+  // hosted-only answer, not a failure to reach the reveal service (502).
+  const actingAsServiceToken = args.workosApiKeyActingAs
+    ? requireServiceCredential(WORKOS_API_KEY_FEATURE)
+    : undefined;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -210,17 +287,12 @@ export async function fetchRuntimeServerSecrets(args: {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(scenarioServiceToken
+        ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: scenarioServiceToken }
+        : {}),
     };
-    if (args.workosApiKeyActingAs) {
-      const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-      if (!serviceToken) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
-        );
-      }
-      headers["Authorization"] = `Bearer ${serviceToken}`;
+    if (args.workosApiKeyActingAs && actingAsServiceToken) {
+      headers["Authorization"] = `Bearer ${actingAsServiceToken}`;
       headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
       headers["x-mcpjam-acting-in-org"] =
         args.workosApiKeyActingAs.mcpjamOrganizationId;
@@ -235,26 +307,33 @@ export async function fetchRuntimeServerSecrets(args: {
         purpose: "runtime",
         projectId: args.projectId,
         serverId: args.serverId,
+        // The URL this connection is about to dial. The backend refuses the
+        // reveal when it is not an origin the credentials were saved for.
+        ...(typeof args.expectedTargetUrl === "string"
+          ? { targetUrl: args.expectedTargetUrl }
+          : {}),
         ...(args.accessScope ? { accessScope: args.accessScope } : {}),
         ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
           : {}),
       }),
-      signal: controller.signal,
+      signal: withLocalCheckSignal(controller.signal),
     });
   } catch (error) {
     const isAbort =
       error instanceof Error &&
       (error.name === "AbortError" ||
         (error as { code?: string }).code === "ABORT_ERR");
+    // Tagged with the hop so a caller deciding per server can tell MCPJam's
+    // own reveal service not answering from the MCP server's refusal.
     throw new WebRouteError(
       isAbort ? 504 : 502,
       ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Secret reveal service timed out after ${RUNTIME_REVEAL_TIMEOUT_MS}ms`
         : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
+    ).withSetupFailureSource("secret_reveal");
   } finally {
     clearTimeout(timeoutId);
   }
@@ -270,13 +349,18 @@ export async function fetchRuntimeServerSecrets(args: {
     const code = isErrorCode(body?.code)
       ? body.code
       : statusToErrorCode(response.status);
-    const message =
-      typeof body?.message === "string"
-        ? body.message
-        : typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(response.status, code, message);
+    const message = backendFailureText({
+      source: "server-secrets",
+      status: response.status,
+      detail: typeof body?.message === "string" ? body.message : body?.error,
+      fallback: `Secret reveal failed (${response.status})`,
+    });
+    throw new WebRouteError(
+      response.status,
+      code,
+      message,
+      credentialRefusalDetails(body)
+    ).withSetupFailureSource("secret_reveal");
   }
 
   if (!body?.success) {
@@ -287,9 +371,19 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
 
+  // No origin comparison here: the backend decided, and refused above if the
+  // target is not where the credentials were saved for. What comes back is
+  // where they MAY go, for the transport rule.
   return {
     env: parseRecord(body.env),
     headers: parseRecord(body.headers),
+    boundOrigins: boundOriginsFromReveal(body),
+    // Older backends did not distinguish public literals from credentials.
+    // Preserve their fail-closed behavior unless an explicit valid list arrives.
+    credentialHeaderNames: parseCredentialHeaderNames(
+      body.credentialHeaderNames,
+      parseRecord(body.headers)
+    ),
   };
 }
 
@@ -307,6 +401,9 @@ export interface ServerClientSecretResult {
    * whose metadata advertises the origin root as issuer. Absent/false =
    * strict; the guard only relaxes on an explicit true. */
   xaaAllowPathScopedIssuer?: boolean;
+  /** The backend held the secret to the declared `targetUrl` before
+   * releasing it. Only an explicit true counts. */
+  targetEnforced?: boolean;
 }
 
 /**
@@ -321,11 +418,20 @@ export async function fetchServerClientSecret(args: {
   serverId: string;
   projectId: string;
   clientIp?: string | null;
+  /**
+   * The resource the secret is about to be used for. The backend refuses the
+   * reveal when it is not the origin the secret was saved for.
+   */
+  targetUrl?: string;
 }): Promise<ServerClientSecretResult> {
   const body = await postToConvexAuthorized({
     path: "/web/xaa/server/reveal-secret",
     bearerToken: args.bearerToken,
-    body: { serverId: args.serverId, projectId: args.projectId },
+    body: {
+      serverId: args.serverId,
+      projectId: args.projectId,
+      ...(args.targetUrl ? { targetUrl: args.targetUrl } : {}),
+    },
     serviceName: "secret-reveal service",
     clientIp: args.clientIp,
   });
@@ -340,6 +446,7 @@ export async function fetchServerClientSecret(args: {
     // Strict by default: only an explicit true from the stored config relaxes
     // the issuer check (older backends simply omit the field).
     xaaAllowPathScopedIssuer: body.xaaAllowPathScopedIssuer === true,
+    targetEnforced: body.targetEnforced === true,
   };
 }
 

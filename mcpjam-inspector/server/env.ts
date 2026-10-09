@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
+import { tryGetGuestAuthority } from "./utils/guest-authority.js";
 import { logger as appLogger } from "./utils/logger.js";
 
 export type InspectorEnvMode = "development" | "production";
@@ -62,22 +63,42 @@ export function resolveInspectorEnvDir(serverDir: string): string {
   return process.cwd();
 }
 
+/**
+ * Set by a launcher that already resolved this instance's configuration
+ * (`bin/runtime-profile.mjs`): the environment it passed IS the configuration.
+ */
+export const RESOLVED_RUNTIME_MARKER = "MCPJAM_RESOLVED_RUNTIME";
+
+export function isResolvedRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env[RESOLVED_RUNTIME_MARKER] === "1";
+}
+
 export function loadInspectorEnv(serverDir: string): LoadedInspectorEnv {
   const mode = getInspectorEnvMode();
   const envDir = resolveInspectorEnvDir(serverDir);
   const loadedFiles: string[] = [];
 
-  for (const fileName of getInspectorEnvFileNames(mode)) {
-    const envPath = join(envDir, fileName);
-    if (!existsSync(envPath)) continue;
+  // Under a launcher-resolved runtime no file is read: dotenv never overrides
+  // a variable that is set, but it DOES fill one that is missing, which is
+  // exactly how a value the selected profile deliberately left out used to
+  // come back from another target's `.env` file.
+  if (!isResolvedRuntime()) {
+    for (const fileName of getInspectorEnvFileNames(mode)) {
+      const envPath = join(envDir, fileName);
+      if (!existsSync(envPath)) continue;
 
-    dotenv.config({ path: envPath });
-    loadedFiles.push(envPath);
+      dotenv.config({ path: envPath });
+      loadedFiles.push(envPath);
+    }
   }
 
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error(
-      `CONVEX_HTTP_URL is required but not set. Loaded from: ${loadedFiles.join(", ") || "(none)"}`,
+      isResolvedRuntime()
+        ? "CONVEX_HTTP_URL is required but the launcher-resolved configuration does not set it."
+        : `CONVEX_HTTP_URL is required but not set. Loaded from: ${loadedFiles.join(", ") || "(none)"}`,
     );
   }
 
@@ -169,6 +190,45 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
   };
 }
 
+/**
+ * The backend origins this deployment is configured with.
+ *
+ * `api` is the Convex API origin, which also serves file storage
+ * (`/api/storage/…`); `http` is the HTTP-actions origin (`/web/artifact`,
+ * the control-plane routes). Each is read from the variables that name it —
+ * `CONVEX_URL` and `VITE_CONVEX_URL` for the API, `CONVEX_HTTP_URL` for HTTP
+ * actions — and, on Convex's default hosts only, the other half of the same
+ * deployment is derived by suffix (`<name>.convex.cloud` ↔
+ * `<name>.convex.site`), exactly as `getInspectorClientRuntimeConfig` does. A
+ * custom domain (`rt.mcpjam.com`, `rt-http.mcpjam.com`) is used as configured,
+ * and nothing is derived from it.
+ */
+export function getConfiguredConvexOrigins(): {
+  api: string[];
+  http: string[];
+} {
+  const api = new Set<string>();
+  const http = new Set<string>();
+  const add = (set: Set<string>, origin: string | undefined) => {
+    if (origin) set.add(origin);
+  };
+  for (const name of ["CONVEX_URL", "VITE_CONVEX_URL"]) {
+    const value = getNonEmptyEnv(name);
+    add(api, normalizeUrlOrigin(value));
+    add(
+      http,
+      replaceConvexHostnameSuffix(value, ".convex.cloud", ".convex.site"),
+    );
+  }
+  const httpValue = getNonEmptyEnv("CONVEX_HTTP_URL");
+  add(http, normalizeUrlOrigin(httpValue));
+  add(
+    api,
+    replaceConvexHostnameSuffix(httpValue, ".convex.site", ".convex.cloud"),
+  );
+  return { api: Array.from(api), http: Array.from(http) };
+}
+
 export function getInspectorClientRuntimeConfigScript(): string | null {
   const runtimeConfig = getInspectorClientRuntimeConfig();
   if (!Object.values(runtimeConfig).some((value) => value !== undefined)) {
@@ -192,6 +252,23 @@ function getConvexDeploymentSlug(url: string | undefined): string | null {
   }
 }
 
+// The first hostname label is the deployment name only on Convex's default
+// hosts. On a custom domain (`rt.mcpjam.com` / `rt-http.mcpjam.com` both front
+// the production deployment) the labels legitimately differ, so a slug
+// comparison there would only ever produce a false mismatch warning.
+function isConvexDefaultHost(url: string | undefined): boolean {
+  if (!url) return false;
+
+  try {
+    const { hostname } = new URL(url);
+    return (
+      hostname.endsWith(".convex.cloud") || hostname.endsWith(".convex.site")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
   const response = await fetch(`${convexHttpUrl}/scenario/bootstrap`, {
     method: "OPTIONS",
@@ -203,6 +280,58 @@ async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
       `[boot] CONVEX_HTTP_URL does not expose /scenario/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
     );
   }
+}
+
+/**
+ * A developer overlay (`.env.development.local`) that names a backend other
+ * than the standard profile's, while guest sessions still come from the
+ * HOSTED guest authority: every guest token is then signed by the hosted
+ * Inspector's keys and refused by the private backend (401 on each guest
+ * call). The launcher (`npm run dev:worktree`) refuses this before starting;
+ * `npm run dev` reads the files directly and only has this warning.
+ *
+ * Pure, for tests: the warning text, or null when the setup is coherent.
+ */
+export function describeGuestAuthorityMismatch(args: {
+  standardConvexHttpUrl: string | undefined;
+  overlayConvexHttpUrl: string | undefined;
+  guestAuthorityKind: "backend" | "hosted" | null;
+}): string | null {
+  const standard = normalizeUrlOrigin(args.standardConvexHttpUrl);
+  const overlay = normalizeUrlOrigin(args.overlayConvexHttpUrl);
+  if (!standard || !overlay || overlay === standard) return null;
+  if (args.guestAuthorityKind !== "hosted") return null;
+  return (
+    `[boot] .env.development.local points CONVEX_HTTP_URL at ${overlay}, but guest ` +
+    "sessions come from the hosted guest authority, whose tokens that backend will " +
+    "refuse (every guest call answers 401). Run `npm run dev:setup-guest-auth -- " +
+    "--deployment dev:<name>` once for your own deployment, or start with " +
+    "`npm run dev:worktree -- <N>`, which checks this before launching."
+  );
+}
+
+function readEnvFileValues(path: string): Record<string, string> | null {
+  if (!existsSync(path)) return null;
+  try {
+    return dotenv.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function warnOnGuestAuthorityMismatch(env: LoadedInspectorEnv): void {
+  // Under a launcher-resolved runtime the launcher already refused this.
+  if (isResolvedRuntime()) return;
+  const overlay = readEnvFileValues(join(env.envDir, ".env.development.local"));
+  if (!overlay?.CONVEX_HTTP_URL) return;
+  const standard = readEnvFileValues(join(env.envDir, ".env.local"));
+  const authority = tryGetGuestAuthority();
+  const warning = describeGuestAuthorityMismatch({
+    standardConvexHttpUrl: standard?.CONVEX_HTTP_URL,
+    overlayConvexHttpUrl: overlay.CONVEX_HTTP_URL,
+    guestAuthorityKind: authority.ok ? authority.authority.kind : null,
+  });
+  if (warning) appLogger.warn(warning);
 }
 
 export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
@@ -224,11 +353,17 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
     }
   ).__MCPJAM_CONVEX_DIAGNOSTICS_STARTED__ = true;
 
+  warnOnGuestAuthorityMismatch(env);
+
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const viteConvexUrl = process.env.VITE_CONVEX_URL;
 
-  const httpSlug = getConvexDeploymentSlug(convexHttpUrl);
-  const viteSlug = getConvexDeploymentSlug(viteConvexUrl);
+  const httpSlug = isConvexDefaultHost(convexHttpUrl)
+    ? getConvexDeploymentSlug(convexHttpUrl)
+    : null;
+  const viteSlug = isConvexDefaultHost(viteConvexUrl)
+    ? getConvexDeploymentSlug(viteConvexUrl)
+    : null;
 
   if (httpSlug && viteSlug && httpSlug !== viteSlug) {
     appLogger.warn(

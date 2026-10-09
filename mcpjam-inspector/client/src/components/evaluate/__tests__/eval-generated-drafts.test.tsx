@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+// An open authoring draft renders the model picker, which reads shared app
+// state this suite does not mount.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
-import { EvalGeneratedDrafts } from "../eval-generated-drafts";
+import {
+  EvalGeneratedDrafts,
+  describeEvalDraftError,
+} from "../eval-generated-drafts";
 import {
   evalSuiteKey,
   registerEvalSuite,
@@ -9,6 +17,44 @@ import {
 
 vi.mock("../../evals/step-list-editor", () => ({ StepListEditor: () => null }));
 const scope = { projectId: "project", suiteId: "suite", suiteName: "Suite" };
+/** A draft an import authored, with document provenance and given issues. */
+function draftWithAuthoring(
+  id: string,
+  authoring: { issues: Array<Record<string, unknown>> },
+) {
+  return {
+    id,
+    revision: "r1",
+    authoring: {
+      version: 1,
+      draftId: id,
+      revision: 0,
+      source: { fileName: "cases.md" },
+      additions: [],
+      review: "required",
+      case: {
+        title: id,
+        steps: [{ id: "p", kind: "prompt", prompt: "Find ticket" }],
+        expectedOutput: "Found",
+        isNegativeTest: false,
+        runs: 1,
+        models: [],
+      },
+      ...authoring,
+    },
+    input: {
+      suiteId: "suite",
+      title: id,
+      query: "Find ticket",
+      models: [],
+      expectedToolCalls: [],
+      runs: 1,
+      isNegativeTest: false,
+      expectedOutput: "Found",
+      steps: [{ id: "p", kind: "prompt" as const, prompt: "Find ticket" }],
+    },
+  };
+}
 const key = evalSuiteKey(scope);
 const save = vi.fn();
 let cleanup: () => void;
@@ -51,7 +97,7 @@ afterEach(() => {
 it("adds all staged cases explicitly and clears the draft section after saving", async () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
   expect(screen.queryByText("Draft Test Cases Generated")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toBeVisible();
   expect(save).not.toHaveBeenCalled();
   await userEvent
     .setup()
@@ -185,16 +231,16 @@ it("saves shared case-body outcome edits without losing generated actions", asyn
 it("keeps retained drafts collapsed on return without losing them", async () => {
   const user = userEvent.setup();
   const view = renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   expect(screen.getByRole("article", { name: "Draft: First" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   view.unmount();
   renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
   expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(2);
   expect(save).not.toHaveBeenCalled();
 });
@@ -223,4 +269,155 @@ it("prevents removing a draft while it is being saved", async () => {
   expect(screen.getByRole("button", { name: "Remove Second" })).toBeEnabled();
   finish();
   await waitFor(() => expect(screen.queryByRole("button", { name: "Remove First" })).toBeNull());
+});
+
+/**
+ * The store keeps the wire message verbatim on purpose, so the shaping has to
+ * happen at render — and this list OVERRIDES the Generate screen's own line the
+ * moment a draft lands, which is exactly the reported screenshot.
+ */
+it("explains a model-limit refusal instead of echoing its raw body", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        status: "error",
+        error:
+          'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/Out of MCPJam credits\./);
+  expect(alert).not.toHaveTextContent("user_rate_limit");
+});
+
+it("turns a write conflict on a draft into a plain retry line", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        drafts: s.suites[key].drafts.map((draft, index) =>
+          index === 0
+            ? {
+                ...draft,
+                error:
+                  '[Request ID: abc] Server Error\nUncaught Error: Documents read from or written to the "testSuites" table changed while this mutation was being run and on every subsequent retry. Another call to this mutation changed the document. {"code":"OptimisticConcurrencyControlFailure"}',
+              }
+            : draft,
+        ),
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Another change to this suite landed first. Try adding it again.",
+  );
+  expect(alert).not.toHaveTextContent("OptimisticConcurrencyControlFailure");
+});
+
+it("leaves an ordinary draft error verbatim", () => {
+  useEvalGeneration.setState((s) => ({
+    suites: {
+      [key]: {
+        ...s.suites[key],
+        drafts: s.suites[key].drafts.map((draft, index) =>
+          index === 0 ? { ...draft, error: "Save failed. Try again." } : draft,
+        ),
+      },
+    },
+  }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Save failed. Try again.");
+});
+
+/**
+ * Every save reads and writes the SAME suite document, so firing them together
+ * loses the optimistic-concurrency check and all but one fail. Serializing is
+ * the fix, so the ordering is the thing worth pinning.
+ */
+it("adds drafts one at a time so they cannot collide on the suite", async () => {
+  const order: string[] = [];
+  let releaseFirst!: () => void;
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  save.mockImplementation(async (input: { title: string }) => {
+    order.push(`start:${input.title}`);
+    if (input.title === "First") await first;
+    order.push(`end:${input.title}`);
+  });
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Add all to suite" }));
+  await waitFor(() => expect(order).toContain("start:First"));
+  expect(order).not.toContain("start:Second");
+  releaseFirst();
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(order).toEqual([
+    "start:First",
+    "end:First",
+    "start:Second",
+    "end:Second",
+  ]);
+});
+
+it("does not put the model's own contract error on screen", () => {
+  // The job retries these itself. A serialized issue array names a field of a
+  // contract the reader cannot see and cannot act on.
+  expect(
+    describeEvalDraftError(
+      '[{"code":"invalid_type","expected":"string","received":"undefined","path":["drafts",0,"additions",0,"id"],"message":"Required"}]',
+    ),
+  ).toBe("The model's reply did not match the case contract. Retrying.");
+  // Anything written for a person still reaches them verbatim.
+  expect(describeEvalDraftError("You cannot import into this suite.")).toBe(
+    "You cannot import into this suite.",
+  );
+});
+
+it("counts what was written and what can be added, without calling it a failure", async () => {
+  // Every case here WAS written. One of them needs a decision before it can
+  // be added, which is not the same as the import breaking, so the numbers
+  // carry it and the button says how many it will actually add.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey(scope)]: {
+        status: "ready",
+        authoringSource: "import",
+        drafts: [
+          draftWithAuthoring("ready-1", { issues: [] }),
+          draftWithAuthoring("blocked-1", {
+            issues: [
+              {
+                code: "unknown_tool",
+                blocking: true,
+                message: "Tool place-order is missing or ambiguous.",
+              },
+            ],
+          }),
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <EvalGeneratedDrafts
+      projectId={scope.projectId}
+      suiteId={scope.suiteId}
+      suiteName="Suite"
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "2 cases written · 1 ready to add",
+  );
+  expect(
+    screen.getByRole("button", { name: "Add the 1 ready case" }),
+  ).toBeEnabled();
+  // The panel names the job it ran, not "drafts".
+  expect(
+    screen.getByRole("button", { name: /Review imported cases/ }),
+  ).toBeVisible();
 });

@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing-entitlements";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 /** Which wall the user was standing at. Drives the return confirmation copy. */
 export type UpgradeOrigin = "evals" | "credits";
@@ -306,7 +307,6 @@ export function useUpgradeCheckout({
         limit_kind: limitKind,
         origin,
         billing_interval: nextInterval,
-        price_cents: teamEntry?.prices[nextInterval] ?? null,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
@@ -379,7 +379,6 @@ export function useUpgradeCheckout({
         limit_kind: limitKind,
         origin,
         billing_interval: checkoutInterval,
-        price_cents: teamEntry?.prices[checkoutInterval] ?? null,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
@@ -387,6 +386,15 @@ export function useUpgradeCheckout({
         monthly_supported: monthlySupported,
       });
       const result = await resultPromise;
+      // The user is about to change plan, or has: a swarm wave that ran out
+      // before this and runs out again after it is news, not a repeat (a
+      // create-flow Retry reuses its wave). A change that only takes effect at
+      // renewal lifts nothing yet, and it is this organization's waves only.
+      if (result.kind !== "scheduled") {
+        useMCPJamLimitDialogStore
+          .getState()
+          .forgetNotifiedWaves(organizationId);
+      }
       if (result.kind === "checkout" || result.kind === "portal") {
         const nextUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
@@ -441,7 +449,6 @@ export function useUpgradeCheckout({
         limit_kind: limitKind,
         origin,
         error_kind: "start_plan_change_failed",
-        error_name: error instanceof Error ? error.name : "unknown",
         billing_interval: checkoutInterval,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
@@ -478,6 +485,13 @@ export function useUpgradeCheckout({
       teamEntry?.billingModel === "flat" ? "per month" : "per seat/month",
     isFlatPlan: teamEntry?.billingModel === "flat",
     teamName: teamEntry?.displayName ?? "Team",
+    creditUpgradePlans: [
+      planCatalog?.plans.pro,
+      planCatalog?.plans.team,
+    ].filter(
+      (plan): plan is NonNullable<typeof plan> =>
+        !!plan && plan.topUp?.eligible === true,
+    ),
     /** Team's monthly eval cap, straight from the catalog so it can't go stale
      * in the copy. The backend applies this amount per seat. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
@@ -485,6 +499,9 @@ export function useUpgradeCheckout({
     // is actually receiving. During a Team trial the persisted billing plan is
     // still Free, while the effective plan (and its limits) is Team.
     effectivePlan,
+    pricingVersion:
+      billingStatus?.pricingVersion ??
+      (billingStatus?.catalogPlanId?.endsWith("_v2") ? "v2" : undefined),
     // Keep the persisted plan separate for real billing/checkout decisions.
     currentPlan,
     organizationName: billingStatus?.organizationName ?? "your organization",

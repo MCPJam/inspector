@@ -89,6 +89,7 @@ import {
   iterationsToEvalResultInputs,
   iterationTraceFromPrompts,
   traceMessagesFromPrompts,
+  variantFromExecutor,
 } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -455,6 +456,12 @@ export interface EvalTestRunOptions {
   maxCapturedBytes?: number;
   /** @internal used by EvalSuite to prevent duplicate per-test uploads */
   __suppressMcpjamAutoSave?: boolean;
+  /**
+   * @internal used by the local suite-file runner, whose caller owns
+   * telemetry: the CLI honors `--no-telemetry` and a persisted opt-out,
+   * neither of which this module-level env check can see.
+   */
+  __suppressTelemetry?: boolean;
 }
 
 /**
@@ -949,14 +956,16 @@ export class EvalTest {
         // Internal alias kept short so the iteration loop reads cleanly; the
         // public-facing parameter name is `executor`.
         const agent = executor;
-        posthog.capture({
-          distinctId: "anonymous",
-          event: "eval_test_run_triggered",
-          properties: {
-            iterations: options.iterations,
-            concurrency: options.concurrency ?? 5,
-          },
-        });
+        if (!options.__suppressTelemetry) {
+          posthog.capture({
+            distinctId: "anonymous",
+            event: "eval_test_run_triggered",
+            properties: {
+              iterations: options.iterations,
+              concurrency: options.concurrency ?? 5,
+            },
+          });
+        }
         const concurrency = options.concurrency ?? 5;
         const retries = options.retries ?? 0;
         const timeoutMs = options.timeoutMs ?? 30000;
@@ -978,7 +987,9 @@ export class EvalTest {
         const evaluationConfig = this.buildEvaluationConfig();
         this.lastEvaluationConfig = evaluationConfig;
 
-        const runSingleIteration = async (): Promise<IterationResult> => {
+        const runSingleIteration = async (
+          iterationIndex: number
+        ): Promise<IterationResult> => {
           let captureAttempt = 0;
           try {
             let lastError: string | undefined;
@@ -1065,6 +1076,7 @@ export class EvalTest {
                   (value) => value.rule
                 );
                 const graded = await this.scoreIteration({
+                  iterationIndex,
                   promptResults,
                   tokens: promptMetrics.tokens,
                   legacy: { kind: "returned", passed },
@@ -1108,8 +1120,8 @@ export class EvalTest {
                   status: controller.signal.aborted
                     ? "cancelled"
                     : timeoutTriggered && !passed
-                    ? "timed_out"
-                    : "completed",
+                      ? "timed_out"
+                      : "completed",
                   ...promptMetrics,
                   ...(timeoutTriggered && !passed
                     ? { error: timeoutError.message }
@@ -1203,6 +1215,7 @@ export class EvalTest {
             // here fails closed by default, which is the correct reading of "the
             // gate never ran".
             const graded = await this.scoreIteration({
+              iterationIndex,
               promptResults: failedPromptResults,
               tokens: promptMetrics.tokens,
               legacy: { kind: "threw", error: lastError ?? "iteration failed" },
@@ -1221,8 +1234,8 @@ export class EvalTest {
               status: controller.signal.aborted
                 ? "cancelled"
                 : lastAttemptTimedOut
-                ? "timed_out"
-                : "failed",
+                  ? "timed_out"
+                  : "failed",
               ...promptMetrics,
               error: lastError,
               retryCount: attempts,
@@ -1270,7 +1283,7 @@ export class EvalTest {
           Array.from({ length: Math.min(concurrency, total) }, async () => {
             while (next < total) {
               const index = next++;
-              results[index] = await runSingleIteration();
+              results[index] = await runSingleIteration(index);
             }
           })
         );
@@ -1282,8 +1295,7 @@ export class EvalTest {
         );
         if (this.config.runEvaluators?.length) {
           let context:
-            | ReturnType<typeof runEvaluatorContextFromIterations>
-            | undefined;
+            ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
           const identity = {
             caseId: this.config.id,
             externalRunId: options.mcpjam?.externalRunId,
@@ -1396,7 +1408,8 @@ export class EvalTest {
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras
+      hostExtras,
+      variantFromExecutor(executor)
     );
     if (runResult.runEvaluation) {
       results.forEach((result, index) => {
@@ -1472,7 +1485,21 @@ export class EvalTest {
       outputTokens: tokens.output,
       totalTokens: tokens.total,
     };
+    const recordedContext = promptResults
+      .map((result) => result.recordedContext)
+      .filter((record) => record !== undefined);
     return {
+      recordedContext,
+      ...(recordedContext.length
+        ? {
+            toolDefinitions: recordedContext.map(
+              (record) => record.toolDefinitions
+            ),
+          }
+        : {}),
+      evidenceUnavailable: recordedContext.flatMap(
+        (record) => record.unavailable ?? []
+      ),
       version: 1,
       scenario: {
         title: this.getName(),
@@ -1486,6 +1513,9 @@ export class EvalTest {
         usage,
       }),
       trace: {
+        widgetSnapshots: promptResults.flatMap((result) =>
+          result.getWidgetSnapshots()
+        ),
         messages: traceMessages,
         // `iterationTraceFromPrompts` returns the widest wire shape (a string
         // and a bare message array are both legal traces); only the object form
@@ -1653,11 +1683,11 @@ export class EvalTest {
    * reads the way the test does.
    */
   private async scoreIteration(params: {
+    iterationIndex: number;
     promptResults: PromptResult[];
     tokens: { input: number; output: number; total: number };
     legacy:
-      | { kind: "returned"; passed: boolean }
-      | { kind: "threw"; error: unknown };
+      { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
@@ -1672,6 +1702,8 @@ export class EvalTest {
       params.promptResults,
       params.tokens
     );
+    context.gradingKey = `${this.config.id}#${params.iterationIndex + 1}`;
+    context.scenario.scenarioKey = this.config.id;
     const definitions = params.evaluationConfig.definitions;
     const byId = new Map(
       definitions.map((definition) => [definition.scorerId, definition])
@@ -1768,7 +1800,8 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -1798,7 +1831,8 @@ export class EvalTest {
         ...(this.config.expectedOutput !== undefined
           ? { expectedOutput: this.config.expectedOutput }
           : {}),
-      }
+      },
+      variant
     );
   }
 

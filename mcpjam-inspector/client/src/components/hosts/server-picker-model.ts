@@ -3,7 +3,8 @@
  *
  * Storage has no column for a bare server: every selection is a
  * `serverAttachments` row, and picking one server resolves to the row holding
- * exactly it. `isServerStandIn` is the one definition of that shape.
+ * exactly it. `isServerStandIn` is the one definition of that shape — used to
+ * reuse a bare-server pick and to label the trigger, not to hide the row.
  */
 export type PickerGroup = {
   _id: string;
@@ -11,6 +12,8 @@ export type PickerGroup = {
   serverIds: string[];
   /** Optional: rows written before the field existed arrive without it. */
   resolvedServerNames?: string[];
+  /** Delete would be refused; absent from rows the client minted itself. */
+  inUse?: boolean;
 };
 
 /** `dangling` is not `null`: a deleted row differs from a choice never made. */
@@ -45,11 +48,20 @@ export function isServerStandIn(group: PickerGroup): boolean {
   return /^[1-9][0-9]*$/.test(suffix) && Number(suffix) >= 2;
 }
 
-/** Groups tab rows: stand-ins are dropped, so no choice appears on both tabs. */
+/**
+ * Groups tab rows.
+ *
+ * Stand-ins used to be dropped so a server did not appear on both tabs.
+ * A group the user created and named after its only server is the same
+ * shape — there is no column to tell the two apart — so hiding stand-ins
+ * hid groups they had just made, while the backend still reserved the
+ * name. List every row; `findSoloGroup` still reuses a stand-in when the
+ * Servers tab is clicked. Delete is how a leftover stand-in is cleared.
+ */
 export function listGroupsForTab(
   groups: readonly PickerGroup[],
 ): PickerGroup[] {
-  return groups.filter((group) => !isServerStandIn(group));
+  return [...groups];
 }
 
 /** Exact, never "contains": a wider row would attach servers nobody picked. */

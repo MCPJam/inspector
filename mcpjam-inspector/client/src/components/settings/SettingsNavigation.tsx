@@ -3,6 +3,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
+import { useIntegrationsTabEnabled } from "@/hooks/useIntegrationsTabEnabled";
 import { useTraceDestinationsAvailability } from "@/hooks/useOrgTraceDestinations";
 import { SettingsRail } from "./SettingsRail";
 import type { SettingsContext } from "@/lib/settings-manifest";
@@ -25,9 +26,13 @@ function AvailabilityProbe({
   const observability =
     useTraceDestinationsAvailability(tracesEnabled ? organizationId : null)
       ?.state === "enabled";
+  const integrations = useIntegrationsTabEnabled();
   useEffect(() => {
-    onChange({ organizationId, features: { github, discord, observability } });
-  }, [organizationId, github, discord, observability, onChange]);
+    onChange({
+      organizationId,
+      features: { github, discord, observability, integrations },
+    });
+  }, [organizationId, github, discord, observability, integrations, onChange]);
   return null;
 }
 /** Availability errors must never take down settings navigation. */

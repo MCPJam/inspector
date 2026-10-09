@@ -8,13 +8,31 @@ import {
   type ResolveComposerResult,
 } from "@/components/environment-composer/resolve-stacks";
 import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
+import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
 import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import { useHostHarnessLoader } from "@/hooks/use-host-harness-targets";
+import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 
-export function useComposerResolver(rawProjectId: string): (args: {
+export function useComposerResolver(
+  rawProjectId: string,
+  options: {
+    /**
+     * Eval surfaces pass `true`: see `resolveComposerEnvironments`. Swarms and
+     * User Testing leave it off — their targets fall back to the client's own
+     * servers.
+     */
+    requireServerAttachment?: boolean;
+    /**
+     * User Testing passes `true`: its participants are not the composer, so a
+     * Cursor client's key has to be project-shared to reach them.
+     */
+    requireSharedExternalCredential?: boolean;
+  } = {},
+): (args: {
   state: EnvironmentComposerState;
   liveEnvironments: ProjectEnvironmentView[];
   max: number;
@@ -25,8 +43,19 @@ export function useComposerResolver(rawProjectId: string): (args: {
   const projectId = rawProjectId.trim();
   const ensureAdhocEnvironments = useEnsureAdhocEnvironments();
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // An image pin rides `sandbox-images-enabled`, not `computers-enabled`.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
+  const requireServerAttachment = options.requireServerAttachment === true;
+  // Read at resolve time, per client with explicit model picks, so a pair the
+  // client's harness cannot run is skipped (and reported) instead of minted.
+  const loadHostHarness = useHostHarnessLoader();
+  const modelSelectionsEnabled = useModelSelectionsCapability(projectId);
+  // The key a Cursor client's environment must grant. Only read at resolve time
+  // for such a client; held here because it is a reactive query.
+  const projectSecrets = useProjectSecrets(projectId || null);
+  const requireSharedExternalCredential =
+    options.requireSharedExternalCredential === true;
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -36,16 +65,26 @@ export function useComposerResolver(rawProjectId: string): (args: {
         liveEnvironments,
         ensureAdhocEnvironments,
         skillsEnabled,
-        computersEnabled,
+        computersEnabled: sandboxImagesEnabled,
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
+        requireServerAttachment,
+        loadHostHarness,
+        modelSelectionsEnabled: modelSelectionsEnabled === true,
+        projectSecrets,
+        requireSharedExternalCredential,
       }),
     [
-      computersEnabled,
+      projectSecrets,
+      requireSharedExternalCredential,
       ensureAdhocEnvironments,
+      loadHostHarness,
       modelMatrixEnabled,
+      modelSelectionsEnabled,
       projectId,
+      requireServerAttachment,
+      sandboxImagesEnabled,
       skillsEnabled,
-    ]
+    ],
   );
 }

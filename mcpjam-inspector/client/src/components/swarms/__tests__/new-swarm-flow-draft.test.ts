@@ -1,3 +1,4 @@
+import { withChosenIterations } from "../swarm-funding-plan";
 /**
  * The session draft is the only thing standing between a remount and a thrown
  * away persona slate, so the cases that matter are the ones where it must
@@ -27,7 +28,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
         serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId: null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: false,
     },
@@ -50,6 +51,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
     launchedRuns: [],
     runLabels: [],
     generatingSince: null,
+    attachingFile: null,
     launch: {
       flowId: "flow-1",
       swarmId: null,
@@ -121,7 +123,7 @@ describe("new swarm flow draft", () => {
     // Client defaults: exactly what the stack meant before the slot existed.
     expect(restored?.targetState.stack.modelSelection).toEqual({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 
@@ -155,6 +157,15 @@ describe("new swarm flow draft", () => {
   it("round-trips the resumable flow for the same project", () => {
     saveNewSwarmFlowDraft("proj-1", draft());
 
+    expect(readNewSwarmFlowDraft("proj-1")).toEqual(draft());
+  });
+
+  it("keeps an in-flight attachment's name, and restores older drafts without it", () => {
+    saveNewSwarmFlowDraft("proj-1", draft({ attachingFile: "research.md" }));
+    expect(readNewSwarmFlowDraft("proj-1")?.attachingFile).toBe("research.md");
+
+    const { attachingFile: _omitted, ...legacy } = draft();
+    saveNewSwarmFlowDraft("proj-1", legacy);
     expect(readNewSwarmFlowDraft("proj-1")).toEqual(draft());
   });
 
@@ -268,4 +279,45 @@ describe("new swarm flow draft", () => {
 
     expect(readNewSwarmFlowDraft("proj-1")).toBeNull();
   });
+});
+
+it.each([false, true])(
+  "restores iteration keys for legacy persisted targets (reused: %s)",
+  (reused) => {
+    const old = draft();
+    old.reusedIds = reused ? ["persona-1"] : [];
+    old.launch.targets = [
+      {
+        journeyId: "journey-1",
+        label: "Refund",
+        personaId: "persona-1",
+        personaName: "Refund Chaser",
+        personaRole: "Support agent",
+      },
+    ];
+    saveNewSwarmFlowDraft("proj-1", old);
+    const targets = readNewSwarmFlowDraft("proj-1")!.launch.targets!;
+    const key = reused ? "persona-1" : "persona-0-Refund Chaser";
+    expect(targets[0]!.iterationsKey).toBe(key);
+    expect(
+      withChosenIterations(targets, { [key]: 3 })[0]!.sessionsPerTarget,
+    ).toBe(3);
+  },
+);
+it("does not guess an iteration identity when legacy persona names are ambiguous", () => {
+  const old = draft();
+  old.proposed.push({ ...old.proposed[0]!, key: "another-persona" });
+  old.launch.targets = [
+    {
+      journeyId: "journey-1",
+      label: "Refund",
+      personaId: "persona-1",
+      personaName: "Refund Chaser",
+      personaRole: "Support agent",
+    },
+  ];
+  saveNewSwarmFlowDraft("proj-1", old);
+  expect(
+    readNewSwarmFlowDraft("proj-1")!.launch.targets![0]!.iterationsKey,
+  ).toBeUndefined();
 });

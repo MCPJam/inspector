@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareSection, type ShareSectionProps } from "../ShareSection";
+import { isGuestActivated, markGuestActivated } from "@/lib/guest-session";
+import { ConvexError } from "convex/values";
+import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import type { ShareMemberView, ShareSettingsEnvelope } from "../share-types";
 
 vi.mock("@/lib/clipboard", () => ({
@@ -15,6 +18,10 @@ const toast = vi.hoisted(() => ({
 
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/lib/toast", () => ({ toast }));
+
+const auth = vi.hoisted(() => ({ signUp: vi.fn(), signIn: vi.fn() }));
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => auth }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 function envelope(
   overrides: Partial<ShareSettingsEnvelope> = {},
@@ -121,7 +128,7 @@ describe("ShareSection", () => {
         disabledReason="This scenario's environment was archived."
         copy={{
           linkLabel: "Tester link",
-          withheldLabel: "Withheld — this scenario can't run.",
+          withheldLabel: "Withheld: this scenario can't run.",
         }}
         testIds={{
           copy: "scenario-copy-tester-link",
@@ -132,7 +139,7 @@ describe("ShareSection", () => {
     );
 
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "Withheld — this scenario can't run.",
+      "Withheld: this scenario can't run.",
     );
     expect(screen.getByTestId("scenario-copy-tester-link")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Invite", exact: true })).toBeDisabled();
@@ -197,12 +204,12 @@ describe("ShareSection", () => {
       disabledReason: "This scenario's environment was archived.",
       copy: {
         linkLabel: "Share link",
-        withheldLabel: "Withheld — this scenario can't run.",
+        withheldLabel: "Withheld: this scenario can't run.",
       },
     });
 
     expect(screen.getByLabelText("Share link")).toHaveTextContent(
-      "Withheld — this scenario can't run.",
+      "Withheld: this scenario can't run.",
     );
     expect(screen.getByTestId("share-copy")).toBeDisabled();
     await user.click(screen.getByTestId("share-copy"));
@@ -332,5 +339,108 @@ describe("ShareSection", () => {
     expect(onUpdated).toHaveBeenCalledWith(
       expect.objectContaining({ policyVersion: 4 }),
     );
+  });
+});
+
+describe("guest sharing signup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+    markGuestActivated("guest-sharing-1");
+    window.history.replaceState({}, "", "/p/k5700000000000000000000000a/user-testing/scenario-1");
+  });
+
+  const refusal = () =>
+    new ConvexError({
+      code: "guest_sharing_requires_sign_in",
+      message: "Sign up to share",
+    });
+
+  it.each(["link_guests", "anyone_with_link"])("prompts on %s, keeps the scenario, and hands signup the return path", async (publicPreset) => {
+    const user = userEvent.setup();
+    const onUpdated = vi.fn();
+    const onSetPreset = vi
+      .fn()
+      .mockRejectedValueOnce(refusal())
+      .mockResolvedValue(envelope({ mode: "anyone_with_link" }));
+    renderShare({
+      onSetPreset,
+      onUpdated,
+      presets: presets.map((preset) =>
+        preset.value === "link_guests" ? { ...preset, value: publicPreset } : preset,
+      ),
+    });
+    await user.click(
+      screen.getByRole("button", { name: /Invited users only/i }),
+    );
+    await user.click(screen.getByText("Anyone with the link"));
+    expect(
+      await screen.findByRole("dialog", { name: "Sign up to share" }),
+    ).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(onUpdated).not.toHaveBeenCalled();
+    expect(auth.signUp).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Sign up to share" }));
+    expect(auth.signUp).toHaveBeenCalledTimes(1);
+    expect(isGuestActivated("guest-sharing-1")).toBe(true);
+    expect(auth.signUp).toHaveBeenCalledWith(
+      expect.objectContaining({ state: expect.any(Object) }),
+    );
+    expect(readAppSignInReturnPath()).toBe(
+      "/p/k5700000000000000000000000a/user-testing/scenario-1",
+    );
+    // A cancelled auth handoff does not discard the scenario. After promotion,
+    // the same control can retry the exact sharing operation.
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.getByLabelText("Share link")).toHaveTextContent(
+      "example.com/s/tok",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Invited users only/i }),
+    );
+    await user.click(screen.getByText("Anyone with the link"));
+    expect(onSetPreset).toHaveBeenNthCalledWith(2, publicPreset);
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceId: "r1", mode: "anyone_with_link" }),
+    );
+  });
+
+  it("prompts on rotation without replacing the existing link or showing success", async () => {
+    const user = userEvent.setup();
+    const onUpdated = vi.fn();
+    renderShare({
+      onRotateLink: vi.fn().mockRejectedValue(refusal()),
+      onUpdated,
+    });
+    await user.click(screen.getByTestId("share-rotate-menu"));
+    await user.click(screen.getByTestId("share-rotate-link"));
+    await user.click(screen.getByTestId("share-rotate-confirm"));
+    expect(
+      await screen.findByRole("dialog", { name: "Sign up to share" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onUpdated).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(auth.signIn).toHaveBeenCalledTimes(1);
+    expect(isGuestActivated("guest-sharing-1")).toBe(true);
+    expect(readAppSignInReturnPath()).toBe(
+      "/p/k5700000000000000000000000a/user-testing/scenario-1",
+    );
+  });
+
+  it.each([
+    new Error("Sign up to share"),
+    new ConvexError({ code: "FORBIDDEN", message: "Not an admin" }),
+  ])("keeps unrelated failures as errors", async (error) => {
+    const user = userEvent.setup();
+    renderShare({ onSetPreset: vi.fn().mockRejectedValue(error) });
+    await user.click(
+      screen.getByRole("button", { name: /Invited users only/i }),
+    );
+    await user.click(screen.getByText("Anyone with the link"));
+    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

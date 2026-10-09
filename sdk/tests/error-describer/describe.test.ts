@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  SdkErrorCode,
+  SdkHttpError,
+  SseError,
+} from "@modelcontextprotocol/client";
+import {
   describeAsSlug,
+  mcpjamLimitSlugForMessage,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
@@ -75,6 +81,24 @@ const CASES: Case[] = [
     build: () => makeError("Internal error", { code: -32603 }),
     expectSlug: "jsonrpc/internal_error",
     expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format",
+    build: () => makeError("Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "-32603 invalid response format (MCP error wrapping)",
+    build: () =>
+      makeError("MCP error -32603: Invalid response format", { code: -32603 }),
+    expectSlug: "jsonrpc/invalid_response_format",
+    expectRawCode: -32603,
+  },
+  {
+    name: "invalid response format without numeric code",
+    build: () => makeError("Invalid response format"),
+    expectSlug: "jsonrpc/invalid_response_format",
   },
   {
     name: "-32000 connection closed",
@@ -205,6 +229,20 @@ const CASES: Case[] = [
     name: "Missing bearer",
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
+  },
+  // MCPJam's own consent wording. Both strings are produced by the client's
+  // OAuth orchestrator and used to land on `internal/unknown`, which rendered
+  // an expected one-click state as "Unknown error".
+  {
+    name: "consent-required wording",
+    build: () =>
+      new Error("OAuth consent is required for asana. Click Reconnect to continue."),
+    expectSlug: "auth/consent_required",
+  },
+  {
+    name: "reauthenticate-to-continue wording",
+    build: () => new Error("Reauthenticate asana to continue."),
+    expectSlug: "auth/consent_required",
   },
   // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
   // `APICallError` carries `statusCode`, some transports set a numeric `code`,
@@ -394,6 +432,27 @@ describe("describeError — table-driven", () => {
       expect(out.rawMessage.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("describeError — invalid response format copy", () => {
+  it("points at the result shape, not a retry", () => {
+    const out = describeError(
+      makeError("Invalid response format", { code: -32603 }),
+    );
+    expect(out.slug).toBe("jsonrpc/invalid_response_format");
+    expect(out.likelyCauses).toHaveLength(1);
+    expect(out.nextSteps.join(" ")).toMatch(/Traffic Log/);
+    expect(out.nextSteps.join(" ").toLowerCase()).not.toMatch(/retry/);
+  });
+
+  it("does not treat a buried phrase as invalid response format", () => {
+    const out = describeError(
+      makeError("Internal error: logs mention invalid response format", {
+        code: -32603,
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/internal_error");
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {
@@ -621,6 +680,46 @@ describe("describeError — specific message wording wins over generic HTTP 401"
   });
 });
 
+describe("describeError — a 401 reaching the UI as prose or a wrapped cause", () => {
+  it.each([
+    ["401 Unauthorized"],
+    ["SSE error: Non-200 status code (401)"],
+    ["Error POSTing to endpoint (HTTP 401): Unauthorized"],
+  ])("classifies %j as auth/http_401", (message) => {
+    expect(describeError(new Error(message)).slug).toBe("auth/http_401");
+  });
+
+  it("keeps a port or decimal that merely contains 401 unclassified", () => {
+    expect(
+      describeError(new Error("connect ECONNREFUSED 127.0.0.1:401")).slug
+    ).toBe("transport/econnrefused");
+  });
+
+  it("reads the 401 off an era-negotiation wrapper's inner transport error", () => {
+    // Auto activation probes an UNCONFIGURED connection with `server/discover`;
+    // against an OAuth-gated server the upstream client raises
+    // SdkError(EraNegotiationFailed) carrying the real UnauthorizedError at
+    // `data.cause`, and the toast's docs link pointed at the unknown-error
+    // section because only the wrapper was inspected.
+    const unauthorized = Object.assign(new Error("Unauthorized"), {
+      name: "UnauthorizedError",
+    });
+    const wrapper = Object.assign(new Error("Era negotiation failed"), {
+      name: "SdkError",
+      code: "ERA_NEGOTIATION_FAILED",
+      data: { cause: unauthorized },
+    });
+    expect(describeError(wrapper).slug).toBe("auth/http_401");
+  });
+
+  it("reads the 401 off a plain cause chain", () => {
+    const connect = Object.assign(new Error("Failed to connect"), {
+      cause: Object.assign(new Error("Unauthorized"), { status: 401 }),
+    });
+    expect(describeError(connect).slug).toBe("auth/http_401");
+  });
+});
+
 describe("describeError — unclassified errors surface their raw message", () => {
   it("promotes rawMessage into oneLine when slug is internal/unknown", () => {
     // OAuth step errors and other unclassified text used to be hidden
@@ -819,3 +918,185 @@ it.each(["content", "messages"])(
     });
   }
 );
+
+
+describe("MCPJam containment refusals", () => {
+  it.each([
+    ["platform_free_budget_exhausted", "provider/mcpjam_platform_budget"],
+    ["account_suspended", "account/suspended"],
+  ])("preserves %s without reporting provider authentication failure", (code, slug) => {
+    expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
+    expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
+  });
+});
+
+it.each([
+  ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
+  ["Monthly MCPJam model limit reached.", "provider/mcpjam_limit_monthly"],
+  [
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+    "provider/mcpjam_limit",
+  ],
+  [
+    "This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    "provider/mcpjam_limit_insufficient",
+  ],
+  [
+    "This request needs about 30 MCPJam credits; your organization has 0 left today.",
+    undefined,
+  ],
+  [
+    "This request needs about 20 MCPJam credits; your organization has 23 left today.",
+    undefined,
+  ],
+  ["Provider rate limit", undefined],
+])("classifies MCPJam limit markers: %s", (message, slug) => {
+  expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
+  if (slug) expect(describeError(new Error(message)).slug).toBe(slug);
+});
+
+it("describes the credit exhaustion heading with plan-appropriate recovery guidance", () => {
+  const result = describeError("Out of MCPJam credits.");
+  expect(result.slug).toBe("provider/mcpjam_limit");
+  expect(result.title).toBe("Out of MCPJam credits");
+});
+
+it("classifies the shortfall even when composed copy also says out of credits", () => {
+  expect(
+    describeError(
+      "Out of MCPJam credits. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    ).slug,
+  ).toBe("provider/mcpjam_limit_insufficient");
+});
+
+it("does not call a partial balance used up when the request needs more than is left", () => {
+  const result = describeError(
+    JSON.stringify({
+      code: "user_rate_limit",
+      limitKind: "total",
+      refusalReason: "insufficient_for_request",
+      creditsRemaining: 23,
+      creditsRequired: 30,
+      error:
+        "Daily MCPJam model limit reached. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    }),
+  );
+  expect(result.slug).toBe("provider/mcpjam_limit_insufficient");
+  expect(result.title).toBe("Not enough MCPJam credits");
+  expect(result.oneLine).toBe(
+    "This request needs about 30 MCPJam credits; your organization has 23 left today.",
+  );
+});
+
+describe("an MCP server's HTTP error answer", () => {
+  // The Streamable HTTP transport's error class sets no `name`; it is known by
+  // class, like the real one.
+  class StreamableHTTPError extends Error {
+    constructor(
+      readonly code: number,
+      message: string,
+    ) {
+      super(`Streamable HTTP error: ${message}`);
+    }
+  }
+
+  function httpError(status: number, statusText: string) {
+    return new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      `Error POSTing to endpoint (HTTP ${status} ${statusText}): <html>…</html>`,
+      { status, statusText, text: "<html>…</html>" },
+    );
+  }
+
+  /** The connect failure the manager throws when both transports got 404. */
+  function connectFailure404() {
+    const error = new Error(
+      "Server returned HTTP 404 at https://example.com/. Check the MCP endpoint and server logs.",
+      { cause: new SseError(404, "Non-200 status code (404)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(404, "Not Found"),
+      enumerable: false,
+    });
+    return error;
+  }
+
+  it("reads an all-404 connect failure as the server's HTTP error", () => {
+    const d = describeError(connectFailure404());
+    expect(d.slug).toBe("server/http_error");
+    expect(d.title).toBe("MCP server returned an HTTP error");
+    expect(d.oneLine).toBe("The MCP server answered the request with HTTP 404.");
+    expect(d.rawCode).toBe(404);
+    expect(originOf(d)).toBe("user_server");
+  });
+
+  it.each([
+    [404, "Not Found"],
+    [405, "Method Not Allowed"],
+    [500, "Internal Server Error"],
+  ])("reads a raw SdkHttpError %s as the server's HTTP error", (status, text) => {
+    const d = describeError(httpError(status, text));
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(status);
+    // The response body never reaches the visible line.
+    expect(d.oneLine).not.toContain("<html>");
+  });
+
+  it("finds the status on the Streamable HTTP attempt beside an SSE cause", () => {
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. SSE error: fetch failed.',
+      { cause: new TypeError("fetch failed") },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(405, "Method Not Allowed"),
+      enumerable: false,
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it("names both statuses when the attempts failed differently, the Streamable one first", () => {
+    // A Streamable HTTP 500, then a modern-only server's 405 to the SSE GET.
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. Streamable HTTP error: Version negotiation failed: the server answered the probe with HTTP 500. SSE error: SSE error: Non-200 status code (405).',
+      { cause: new SseError(405, "Non-200 status code (405)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: httpError(500, "Internal Server Error"),
+      enumerable: false,
+    });
+    const d = describeError(error);
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(500);
+    expect(d.oneLine).toBe(
+      "The MCP server answered the request with HTTP 500, then with HTTP 405 to the SSE fallback.",
+    );
+  });
+
+  it("finds the status through the era-negotiation wrapper", () => {
+    const error = makeError("negotiation failed", {
+      name: "SdkError",
+      code: "ERA_NEGOTIATION_FAILED",
+      data: { cause: httpError(502, "Bad Gateway") },
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it.each([
+    [401, "auth/http_401"],
+    [403, "auth/http_403"],
+    [429, "provider/quota"],
+  ])("keeps the existing slug for a transport %s", (status, slug) => {
+    expect(describeError(httpError(status, "x")).slug).toBe(slug);
+  });
+
+  it("does not read a bare status as the MCP server's answer", () => {
+    // MCPJam's own route errors and LLM provider errors carry a `status` too;
+    // neither is the user's server.
+    expect(
+      describeError(makeError("Project not found", { status: 404 })).slug,
+    ).toBe("internal/unknown");
+    expect(
+      describeError(makeError("Provider exploded", { statusCode: 500 })).slug,
+    ).toBe("internal/unknown");
+  });
+});

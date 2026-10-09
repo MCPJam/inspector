@@ -1,5 +1,8 @@
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+const billingState = vi.hoisted(() => ({ effectivePlan: "team", canManageBilling: true, isLoadingBilling: false }));
+vi.mock("@/hooks/use-upgrade-checkout", () => ({ useUpgradeCheckout: () => billingState }));
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { TopupGatedErrorBox } from "../TopupGatedErrorBox";
 
@@ -50,6 +53,7 @@ const RATE_LIMIT_PROPS = {
 
 describe("TopupGatedErrorBox", () => {
   beforeEach(() => {
+    Object.assign(billingState, { effectivePlan: "team", canManageBilling: true, isLoadingBilling: false });
     presetsState = [
       {
         packageId: "credits_500",
@@ -114,11 +118,12 @@ describe("TopupGatedErrorBox", () => {
       screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Ask org admin to top up credits/)
+      screen.getByRole("button", { name: "Request credits" })
     ).toBeInTheDocument();
   });
 
   it("hides the Buy credits CTA when canTopUp is true but presets are empty", () => {
+    Object.assign(billingState, { effectivePlan: "team", canManageBilling: true, isLoadingBilling: false });
     presetsState = [];
     render(
       <TopupGatedErrorBox
@@ -172,3 +177,24 @@ describe("TopupGatedErrorBox", () => {
     errorSpy.mockRestore();
   });
 });
+
+  it.each([
+    ["free", true, true, "Compare plans"],
+    ["free", false, true, "Request upgrade"],
+    ["free", false, false, "Request upgrade"],
+    ["team", false, false, "Request credits"],
+  ])("routes %s credit recovery to a plan-aware dialog", (plan, owner, manager, label) => {
+    Object.assign(billingState, { effectivePlan: plan, canManageBilling: owner, isLoadingBilling: false });
+    const purchase = vi.fn();
+    render(<TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp canManageCredits={manager} organizationId="billed-org" onTopUp={purchase} />);
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(purchase).not.toHaveBeenCalled();
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({ organizationId: "billed-org" });
+  });
+
+  it("does not advertise an upgrade before billing resolves", () => {
+    Object.assign(billingState, { effectivePlan: "free", canManageBilling: true, isLoadingBilling: true });
+    render(<TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp canManageCredits organizationId="org-1" />);
+    expect(screen.queryByRole("button", { name: /Compare plans|Buy credits|Request/ })).not.toBeInTheDocument();
+  });

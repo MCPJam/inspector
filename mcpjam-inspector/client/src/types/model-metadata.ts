@@ -40,10 +40,29 @@ export interface OpenRouterModel {
   // Which provider serves this model: 'gateway' when a Gateway price exists,
   // 'openrouter' for fallback models with no Gateway entry.
   providerSource: "gateway" | "openrouter";
+  // Catalog observations (backend P3-1). Every field is optional: a backend
+  // that predates them sends none, and the picker must then behave as before.
+  /** Release time, epoch seconds (Gateway `released`). */
+  released?: number | null;
+  /** Provider retirement time, epoch ms (Gateway `deprecated_at`). */
+  deprecated_at?: number | null;
+  observations?: Partial<Record<string, CatalogObservationDto | null>> | null;
+  /** True only when `supported_parameters` is the Gateway's full list. */
+  supported_parameters_complete?: boolean;
+  free_tier_eligible?: boolean;
+  judge_eligible?: boolean;
+  /**
+   * Reasoning efforts `/stream` accepts for this model, low-to-high (backend
+   * `supportedReasoningEfforts`). Absent from a backend that predates it, and
+   * empty for a model with no effort control.
+   */
+  supportedReasoningEfforts?: string[];
+  /** When the catalog row's observations were read, epoch ms. */
+  catalog_observed_at?: number | null;
 }
 
-export interface ModelMetadataResponse {
-  ok: boolean;
-  data?: OpenRouterModel[];
-  error?: string;
+export interface CatalogObservationDto {
+  status?: string;
+  source?: string;
+  observedAt?: number | null;
 }

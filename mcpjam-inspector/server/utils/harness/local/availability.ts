@@ -54,7 +54,7 @@ import {
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "./targets.js";
-import { manifestWithExpectedBundleDigest } from "./runtime-install.js";
+import { isSelectablePack, manifestWithExpectedBundleDigest } from "./runtime-install.js";
 import { supportsOwnershipProof } from "./process-identity.js";
 
 export type LocalHarnessUnavailableStatus =
@@ -105,19 +105,21 @@ export interface LocalHarnessActor {
 
 export function isActorEligibleForLocalHarness(
   actor: LocalHarnessActor,
+  scope: "attended" | "unattended" = "attended",
 ): boolean {
   return (
     !actor.isGuest &&
     !actor.isScenarioSession &&
-    !actor.isJourneySession &&
+    (scope === "unattended" || (!actor.isJourneySession &&
     (actor.executionScopeKind === undefined ||
-      actor.executionScopeKind === "project")
+      actor.executionScopeKind === "project")))
   );
 }
 
 export interface LocalHarnessAvailabilityQuery {
   target: LocalHarnessExecutionTarget;
   actor: LocalHarnessActor;
+  scope?: "attended" | "unattended";
   userId: string;
   projectId: string;
   /** Plaintext capability from the request header; never persisted. */
@@ -127,6 +129,13 @@ export interface LocalHarnessAvailabilityQuery {
   /** Installed adapter version, read from the package at call time. Required:
    *  a caller that cannot state it cannot be allowed to skip the exact pin. */
   installedAdapterVersion: string;
+  /**
+   * The tree digest of the pack the caller SELECTED (`readRuntimeInstallStatus`)
+   * — the desired pack or the permitted previous one. Refused unless this
+   * build may select it and it is not revoked (invariant 4). Absent: the
+   * desired pack.
+   */
+  runtimeDigest?: string;
   /** Test seams. */
   localMachineId?: string;
   manifests?: Readonly<Record<string, LocalHarnessCompatibility>>;
@@ -140,6 +149,27 @@ function unavailable(
   message: string,
 ): LocalHarnessAvailability {
   return { available: false, status, message };
+}
+
+/** Development-only evidence for exercising an unpublished runtime pack. */
+export function localHarnessManifestsForDevelopment(
+  manifests: Readonly<Record<string, LocalHarnessCompatibility>> = LOCAL_HARNESS_MANIFEST,
+): Readonly<Record<string, LocalHarnessCompatibility>> {
+  const version = process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION?.trim();
+  if (HOSTED_MODE || process.env.ENVIRONMENT !== "dev" || !version) {
+    return manifests;
+  }
+  return Object.fromEntries(
+    Object.entries(manifests).map(([id, manifest]) => [
+      id,
+      // Every harness the manifest names, not only Claude Code: an unpublished
+      // Codex pack has to be exercisable through the same override before its
+      // conformance is recorded. Development builds only (see above).
+      manifest.lifecycleConformanceVersion
+        ? manifest
+        : { ...manifest, lifecycleConformanceVersion: version },
+    ]),
+  );
 }
 
 export async function resolveLocalHarnessAvailability(
@@ -162,7 +192,7 @@ export async function resolveLocalHarnessAvailability(
         "(MCPJAM_LOCAL_HARNESS_ENABLED)",
     );
   }
-  if (!isActorEligibleForLocalHarness(query.actor)) {
+  if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {
     return unavailable(
       "actor-not-eligible",
       "local execution requires an attended, signed-in member running their " +
@@ -209,14 +239,18 @@ export async function resolveLocalHarnessAvailability(
   const target = query.target;
   const compatibility = resolveLocalCompatibility(
     {
+      scope: query.scope,
       harnessId: target.harnessId,
       platform: currentLocalPlatform(platform),
       targetKind: target.kind,
       permissionProfile: target.permissionProfile,
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
+      // The exact pack target, so a manifest certified per architecture (D8)
+      // refuses an uncertified one rather than trusting the OS alone.
+      packTarget: localPackTarget(platform),
       installedAdapterVersion: query.installedAdapterVersion,
     },
-    query.manifests ?? LOCAL_HARNESS_MANIFEST,
+    query.manifests ?? localHarnessManifestsForDevelopment(),
   );
   if (!compatibility.ok) {
     return unavailable(compatibility.status, compatibility.message);
@@ -227,6 +261,20 @@ export async function resolveLocalHarnessAvailability(
     return unavailable("workspace-grant-invalid", workspace.message);
   }
 
+  // A selected pack must be one this build may select: its desired pack or
+  // its one permitted previous pack, and never a revoked one. Conformance
+  // runners that pass their own manifests name the pack under test instead.
+  const packTarget = localPackTarget(platform);
+  if (
+    query.runtimeDigest !== undefined &&
+    query.manifests === undefined &&
+    compatibility.manifest.runtime.source === "managed-bundle" &&
+    packTarget !== null
+  ) {
+    const selectable = await isSelectablePack(compatibility.manifest.harnessId, packTarget, query.runtimeDigest);
+    if (!selectable.ok) return unavailable("runtime-unavailable", selectable.message);
+  }
+
   const runtimeResolution =
     compatibility.manifest.runtime.source === "managed-bundle"
       ? await resolveManagedBundle({
@@ -235,11 +283,21 @@ export async function resolveLocalHarnessAvailability(
           // reading of the same table. They differ only under the documented
           // development override — and there they differed fatally: a locally
           // built pack installed and then could never run.
-          manifest: manifestWithExpectedBundleDigest(
-            compatibility.manifest,
-            compatibility.manifest.harnessId,
-            localPackTarget(platform),
-          ),
+          //
+          // EXCEPT for a caller that supplied its own manifests (the
+          // conformance runners): their manifest names the pack under test,
+          // and replacing its digest with the pinned one made a pack built
+          // from changed inputs — exactly what a pack-input change or a new
+          // pack's pre-pin conformance has to run — unrunnable.
+          manifest:
+            query.manifests !== undefined
+              ? compatibility.manifest
+              : manifestWithExpectedBundleDigest(
+                  compatibility.manifest,
+                  compatibility.manifest.harnessId,
+                  packTarget,
+                  query.runtimeDigest,
+                ),
           runtimeRoot: query.runtimeRoot,
           platform: currentLocalPlatform(platform)!,
         })
@@ -268,6 +326,7 @@ export async function resolveLocalHarnessAvailability(
   }
 
   const binding: HarnessGrantBinding = {
+    scope: query.scope ?? "attended",
     userId: query.userId,
     machineId: target.machineId,
     projectId: query.projectId,

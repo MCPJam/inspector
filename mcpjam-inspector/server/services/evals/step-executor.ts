@@ -1,4 +1,5 @@
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 /**
  * step-executor.ts — the single sequential executor over a unified `TestStep[]`.
  *
@@ -25,10 +26,7 @@ import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
  */
 
 import type { ModelMessage } from "ai";
-import type {
-  PredicateResult,
-  ToolErrorRecord,
-} from "@/shared/eval-matching";
+import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   checkRole,
@@ -38,7 +36,10 @@ import {
   widgetCallToToolCall,
 } from "@/shared/eval-matching";
 import type { ToolCall } from "@/shared/eval-matching";
-import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
+import type {
+  EvalTraceSpan,
+  RunnerWidgetRenderObservation,
+} from "@/shared/eval-trace";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import {
   isAssertStep,
@@ -55,6 +56,7 @@ import {
 } from "@/shared/steps";
 import type { BrowserSessionContext } from "../browser-session-context";
 import { MAX_WIDGET_FOLLOWUP_TURNS } from "./drive-hosted-eval-turn.js";
+import { extractTranscriptEvidence } from "./transcript-evidence";
 import { logger } from "../../utils/logger.js";
 
 /** Accumulated token usage in AI-SDK-canonical shape. */
@@ -107,6 +109,12 @@ export interface StepExecutionState {
   toolCallsByTurn: ToolCall[][];
   /** Tool failures observed outside any trace (pinned calls, etc.). */
   toolErrors: ToolErrorRecord[];
+  /**
+   * Trace spans the engine recorded for the steps run so far. With `messages`
+   * they are the evidence result and timing checks read — the same two
+   * channels the case-level verdict extracts from the finished trace.
+   */
+  spans: EvalTraceSpan[];
   /** Render observations the browser session collected (live reference). */
   widgetRenderObservations: readonly RunnerWidgetRenderObservation[];
   /** One entry per `assert` step. */
@@ -138,6 +146,7 @@ export function createStepExecutionState(): StepExecutionState {
     toolCalls: [],
     toolCallsByTurn: [],
     toolErrors: [],
+    spans: [],
     widgetRenderObservations: [],
     assertionResults: [],
     interactionFailures: [],
@@ -154,6 +163,8 @@ export interface StepEngineOutcome {
   toolCalls?: ToolCall[];
   /** Tool failures observed during this step (folded into the transcript). */
   toolErrors?: ToolErrorRecord[];
+  /** Trace spans recorded during this step (tool timings for step checks). */
+  spans?: EvalTraceSpan[];
   /** Usage delta for this step (`prompt` only; `toolCall` issues none). */
   usage?: Partial<UsageSummary>;
   /**
@@ -191,6 +202,12 @@ export interface StepEngineOutcome {
   errorCode?: string;
   /** HTTP status, when the failure came from a non-OK response. */
   errorHttpStatus?: number;
+  /**
+   * The producer's STRUCTURED evidence that one of OUR layers failed. Read
+   * only by the eval infra-error classifier (`infra-error-classification.ts`);
+   * absent ⇒ unclassified.
+   */
+  errorInfra?: InfraFailureEvidence;
   /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
@@ -249,6 +266,7 @@ export interface StepExecutorResult {
   errorSource?: "model" | "setup";
   errorCode?: string;
   errorHttpStatus?: number;
+  errorInfra?: InfraFailureEvidence;
   /** A step's engine reported cancellation — see `StepEngineOutcome`. */
   cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
@@ -259,8 +277,7 @@ export interface StepExecutorResult {
 export function hasWidgetDrivingStep(steps: TestStep[]): boolean {
   return steps.some(
     (s) =>
-      isInteractStep(s) ||
-      (isAssertStep(s) && isWidgetAssertion(s.assertion)),
+      isInteractStep(s) || (isAssertStep(s) && isWidgetAssertion(s.assertion)),
   );
 }
 
@@ -285,8 +302,10 @@ function applyOutcome(
   turn: number,
 ): void {
   if (outcome.messages?.length) state.messages.push(...outcome.messages);
-  if (outcome.toolCalls?.length) recordToolCalls(state, turn, outcome.toolCalls);
+  if (outcome.toolCalls?.length)
+    recordToolCalls(state, turn, outcome.toolCalls);
   if (outcome.toolErrors?.length) state.toolErrors.push(...outcome.toolErrors);
+  if (outcome.spans?.length) state.spans.push(...outcome.spans);
   if (outcome.usage) {
     state.usage.inputTokens += outcome.usage.inputTokens ?? 0;
     state.usage.outputTokens += outcome.usage.outputTokens ?? 0;
@@ -297,11 +316,21 @@ function applyOutcome(
 /** Snapshot the state as an `IterationTranscript` for point-in-time predicate eval. */
 function snapshotTranscript(state: StepExecutionState) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
+  // Tool results and per-call timings, read from the messages and spans the
+  // steps so far produced — exactly how the case-level verdict reads them from
+  // the finished trace (`iteration-verdict.ts`). Without these, every result or
+  // timing check scored at an assert step reported "no tool results captured".
+  const evidence = extractTranscriptEvidence({
+    messages: state.messages,
+    spans: state.spans,
+  });
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    ...(finalAssistantMessage !== undefined
-      ? { finalAssistantMessage }
-      : {}),
+    toolResults: evidence.toolResults,
+    resultsCaptured: evidence.resultsCaptured,
+    toolCallTimings: evidence.toolCallTimings,
+    timingsCaptured: evidence.timingsCaptured,
+    ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     usage:
       state.usage.inputTokens ||
       state.usage.outputTokens ||
@@ -400,7 +429,11 @@ async function drainAndDriveFollowUps(
         return undefined;
       }
       remaining -= 1;
-      const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
+      const outcome = await handlers.onFollowUp!({
+        text,
+        stepIndex,
+        turnOrdinal: turn,
+      });
       applyOutcome(state, outcome, turn);
       // `cancelled` as well as `iterationError`: a follow-up turn the engine
       // saw cancelled carries no error, so returning only on `iterationError`
@@ -432,8 +465,7 @@ async function runAssertStep(
       passed: outcome.ok,
       reason: outcome.ok
         ? `widget assertion "${step.assertion.kind}" passed`
-        : outcome.reason ??
-          `widget assertion "${step.assertion.kind}" failed`,
+        : outcome.reason ?? `widget assertion "${step.assertion.kind}" failed`,
     });
     return;
   }
@@ -597,6 +629,7 @@ export async function executeSteps(args: {
       ...(typeof failed.errorHttpStatus === "number"
         ? { errorHttpStatus: failed.errorHttpStatus }
         : {}),
+      ...(failed.errorInfra ? { errorInfra: failed.errorInfra } : {}),
       setupFailure: false,
     };
   };
@@ -619,7 +652,8 @@ export async function executeSteps(args: {
       applyOutcome(state, outcome, turnOrdinal);
       // Before the error check: a cancelled turn has no error to report, and
       // continuing to the next step of a stopped run is the thing to avoid.
-      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
+      if (outcome.cancelled)
+        return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -639,6 +673,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -663,7 +698,8 @@ export async function executeSteps(args: {
         turnOrdinal,
       });
       applyOutcome(state, outcome, turnOrdinal);
-      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
+      if (outcome.cancelled)
+        return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -683,6 +719,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -779,8 +816,7 @@ export function stepsVerdict(state: StepExecutionState): {
   failedAsserts: StepAssertionResult[];
 } {
   const failedAsserts = state.assertionResults.filter(
-    (r) =>
-      !r.passed && checkRole(r.predicateResult?.predicate) !== "advisory"
+    (r) => !r.passed && checkRole(r.predicateResult?.predicate) !== "advisory",
   );
   const passed =
     failedAsserts.length === 0 && state.interactionFailures.length === 0;

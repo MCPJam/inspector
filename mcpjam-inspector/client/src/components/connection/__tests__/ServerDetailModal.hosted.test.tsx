@@ -146,7 +146,7 @@ describe("ServerDetailModal hosted reconnect", () => {
           connectionStatus: "connected",
           useOAuth: true,
         })}
-        defaultTab="overview"
+        defaultTab="authorization"
         projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
       />,
@@ -199,7 +199,7 @@ describe("ServerDetailModal hosted reconnect", () => {
           connectionStatus: "connected",
           useOAuth: true,
         })}
-        defaultTab="overview"
+        defaultTab="authorization"
         projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
       />,

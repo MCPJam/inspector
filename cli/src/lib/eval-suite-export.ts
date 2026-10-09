@@ -32,6 +32,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   evalSuiteFileSchema,
   isOpaqueId,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   type EvalSuiteFile,
   type EvalSuiteFileCase,
   type EvalSuiteSchemaVersion,
@@ -443,20 +444,14 @@ function suiteLevelFindings(
       );
     }
   } else if (
-    settings.minimumAccuracy === null ||
-    settings.minimumAccuracy === undefined
-  ) {
-    findings.push(
-      unsupported(
-        ["settings", "minimumAccuracy"],
-        "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
-          "required in a suite file. Set one and export again."
-      )
-    );
-  } else if (
-    settings.minimumAccuracy < 0 ||
-    settings.minimumAccuracy > 100 ||
-    percentToFraction(settings.minimumAccuracy) === null
+    // A legacy suite with no minimum accuracy is NOT unset: every legacy
+    // producer grades it at `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` (100, "every
+    // unit must pass"), so exporting that value is lossless. Only a present
+    // value that does not convert cleanly is refused.
+    typeof settings.minimumAccuracy === "number" &&
+    (settings.minimumAccuracy < 0 ||
+      settings.minimumAccuracy > 100 ||
+      percentToFraction(settings.minimumAccuracy) === null)
   ) {
     findings.push(
       unsupported(
@@ -499,17 +494,6 @@ function suiteLevelFindings(
     );
   }
 
-  if (settings.judge?.autoRun === true) {
-    findings.push(
-      unsupported(
-        ["settings", "judge"],
-        "suite automatically runs LLM-as-judge grading, and a suite file has " +
-          "no judge vocabulary. Exporting it would produce a file that " +
-          "grades with deterministic assertions alone."
-      )
-    );
-  }
-
   return findings;
 }
 
@@ -535,16 +519,6 @@ function caseLevelFindings(
           `(${models.map((entry) => entry.model).join(", ")}); a suite ` +
           `file's \`model\` is one id, and a compare-across-models case has no ` +
           `single-model representation`
-      )
-    );
-  }
-
-  if (evalCase.scenario !== undefined && evalCase.scenario !== null) {
-    findings.push(
-      unsupported(
-        ["cases", index, "scenario"],
-        `case "${evalCase.title}" is bound to scenario ` +
-          `"${evalCase.scenario}", which a suite file has no field for`
       )
     );
   }
@@ -825,10 +799,10 @@ export function buildSuiteFileFromPlatform(
     mode: "agentWorkflow",
     reportingMode: "standard",
     suite: {
-      // File-owned suites keep the declared id the file authored. A UI suite
-      // has none, so export still writes the Convex document id — running that
-      // file back is the ownership refusal, not an attach.
-      id: detail.declaredId ?? detail.id,
+      // File-owned suites keep the declared id the file authored. For a
+      // UI-owned suite, derive a stable file identity distinct from the source
+      // row so importing the export creates a file-owned clone.
+      id: detail.declaredId ?? `s_export_${detail.id}`,
       name: (detail.name ?? "").trim(),
       ...(detail.description === null || detail.description === undefined
         ? {}
@@ -856,6 +830,31 @@ export function buildSuiteFileFromPlatform(
         : {}),
     },
     defaults: {
+      ...(detail.settings.judge
+        ? {
+            judge: {
+              enabled: detail.settings.judge.enabled,
+              ...(detail.settings.judge.model != null
+                ? { model: detail.settings.judge.model }
+                : {}),
+              ...(detail.settings.judge.autoRun !== undefined
+                ? { autoRun: detail.settings.judge.autoRun }
+                : {}),
+              ...(detail.settings.judge.threshold !== undefined
+                ? { threshold: detail.settings.judge.threshold }
+                : {}),
+              ...(detail.settings.judge.role !== undefined
+                ? { role: detail.settings.judge.role }
+                : {}),
+              ...(detail.settings.judge.severity !== undefined
+                ? { severity: detail.settings.judge.severity }
+                : {}),
+              ...(detail.settings.judge.rubric !== undefined
+                ? { rubric: detail.settings.judge.rubric }
+                : {}),
+            },
+          }
+        : {}),
       model: suiteModel,
       ...(hoistedProvider === undefined ? {} : { provider: hoistedProvider }),
       ...(executionConfig.systemPrompt === undefined
@@ -868,11 +867,13 @@ export function buildSuiteFileFromPlatform(
       // A v2 suite uses its own fraction; a legacy one converts its percent.
       // Never the other way round for a v2 suite: `suiteLevelFindings` has
       // already refused the export when a v2 threshold is unreadable, so this
-      // `??` can only reach the legacy branch for a legacy suite.
+      // `??` can only reach the legacy branch for a legacy suite. A legacy
+      // suite with no percent writes the fallback every run already grades at.
       passThreshold: isVerdictPolicyV2Suite(detail.settings)
         ? (suiteVerdictPolicyThreshold(detail.settings) as number)
         : (percentToFraction(
-            detail.settings.minimumAccuracy as number
+            detail.settings.minimumAccuracy ??
+              LEGACY_SUITE_WIDE_THRESHOLD_PERCENT
           ) as number),
       // `{}`, not the resolved defaults: the contract documents them and the
       // loader applies them, and writing them here would put values nobody
@@ -884,9 +885,11 @@ export function buildSuiteFileFromPlatform(
     // import status for it would assert a faithfulness claim about a mapping
     // that never happened.
     cases: cases.map((evalCase, index) => ({
+      ...(evalCase.judge !== undefined ? { judge: evalCase.judge } : {}),
       id: caseIds[index],
       title: evalCase.title,
       ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
+      ...(evalCase.scenario == null ? {} : { scenario: evalCase.scenario }),
       ...(evalCase.iterations === iterations
         ? {}
         : { [countKey]: evalCase.iterations }),
@@ -904,7 +907,7 @@ export function buildSuiteFileFromPlatform(
         ? {
             assertions: filterSuppressedSuiteAssertions(
               assertions,
-              evalCase.suppressedSuiteStandardCheckIds,
+              evalCase.suppressedSuiteStandardCheckIds
             ),
           }
         : {}),

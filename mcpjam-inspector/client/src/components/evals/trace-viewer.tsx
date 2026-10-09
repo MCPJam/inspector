@@ -1,3 +1,6 @@
+import { readTraceRequestPayloads } from "@/shared/live-chat-trace";
+import { isLiveChatPreviewSpanId } from "@/shared/live-chat-trace-preview";
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
   Suspense,
@@ -5,6 +8,7 @@ import {
   useState,
   useEffect,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus, Code2, Columns2 } from "lucide-react";
@@ -21,12 +25,15 @@ import type {
 import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Thread } from "@/components/chat-v2/thread";
+import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
+  type AdaptedTraceResult,
   type TraceMessage,
 } from "./trace-viewer-adapter";
 import {
@@ -63,9 +70,8 @@ import type {
   McpToolResultImageRendering,
 } from "@/lib/client-config-v2";
 
-// Default host-style id used when the caller passes `activeHost` but no explicit
-// `hostStyle`. Mirrors the catalog default without importing catalog/client
-// modules into this trace-only surface.
+// Preserve the existing caps seed for activeHost-only callers. Explicit
+// snapshots instead seed their capabilities through HostStyledShell.
 const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
@@ -73,6 +79,33 @@ const TraceTimelineLazy = lazy(() =>
 );
 
 const NOOP = (..._args: unknown[]) => {};
+
+type TranscriptNavigation = {
+  focusMessageId: string | null;
+  highlightedMessageIds: string[];
+  navigationKey: number;
+};
+
+const TRANSCRIPT_NAVIGATION_AT_REST: TranscriptNavigation = {
+  focusMessageId: null,
+  highlightedMessageIds: [],
+  navigationKey: 0,
+};
+
+/** Adds the rows in `rowIds` not seen before; keeps `open` when there are none. */
+function withNewRowsOpen(
+  open: Set<string>,
+  rowIds: Set<string>,
+  seenRowIds: Set<string>
+): Set<string> {
+  let next: Set<string> | null = null;
+  for (const id of rowIds) {
+    if (seenRowIds.has(id) || open.has(id)) continue;
+    next ??= new Set(open);
+    next.add(id);
+  }
+  return next ?? open;
+}
 
 export type TraceViewerEvalToolCall = {
   toolName: string;
@@ -82,6 +115,12 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  /** Prepared from the same trace; lets session ratings share the exact rendered IDs. */
+  adaptedTrace?: AdaptedTraceResult;
+  renderAssistantTurnFooter?: ComponentProps<typeof Thread>["renderAssistantTurnFooter"];
+  reasoningDisplayMode?: ComponentProps<typeof Thread>["reasoningDisplayMode"];
+  widgetPolicy?: ComponentProps<typeof Thread>["widgetPolicy"];
+  frame?: "inset" | "none";
   /**
    * Chat: forwarded to the transcript `Thread`. Tools (Results): shows a spinner
    * beside "Actual" while the run is still in progress.
@@ -202,15 +241,8 @@ interface TraceViewerProps {
    * install a scope with no host (template-seed fallback).
    */
   activeHost?: HostConfigDtoV2 | null;
-  /**
-   * Host style fallback used when an inner scope is installed but no
-   * `activeHost` is provided. Like `activeHost`, passing `undefined`
-   * (the default) means "don't install an inner scope" — DO NOT read
-   * the surrounding `ScenarioHostStyleProvider` here, because that
-   * ambient style would synthesize template-seed caps that shadow
-   * outer scope's user-edited caps.
-   */
-  hostStyle?: string;
+  /** undefined inherits the surrounding host; null explicitly uses the generic shell. */
+  hostSnapshot?: HostSnapshot | null;
   /**
    * Human-facing render policy for MCP tool-result images, mirroring the
    * chat surfaces (App.tsx / ChatTabV2). When omitted, the trace `Thread`
@@ -347,6 +379,11 @@ function getBrowserVideoMeta(
 
 export function TraceViewer({
   trace,
+  adaptedTrace: preparedTrace,
+  renderAssistantTurnFooter,
+  reasoningDisplayMode = "collapsed",
+  widgetPolicy = "live",
+  frame = "inset",
   model,
   isLoading = false,
   toolsMetadata = {},
@@ -392,29 +429,20 @@ export function TraceViewer({
   rawGrowWithContent = false,
   rawFadeScrollEdges = false,
   activeHost,
-  hostStyle,
+  hostSnapshot,
   mcpToolResultImageRendering,
 }: TraceViewerProps) {
+  const persistedRequestPayloads = useMemo(
+    () => readTraceRequestPayloads(trace),
+    [trace],
+  );
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
 
-  // Decide whether to install an inner ActiveHostCapsResolverScope around
-  // the trace's `<Thread>`. We only install when the caller passed
-  // explicit `activeHost` or `hostStyle` props. When neither is given,
-  // we pass through to any outer scope (e.g. the chat surface's
-  // ClientStyledChatTabV2 / PlaygroundTab wrap) — installing a scope
-  // here unconditionally would shadow that outer scope with
-  // template-seed caps and silently drop the user's saved
-  // `clientCapabilities` edits. See TL feedback on PR #2169.
-  //
-  // `hostStyle` falls back to `DEFAULT_TRACE_HOST_STYLE_FALLBACK` only
-  // when the inner scope IS being installed (caller passed activeHost
-  // but no explicit hostStyle); we don't reach into the ambient
-  // ScenarioHostStyleProvider here, because that ambient style may not
-  // line up with the explicit `activeHost`.
+  // An explicit snapshot owns the full shell. Otherwise preserve the existing
+  // activeHost-only capability scope and ambient presentation (PR #2169).
   const shouldInstallTraceScope =
-    activeHost !== undefined || hostStyle !== undefined;
-  const traceScopeHostStyle = hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
+    hostSnapshot === undefined && activeHost !== undefined;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools" | "browser" | "steps"
@@ -429,15 +457,8 @@ export function TraceViewer({
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [transcriptNavigation, setTranscriptNavigation] = useState<{
-    focusMessageId: string | null;
-    highlightedMessageIds: string[];
-    navigationKey: number;
-  }>({
-    focusMessageId: null,
-    highlightedMessageIds: [],
-    navigationKey: 0,
-  });
+  const [transcriptNavigation, setTranscriptNavigation] =
+    useState<TranscriptNavigation>(TRANSCRIPT_NAVIGATION_AT_REST);
   const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
@@ -511,31 +532,90 @@ export function TraceViewer({
     return true;
   }, [promptGroups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
-  useEffect(() => {
+  // Reset the timeline's zoom and filter when its spans change, by
+  // adjusting state during render rather than in an effect. A streaming reply
+  // hands this viewer a new trace on every token, and an effect here set state
+  // after each token's commit. A fast stream stacks enough of those in a row
+  // to trip React's "Maximum update depth exceeded", the same failure the
+  // compare cards had in INSPECTOR-CLIENT-2HP. React applies an update to this
+  // component's own state within the same render pass, so it never schedules
+  // more work. The key starts at `null` so the first render applies the reset,
+  // as the mount-time effect did.
+  const [timelineResetIdentity, setTimelineResetIdentity] = useState<
+    string | null
+  >(null);
+  if (timelineResetIdentity !== traceIdentityForToolbar) {
+    setTimelineResetIdentity(traceIdentityForToolbar);
     setTimelineViewportMaxMs(maxEndMsForToolbar);
-  }, [maxEndMsForToolbar, traceIdentityForToolbar]);
-
-  useEffect(() => {
     setTimelineFilter("all");
-    if (!recordedSpans?.length) {
-      setExpandedPromptIds(new Set());
-      setExpandedStepIds(new Set());
-      return;
+  }
+
+  // Open every timeline row by default, but only when the rows change, during
+  // render for the same reason as above. Keying this on the spans' times too
+  // reopened a row the user had just closed, since a streaming bar grows on
+  // every token. While rows are only being added (new steps and tools, or the
+  // live preview rows giving way to the recorded ones), open just the new
+  // rows. Any other change, such as another trace, opens every row again.
+  const timelineRowIdsKey = useMemo(
+    () => recordedSpans?.map((span) => span.id).join("|") ?? "",
+    [recordedSpans]
+  );
+  const [openedTimelineRows, setOpenedTimelineRows] = useState<{
+    key: string;
+    spanIds: Set<string>;
+    promptIds: Set<string>;
+    stepIds: Set<string>;
+  } | null>(null);
+  if (openedTimelineRows?.key !== timelineRowIdsKey) {
+    const spanIds = new Set(recordedSpans?.map((span) => span.id) ?? []);
+    const promptIds = new Set(promptGroups.map((g) => g.key));
+    const stepIds = collectStepSpanIdsWithChildren(promptGroups);
+    setOpenedTimelineRows({
+      key: timelineRowIdsKey,
+      spanIds,
+      promptIds,
+      stepIds,
+    });
+
+    // Preview rows may only go away when the recorded rows replace them. If
+    // the new trace still has preview rows, it is another preview.
+    const previewGaveWayToRecorded = ![...spanIds].some(
+      isLiveChatPreviewSpanId
+    );
+    const onlyRowsAdded =
+      openedTimelineRows !== null &&
+      [...openedTimelineRows.spanIds].every(
+        (id) =>
+          spanIds.has(id) ||
+          (previewGaveWayToRecorded && isLiveChatPreviewSpanId(id))
+      );
+    if (onlyRowsAdded) {
+      setExpandedPromptIds(
+        withNewRowsOpen(
+          expandedPromptIds,
+          promptIds,
+          openedTimelineRows.promptIds
+        )
+      );
+      setExpandedStepIds(
+        withNewRowsOpen(expandedStepIds, stepIds, openedTimelineRows.stepIds)
+      );
+    } else {
+      setExpandedPromptIds(promptIds);
+      setExpandedStepIds(stepIds);
     }
-    setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
-    setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
-  }, [traceIdentityForToolbar, promptGroups, recordedSpans?.length]);
+  }
 
   const adaptedTrace = useMemo(
     () =>
-      adaptTraceToUiMessages({
+      preparedTrace ?? adaptTraceToUiMessages({
         trace,
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
         toolResultDisplay: "tool-card",
       }),
-    [trace, toolsMetadata, toolServerMap, connectedServerIds]
+    [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
   // Frozen replay: when simply VIEWING a completed run, show each widget's
@@ -574,13 +654,17 @@ export function TraceViewer({
     [browserSteps, recorder?.recordingTarget]
   );
 
-  useEffect(() => {
-    setTranscriptNavigation({
-      focusMessageId: null,
-      highlightedMessageIds: [],
-      navigationKey: 0,
-    });
-  }, [trace]);
+  // A reveal-in-transcript highlight belongs to the trace it was made on. Clear
+  // it when the trace changes, during render for the same reason as the
+  // timeline reset above, and only when there is a highlight to clear.
+  const [transcriptNavigationTrace, setTranscriptNavigationTrace] =
+    useState(trace);
+  if (transcriptNavigationTrace !== trace) {
+    setTranscriptNavigationTrace(trace);
+    if (transcriptNavigation !== TRANSCRIPT_NAVIGATION_AT_REST) {
+      setTranscriptNavigation(TRANSCRIPT_NAVIGATION_AT_REST);
+    }
+  }
 
   useEffect(() => {
     if (!hasEvalToolCalls) {
@@ -709,7 +793,7 @@ export function TraceViewer({
     </div>
   );
 
-  return (
+  const content = (
     <div
       className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
       data-testid="trace-viewer-root"
@@ -864,7 +948,12 @@ export function TraceViewer({
           >
             <TraceRawView
               trace={trace}
-              requestPayloadHistory={rawRequestPayloadHistory}
+              requestPayloadHistory={
+                rawRequestPayloadHistory ??
+                (persistedRequestPayloads.length
+                  ? { entries: persistedRequestPayloads, hasUiMessages: false }
+                  : null)
+              }
               harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
               fadeScrollEdges={rawFadeScrollEdges}
@@ -981,27 +1070,20 @@ export function TraceViewer({
 
         {effectiveViewMode === "chat" &&
           (traceMessages.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              No messages in trace
-            </div>
+            <TranscriptEmptyState {...(isLoading
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: hasRecordedSpans ? "observed" as const : "unknown" as const })} />
           ) : (
             <div
               className={cn(
-                "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
+                "min-w-0 flex flex-col",
+                frame === "inset" && "rounded-md border border-border/30 bg-background/50",
                 fillContent ? "min-h-0 flex-1 overflow-hidden" : "min-h-0"
               )}
               data-testid="trace-viewer-chat"
             >
               {(() => {
-                // Trace `<Thread>` mount. Wrapped in
-                // `ActiveHostCapsResolverScope` ONLY when the caller
-                // passed explicit host inputs (`activeHost` or
-                // `hostStyle`). Otherwise we render Thread directly so
-                // any outer scope from the chat surface
-                // (ClientStyledChatTabV2 / PlaygroundTab) flows through
-                // with the user's saved capability edits intact.
-                // Installing an inner scope unconditionally would
-                // shadow the outer one with template-seed caps.
+                // With no explicit host inputs, inherit the caller's providers.
                 const threadEl = (
                   <Thread
                     chatSessionId={chatSessionId}
@@ -1029,13 +1111,15 @@ export function TraceViewer({
                     minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
-                    reasoningDisplayMode="collapsed"
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy={widgetPolicy}
+                    renderAssistantTurnFooter={renderAssistantTurnFooter}
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
                       transcriptNavigation.highlightedMessageIds
                     }
                     navigationKey={transcriptNavigation.navigationKey}
-                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    contentClassName={cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-8 space-y-8")}
                     getMessageWrapperProps={({ message }) => {
                       const sourceRange =
                         adaptedTrace.uiMessageSourceRanges[message.id];
@@ -1050,7 +1134,7 @@ export function TraceViewer({
                 const scoped = shouldInstallTraceScope ? (
                   <ActiveHostCapsResolverScope
                     activeHost={activeHost ?? null}
-                    hostStyle={traceScopeHostStyle}
+                    hostStyle={DEFAULT_TRACE_HOST_STYLE_FALLBACK}
                   >
                     {threadEl}
                   </ActiveHostCapsResolverScope>
@@ -1162,5 +1246,17 @@ export function TraceViewer({
         ) : null}
       </div>
     </div>
+  );
+
+  return hostSnapshot !== undefined ? (
+    <HostStyledShell
+      hostSnapshot={hostSnapshot}
+      activeHost={activeHost ?? null}
+      className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
+    >
+      {content}
+    </HostStyledShell>
+  ) : (
+    content
   );
 }

@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
@@ -14,10 +15,10 @@ vi.mock("convex/react", () => ({
     return name === "users:getCurrentUser"
       ? { _id: state.user }
       : name === "projects:getMyProjects"
-        ? state.projectsMissing
-          ? []
-          : [{ _id: "project", organizationId: "org" }]
-        : { effectivePlan: state.plan, pricingVersion: state.pricingVersion };
+      ? state.projectsMissing
+        ? []
+        : [{ _id: "project", organizationId: "org" }]
+      : { effectivePlan: state.plan, pricingVersion: state.pricingVersion };
   },
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -114,13 +115,15 @@ describe("shared settings access", () => {
         <button>Save settings</button>
       </SharedSettingsGate>,
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("Basic RBAC");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "requires Team or Enterprise",
+    );
     expect(
       screen.getByRole("link", { name: "View Team plans" }),
     ).toHaveAttribute("href", "/organizations/org/plans");
     expect(
-      screen.queryByRole("button", { name: "Save settings" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Save settings" }),
+    ).toBeDisabled();
   });
   it.each(["team", "enterprise"])(
     "retains existing editing UI on %s",
@@ -151,3 +154,33 @@ describe("shared settings access", () => {
     );
   });
 });
+
+it.each(["suite", "journey", "scenario"])(
+  "keeps %s saves disabled until the resource org upgrades",
+  async (resource) => {
+    const save = vi.fn();
+    const user = userEvent.setup();
+    const editor = () => (
+      <SharedSettingsGate
+        projectId="project"
+        creatorId="creator"
+        resource={resource}
+      >
+        <button onClick={save}>Save</button>
+      </SharedSettingsGate>
+    );
+    const { rerender } = render(editor());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).not.toHaveBeenCalled();
+    state.plan = "pro";
+    rerender(editor());
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    state.plan = "team";
+    rerender(editor());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenCalledTimes(1);
+    state.plan = "free";
+    rerender(editor());
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  },
+);

@@ -42,6 +42,12 @@ const ALLOWED_FILES = new Set([
   // rather than pattern-exempt: a new file reaching for the policy should show
   // up here as a diff line someone has to justify.
   "App.tsx",
+  // Owns `redactStackLikeText`, which redacts any error's stack before the
+  // error card renders or copies it. A new home rather than a copy: this is
+  // not an OAuth trace, so gating it on `SANITIZE_OAUTH_TRACES` would be
+  // wrong — a stack shown to a user must be redacted in every mode. App.tsx
+  // imports it from here rather than keeping the private copy it used to have.
+  "lib/error-technical-details.ts",
   // Re-exports `sanitizeStepError` for the debugger's Sentry reporting.
   "lib/oauth/debug-state-machine-adapter.ts",
   // Copy-to-clipboard redaction for the OAuth debugger's logs. Its own

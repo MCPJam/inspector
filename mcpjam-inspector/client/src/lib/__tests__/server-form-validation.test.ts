@@ -7,6 +7,9 @@ const importValidator = async (hosted: boolean) => {
   return (await import("../server-form-validation")).validateServerFormData;
 };
 
+const importBearerValidator = async () =>
+  (await import("../server-form-validation")).validateBearerTargetUrl;
+
 afterEach(() => {
   vi.doUnmock("@/lib/config");
   vi.resetModules();
@@ -30,13 +33,13 @@ describe("validateServerFormData", () => {
 
   it("requires a URL for HTTP connections", async () => {
     const validate = await importValidator(false);
-    expect(validate(httpForm({ url: "" }))).toMatch(/URL is required/i);
+    expect(validate(httpForm({ url: "" }))).toMatch(/Enter your server’s URL/i);
   });
 
   it("rejects a malformed URL", async () => {
     const validate = await importValidator(false);
     expect(validate(httpForm({ url: "not a url" }))).toMatch(
-      /Invalid URL format/i,
+      /Enter a complete server URL/i,
     );
   });
 
@@ -44,7 +47,7 @@ describe("validateServerFormData", () => {
     const validate = await importValidator(false);
     expect(
       validate({ name: "x", type: "stdio", command: "" } as ServerFormData),
-    ).toMatch(/Command is required/i);
+    ).toMatch(/Enter the command/i);
   });
 
   it("allows plain http in local mode", async () => {
@@ -55,12 +58,52 @@ describe("validateServerFormData", () => {
   it("rejects plain http in hosted mode", async () => {
     const validate = await importValidator(true);
     expect(validate(httpForm({ url: "http://localhost:8787/mcp" }))).toMatch(
-      /Hosted mode requires HTTPS/i,
+      /hosted web app requires an HTTPS/i,
     );
   });
 
   it("allows https in hosted mode", async () => {
     const validate = await importValidator(true);
     expect(validate(httpForm())).toBeNull();
+  });
+});
+
+describe("validateBearerTargetUrl", () => {
+  it("rejects bearer credentials over public HTTP", async () => {
+    const validate = await importBearerValidator();
+    expect(validate("http://mcp.example.com/mcp")).toMatch(
+      /require HTTPS for non-local/i,
+    );
+  });
+
+  it.each([
+    "http://localhost:8787/mcp",
+    "http://127.0.0.1:8787/mcp",
+    "http://192.168.1.10/mcp",
+    "https://mcp.example.com/mcp",
+  ])("allows a bearer credential for %s", async (url) => {
+    const validate = await importBearerValidator();
+    expect(validate(url)).toBeNull();
+  });
+});
+
+describe("shared OAuth credential validation", () => {
+  it("uses the same client ID and secret rules in both server forms", async () => {
+    const { validateOAuthClientId, validateOAuthClientSecret } =
+      await import("../server-form-validation");
+    expect(validateOAuthClientId("ab")).toMatch(/at least 3 characters/);
+    expect(validateOAuthClientId("abc")).toBeNull();
+    expect(validateOAuthClientSecret("   ")).toMatch(/only whitespace/);
+    expect(validateOAuthClientSecret("")).toBeNull();
+  });
+
+  it("blocks confidential CIMD until its identity is ready", async () => {
+    const { getConfidentialCimdBlockReason } =
+      await import("../server-form-validation");
+    expect(getConfidentialCimdBlockReason(true, "loading")).toMatch(
+      /Preparing/,
+    );
+    expect(getConfidentialCimdBlockReason(true, "ready")).toBeNull();
+    expect(getConfidentialCimdBlockReason(false, "unavailable")).toBeNull();
   });
 });

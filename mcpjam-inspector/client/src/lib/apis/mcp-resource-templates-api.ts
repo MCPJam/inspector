@@ -44,7 +44,7 @@ export async function listResourceTemplatesPage(
   nextCursor?: string;
   servedFromCache?: ServedFromCache;
 }> {
-  ensureLocalMode("Resource templates are not supported in hosted mode");
+  ensureLocalMode("Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
 
   const res = await authFetch("/api/mcp/resource-templates/list", {
     method: "POST",

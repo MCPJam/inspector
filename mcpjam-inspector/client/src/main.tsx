@@ -1,476 +1,165 @@
-import { StrictMode, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { AppRouterProvider } from "./router";
+// Must stay the first import; OAuth modules retain window.fetch at load time.
+import "./lib/install-failed-request-tracker";
+import {
+  consumeAccessLinkFromUrl,
+  watchForAccessLinks,
+} from "./lib/access-link";
+import { StrictMode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { appRoot } from "./app-root";
+import LoadingScreen from "./components/LoadingScreen";
+import { Button } from "@mcpjam/design-system/button";
 import "./index.css";
-import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
-import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
-import { PostHogProvider } from "posthog-js/react";
-import { AuthKitProvider } from "@workos-inc/authkit-react";
-import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
-import { captureSentryException, initSentry } from "./lib/sentry.js";
-import { reportCaught } from "./lib/error-reporting";
-import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
-import { ErrorBoundary } from "./components/ui/error-boundary";
-import { IframeRouterError } from "./components/IframeRouterError.jsx";
-import { initializeSessionToken } from "./lib/session-token.js";
-import { resolveBootstrapErrorScreen } from "./components/SessionBootstrapError";
+import { buildElectronMcpCallbackUrl } from "./lib/electron-mcp-callback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
-import { detectSandboxOriginFault } from "./lib/sandbox-origin-fault";
+import { Loader2, Circle } from "lucide-react";
 import {
-  buildElectronHostedAuthCallbackUrl,
-  resolveWorkosRedirectUri,
-} from "./lib/electron-hosted-auth";
-import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
-import {
-  getRuntimeConvexUrl,
-  getRuntimeWorkosApiHostname,
-  getRuntimeWorkosClientId,
-} from "./lib/runtime-config";
-import {
-  isDebugOAuthCallbackPath,
-  normalizeInitialLegacyHashBookmark,
-} from "./lib/app-navigation";
-import { queueProjectSignInReturnPath } from "./lib/app-signin-return-path";
-import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
-import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
-import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
-import {
-  PERMALINK_SIGN_IN_STATE_KEY,
-  takePermalinkSignInReturn,
-} from "./lib/permalink-signin-return";
-import {
-  callbackMatchesPending,
-  HANDOFF_SIGN_IN_STATE_KEY,
-  matchHandoffRoute,
-  readCallbackParams,
-  readPendingAuthorization,
-  takeHandoffSignInReturn,
-} from "./lib/server-connection-handoff";
-import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
-import {
-  getInitialThemeMode,
-  getInitialThemePreset,
-  updateThemeMode,
-  updateThemePreset,
-} from "./lib/theme-utils";
-import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
-import {
-  clearLegacyWorkosRefreshTokenStorage,
-  resolveWorkosClientOptions,
-  WORKOS_DEV_MODE,
-} from "./lib/workos-authkit-config";
+  FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
+  getFirstRunOAuthReturnServerName,
+} from "./lib/first-run-oauth-return";
 
-// Initialize Sentry before React mounts
-initSentry();
-
-// The invariant a browser can actually decide. Its reasoning, and the half
-// that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
-const sandboxOriginFault = detectSandboxOriginFault({
-  hostedMode: HOSTED_MODE,
-  sandboxOrigin: SANDBOX_ORIGIN,
-});
-if (sandboxOriginFault) {
-  console.error(`[MCPJam] ${sandboxOriginFault.message}`);
-  if (sandboxOriginFault.shouldCapture) {
-    captureSentryException(new Error(sandboxOriginFault.message), {
-      tags: { area: "sandbox-origin", severity: "config" },
-    });
-  }
-}
-
-function AuthBootstrap({ children }: { children: ReactNode }) {
-  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
-
+function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
   return (
-    <DbUserReadyProvider
-      isEnsuringUser={isEnsuringUser}
-      isUserReady={isUserReady}
-    >
-      {children}
-    </DbUserReadyProvider>
-  );
-}
-
-// Detect if we're inside an iframe - this happens when a user's app uses BrowserRouter
-// and does history.pushState, then the iframe is refreshed. The server doesn't recognize
-// the new path and serves the Inspector's index.html inside the iframe.
-//
-// Exception: same-origin self-embed of the public scenario runtime (a tester
-// link path — `/user-testing/<slug>/<token>`).
-// The User Testing tab's Preview pane iframes the publish link to show a live
-// preview inside the app — that's intentional, not a misrouted-pushState
-// misconfiguration, so we let the normal tree mount. Restricted to a tester
-// link route + same-origin parent so the "user app accidentally serving
-// inspector index.html" guard still fires for every other shape.
-const isInIframe = (() => {
-  try {
-    if (window.self === window.top) return false;
-    try {
-      const sameOrigin = window.top!.location.origin === window.location.origin;
-      // Match the documented `<segment>/<slug>/<token>` shape only; a generic
-      // prefix test would let any unrelated future subpath slip past the
-      // misrouted-pushState guard. See lib/tester-link-path.ts.
-      const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
-        window.location.pathname,
-      );
-      if (sameOrigin && isPublicScenarioRuntimePath) {
-        return false;
-      }
-    } catch {
-      // window.top.location throws under cross-origin — definitely an
-      // unrelated embed, keep the guard.
-    }
-    return true;
-  } catch {
-    // If we can't access window.top due to cross-origin restrictions, we're in an iframe
-    return true;
-  }
-})();
-
-/**
- * Whether this load belongs to the connection handoff page.
- *
- * Two ways in. The handoff paths are unambiguous. The third case is
- * `/oauth/callback`, which is SHARED with the Inspector's own OAuth flow — so
- * it is claimed only when this tab actually started a connection
- * authorization, and only when the query carries an authorization server's
- * answer. Claiming it on the marker alone would swallow the Inspector's own
- * callbacks in the same tab.
- */
-function isServerConnectionHandoff(): boolean {
-  if (matchHandoffRoute(window.location.pathname)) return true;
-  if (window.location.pathname !== "/oauth/callback") return false;
-  // Matched on `state`, not merely on a marker existing: an abandoned handoff
-  // must not swallow the Inspector's own OAuth callbacks in the same tab.
-  return callbackMatchesPending(
-    readPendingAuthorization(),
-    readCallbackParams(window.location.search),
-  );
-}
-
-// If we're in an iframe, render a helpful error message instead of the full Inspector
-if (isInIframe) {
-  const root = createRoot(document.getElementById("root")!);
-  root.render(
-    <StrictMode>
-      <IframeRouterError />
-    </StrictMode>,
-  );
-} else if (isServerConnectionHandoff()) {
-  // <AuthKitProvider> BUT NO CONVEX. The page still holds no credential of its
-  // own — every connection call authenticates with an HttpOnly cookie it
-  // cannot read — but the CLAIM has to say who the visitor is: the backend
-  // refuses an account-owned handoff link to anyone but its owner, and with no
-  // token to send it refused the owner too.
-  //
-  // The provider rather than a hand-rolled token fetch, because only the SDK
-  // knows where to ask. The `/user_management` proxy this page first tried is
-  // mounted only when `!HOSTED_MODE` (see `server/index.ts`), so in hosted it
-  // 404s and every signed-in owner is refused exactly as before — the same
-  // shape of never-passing gate this flow has already shipped twice.
-  //
-  // A signed-out visitor or a guest costs one failed refresh and proceeds
-  // unauthenticated, which is what `bestEffortAccessToken` in the page is for.
-  // App's theme bootstrap does not run here, so apply the stored theme
-  // directly — same as the debug callback below.
-  updateThemeMode(getInitialThemeMode());
-  updateThemePreset(getInitialThemePreset());
-  const handoffWorkosClientId =
-    getRuntimeWorkosClientId() ??
-    (import.meta.env.VITE_WORKOS_CLIENT_ID as string | undefined) ??
-    "";
-  const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
-  const handoffWorkosOptions = handoffRuntimeApiHostname
-    ? { apiHostname: handoffRuntimeApiHostname }
-    : resolveWorkosClientOptions(import.meta.env, window.location, HOSTED_MODE);
-  const root = createRoot(document.getElementById("root")!);
-  root.render(
-    <StrictMode>
-      <AuthKitProvider
-        clientId={handoffWorkosClientId}
-        redirectUri={resolveWorkosRedirectUri({
-          envRedirect:
-            (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined,
-          isElectron: window.isElectron === true,
-          location: window.location,
-        })}
-        devMode={WORKOS_DEV_MODE}
-        {...handoffWorkosOptions}
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background p-4 text-foreground">
+      <div className="fixed inset-0 bg-overlay backdrop-blur-sm" aria-hidden />
+      <div
+        className="relative z-10 w-full max-w-[408px] rounded-xl border border-border bg-card p-6"
+        role="status"
+        aria-label={`Connecting to ${serverName}`}
       >
-        <ServerConnectionHandoff />
-      </AuthKitProvider>
-    </StrictMode>,
+        <h1 className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+          Connecting to {serverName}
+        </h1>
+        <p className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+          Checking the connection before MCPJam opens the playground.
+        </p>
+        <ol className="mt-5 grid gap-2.5" aria-label="Connection progress">
+          {["Connect server", "Negotiate MCP compatibility", "Load tools"].map(
+            (label, index) => (
+              <li
+                key={label}
+                className="rounded-md border border-border bg-muted/25 px-3 py-2.5 text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+                    {index === 0 ? (
+                      <Loader2
+                        className="size-4 animate-spin text-primary"
+                        aria-hidden
+                      />
+                    ) : (
+                      <Circle className="size-3" aria-hidden />
+                    )}
+                  </span>
+                  <span
+                    className={
+                      index === 0
+                        ? "text-[12px] leading-5 font-medium text-card-foreground"
+                        : "text-[12px] leading-5 text-muted-foreground"
+                    }
+                  >
+                    {label}
+                  </span>
+                </div>
+              </li>
+            ),
+          )}
+        </ol>
+      </div>
+    </div>
   );
-} else if (
-  import.meta.env.DEV &&
-  window.location.pathname.startsWith("/__preview/plan-limit")
-) {
-  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
-  // of AuthKit and Convex, because the states worth reviewing (member who
-  // can't upgrade, org already at its Team ceiling) can't be produced on
-  // demand against a real backend. Renders the real component and the real
-  // stylesheet with dummy data. The DEV guard keeps it out of production
-  // bundles entirely.
-  updateThemeMode(getInitialThemeMode());
-  updateThemePreset(getInitialThemePreset());
-  const root = createRoot(document.getElementById("root")!);
-  root.render(
+}
+
+consumeAccessLinkFromUrl();
+watchForAccessLinks();
+
+const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
+if (electronMcpReturnUrl) {
+  // The browser owns no app session here. Do not initialize auth, Convex,
+  // guest sessions or onboarding before handing this result to Electron.
+  appRoot.render(
     <StrictMode>
-      <PlanLimitDialogPreview />
-    </StrictMode>,
-  );
-} else if (isDebugOAuthCallbackPath(window.location.pathname)) {
-  // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
-  // WorkOS refresh that logs the opener window out. See isDebugOAuthCallbackPath.
-  // App's theme bootstrap doesn't run here, so apply the stored theme directly.
-  updateThemeMode(getInitialThemeMode());
-  updateThemePreset(getInitialThemePreset());
-  const root = createRoot(document.getElementById("root")!);
-  root.render(
-    <StrictMode>
-      <OAuthDebugCallback />
+      <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpReturnUrl} />
     </StrictMode>,
   );
 } else {
-  const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  const runtimeConvexUrl = getRuntimeConvexUrl();
-  const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
-  // Runtime config wins over the build-time value for the same reason the
-  // Convex URL above does: the deployed bundle is shared across environments
-  // and only the serving process knows which WorkOS environment it belongs to.
-  const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
-    string | undefined;
-  // Coerced to "" rather than typed as `string`: the previous `as string` cast
-  // claimed a value that may not exist, and AuthKit already fails loudly on a
-  // falsy client id. The warning below is the one that should fire first.
-  const workosClientId =
-    getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
-
-  // Compute redirect URI safely across environments
-  const workosRedirectUri = (() => {
-    const envRedirect =
-      (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
-    if (typeof window === "undefined") return envRedirect ?? "/callback";
-    return resolveWorkosRedirectUri({
-      envRedirect,
-      isElectron: window.isElectron === true,
-      location: window.location,
+  const firstRunOAuthReturnServerName = getFirstRunOAuthReturnServerName();
+  let oauthBootRoot: Root | null = null;
+  let oauthBootHost: HTMLDivElement | null = null;
+  let oauthBootTimeoutId: number | null = null;
+  let oauthBootErrorObserver: MutationObserver | null = null;
+  const dismissOAuthBootScreen = () => {
+    if (oauthBootTimeoutId !== null) {
+      window.clearTimeout(oauthBootTimeoutId);
+      oauthBootTimeoutId = null;
+    }
+    window.removeEventListener(
+      FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
+      dismissOAuthBootScreen,
+    );
+    oauthBootErrorObserver?.disconnect();
+    oauthBootErrorObserver = null;
+    const rootToUnmount = oauthBootRoot;
+    const hostToRemove = oauthBootHost;
+    oauthBootRoot = null;
+    oauthBootHost = null;
+    // The ready event fires from the app root's layout effect. Unmounting a
+    // different root in that commit triggers a React cross-root warning.
+    queueMicrotask(() => {
+      rootToUnmount?.unmount();
+      hostToRemove?.remove();
     });
-  })();
-  const electronHostedAuthCallbackUrl =
-    typeof window === "undefined" || window.isElectron
-      ? null
-      : buildElectronHostedAuthCallbackUrl(window.location);
+  };
 
-  // Warn if critical env vars are missing
-  if (!convexUrl) {
-    console.warn(
-      "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
+  if (firstRunOAuthReturnServerName) {
+    oauthBootHost = document.createElement("div");
+    oauthBootHost.id = "first-run-oauth-boot-overlay";
+    document.body.append(oauthBootHost);
+    oauthBootRoot = createRoot(oauthBootHost);
+    oauthBootRoot.render(
+      <FirstRunOAuthReturnBootScreen
+        serverName={firstRunOAuthReturnServerName}
+      />,
     );
-  }
-  if (import.meta.env.DEV) {
-    console.info("[main] Convex client config", {
-      convexUrl: convexUrl || "(empty)",
-      source: runtimeConvexUrl
-        ? "runtime"
-        : buildConvexUrl
-          ? "build (VITE_CONVEX_URL)"
-          : "none",
-      HOSTED_MODE,
-    });
-  }
-  if (import.meta.env.DEV && typeof window !== "undefined") {
-    (window as unknown as { __mcpjamConvex?: unknown }).__mcpjamConvex = {
-      convexUrl,
-      buildConvexUrl,
-      runtimeConvexUrl,
-    };
-  }
-  if (
-    HOSTED_MODE &&
-    runtimeConvexUrl &&
-    buildConvexUrl &&
-    runtimeConvexUrl !== buildConvexUrl
-  ) {
-    console.warn(
-      "[main] Hosted runtime Convex URL overrides build-time VITE_CONVEX_URL.",
-      {
-        buildConvexUrl,
-        runtimeConvexUrl,
-      },
+    window.addEventListener(
+      FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
+      dismissOAuthBootScreen,
+      { once: true },
     );
-  }
-  if (!workosClientId) {
-    console.warn(
-      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work.",
-    );
+    const appHost = document.getElementById("root");
+    if (appHost) {
+      oauthBootErrorObserver = new MutationObserver(() => {
+        // An auth/bootstrap error must not sit behind the callback card.
+        if (appHost.querySelector('[role="alert"]')) dismissOAuthBootScreen();
+      });
+      oauthBootErrorObserver.observe(appHost, { childList: true, subtree: true });
+    }
+    // If auth or project setup fails before the onboarding overlay mounts,
+    // expose the app's recovery UI instead of covering it indefinitely.
+    oauthBootTimeoutId = window.setTimeout(dismissOAuthBootScreen, 20_000);
   }
 
-  // A runtime hostname takes the same precedence an explicit
-  // `VITE_WORKOS_API_HOSTNAME` has inside `resolveWorkosClientOptions`: it
-  // overrides the local-proxy derivation rather than merging with it.
-  const runtimeWorkosApiHostname = getRuntimeWorkosApiHostname();
-  const workosClientOptions = runtimeWorkosApiHostname
-    ? { apiHostname: runtimeWorkosApiHostname }
-    : resolveWorkosClientOptions(
-        import.meta.env,
-        typeof window === "undefined" ? undefined : window.location,
-        HOSTED_MODE,
-      );
-  clearLegacyWorkosRefreshTokenStorage();
-
-  // INVARIANT: this MUST stay below the `refreshBufferInterval` passed to
-  // <AuthKitProvider> below. Convex refetches at `exp - leeway`; if that lands
-  // before authkit's own refresh threshold (`exp - refreshBufferInterval`),
-  // authkit hands back the SAME still-valid token, Convex sees an unchanged
-  // token, settles into `notRefetching` — and never schedules another refetch.
-  // The refresh loop then dies silently and the token expires under a live
-  // socket. Raised from the 10s default so the retry ladder in
-  // `useUnifiedConvexAuth` (~5s worst case) still completes while the current
-  // token is valid.
-  const convex = new ConvexReactClient(convexUrl, {
-    authRefreshTokenLeewaySeconds: 60,
+  // Keep the callback card in its own root while the real app hydrates below
+  // it. The onboarding overlay dismisses that card only after its equivalent
+  // connection surface is mounted, avoiding a modal -> loader -> modal flash.
+  appRoot.render(<LoadingScreen />);
+  void import("./app-bootstrap").catch((error: unknown) => {
+    console.error("MCPJam app bootstrap failed", error);
+    dismissOAuthBootScreen();
+    appRoot.render(
+      <div
+        role="alert"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-4 text-foreground"
+      >
+        <p>MCPJam couldn't load. Check your connection and try again.</p>
+        <Button onClick={() => window.location.reload()}>Reload MCPJam</Button>
+      </div>,
+    );
+    // Reporting must not prevent recovery if the network also blocks this chunk.
+    void import("./lib/error-reporting")
+      .then(({ reportCaught }) =>
+        reportCaught(error, { source: "app_bootstrap" }),
+      )
+      .catch(() => {});
   });
-  normalizeInitialLegacyHashBookmark();
-
-  const Providers = (
-    <AuthKitProvider
-      clientId={workosClientId}
-      redirectUri={workosRedirectUri}
-      devMode={WORKOS_DEV_MODE}
-      // Must stay ABOVE `authRefreshTokenLeewaySeconds` on the Convex client
-      // above — see the invariant documented there.
-      refreshBufferInterval={90}
-      onRefresh={() => {
-        clearLegacyWorkosRefreshTokenStorage();
-      }}
-      // Redirect a genuinely dead session to sign-in rather than leaving
-      // signed-in chrome over a de-authed connection. See the handler.
-      onRefreshFailure={handleWorkosRefreshFailure}
-      /**
-       * Send a returning sign-in back where it started, when something asked
-       * to come back.
-       *
-       * TWO things do. The handoff page lives on `/connect/server/…`, and an
-       * agent-minted PERMALINK can be any exact resource path plus its
-       * `?project=` scope; both redirect HERE on `/callback`, and without
-       * this the user arrives at the app shell having lost what they opened.
-       *
-       * In both cases the nonce is all that crossed the network — the path
-       * itself was kept in same-origin storage, and each `take…` re-validates
-       * it as same-origin on the way out before anything navigates. AuthKit's
-       * default for this hook is a no-op, so nothing else changes by
-       * supplying it.
-       *
-       * It runs AFTER the session is persisted (authkit-js sets session data,
-       * then calls this), so navigating away here does not race the login.
-       */
-      onRedirectCallback={({ state }) => {
-        const carried = state as Record<string, unknown> | null;
-        const returnTo =
-          takeHandoffSignInReturn(
-            carried?.[HANDOFF_SIGN_IN_STATE_KEY],
-            window.location.origin,
-          ) ??
-          // An agent-minted permalink the visitor opened while signed out.
-          // Without this they authenticate and land on the app shell, having
-          // lost both the resource AND the `?project=` scope — the
-          // wrong-project landing permalinks exist to prevent, reintroduced
-          // at the last step.
-          takePermalinkSignInReturn(
-            carried?.[PERMALINK_SIGN_IN_STATE_KEY],
-            window.location.origin,
-          );
-        if (returnTo) {
-          // A scoped return cannot navigate until App has the database user
-          // and authoritative memberships. Keep it in same-origin storage and
-          // leave the browser on `/callback`; App consumes and validates it,
-          // then performs the one final replacement navigation.
-          if (queueProjectSignInReturnPath(returnTo)) return;
-          // `replace`, not `assign`: `/callback` is not somewhere the back
-          // button should return to. Unscoped handoffs need no membership
-          // validation and retain their existing immediate behavior.
-          window.location.replace(returnTo);
-        }
-      }}
-      {...workosClientOptions}
-    >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
-        <AuthBootstrap>
-          <AppRouterProvider />
-        </AuthBootstrap>
-      </ConvexProviderWithAuthKit>
-    </AuthKitProvider>
-  );
-
-  // Async bootstrap to initialize session token before rendering
-  async function bootstrap() {
-    const root = createRoot(document.getElementById("root")!);
-    const skipLocalSessionBootstrap =
-      import.meta.env.DEV && window.location.pathname.startsWith("/__e2e/");
-
-    if (electronHostedAuthCallbackUrl) {
-      root.render(
-        <StrictMode>
-          <OAuthDesktopReturnNotice
-            returnToElectronUrl={electronHostedAuthCallbackUrl}
-          />
-        </StrictMode>,
-      );
-      return;
-    }
-
-    try {
-      if (!HOSTED_MODE && !skipLocalSessionBootstrap) {
-        // Initialize session token BEFORE rendering in local mode.
-        await initializeSessionToken();
-        console.log("[Auth] Session token initialized");
-      } else {
-        console.log(
-          "[Auth] Hosted mode active, skipping session token bootstrap",
-        );
-      }
-    } catch (error) {
-      console.error("[Auth] Failed to initialize session token:", error);
-
-      // The branch decision (which screen; whether to report) lives in
-      // resolveBootstrapErrorScreen so it is unit-testable — main.tsx itself
-      // can't be imported in a test. Expected host-denial 403s render guidance
-      // and are NOT reported (the Sentry noise this feature removed); genuine
-      // failures render the generic screen AND report.
-      const { report, element } = resolveBootstrapErrorScreen(error);
-      if (report) {
-        reportCaught(error, { source: "session_token_bootstrap" });
-      }
-      root.render(<StrictMode>{element}</StrictMode>);
-      return;
-    }
-
-    // Replay/surveys/exception bundles must be REGISTERED before the provider
-    // initializes the SDK, or feature start falls back to the remote fetch
-    // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
-    // No-op (and no chunk download) off the error-capture surfaces.
-    await preloadPosthogBundledExtensions();
-
-    root.render(
-      <StrictMode>
-        {/* OUTSIDE PostHogProvider on purpose: a crash while the provider
-            initializes must still be caught and reported, and Sentry capture
-            needs no React context. */}
-        <ErrorBoundary name="root">
-          <PostHogProvider
-            apiKey={getPostHogKey()}
-            options={getPostHogOptions()}
-          >
-            {Providers}
-          </PostHogProvider>
-        </ErrorBoundary>
-      </StrictMode>,
-    );
-  }
-
-  bootstrap();
 }

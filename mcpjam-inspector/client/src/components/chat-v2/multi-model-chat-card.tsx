@@ -27,7 +27,13 @@ import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-c
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { applyWidgetStateUpdates } from "@/shared/user-context-message";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  CompareCardEffort,
+  type CompareCardEffortProps,
+} from "@/components/chat-v2/compare-card-effort";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -46,6 +52,18 @@ export interface BroadcastChatTurnRequest {
 
 interface MultiModelChatCardProps {
   model: ModelDefinition;
+  /**
+   * The card's identity (`comparisonKey` of its selection): keys summaries,
+   * `hasMessages` and transcripts so two cards of one model at different
+   * efforts never collide. Defaults to the model id.
+   */
+  compareId?: string;
+  /** Header title; defaults to the model name ("Sonnet 5 · High"). */
+  compareLabel?: string;
+  /** This card's own effort, sent on its requests (undefined = Default). */
+  reasoningEffort?: ModelReasoningEffort;
+  /** This card's effort chip; omitted ⇒ none. */
+  effort?: CompareCardEffortProps;
   comparisonSummaries: MultiModelCardSummary[];
   selectedServers: string[];
   selectedServerInstructions: Record<string, string>;
@@ -73,6 +91,10 @@ interface MultiModelChatCardProps {
 
 export function MultiModelChatCard({
   model,
+  compareId: compareIdProp,
+  compareLabel,
+  reasoningEffort,
+  effort,
   comparisonSummaries,
   selectedServers,
   selectedServerInstructions,
@@ -94,6 +116,9 @@ export function MultiModelChatCard({
   resolveSenderAvatar,
   outgoingSenderMetadata,
 }: MultiModelChatCardProps) {
+  const compareId = compareIdProp ?? String(model.id);
+  const showEffort =
+    !!effort && (effort.levels.length > 0 || effort.value !== undefined);
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
@@ -138,6 +163,8 @@ export function MultiModelChatCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     hostedContext,
     executionConfig: {
@@ -145,6 +172,11 @@ export function MultiModelChatCard({
       modelId: String(model.id),
       mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     },
+    // The card's own row and effort: two cards of one model send their own
+    // levels, and an OpenRouter card never resolves to the hosted row.
+    pinnedModelProvider: String(model.provider),
+    reasoningEffortEnabled: true,
+    fixedReasoningEffort: reasoningEffort ?? null,
     onReset: () => {
       setWidgetStateQueue([]);
       setModelContextQueue([]);
@@ -189,7 +221,7 @@ export function MultiModelChatCard({
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
-      modelId: String(model.id),
+      modelId: compareId,
       durationMs: latestTurn?.durationMs ?? null,
       tokens: latestTurn?.usage?.totalTokens ?? 0,
       toolCount: latestTurn?.actualToolCalls?.length ?? 0,
@@ -202,7 +234,7 @@ export function MultiModelChatCard({
         : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [error, isStreaming, isThreadEmpty, latestTurn, model.id]
+    [compareId, error, isStreaming, isThreadEmpty, latestTurn]
   );
 
   useEffect(() => {
@@ -218,12 +250,12 @@ export function MultiModelChatCard({
   }, [summary]);
 
   useEffect(() => {
-    onHasMessagesChangeRef.current?.(String(model.id), !isThreadEmpty);
-  }, [isThreadEmpty, model.id]);
+    onHasMessagesChangeRef.current?.(compareId, !isThreadEmpty);
+  }, [compareId, isThreadEmpty]);
 
   useEffect(() => {
-    onTranscriptSync?.(String(model.id), messages);
-  }, [messages, model.id, onTranscriptSync]);
+    onTranscriptSync?.(compareId, messages);
+  }, [compareId, messages, onTranscriptSync]);
 
   useEffect(() => {
     if (
@@ -294,66 +326,6 @@ export function MultiModelChatCard({
     });
   }, [selectedServerInstructions, setMessages]);
 
-  const applyWidgetStateUpdates = useCallback(
-    (
-      previousMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
-    ) => {
-      let nextMessages = previousMessages;
-
-      for (const { toolCallId, state } of updates) {
-        const messageId = `widget-state-${toolCallId}`;
-
-        if (state === null) {
-          nextMessages = nextMessages.filter(
-            (message) => message.id !== messageId
-          );
-          continue;
-        }
-
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
-          state
-        )}`;
-        const existingIndex = nextMessages.findIndex(
-          (message) => message.id === messageId
-        );
-
-        if (existingIndex !== -1) {
-          const existingMessage = nextMessages[existingIndex];
-          const existingText =
-            existingMessage.parts?.[0]?.type === "text"
-              ? (existingMessage.parts[0] as { text?: string }).text
-              : null;
-
-          if (existingText === stateText) {
-            continue;
-          }
-
-          const updatedMessages = [...nextMessages];
-          updatedMessages[existingIndex] = {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          };
-          nextMessages = updatedMessages;
-          continue;
-        }
-
-        nextMessages = [
-          ...nextMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          },
-        ];
-      }
-
-      return nextMessages;
-    },
-    []
-  );
-
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
@@ -364,7 +336,7 @@ export function MultiModelChatCard({
         setWidgetStateQueue((previous) => [...previous, { toolCallId, state }]);
       }
     },
-    [applyWidgetStateUpdates, setMessages, status]
+    [setMessages, status],
   );
 
   useEffect(() => {
@@ -376,7 +348,7 @@ export function MultiModelChatCard({
       applyWidgetStateUpdates(previousMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
-  }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
+  }, [setMessages, status, widgetStateQueue]);
 
   useEffect(() => {
     if (!broadcastRequest) {
@@ -496,13 +468,24 @@ export function MultiModelChatCard({
     >
       <ModelCompareCardHeader
         model={model}
+        compareLabel={compareLabel}
         summary={summary}
         allSummaries={comparisonSummaries}
         mode={activeTraceViewMode}
         onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
         showComparisonChrome={showComparisonChrome}
+        titleAccessory={
+          effort && showEffort ? (
+            <CompareCardEffort model={model} {...effort} />
+          ) : null
+        }
       />
+      {effort && showEffort && !showComparisonChrome ? (
+        <div className="flex shrink-0 items-center justify-end border-b border-border/60 px-3 py-1">
+          <CompareCardEffort model={model} {...effort} />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
@@ -589,9 +572,7 @@ export function MultiModelChatCard({
                 {activeTraceViewMode === "timeline" &&
                 !hasLiveTimelineContent ? (
                   <LiveTraceTimelineEmptyState
-                    testId={`multi-model-live-trace-pending-${String(
-                      model.id
-                    )}`}
+                    testId={`multi-model-live-trace-pending-${compareId}`}
                   />
                 ) : (
                   <TraceViewer

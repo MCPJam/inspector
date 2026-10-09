@@ -19,12 +19,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: (name: string) =>
     name === "testSuites:applySuiteSettings"
       ? mocks.applySuiteSettings
       : mocks.updateTestSuite,
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
@@ -82,6 +86,7 @@ vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../suite-header", () => ({
@@ -224,7 +229,7 @@ describe("suite settings ledger", () => {
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
     expect(
-      screen.getByRole("heading", { name: "Checks by stage" }),
+      screen.getByRole("heading", { name: "Evaluators" }),
     ).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(

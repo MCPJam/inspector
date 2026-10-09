@@ -83,7 +83,7 @@ describe("useServerForm", () => {
       result.current.setUrl("foo");
     });
 
-    expect(result.current.validateForm()).toBe("Invalid URL format");
+    expect(result.current.validateForm()).toBe("Enter a complete server URL, such as https://example.com/mcp.");
   });
 
   it("allows valid HTTP URLs when HTTPS is not required", () => {

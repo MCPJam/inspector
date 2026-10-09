@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type OrganizationMembershipRole = "owner" | "admin" | "member" | "guest";
@@ -196,13 +196,9 @@ export function useOrganizationMutations() {
     "organizations:transferOrganizationOwnership" as any,
   );
   const removeMember = useMutation("organizations:removeMember" as any);
-  const generateLogoUploadUrl = useAction(
-    "organizations:generateOrganizationLogoUploadUrl" as any,
-  );
-  const updateOrganizationLogo = useMutation(
-    "organizations:updateOrganizationLogo" as any,
-  );
 
+  // Logo uploads go through the backend upload route (`useImageUpload`), not
+  // a Convex mutation.
   return {
     createOrganization,
     updateOrganization,
@@ -211,7 +207,5 @@ export function useOrganizationMutations() {
     changeMemberRole,
     transferOrganizationOwnership,
     removeMember,
-    generateLogoUploadUrl,
-    updateOrganizationLogo,
   };
 }

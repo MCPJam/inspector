@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
+import {
+  modelDisplayName,
+  ModelDisplayNamesContext,
+} from "@/lib/model-display-name";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
@@ -11,6 +15,12 @@ import {
   isRunnerReportedCost,
 } from "./helpers";
 import { IterationDetails } from "./iteration-details";
+import {
+  iterationReasoningEffort,
+  runMetricsFromIterations,
+} from "./run-metrics";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { summarizeTrialChain } from "@/components/evaluate/stage-trial-model";
 import type { EvalCase, EvalIteration } from "./types";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
@@ -76,6 +86,7 @@ export function TestCaseIterationsTable({
 }: TestCaseIterationsTableProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
+  const availableModels = useContext(ModelDisplayNamesContext);
   const sortedIterations = (() => {
     if (sortMode === "chronological") {
       return [...iterations].sort(
@@ -94,6 +105,23 @@ export function TestCaseIterationsTable({
     });
     return [...failing, ...passing, ...other];
   })();
+  // One entry per target (model × effort), from the same fold the run rollup
+  // uses. Summarized only when the rows span more than one target.
+  const targets =
+    iterations.length > 0 ? runMetricsFromIterations(iterations).models : [];
+  // The fold keys by bare model id; the display name needs the provider too,
+  // or one id shared by two providers resolves to the wrong one.
+  const targetModelName = (model: string) => {
+    const provider = iterations.find(
+      (row) => row.testCaseSnapshot?.model?.trim() === model,
+    )?.testCaseSnapshot?.provider;
+    return modelDisplayName(
+      provider ? `${provider}/${model}` : model,
+      availableModels,
+    );
+  };
+  const effortSuffix = (effort: string | undefined) =>
+    effort ? ` · ${reasoningEffortLabel(effort as ModelReasoningEffort)}` : "";
 
   return (
     <div className="space-y-2">
@@ -101,6 +129,30 @@ export function TestCaseIterationsTable({
         <Label className="text-xs font-medium text-muted-foreground">
           {label}
         </Label>
+      ) : null}
+      {targets.length > 1 ? (
+        <div
+          className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground"
+          data-testid="iteration-target-summary"
+        >
+          {targets.map((target) => (
+            <span
+              key={`${target.model}::${target.reasoningEffort ?? "default"}`}
+              data-testid="iteration-target"
+            >
+              <span className="font-mono text-foreground">
+                {targetModelName(target.model)}
+                {effortSuffix(target.reasoningEffort)}
+              </span>
+              {` ${target.passed}/${target.total} passed · ${formatCostOrDash(
+                target.costUsd,
+              )}`}
+              {typeof target.reasoningTokens === "number"
+                ? ` · ${target.reasoningTokens.toLocaleString()} reasoning`
+                : ""}
+            </span>
+          ))}
+        </div>
       ) : null}
       {iterations.length === 0 ? (
         <div className="py-12 text-center text-sm text-muted-foreground">
@@ -117,6 +169,7 @@ export function TestCaseIterationsTable({
               <div className="min-w-[120px] text-left">Model</div>
               <div className="min-w-[50px] text-center">Calls</div>
               <div className="min-w-[60px] text-center">Tokens</div>
+              <div className="min-w-[70px] text-center">Reasoning</div>
               <div className="min-w-[70px] text-right">Cost</div>
               <div className="min-w-[40px] text-right">Time</div>
               <div className="min-w-[80px] text-right">When</div>
@@ -139,6 +192,15 @@ export function TestCaseIterationsTable({
               iteration.status === "running" ||
               computedResult === "pending";
             const isOpen = openIterationId === iteration._id;
+            // The target is model × effort: two efforts of one model are two
+            // targets, so the effort rides beside the model name.
+            const modelLabel = snapshot
+              ? `${modelDisplayName(
+                  `${snapshot.provider}/${snapshot.model}`,
+                  availableModels,
+                )}${effortSuffix(iterationReasoningEffort(iteration))}`
+              : "—";
+            const reasoningTokens = iteration.usage?.reasoningTokens;
 
             return (
               <div
@@ -202,12 +264,11 @@ export function TestCaseIterationsTable({
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-                    <div className="min-w-[120px] text-left truncate">
-                      <span className="font-mono text-xs">
-                        {snapshot
-                          ? `${snapshot.provider}/${snapshot.model}`
-                          : "—"}
-                      </span>
+                    <div
+                      className="min-w-[120px] text-left truncate"
+                      title={snapshot ? modelLabel : undefined}
+                    >
+                      <span className="font-mono text-xs">{modelLabel}</span>
                     </div>
                     <div className="min-w-[50px] text-center">
                       <span className="font-mono">
@@ -219,6 +280,13 @@ export function TestCaseIterationsTable({
                         {isPending
                           ? "—"
                           : Number(iteration.tokensUsed || 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="min-w-[70px] text-center">
+                      <span className="font-mono">
+                        {isPending || typeof reasoningTokens !== "number"
+                          ? "—"
+                          : reasoningTokens.toLocaleString()}
                       </span>
                     </div>
                     <div

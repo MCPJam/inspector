@@ -1,3 +1,6 @@
+import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
@@ -28,6 +31,7 @@ import {
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  LaunchJourneyRunError,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
@@ -74,6 +78,7 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
@@ -90,26 +95,9 @@ export type JourneyRunSelection = {
 
 export type JourneyCellOutcome = "pass" | "fail" | "part" | "running" | "none";
 
-const CELL_STATUS_META: Record<
-  Exclude<JourneyCellOutcome, "none">,
-  { label: string; dot: string; text: string }
-> = {
-  pass: { label: "Pass", dot: "bg-success", text: "text-success" },
-  fail: { label: "Fail", dot: "bg-destructive", text: "text-destructive" },
-  part: {
-    label: "Partial",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-  },
-  running: {
-    label: "Running",
-    dot: "bg-muted-foreground animate-pulse",
-    text: "text-muted-foreground",
-  },
-};
-
 /** Trend-segment fills — same palette as the evals RunTrendStrip. */
-const SEGMENT_CLASS: Record<Exclude<JourneyCellOutcome, "none">, string> = {
+const SEGMENT_CLASS: Record<JourneyCellOutcome, string> = {
+  none: "bg-muted",
   pass: "bg-success/70",
   fail: "bg-destructive/70",
   part: "bg-amber-500/70 dark:bg-amber-400/70",
@@ -163,23 +151,24 @@ export function journeyHostOutcome(
   run: JourneyRun,
   targetKey: string,
 ): JourneyCellOutcome {
-  const entry = run.hostSummaries.find(
-    (h) => summaryTargetKey(h) === targetKey,
+  if (run.status === "running" || run.verdictSummary?.status === "pending")
+    return "running";
+  if (run.verdictSummary?.status !== "decided") return "none";
+  const decision = run.verdictSummary.decision.cases.find(
+    (c) =>
+      c.caseId ===
+      swarmTargetCaseId(
+        run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)
+          ?.targetId ?? targetKey,
+      ),
   );
-  if (!entry || entry.total === 0) {
-    return run.status === "running" ? "running" : "none";
-  }
-  const done = entry.succeeded + entry.failed + entry.rateLimited;
-  if (run.status === "running" && done < entry.total) return "running";
-  if (entry.succeeded === entry.total) return "pass";
-  if (entry.succeeded === 0) return "fail";
-  return "part";
-}
-
-function hostSummaryFor(run: JourneyRun, targetKey: string) {
-  return (
-    run.hostSummaries.find((h) => summaryTargetKey(h) === targetKey) ?? null
-  );
+  return decision?.verdict === "passed"
+    ? "pass"
+    : decision?.verdict === "failed"
+      ? "fail"
+      : decision?.verdict === "inconclusive"
+        ? "part"
+        : "none";
 }
 
 /** Per-journey blocks: each journey shows its own hosts as result cells. */
@@ -311,8 +300,8 @@ function JourneyBlock({
     [journey, hosts, latestRun, environments, environmentsEnabled],
   );
   const serverGroupName = journey.serverAttachmentId
-    ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null
+    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null)
     : null;
   const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
@@ -358,6 +347,10 @@ function JourneyBlock({
       if (result.status === "already_launching") return;
       toast.success("Goal run started");
     } catch (e) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it inline under the goal
+      // would say the same thing twice with nothing to act on.
+      if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
@@ -489,8 +482,6 @@ function JourneyBlock({
           }
 
           const outcome = journeyHostOutcome(latestRun, col.key);
-          const meta = outcome === "none" ? null : CELL_STATUS_META[outcome];
-          const summary = hostSummaryFor(latestRun, col.key);
           // Oldest → newest, capped like the evals trend strip.
           const trendRuns = [...typedRuns]
             .reverse()
@@ -498,14 +489,6 @@ function JourneyBlock({
               run: r,
               outcome: journeyHostOutcome(r, col.key),
             }))
-            .filter(
-              (
-                p,
-              ): p is {
-                run: JourneyRun;
-                outcome: Exclude<JourneyCellOutcome, "none">;
-              } => p.outcome !== "none",
-            )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
             selection?.targetKey === col.key &&
@@ -526,11 +509,6 @@ function JourneyBlock({
                 data-testid="journey-host-cell"
                 data-outcome={outcome}
                 aria-label={`Open runs for ${journey.goal} on ${col.label}`}
-                title={
-                  summary
-                    ? `Latest run on ${col.label}: ${summary.succeeded}/${summary.total} sessions ok`
-                    : undefined
-                }
                 onClick={() => openRun(latestRun, col.key)}
                 className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -538,21 +516,6 @@ function JourneyBlock({
                   <JourneyHostLogoMark label={col.label} />
                   <span className="truncate text-[11px] font-medium text-foreground/80">
                     {col.label}
-                  </span>
-                </span>
-                <span className="inline-flex shrink-0 items-center gap-1.5">
-                  {meta ? (
-                    <span className={cn("size-1.5 rounded-full", meta.dot)} />
-                  ) : null}
-                  <span
-                    className={cn(
-                      "text-[11px] font-semibold tabular-nums",
-                      meta?.text ?? "text-muted-foreground",
-                    )}
-                  >
-                    {summary
-                      ? `${summary.succeeded}/${summary.total} ok`
-                      : meta?.label ?? "No data"}
                   </span>
                 </span>
               </button>
@@ -637,7 +600,9 @@ function JourneyGradingEditor({
   projectId: string;
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
@@ -679,7 +644,7 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update grading");
+      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
     } finally {
       setSaving(false);
     }
@@ -696,7 +661,7 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "check" : "checks"}`
+              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -714,11 +679,13 @@ function JourneyGradingEditor({
           resource="swarm settings"
         >
           <JudgesSection
+            policy={journey.judgePolicy}
             chrome="bare"
             value={judgeConfig}
             onChange={setJudgeConfig}
             availableModels={availableModels}
-            bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits."
+            saveModelSelections={modelSelectionsSupported}
+            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">
@@ -827,9 +794,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -863,9 +828,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -873,8 +836,8 @@ function JourneyEnvironmentsEditor({
 
   const label =
     current.length === 1
-      ? environments.find((e) => e.environmentId === current[0])?.name ??
-        "1 environment"
+      ? (environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment")
       : `${current.length} environments`;
 
   return (

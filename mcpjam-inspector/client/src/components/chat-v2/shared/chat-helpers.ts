@@ -1,6 +1,13 @@
-import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
+import { messagePartPlainText } from "@/shared/plugin-message";
+import { looksLikeErrorPage } from "@/shared/error-page";
+import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
+import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
+import {
+  buildSkillContextMessages as buildSkillContextMessagesFor,
+  promptExampleContextText,
+} from "@/shared/user-context-message";
 
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -110,6 +117,9 @@ const MCPJAM_PLATFORM_CODES = [
   MCPJAM_RATE_LIMIT_CODE,
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's hosted gateway: our setting, not
+  // the user's key. `ErrorBox` gives it its own banner.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ];
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
@@ -396,6 +406,29 @@ const formatMCPJamModelLimit = (
     : {}),
 });
 
+function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
+  const sentinel =
+    "Backend step returned no content (stream error or empty response)";
+  if (
+    typeof message !== "string" ||
+    !message.startsWith(sentinel) ||
+    (message !== sentinel &&
+      (!message.includes(
+        "the model emitted no text, no reasoning and no tool call",
+      ) ||
+        !/\(finishReason: (?:none reported|stop|tool-calls|error|other|unknown)\)/.test(
+          message,
+        )))
+  )
+    return null;
+  return {
+    message: "The model returned no response. Please try again.",
+    code: "provider_empty_response",
+    isRetryable: true,
+    details: JSON.stringify({ message }),
+  };
+}
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -426,8 +459,14 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         typeof parsed.walletLocked === "boolean"
           ? parsed.walletLocked
           : undefined;
+      // `holds_committed` arrives as `limitKind: "total"`, but it is the
+      // concurrency case: other in-flight requests hold the last credits and
+      // the backend says retry shortly. Rendering it as a spent allowance
+      // hid it entirely, since the out-of-credits dialog is not raised for it.
       const limitKind =
-        parsed.limitKind === "total" || parsed.limitKind === "concurrency"
+        parsed.refusalReason === "holds_committed"
+          ? "concurrency"
+          : parsed.limitKind === "total" || parsed.limitKind === "concurrency"
           ? parsed.limitKind
           : undefined;
       // `retryAfterMs` is only meaningful for the concurrency banner (which
@@ -455,6 +494,17 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           },
         );
       }
+
+      const emptyResponse = summarizeEmptyModelResponse(message);
+      if (emptyResponse)
+        return {
+          ...emptyResponse,
+          ...(typeof code === "string" ? { code } : {}),
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+          details: preserveServerMessageInDetails(message, parsed.details),
+        };
 
       // Connection failures get human copy; the server's own wording stays
       // reachable under "More details" rather than leading the banner. Copy
@@ -518,6 +568,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
   const protocolPin = summarizeProtocolVersionPin(errorString);
   if (protocolPin) return protocolPin;
 
+  const emptyResponse = summarizeEmptyModelResponse(errorString);
+  if (emptyResponse) return emptyResponse;
+
   const opaque = summarizeOpaquePayload(errorString);
   if (opaque) return opaque;
 
@@ -538,35 +591,6 @@ const RAW_PAYLOAD_MAX = 4000;
  * order mark, whitespace, HTML comments, an XML declaration. Gateways and
  * proxies prepend these freely.
  */
-const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
-
-/** Markup that can only be a document, once any preamble is stripped. */
-const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
-
-/**
- * The one marker conclusive wherever it appears. `<html>` is NOT: error text
- * quotes it ("expected <html> but the tool returned a number"), and treating
- * that as a document would summarize a perfectly readable message away.
- */
-const DOCTYPE_MARKER = /<!doctype\s+html/i;
-
-/**
- * Detection has to survive bodies that are not well-formed documents. A
- * truncated or streamed response never reaches `</html>`; a proxy may prepend
- * a comment or an XML declaration; a fragment may begin at `<head>` with no
- * doctype at all. Matching only "starts with `<html`" or "ends with
- * `</html>`" let all of those through to be rendered as raw markup — the
- * exact failure this function exists to prevent.
- *
- * The start-anchored check runs against the preamble-stripped body so that
- * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
- * mistaken for a document.
- */
-function looksLikeErrorPage(trimmed: string): boolean {
-  if (DOCTYPE_MARKER.test(trimmed)) return true;
-  if (/<\/html>\s*$/i.test(trimmed)) return true;
-  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
-}
 
 /**
  * `code` carried by a formatted upstream-error-page failure.
@@ -770,13 +794,20 @@ export function buildMcpPromptMessages(
         ? (promptMessage.role as UIMessage["role"])
         : ("user" as UIMessage["role"]);
 
+      // An example assistant turn from the prompt is sent as labelled user
+      // text: the user chose the prompt, so its content is theirs to send,
+      // and the assistant turns in the conversation stay the model's own
+      // (MJ-009).
+      const isAssistantExample = role === "assistant";
       messages.push({
         id: `mcp-prompt-${result.namespacedName}-${index}-${generateId()}`,
-        role,
+        role: isAssistantExample ? "user" : role,
         parts: [
           {
             type: "text",
-            text: `[${result.namespacedName}] ${text}`,
+            text: isAssistantExample
+              ? promptExampleContextText(result.namespacedName, text)
+              : `[${result.namespacedName}] ${text}`,
           },
         ],
       });
@@ -787,95 +818,14 @@ export function buildMcpPromptMessages(
 }
 
 /**
- * A skill name, reduced to the character set a provider accepts inside a
- * `tool_use.id`.
- *
- * Anthropic validates those ids against `^[a-zA-Z0-9_-]+$` and rejects the
- * whole request otherwise. A SERVER-SERVED skill (SEP-2640) is addressed by a
- * namespaced ref — `<server>/<skill>` — so its `/` made every follow-up turn
- * fail with `messages.N.content.M.tool_use.id: String should match pattern`,
- * and the transcript could not be continued at all. Cloud and local skills are
- * plain slugs, which is why the id survived unsanitized until server skills
- * introduced a separator into the name.
- *
- * The name is in the id for debuggability only — `generateId()` supplies the
- * uniqueness — so replacing rather than dropping the offending characters
- * keeps the id readable while making it valid. Sanitized at the ONE place ids
- * are minted rather than by narrowing refs upstream: the ref's shape is the
- * namespacing contract the picker and `loadSkill` both compute, and bending it
- * to a provider's id rules would make two unrelated concerns share a format.
+ * The skills the user picked in the composer, as user messages sent ahead of
+ * their next message: each carries the text `loadSkill` returns for the skill
+ * and every file the user selected (see `shared/user-context-message.ts`).
  */
-function toolCallIdSegment(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]+/g, "_");
-}
-
-/**
- * Builds UIMessages that simulate the LLM calling loadSkill tool.
- * Creates assistant messages with tool invocations instead of user messages.
- */
-export function buildSkillToolMessages(
+export function buildSkillContextMessages(
   skillResults: SkillResult[],
 ): UIMessage[] {
-  const messages: UIMessage[] = [];
-
-  for (const skill of skillResults) {
-    if (!skill.content) continue;
-
-    const toolCallId = `skill-load-${toolCallIdSegment(
-      skill.name
-    )}-${generateId()}`;
-
-    // Format output to match server-side loadSkill response.
-    //
-    // `toolOutput` is the escape hatch for a SERVER-SERVED skill (SEP-2640):
-    // its `loadSkill` result is the shared origin banner plus the body, and the
-    // banner already carries the `# Skill: <ref>` heading. Re-prefixing here
-    // would produce a message the tool could never have returned, breaking the
-    // "injection is indistinguishable from a real tool result" invariant this
-    // whole function exists to maintain.
-    const skillOutput =
-      skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`;
-
-    // Build parts array
-    const parts: UIMessage["parts"] = [];
-
-    // Add loadSkill tool part
-    const loadSkillPart: DynamicToolUIPart = {
-      type: "dynamic-tool",
-      toolCallId,
-      toolName: "loadSkill",
-      state: "output-available",
-      input: { name: skill.name },
-      output: skillOutput,
-    };
-    parts.push(loadSkillPart);
-
-    // Add readSkillFile parts for selected files
-    if (skill.selectedFiles && skill.selectedFiles.length > 0) {
-      for (const file of skill.selectedFiles) {
-        const fileToolCallId = `skill-file-${generateId()}`;
-
-        const readFilePart: DynamicToolUIPart = {
-          type: "dynamic-tool",
-          toolCallId: fileToolCallId,
-          toolName: "readSkillFile",
-          state: "output-available",
-          input: { name: skill.name, path: file.path },
-          output: `# File: ${file.path}\n\n\`\`\`\n${file.content}\n\`\`\``,
-        };
-        parts.push(readFilePart);
-      }
-    }
-
-    // Create assistant message with tool invocations
-    messages.push({
-      id: `assistant-skill-${skill.name}-${generateId()}`,
-      role: "assistant",
-      parts,
-    });
-  }
-
-  return messages;
+  return buildSkillContextMessagesFor(skillResults);
 }
 
 /** Deep-clone UI messages for seeding compare columns or restoring threads. */
@@ -885,14 +835,9 @@ export function cloneUiMessages(messages: UIMessage[]): UIMessage[] {
 
 /** First text part of a user message, used to seed prompt previews. */
 export function extractUserMessageText(message: UIMessage): string {
-  const parts = (message.parts ?? []) as Array<{
-    type?: string;
-    text?: unknown;
-  }>;
-  for (const part of parts) {
-    if (part?.type === "text" && typeof part.text === "string") {
-      return part.text;
-    }
+  for (const part of message.parts ?? []) {
+    const text = messagePartPlainText(part);
+    if (text !== undefined) return text;
   }
   return "";
 }

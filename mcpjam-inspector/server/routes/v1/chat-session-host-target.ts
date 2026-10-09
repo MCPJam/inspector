@@ -37,10 +37,22 @@
  * are refused by name. See {@link resolveChatSessionEngine}.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
-import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
+import {
+  readXaaEnterprisePolicy,
+  type ModelReasoningEffort,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
+import { selectionIfMatches } from "@mcpjam/sdk/browser";
+import {
+  readRoutingSelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
+import { routingSelectionForModel } from "../../utils/selection-rail.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
+  selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -140,8 +152,47 @@ export type ChatSessionEngineRefusal = {
 };
 
 export type ChatSessionEngineResult =
-  | { ok: true; engine: ChatSessionEngine }
+  | {
+      ok: true;
+      engine: ChatSessionEngine;
+      /** Set when the turn may run but the evidence table has not verified
+       *  this harness × model pair ("not verified for <harness> <version>"). */
+      warning?: string;
+    }
   | ({ ok: false } & ChatSessionEngineRefusal);
+
+/**
+ * The host's saved model selection, only when it is for `modelId`.
+ *
+ * A saved selection (and the reasoning effort in its settings) belongs to one
+ * model; a turn that names a different model must not inherit it. Read with the
+ * SDK validator, so a malformed stored selection reads as none.
+ */
+export function hostSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  modelId: string,
+): ModelSelection | undefined {
+  return selectionIfMatches(
+    readStoredModelSelection(runtimeConfig?.modelSelection),
+    modelId,
+  );
+}
+
+/**
+ * The selection that DECIDES THE RAIL for this turn's model: the host's saved
+ * selection, or a STORED legacy one ("own key only"), only when it is for
+ * `model`. `undefined` for an unlabelled host (today's hosted-list routing) or
+ * a turn on a different model.
+ */
+export function hostRoutingSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  model: { id: string | { toString(): string }; provider?: string },
+): RequestedModelSelection | undefined {
+  return routingSelectionForModel(
+    readRoutingSelection(runtimeConfig?.modelSelection),
+    model,
+  );
+}
 
 /**
  * Decide the engine, or refuse with a named reason. Never falls back.
@@ -196,11 +247,22 @@ export type ChatSessionEngineResult =
  *     The escapes are both lossless: `environmentId` pins a host durably, and
  *     `hostId` alone plus per-turn `allowedServerIds` narrows the same set.
  */
+
 export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
   hostTarget?: ChatSessionHostTarget;
   /** The turn's RESOLVED model definition (id + provider), never the raw pin. */
-  model: { id: string; provider?: string };
+  model: {
+    id: string;
+    provider?: string;
+    /**
+     * `false` when the host's saved selection routes the turn OFF MCPJam
+     * credits (`withSelectionRouting`): the harness gate must see it, or a
+     * harness would run an own-key model on MCPJam's lease.
+     */
+    hosted?: boolean;
+    supportedReasoningEfforts?: readonly string[];
+  };
   /** The server set this turn will actually connect. */
   hasSelectedMcpServers: boolean;
   /** The turn's effective tool policy, exactly as the route will apply it. */
@@ -217,6 +279,13 @@ export function resolveChatSessionEngine(args: {
    * to resolve without the caller's help. See the unpinnable-host rule above.
    */
   sessionPinsOwnServerIds: boolean;
+  /**
+   * The effort this turn will run at when it is not the host's saved one (the
+   * request's own, or the one the session pinned). Wins over the host's, like
+   * `/stream` prefers a top-level effort over a selection — so a typed effort
+   * on a harness host is refused up front instead of dropped.
+   */
+  reasoningEffort?: ModelReasoningEffort;
 }): ChatSessionEngineResult {
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
@@ -226,6 +295,10 @@ export function resolveChatSessionEngine(args: {
 
   // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
+
+  const hostEffort =
+    args.reasoningEffort ??
+    selectionReasoningEffort(hostSelectionForModel(hostConfig, args.model.id));
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
@@ -237,6 +310,13 @@ export function resolveChatSessionEngine(args: {
     // never be MORE permissive than a valid one.
     xaaEnterprisePolicyOn:
       readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
+    // An API chat turn is chat: an unverified harness × model pair runs, and
+    // the verdict's reason comes back as `warning`.
+    purpose: "chat",
+    // The host's saved effort, when its selection names the model this turn
+    // runs. A harness that cannot apply it refuses the turn instead of running
+    // without it.
+    ...(hostEffort !== undefined ? { reasoningEffort: hostEffort } : {}),
   });
   if (!availability.ok) {
     return {
@@ -311,6 +391,7 @@ export function resolveChatSessionEngine(args: {
   return {
     ok: true,
     engine: { kind: "harness", harness, hostId: args.hostTarget.hostId },
+    ...(availability.warning ? { warning: availability.warning } : {}),
   };
 }
 
@@ -318,13 +399,10 @@ export function resolveChatSessionEngine(args: {
  * The LAST line of defence: a harness that reached dispatch must be on an
  * engine that can actually run it.
  *
- * `runAssistantTurn` deliberately does NOT hard-fail an ineligible harness —
- * it logs and runs the emulated engine, because eval/synthetic batches forward
- * `harness` unconditionally and must not lose a whole run to one bad case. On
- * an interactive surface that leniency is the bug: the turn would answer 200
- * and be attributed to a runtime it never touched. `resolveTurnRuntime` can
- * also hand back a DIRECT (local-BYOK) runtime, which drops `harness` on the
- * floor entirely.
+ * `runAssistantTurn` throws on an ineligible harness model rather than run the
+ * emulated engine, but `resolveTurnRuntime` can also hand back a DIRECT
+ * (local-BYOK) runtime, which drops `harness` on the floor entirely — the turn
+ * would answer 200 and be attributed to a runtime it never touched.
  *
  * The preflight above should have caught both (a BYOK model is not an
  * MCPJam-hosted one, and the shared gate refuses it), so reaching this is a

@@ -1,7 +1,12 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   Harness,
   McpToolResultImageRenderingPolicy,
@@ -104,6 +109,12 @@ export interface ResumeConfig {
   executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort the conversation ran at, so a reopened chat restores
+   * it. Mirrors `chatResumeConfigValidator.reasoningEffort` in the backend;
+   * absent when the turn had none.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -238,6 +249,13 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  connectionsAtTurn?: Array<{
+    serverId: string;
+    connectionId: string;
+    label: string;
+    profileId?: string;
+  }>;
+  requestPayloads?: PersistedRequestPayloadEntry[];
   turnId: string;
   browserAtTurn?: {
     browserSessionId: string;
@@ -308,6 +326,12 @@ export type ChatOrigin =
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
+  /**
+   * The selection this turn ran, with the effort it applied
+   * (`ranTurnSelection`). The session records it beside `modelId`; last turn
+   * wins, and a turn that sends none clears it.
+   */
+  modelSelection?: RequestedModelSelection;
   /**
    * Who paid for the turn's model spend. Hand-mirrors the backend's
    * `chatModelSourceValidator`.
@@ -558,6 +582,9 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
   const body = JSON.stringify({
     chatSessionId: options.chatSessionId,
     modelId: options.modelId,
+    ...(options.modelSelection
+      ? { modelSelection: options.modelSelection }
+      : {}),
     modelSource: options.modelSource,
     ...(options.projectId ? { projectId: options.projectId } : {}),
     ...(options.sourceType ? { sourceType: options.sourceType } : {}),

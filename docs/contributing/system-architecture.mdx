@@ -787,15 +787,15 @@ flowchart LR
   <Tab title="Docker Deployment">
     **Build Image:**
     ```bash
-    docker build -t mcpjam/inspector .
+    docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
     ```
 
     **Run Container:**
     ```bash
-    docker run -p 6274:6274 mcpjam/inspector
+    docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
     ```
 
-    **Includes:** Complete application in Alpine Linux
+    **Includes:** Complete application on a Debian (`node:*-bookworm-slim`) base image
 
   </Tab>
 </Tabs>

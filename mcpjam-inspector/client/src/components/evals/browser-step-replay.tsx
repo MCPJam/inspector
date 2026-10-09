@@ -1,3 +1,4 @@
+import { RecordedPluginWorkspace } from "@/components/plugin-workspace/PluginWorkspaceReplay";
 /**
  * browser-step-replay.tsx — the shared vocabulary and UI for one recorded
  * browser interaction step, plus the filmstrip that ties a run's steps to its
@@ -19,6 +20,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  handleArtifactMediaError,
+  handleArtifactMediaLoad,
+  useFreshArtifactUrl,
+} from "@/lib/artifact-urls";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceVideoMeta,
@@ -240,8 +247,13 @@ export function BrowserStepDetail({
         <p className="text-xs text-destructive">{step.assertion.reason}</p>
       ) : null}
 
-      {step.screenshotUrl ? (
-        <img
+      {step.pluginWorkspace ? (
+        <RecordedPluginWorkspace
+          recording={step.pluginWorkspace}
+          screenshotUrl={step.screenshotUrl}
+        />
+      ) : step.screenshotUrl ? (
+        <ArtifactImage
           src={step.screenshotUrl}
           alt={browserStepLabel(step)}
           className="max-h-72 w-full rounded-md border border-border/50 object-contain"
@@ -361,9 +373,20 @@ export function BrowserStepFilmstrip({
   // Cleared by `seeked` — the browser's own signal that the seek is done.
   const pendingSeekTargetRef = useRef<number | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
+  // A failed load that could not ask for a new link yet: the link to load
+  // again, and after how long (see the effect below).
+  const [videoRetry, setVideoRetry] = useState<{
+    url: string;
+    delayMs: number;
+  } | null>(null);
 
-  const resolvedVideoUrl = replayVideoUrl(videoUrl);
-  const videoSummary = useMemo(() => summarizeRecording(videoMeta), [videoMeta]);
+  // An artifact link expires; the freshest one known for the recording is
+  // played, and a failed load asks for a new one (see `onError` below).
+  const resolvedVideoUrl = useFreshArtifactUrl(replayVideoUrl(videoUrl));
+  const videoSummary = useMemo(
+    () => summarizeRecording(videoMeta),
+    [videoMeta],
+  );
 
   const ordered = useMemo(
     () =>
@@ -438,10 +461,24 @@ export function BrowserStepFilmstrip({
   }, [ordered, selectedKey]);
 
   // A run whose steps arrive before its video (mid-run, or a dropped upload)
-  // must not keep showing a stale failure state once the video lands.
+  // must not keep showing a stale failure state once the video lands — or
+  // once a renewed link for it does.
   useEffect(() => {
     setVideoFailed(false);
-  }, [videoUrl]);
+  }, [resolvedVideoUrl]);
+
+  // A failure while link refreshes were throttled asked for nothing. Load the
+  // same link again once a refresh may start; if that load fails too, it asks
+  // for one. Bound to the link it was scheduled for, so a renewed link or an
+  // unmount cancels it.
+  useEffect(() => {
+    if (!videoRetry || videoRetry.url !== resolvedVideoUrl) return;
+    const timer = setTimeout(() => {
+      setVideoRetry(null);
+      setVideoFailed(false);
+    }, videoRetry.delayMs);
+    return () => clearTimeout(timer);
+  }, [videoRetry, resolvedVideoUrl]);
 
   if (ordered.length === 0 && !resolvedVideoUrl) {
     return (
@@ -504,7 +541,17 @@ export function BrowserStepFilmstrip({
             preload="metadata"
             onTimeUpdate={onTimeUpdate}
             onSeeked={onSeeked}
-            onError={() => setVideoFailed(true)}
+            onError={() => {
+              const retryInMs = handleArtifactMediaError(resolvedVideoUrl);
+              setVideoFailed(true);
+              setVideoRetry(
+                retryInMs !== null && retryInMs > 0
+                  ? { url: resolvedVideoUrl, delayMs: retryInMs }
+                  : null,
+              );
+            }}
+            // `preload="metadata"`: metadata is the load that always happens.
+            onLoadedMetadata={() => handleArtifactMediaLoad(resolvedVideoUrl)}
             className="w-full rounded-md border border-border/60 bg-black"
             data-testid="browser-replay-video"
           />
@@ -553,8 +600,12 @@ export function BrowserStepFilmstrip({
                       : "border-border/50 hover:border-border",
                   )}
                 >
-                  {step.screenshotUrl ? (
-                    <img
+                  {step.pluginWorkspace ? (
+                    <span className="text-xs text-muted-foreground">
+                      Workspace capture
+                    </span>
+                  ) : step.screenshotUrl ? (
+                    <ArtifactImage
                       src={step.screenshotUrl}
                       alt={browserStepLabel(step)}
                       loading="lazy"

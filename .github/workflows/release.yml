@@ -1,17 +1,17 @@
 name: Release
 
+# Ships the versions `main` already carries. They arrive through the version PR
+# (prepare-release.yml), and release-trigger.yml dispatches this once `main` is
+# green with them on it. This run publishes whatever public package version npm
+# does not have yet, deploys, tags the commit and publishes the GitHub release.
+# It never writes to `main`, whose rulesets take changes only through a
+# reviewed pull request. Dispatching it by hand (Soundcheck's "Run release now")
+# is the retry path.
+run-name: ${{ inputs.versions != '' && format('Release {0}', inputs.versions) || 'Release' }}
+
 on:
   workflow_dispatch:
     inputs:
-      scope:
-        description: "Which release surface to publish"
-        required: true
-        default: full
-        type: choice
-        options:
-          - packages-only
-          - inspector-only
-          - full
       deploy_backend_prod:
         description: "Dispatch backend production deployment"
         required: false
@@ -23,22 +23,59 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Skip the green-CI (Tests + Build and Test) preflight gates"
+        description: "Skip the verification gates: green CI (Tests + Build and Test), and the Ask MCPJam smoke"
         required: false
         default: false
         type: boolean
+      # Set by release-trigger.yml only. `versions` names the run, which is
+      # how the trigger recognises its own earlier attempt at the same
+      # versions; `trigger_sha` is the green commit it saw.
+      versions:
+        description: "Set by release-trigger.yml: the versions this run ships"
+        required: false
+        default: ""
+        type: string
+      trigger_sha:
+        description: "Set by release-trigger.yml: the commit it found green"
+        required: false
+        default: ""
+        type: string
+
+# One release at a time. A second dispatch waits, then finds its versions
+# already on npm.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   NODE_VERSION: "24.14.0"
+
+# Every Ubuntu job below runs on `vars.RELEASE_RUNNER` when it is set, else
+# `ubuntu-latest`. On the shared runners a release's short jobs (publish,
+# deploy, finalize) each queued behind pull-request CI — about 37 of release
+# 3.14.0's 91 minutes was waiting for a runner, not running. Point the
+# variable at a larger-runner label (Settings → Actions → Runners → New
+# GitHub-hosted runner; its own concurrency, not shared with PR CI) and the
+# release stops waiting. Unset, nothing changes.
 
 permissions:
   contents: write
   actions: read
   packages: write
+  # Read only: the local harness gate verifies pinned packs' provenance.
+  # `local-harness-contract` grants itself the OIDC and attestation writes it
+  # needs; no other job gets them.
+  attestations: read
 
 jobs:
   preflight:
-    runs-on: ubuntu-latest
+    # A trigger dispatch names the commit it found green, but a dispatch can
+    # only target `main`, so a push landing in between would run this on a
+    # commit nobody checked. Stand down instead: every job below skips, the
+    # run ends green without publishing, and the newer commit's own checks
+    # trigger the release again.
+    if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
       publish_evaluators: ${{ steps.plan.outputs.publish_evaluators }}
@@ -46,10 +83,16 @@ jobs:
       publish_cli: ${{ steps.plan.outputs.publish_cli }}
       publish_inspector: ${{ steps.plan.outputs.publish_inspector }}
       build_inspector_artifacts: ${{ steps.plan.outputs.build_inspector_artifacts }}
-      build_harness_pack: ${{ steps.plan.outputs.build_harness_pack }}
+      desktop_only: ${{ steps.plan.outputs.desktop_only }}
       inspector_version: ${{ steps.plan.outputs.inspector_version }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
+      evals_action_changed: ${{ steps.evals_action.outputs.changed }}
+      claude_desired_pack: ${{ steps.local_harness_packs.outputs.claude_desired }}
+      codex_desired_pack: ${{ steps.local_harness_packs.outputs.codex_desired }}
+      claude_permitted_pack: ${{ steps.local_harness_packs.outputs.claude_permitted }}
+      codex_permitted_pack: ${{ steps.local_harness_packs.outputs.codex_permitted }}
+      permitted_harnesses: ${{ steps.local_harness_packs.outputs.permitted_harnesses }}
     steps:
       - name: Enforce main branch
         run: |
@@ -59,12 +102,31 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      # The evals GitHub Action ships on its own tags, not on npm, so it has no
+      # changeset to read. Compare the folder against what `evals-v1` already
+      # points at instead. README-only edits are excluded deliberately: a live
+      # smoke spends eval credits, and prose does not change what users run.
+      - name: Detect evals action changes since evals-v1
+        id: evals_action
+        run: |
+          git fetch origin '+refs/tags/evals-v1:refs/tags/evals-v1' 2>/dev/null || true
+          if ! git rev-parse -q --verify 'refs/tags/evals-v1^{commit}' >/dev/null; then
+            echo "evals-v1 is unpublished; this release would be its first."
+            changed=true
+          elif git diff --quiet evals-v1 HEAD -- actions/evals ':(exclude)actions/evals/README.md'; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "actions/evals changed since evals-v1: $changed"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -82,7 +144,7 @@ jobs:
       # BOTH are required — neither alone covers what `verify` did.
       - name: Require green CI for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             // Fetch without branch/status filters — GitHub's search index can
@@ -141,7 +203,7 @@ jobs:
       # run has smoked.
       - name: Require green staging smoke for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const workflowId = "deploy-staging.yml";
@@ -174,129 +236,29 @@ jobs:
 
             core.info(`Found successful staging deploy run ${matchingRun.id} for ${headSha}.`);
 
-      - name: Compute changeset release plan
-        run: npx changeset status --output=.changeset/status.json
-
-      - name: Select release scope
+      # What ships is what `main` carries: every public package whose committed
+      # version npm does not have yet. The version PR put those versions there.
+      # Pending changesets belong to the NEXT release and play no part here.
+      # When npm has everything but the Inspector's GitHub release is missing
+      # (its desktop build failed after publishing), the plan is DESKTOP-ONLY:
+      # build the desktop apps and create the release, publish nothing. See
+      # .github/scripts/release-plan.mjs.
+      - name: Compute release plan
         id: plan
         env:
-          RELEASE_SCOPE: ${{ inputs.scope }}
-          DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
           DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          node <<'NODE'
-          const fs = require("node:fs");
+          node .github/scripts/unpublished-versions.mjs > "$RUNNER_TEMP/unpublished.json"
+          cat "$RUNNER_TEMP/unpublished.json"
+          node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json"
 
-          const status = JSON.parse(fs.readFileSync(".changeset/status.json", "utf8"));
-          const releases = new Map(
-            (status.releases || []).map((release) => [release.name, release])
-          );
-          const scope = process.env.RELEASE_SCOPE;
-
-          const changed = {
-            evaluators: releases.has("@mcpjam/evaluators"),
-            sdk: releases.has("@mcpjam/sdk"),
-            cli: releases.has("@mcpjam/cli"),
-            inspector: releases.has("@mcpjam/inspector"),
-          };
-
-          let selected = { ...changed };
-          if (scope === "packages-only") {
-            if (changed.inspector) {
-              throw new Error(
-                'scope="packages-only" cannot be used while @mcpjam/inspector has pending changesets.'
-              );
-            }
-            selected.inspector = false;
-          } else if (scope === "inspector-only") {
-            if (changed.evaluators || changed.sdk || changed.cli) {
-              throw new Error(
-                'scope="inspector-only" cannot be used while evaluators, sdk or cli have pending changesets.'
-              );
-            }
-            selected.evaluators = false;
-            selected.sdk = false;
-            selected.cli = false;
-          } else if (scope !== "full") {
-            throw new Error(`Unsupported release scope: ${scope}`);
-          }
-
-          if (!selected.evaluators && !selected.sdk && !selected.cli && !selected.inspector) {
-            throw new Error(
-              `Scope "${scope}" does not include any unpublished changesets.`
-            );
-          }
-
-          if (
-            process.env.DEPLOY_BACKEND_PROD === "true" &&
-            scope !== "full"
-          ) {
-            throw new Error(
-              "deploy_backend_prod=true is only supported with scope=full."
-            );
-          }
-
-          if (
-            process.env.DEPLOY_WEBAPP === "true" &&
-            !selected.inspector
-          ) {
-            throw new Error(
-              "deploy_webapp=true requires an inspector release in the selected scope. To deploy production without cutting a release, dispatch deploy-webapp.yml directly."
-            );
-          }
-
-          // Whether this release builds and publishes local-harness runtime
-          // packs, read from the digest table the Inspector build itself
-          // carries rather than from a dispatch input.
-          //
-          // `pack-digests.generated.ts` is written from a dispatched pack build
-          // and committed (docs/local-harness.md). Until that happens
-          // EXPECTED_PACK_VERSION is "", every `expectedPackFor` answers null,
-          // and the local harness is inert in the shipped build — so packs
-          // would be assets nothing can ask for, on a job whose enforcement
-          // step ("the committed digest table matches the packs this build
-          // produced") must fail by construction.
-          //
-          // Deriving it from the table means committing the digests IS the
-          // reintroduction: there is no second switch to remember, and no way
-          // to ship a build naming digests without building the packs they
-          // name — the failure direction this whole gate exists to prevent.
-          const packDigestsPath =
-            "mcpjam-inspector/server/utils/harness/local/pack-digests.generated.ts";
-          const packVersionMatch = fs
-            .readFileSync(packDigestsPath, "utf8")
-            .match(/EXPECTED_PACK_VERSION\s*=\s*"([^"]*)"/);
-          // A shape change there must update this script, not silently stop
-          // building the packs — a release that quietly skips them is exactly
-          // the state this file cannot detect on its own.
-          if (!packVersionMatch) {
-            throw new Error(
-              `Could not read EXPECTED_PACK_VERSION from ${packDigestsPath}.`
-            );
-          }
-
-          const inspectorVersion =
-            releases.get("@mcpjam/inspector")?.newVersion ?? "";
-          const outputs = {
-            scope,
-            publish_any: String(selected.evaluators || selected.sdk || selected.cli || selected.inspector),
-            publish_evaluators: String(selected.evaluators),
-            publish_sdk: String(selected.sdk),
-            publish_cli: String(selected.cli),
-            publish_inspector: String(selected.inspector),
-            build_inspector_artifacts: String(selected.inspector),
-            build_harness_pack: String(
-              selected.inspector && packVersionMatch[1] !== ""
-            ),
-            inspector_version: inspectorVersion,
-            release_tag: inspectorVersion ? `v${inspectorVersion}` : "",
-          };
-
-          const outputFile = process.env.GITHUB_OUTPUT;
-          for (const [key, value] of Object.entries(outputs)) {
-            fs.appendFileSync(outputFile, `${key}=${value}\n`);
-          }
-          NODE
+      # The published local Inspector uses production AuthKit. A code build
+      # can pass while its callback allowlist still rejects non-default ports.
+      - name: Verify production WorkOS loopback callbacks
+        if: steps.plan.outputs.inspector_version != '' && !fromJSON(inputs.skip_verify)
+        run: node .github/scripts/check-workos-loopback.mjs production
 
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
@@ -309,32 +271,114 @@ jobs:
       # release leaves `inspector_version` empty, and the checker rejects an
       # empty `--version` — failing the whole release over a gate that has
       # nothing to check.
+      #
+      # `--verify-attestations`: every pinned pack asset must carry build
+      # provenance from local-harness-pack.yml on main (and every equivalence
+      # record relied on, from local-harness-pack-pipeline.yml) — signed by our
+      # key is not enough on its own.
       - name: Local harness release consistency
-        if: fromJSON(steps.plan.outputs.publish_inspector)
+        if: fromJSON(steps.plan.outputs.build_inspector_artifacts)
         working-directory: mcpjam-inspector
         env:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
-        run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION"
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets --verify-attestations
 
-      - name: Version packages with Changesets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx changeset version
+      # Every pack this build may SELECT: the desired one per harness, and the
+      # one permitted previous (one version across targets; a record that
+      # permits two is refused here rather than half-tested).
+      - name: Local harness packs this build selects
+        id: local_harness_packs
+        working-directory: mcpjam-inspector
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { readRuntimeCompat } from "./scripts/local-harness-pack-tables.mjs";
+          const record = readRuntimeCompat();
+          const one = (harnessId, role) => {
+            const versions = new Set(Object.values(record.harnesses[harnessId]?.targets ?? {})
+              .map((slot) => slot[role]?.packVersion).filter(Boolean));
+            if (versions.size > 1) throw new Error(`${harnessId} ${role} packs differ across targets: ${[...versions]}`);
+            return [...versions][0] ?? "";
+          };
+          const out = {
+            claude_desired: one("claude-code", "desired"),
+            codex_desired: one("codex", "desired"),
+            claude_permitted: one("claude-code", "permitted"),
+            codex_permitted: one("codex", "permitted"),
+          };
+          out.permitted_harnesses = [out.claude_permitted && "claude-code", out.codex_permitted && "codex"].filter(Boolean).join(",");
+          for (const [key, value] of Object.entries(out)) console.log(`${key}=${value}`);
+          JS
 
-      - name: Refresh root lockfile
-        run: npm install --package-lock-only --legacy-peer-deps
+  # The release contract (`runtime-contract.json`): conformance evidence for
+  # THIS commit's Inspector layer × every pack the build may select, on every
+  # advertised platform. Run here, on the release commit, so a bridge change
+  # needs no extra step: the evidence is produced by the release itself.
+  local-harness-evidence:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
+      codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
 
-      - name: Create release patch
-        run: git diff --binary > release.patch
+  local-harness-evidence-permitted:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) && needs.preflight.outputs.permitted_harnesses != '' }}
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
+      codex_published_pack_version: ${{ needs.preflight.outputs.codex_permitted_pack }}
+      harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
 
-      - name: Upload release plan artifact
-        uses: actions/upload-artifact@v4
+  local-harness-contract:
+    needs: [preflight, local-harness-evidence, local-harness-evidence-permitted]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      fromJSON(needs.preflight.outputs.build_inspector_artifacts) &&
+      needs.local-harness-evidence.result == 'success' &&
+      (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          name: release-plan
-          path: |
-            .changeset/status.json
-            release.patch
-          retention-days: 7
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+      - name: Collect conformance evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: conformance-evidence-*
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+      # The gate: refuses a release whose layer was not run against every pack
+      # it may select, and writes the contract a user's installer can be held to.
+      - name: Check the evidence and write the runtime contract
+        working-directory: mcpjam-inspector
+        env:
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
+          EVIDENCE: ${{ runner.temp }}/evidence
+        run: |
+          node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" \
+            --evidence "$EVIDENCE" --commit "$GITHUB_SHA" --contract "$RUNNER_TEMP/runtime-contract.json"
+      - name: Attest the runtime contract
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: ${{ runner.temp }}/runtime-contract.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-harness-runtime-contract
+          path: ${{ runner.temp }}/runtime-contract.json
+          if-no-files-found: error
 
   build-mac:
     needs: preflight
@@ -342,7 +386,6 @@ jobs:
     uses: ./.github/workflows/mac-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
-      apply_release_patch: true
     secrets: inherit
 
   build-windows:
@@ -351,120 +394,93 @@ jobs:
     uses: ./.github/workflows/windows-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
-      apply_release_patch: true
     secrets: inherit
 
-  # The local-harness runtime pack. Not a desktop artifact — it is downloaded
-  # on demand by both distributions — but it is published on the same release,
-  # so it is built alongside them.
-  #
-  # Gated more narrowly than they are, though: on `build_harness_pack` rather
-  # than `build_inspector_artifacts`, because a release whose Inspector carries
-  # no pack digests has no pack to publish. See preflight for why that is read
-  # from the committed table.
-  build-local-harness-pack:
+  # The evals GitHub Action's release, independent of npm and the app deploys:
+  # it ships as a git tag other repos point `uses:` at. Both jobs sit out every
+  # release that did not touch `actions/evals`, so the usual release is
+  # unchanged. Needs only `preflight` and the smoke — `finalize` and
+  # `publish-packages` are skipped for scopes that publish nothing, and the
+  # action does not depend on either.
+  evals-action-smoke:
     needs: preflight
-    if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
-    uses: ./.github/workflows/local-harness-pack.yml
+    # Runs whenever the action changed, including when the repo variables are
+    # unset — the called workflow fails loudly on empty inputs, which is the
+    # point. Skipping here instead meant the gate quietly became a no-op and
+    # `evals-v1` shipped untested while the README said the smoke gated it.
+    if: needs.preflight.outputs.evals_action_changed == 'true'
+    uses: ./.github/workflows/evals-action-smoke.yml
     with:
-      pack_version: ${{ needs.preflight.outputs.inspector_version }}
-      # A release must publish packs the committed digest table already names.
-      # Otherwise the desktop artifacts — built in parallel from the checked-in
-      # table — would ship digests that match nothing, `expectedPackFor` would
-      # answer `null`, and every published pack would be rejected as
-      # unsupported: artifacts that exist and cannot be installed.
-      enforce_committed_digests: true
+      project: ${{ vars.EVALS_SMOKE_PROJECT }}
+      suite: ${{ vars.EVALS_SMOKE_SUITE }}
     secrets: inherit
 
-  artifact-gate:
-    needs:
-      - preflight
-      - build-mac
-      - build-windows
-      - build-local-harness-pack
-    if: always()
-    runs-on: ubuntu-latest
+  publish-evals-action:
+    needs: [preflight, evals-action-smoke]
+    # The tag moves only on a smoke that actually PASSED. It used to move on
+    # anything that was not a failure, which included `skipped` — so with the
+    # smoke's repo variables unset, every published tag was untested.
+    #
+    # `!cancelled()` is kept so a cancelled run does not read as success, and
+    # `preflight` is re-asserted by hand because the change detection runs
+    # before preflight's green-CI gate: a preflight that fails later still
+    # reports `evals_action_changed: true`.
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      needs.evals-action-smoke.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    concurrency:
+      group: evals-action-release
+      cancel-in-progress: false
     steps:
-      - name: Require desktop artifact jobs when inspector is included
-        run: |
-          if [ "${{ needs.preflight.result }}" != "success" ]; then
-            echo "Preflight failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.preflight.outputs.build_inspector_artifacts }}" != "true" ]; then
-            exit 0
-          fi
-
-          if [ "${{ needs.build-mac.result }}" != "success" ]; then
-            echo "Mac artifact build failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.build-windows.result }}" != "success" ]; then
-            echo "Windows artifact build failed." >&2
-            exit 1
-          fi
-
-          # A release whose packs did not build would ship an Inspector whose
-          # manifest names digests for assets that are not there, and every
-          # install would fail verification with nothing to point at.
-          #
-          # `skipped` is a legitimate result here — the pack job runs only when
-          # the committed digest table names a pack — so this asks preflight
-          # what it decided rather than reading the raw job result, which would
-          # read a deliberate skip as a failure.
-          if [ "${{ needs.preflight.outputs.build_harness_pack }}" = "true" ] \
-            && [ "${{ needs.build-local-harness-pack.result }}" != "success" ]; then
-            echo "Local harness runtime pack build failed." >&2
-            exit 1
-          fi
-
-      # The packs are proven installable HERE, before anything irreversible.
-      #
-      # This gate used to live in `finalize`, which was too late to be a gate
-      # at all: by then `publish-packages` has pushed to npm and `finalize` has
-      # run `changeset version` and pushed the version commit and tag. Failing
-      # after that cannot unpublish a package or unpush a tag, and it consumes
-      # the changesets, so a re-run has no pending release to retry from.
-      #
-      # `artifact-gate` is the last point that still gates `publish-packages`,
-      # so a pack that does not verify stops the release rather than annotating
-      # one that already happened.
       - name: Checkout code
-        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
-      - name: Set up Node
-        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Download local harness runtime packs
-        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          pattern: local-harness-pack-*
-          path: .release-assets/runtime
-          merge-multiple: true
-
-      # The same check `finalize` runs against the published release, run here
-      # against the artifacts that release will be built from. They are the
-      # same bytes: a signature that does not verify, an asset that did not
-      # upload, or a manifest whose tree digest disagrees with the committed
-      # table all fail identically, and only one of the two placements can
-      # still stop the release.
-      - name: Built packs are installable by the shipped Inspector
-        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        working-directory: mcpjam-inspector
-        env:
-          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
-          ASSET_DIR: ${{ github.workspace }}/.release-assets/runtime
+      - name: Choose the version tag
+        id: tag
         run: |
-          node scripts/check-local-harness-release.mjs \
-            --version "$INSPECTOR_VERSION" \
-            --base-url "file://$ASSET_DIR/"
+          git fetch --tags --force origin
+          version_tag="$(node actions/evals/release-tags.mjs "$GITHUB_SHA")"
+          echo "version_tag=$version_tag" >> "$GITHUB_OUTPUT"
+
+      # Tags the commit the smoke actually ran against: users pinned to
+      # `evals-v1` run whatever this tag points at.
+      - name: Publish the version tag, then move evals-v1
+        env:
+          VERSION_TAG: ${{ steps.tag.outputs.version_tag }}
+        run: |
+          # Never move `evals-v1` backwards. The concurrency group stops two
+          # publishers running at once, but not two releases FINISHING out of
+          # order: one dispatched at an older commit could otherwise overwrite
+          # a newer release and hand every pinned user code that was already
+          # superseded.
+          if git rev-parse -q --verify 'refs/tags/evals-v1^{commit}' >/dev/null &&
+             ! git merge-base --is-ancestor evals-v1 "$GITHUB_SHA"; then
+            echo "::error::evals-v1 points at $(git rev-parse evals-v1), which is not an ancestor of $GITHUB_SHA. A newer release already published; re-run this one from the current main."
+            exit 1
+          fi
+          # Immutable tag first. A second run racing this one fails here, on a
+          # tag that already exists, before it can move the floating tag.
+          if git rev-parse -q --verify "refs/tags/$VERSION_TAG" >/dev/null; then
+            echo "$VERSION_TAG already points at this commit; moving evals-v1 to match."
+          else
+            git tag "$VERSION_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$VERSION_TAG"
+          fi
+          git tag -f evals-v1 "$GITHUB_SHA"
+          git push --force origin refs/tags/evals-v1
+          echo "Published $VERSION_TAG and moved evals-v1 to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
 
   # Building and smoke-testing the npm tarballs needs nothing from the desktop
   # builds or the backend deploy, so it runs alongside them instead of behind
@@ -474,24 +490,13 @@ jobs:
   build-packages:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Without the patch this builds the PRE-bump versions, and the tarballs
-      # would disagree with what changeset publish then tries to publish.
-      - name: Download release patch
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -564,7 +569,7 @@ jobs:
       # via prepublishOnly; theirs are carried anyway so the publish job can
       # assert it has a complete, already-smoked package set.
       - name: Upload built package dists
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-dists
           path: |
@@ -575,12 +580,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # One signed-in Ask MCPJam turn through THIS release's packed Inspector,
+  # self-hosted and with no INSPECTOR_SERVICE_TOKEN — what every npx, Docker
+  # and desktop user runs — against staging. Gates publish-packages: v3.12.2
+  # shipped an Inspector whose agent refused every turn on exactly that
+  # configuration, and nothing we ran before publishing looked like it.
+  # Ordered after the backend deploy so a backend that does not accept the
+  # claim yet never meets a client that sends it.
+  ask-mcpjam-smoke-staging:
+    needs:
+      - preflight
+      - build-packages
+      - deploy-backend-prod
+    # `skip_verify` skips it outright, like the other verification gates, so a
+    # staging problem can never hold a release hostage; publish-packages then
+    # accepts it as skipped.
+    if: |
+      always() &&
+      !fromJSON(inputs.skip_verify) &&
+      needs.preflight.result == 'success' &&
+      needs.build-packages.result == 'success' &&
+      needs.preflight.outputs.publish_inspector == 'true' &&
+      (
+        !fromJSON(inputs.deploy_backend_prod) ||
+        needs.deploy-backend-prod.result == 'success'
+      )
+    uses: ./.github/workflows/ask-mcpjam-smoke.yml
+    with:
+      source: artifact
+      # A gate that passes because nothing ran is not a gate.
+      require_canary: true
+    # Only what the smoke needs. The canary's own settings live on the
+    # ask-mcpjam-smoke-staging environment.
+    secrets:
+      STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+      SLACK_ALERTS_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
+
   publish-packages:
     needs:
       - preflight
-      - artifact-gate
+      - local-harness-contract
       - build-packages
       - deploy-backend-prod
+      - ask-mcpjam-smoke-staging
     # Publishing is gated on the backend deployment because a released client
     # can start sending a new field the moment it lands on npm. Shipping the
     # Convex schema first means the window where a fresh client talks to a
@@ -591,32 +633,38 @@ jobs:
     # normal failed-dependency propagation, so every other need is checked
     # explicitly below. Dropping the build-packages clause would let a failed
     # package build publish.
+    #
+    # A release that ships the Inspector publishes nothing unless the local
+    # harness runtime contract succeeded: the npm Inspector offers local
+    # execution too. It does NOT wait for the desktop builds — those are
+    # mostly Apple's notary queue (10–25 min in October 2026) and gate only
+    # the GitHub release (`finalize`). A desktop build that fails after this
+    # publishes is completed by the next run, which plans desktop-only.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.artifact-gate.result == 'success' &&
+      (
+        needs.preflight.outputs.publish_inspector != 'true' ||
+        needs.local-harness-contract.result == 'success'
+      ) &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
+      (
+        needs.preflight.outputs.publish_inspector != 'true' ||
+        fromJSON(inputs.skip_verify) ||
+        needs.ask-mcpjam-smoke-staging.result == 'success'
+      ) &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download release patch
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -626,7 +674,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Download built package dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-dists
           path: .
@@ -715,11 +763,11 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
@@ -739,8 +787,12 @@ jobs:
               },
             });
 
+            // The backend deploy runs its full test suite (~24 min) plus runner
+            // queueing and `convex deploy`; 3.14.0 timed out at a 30-min budget
+            // ~100s before a successful 33.5-min deploy finished.
+            const deadline = dispatchTime.getTime() + 60 * 60 * 1000;
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-            for (let attempt = 0; attempt < 120; attempt += 1) {
+            for (let attempt = 0; Date.now() < deadline; attempt += 1) {
               await sleep(15000);
               const { data } = await github.rest.actions.listWorkflowRuns({
                 owner,
@@ -755,7 +807,7 @@ jobs:
               );
 
               if (!matchingRun) {
-                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/120).`);
+                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}).`);
                 continue;
               }
 
@@ -775,7 +827,7 @@ jobs:
               return;
             }
 
-            core.setFailed("Timed out waiting for backend production deployment to finish.");
+            core.setFailed("Timed out after 60 min waiting for backend production deployment to finish.");
 
   # The production deploy itself lives in deploy-webapp.yml so it can also be
   # dispatched on its own — a release is not the only reason to ship or roll
@@ -797,7 +849,6 @@ jobs:
       )
     uses: ./.github/workflows/deploy-webapp.yml
     with:
-      apply_release_patch: true
       require_staging_green: false
     secrets: inherit
 
@@ -812,10 +863,10 @@ jobs:
   # not belong: it talks only to api.github.com, never to the inspector server,
   # so the ordering rationale above does not apply to it. It was also the
   # slowest job in this tail (~3.5 min vs ~1 min) and it deployed TWICE per
-  # release — once here, then again from finalize's version commit, which
-  # touches root package-lock.json, a path in its own push trigger. That push
-  # trigger still redeploys it after every release; this job was the redundant
-  # half.
+  # release — once here, then again from the version commit, which touches
+  # root package-lock.json, a path in its own push trigger. That push trigger
+  # (now fired when the version PR merges) still redeploys it every release;
+  # this job was the redundant half.
   deploy-slack-app:
     needs:
       - preflight
@@ -827,26 +878,55 @@ jobs:
     uses: ./.github/workflows/deploy-slack-app.yml
     secrets: inherit
 
-  # These `needs` look like dead weight — the `if` below never required the
-  # deploy jobs, and with `always()` this runs even when they fail. They are
-  # NOT dead weight, and removing them breaks the satellite ordering invariant:
+  # Points PRODUCTION's hosted computers at the E2B template baked for the
+  # commit this release just deployed (mcpjam-backend computer-template.yml,
+  # which staging already built it with). After the webapp deploy, never
+  # before: production may only boot the bake its own inspector looks for.
+  # Fire and forget — the backend run does the roll-out and records its
+  # rollback line; if it fails, production stays on its previous template,
+  # where turns still work by installing at turn time.
+  roll-out-hosted-template:
+    needs:
+      - preflight
+      - deploy-webapp
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.deploy-webapp.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Ask the backend to point production at this commit's template
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_release_shipped",
+              client_payload: {
+                sha: context.sha,
+                release_tag: "${{ needs.preflight.outputs.release_tag }}",
+              },
+            });
+            core.summary.addRaw(
+              `Sent inspector_release_shipped for ${context.sha} to ${owner}/${repo}; ` +
+                "its Computer template workflow points production at this commit's template.",
+            );
+            await core.summary.write();
+
+  # The deploy jobs are in `needs` although the `if` below never requires
+  # them (with `always()` this runs even when they fail): the tag and the
+  # GitHub release go public only once this release's deploys are done, so
+  # the release page never announces a version production does not run yet.
+  # It costs nothing when deploy_webapp=false: those jobs are skipped, and
+  # `always()` lets this one proceed the moment publish-packages is done.
   #
-  # This job pushes the version commit, which touches `package-lock.json` — a
-  # path in BOTH satellite workflows' `push:` triggers (soundcheck's included,
-  # even though it no longer has a job here). If the push lands while
-  # deploy-webapp is still running, those push-triggered runs find the
-  # `slack-app` / `soundcheck` concurrency groups free and deploy AHEAD of the
-  # server whose contract they render.
-  #
-  # `deploy-slack-app` is the load-bearing entry: waiting for it means that by
-  # the time the push happens, the slack-app group has already been through
-  # this release's deploy, so the push-triggered run is an idempotent duplicate
-  # landing after. Waiting for `deploy-webapp` covers soundcheck, whose only
-  # release-time deploy IS that push-triggered run — the server is live before
-  # the push, so it cannot land early.
-  #
-  # Note this costs nothing when deploy_webapp=false: those jobs are skipped,
-  # and `always()` lets this one proceed the moment publish-packages is done.
+  # This job used to push the version commit to `main` as well. The version PR
+  # carries it now, so nothing here writes to `main`.
   finalize:
     needs:
       - preflight
@@ -854,30 +934,37 @@ jobs:
       - deploy-backend-prod
       - deploy-webapp
       - deploy-slack-app
+      - build-mac
+      - build-windows
+      - local-harness-contract
+    # The tag and the GitHub release wait for the desktop builds: releases are
+    # immutable, so the release is created once with every asset attached.
+    # npm and the webapp did not wait (see publish-packages). A desktop-only
+    # run (completing a release whose desktop build failed) publishes nothing,
+    # so publish-packages is skipped there and this runs anyway.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.publish-packages.result == 'success'
-    runs-on: ubuntu-latest
+      (
+        needs.publish-packages.result == 'success' ||
+        needs.preflight.outputs.desktop_only == 'true'
+      ) &&
+      (
+        needs.preflight.outputs.build_inspector_artifacts != 'true' ||
+        (
+          needs.build-mac.result == 'success' &&
+          needs.build-windows.result == 'success' &&
+          needs.local-harness-contract.result == 'success'
+        )
+      )
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
-
-      - name: Download release patch
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
+        uses: actions/checkout@v7
 
       - name: Setup Node.js for catalog parity heads-up
         if: fromJSON(needs.preflight.outputs.publish_sdk)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -914,57 +1001,51 @@ jobs:
             echo "This warning is non-blocking. Check backend deploy/seed status before relying on the fallback snapshot."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Commit version changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git status --short
-          git commit -m "chore(release): version packages"
-
-      - name: Push release commit
-        run: |
-          git pull --rebase origin main
-          git push origin HEAD:main
-
+      # On the commit this run built, which already carries the versions. The
+      # tag ruleset forbids moving or deleting a `v*` tag, so a re-run finds
+      # it in place, and one pointing anywhere else is a real conflict.
       - name: Create and push release tag
         if: needs.preflight.outputs.release_tag != ''
+        env:
+          TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
-          git tag "${{ needs.preflight.outputs.release_tag }}"
-          git push origin "${{ needs.preflight.outputs.release_tag }}"
+          existing="$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)"
+          if [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "$TAG already points at $GITHUB_SHA."
+          elif [ -n "$existing" ]; then
+            echo "::error::$TAG already exists at $existing, not at $GITHUB_SHA, and release tags cannot move."
+            exit 1
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
 
       - name: Download macOS artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/macos
 
       - name: Download Windows artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
 
-      # Every platform's pack, its signed manifest, its signature and its
-      # sha256 — this is where the installer downloads from.
-      - name: Download local harness runtime packs
-        if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
-        uses: actions/download-artifact@v4
+      # Attested by `local-harness-contract`: the layer digest and the packs
+      # this Inspector selects, with the conformance runs behind each.
+      - name: Download the local harness runtime contract
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: local-harness-pack-*
-          path: .release-assets/runtime
-          merge-multiple: true
+          name: local-harness-runtime-contract
+          path: .release-assets/runtime-contract
 
-      # Created as a DRAFT, and promoted below only once the published assets
-      # have been proven installable. Failing a gate that runs after a public
-      # release cannot unpublish it: the tag, the assets and the release notes
-      # are already there for anyone watching the repo, and a broken pack is
-      # exactly what this release must never leave reachable.
       - name: Create GitHub release (draft)
         if: needs.preflight.outputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           name: Release ${{ needs.preflight.outputs.release_tag }}
@@ -974,42 +1055,14 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
-            .release-assets/runtime/**
-
-      # The gate that proves the PUBLISHED assets are usable by the shipped
-      # Inspector, without any development override.
-      #
-      # The pack workflow's own verification installs from a local file through
-      # `MCPJAM_LOCAL_HARNESS_PACK_SOURCE`. That override is a development
-      # affordance and a shipped Inspector never takes it: it fetches the
-      # release asset by URL and verifies against the committed digest and the
-      # signing key it was built with. Only reading back what was just
-      # published exercises that path — a signature that does not verify, an
-      # asset that did not upload, or a manifest whose tree digest disagrees
-      # with the committed table all produce artifacts that exist and cannot be
-      # installed, which is the failure this release must not ship silently.
-      - name: Published packs are installable by the shipped Inspector
-        if: >-
-          ${{ needs.preflight.outputs.release_tag != ''
-          && fromJSON(needs.preflight.outputs.build_harness_pack) }}
-        working-directory: mcpjam-inspector
-        env:
-          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
-          # The artifacts as downloaded, rather than the release URL: the assets
-          # are byte-identical, and reading them locally does not depend on the
-          # CDN having caught up with a release created seconds earlier.
-          ASSET_DIR: ${{ github.workspace }}/.release-assets/runtime
-        run: |
-          node scripts/check-local-harness-release.mjs \
-            --version "$INSPECTOR_VERSION" \
-            --base-url "file://$ASSET_DIR/"
+            .release-assets/runtime-contract/**
 
       # Everything above has passed, so the draft becomes the release. Same
       # action and same tag: `action-gh-release` updates the existing release
       # rather than creating a second one.
       - name: Publish the GitHub release
         if: needs.preflight.outputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           draft: false

@@ -1,3 +1,6 @@
+import { serverCheckQueue, useServerCheckQueueState } from "@/lib/server-check-queue";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useState,
   useEffect,
@@ -20,15 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import {
   MoreVertical,
   Link2Off,
   RefreshCw,
-  Power,
   Loader2,
   Copy,
   Download,
@@ -37,7 +34,6 @@ import {
   ExternalLink,
   Cable,
   Trash2,
-  AlertCircle,
   FileText,
   FolderInput,
   Building2,
@@ -46,6 +42,8 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  SERVER_CARD_CLASS_NAME,
+  SERVER_CARD_INTERACTIVE_CLASS_NAME,
   UNKNOWN_CONNECTION_STATUS,
   getConnectionStatusMeta,
   isConnectionStatus,
@@ -104,12 +102,12 @@ function isContextMenuExemptTarget(target: EventTarget | null): boolean {
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -148,7 +146,6 @@ interface ServerConnectionCardProps {
 
 export function ServerConnectionCard({
   server,
-  needsReconnect = false,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -162,6 +159,8 @@ export function ServerConnectionCard({
   onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+  const checkProjectId = (HOSTED_MODE ? tryResolveProjectServer(server.name)?.projectId : undefined) ?? projectId ?? "";
+  const checkQueueState = useServerCheckQueueState(checkProjectId, server.name);
   const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
 
   // A pinned protocol version the server doesn't offer is the one connect
@@ -187,6 +186,18 @@ export function ServerConnectionCard({
         },
       }
     : undefined;
+
+  /**
+   * A consent-required state is one click from resolved, so the card offers
+   * that click directly instead of telling the user to go find Reconnect in
+   * the overflow menu.
+   *
+   * `allowInteractiveOAuthFlow: true` is the exact inverse of the condition
+   * that produced the state — the orchestrator returns `reauth_required`
+   * only when a caller asked it NOT to open the consent window.
+   */
+  const needsConsent =
+    server.lastNormalizedError?.slug === "auth/consent_required";
 
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -215,12 +226,16 @@ export function ServerConnectionCard({
    */
   const known = isConnectionStatus(server.connectionStatus);
   const meta = getConnectionStatusMeta(
-    known ? server.connectionStatus : "disconnected",
+    checkQueueState
+      ? "connecting"
+      : known
+        ? server.connectionStatus
+        : "disconnected",
   );
   const {
     label: connectionStatusLabel,
     indicatorClassName,
-  } = known ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
+  } = known || checkQueueState ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
   const { Icon: ConnectionStatusIcon, iconClassName } = meta;
   const commandDisplay = getServerCommandDisplay(server.config);
 
@@ -240,6 +255,7 @@ export function ServerConnectionCard({
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
+    Boolean(checkQueueState) ||
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
   const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
@@ -372,8 +388,10 @@ export function ServerConnectionCard({
 
   const handleReconnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
+    serverCheckQueue.markManual(checkProjectId, server.name);
     setIsReconnecting(true);
     try {
       await onReconnect(server.name, options);
@@ -588,10 +606,8 @@ export function ServerConnectionCard({
   return (
     <>
       <Card
-        className={`group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
-          isDetailModalEnabled
-            ? "cursor-pointer hover:border-border hover:shadow-md hover:border-primary/40"
-            : ""
+        className={`${SERVER_CARD_CLASS_NAME} ${
+          isDetailModalEnabled ? SERVER_CARD_INTERACTIVE_CLASS_NAME : ""
         }`}
         onContextMenu={handleCardContextMenu}
         onClick={isDetailModalEnabled ? handleCardClick : undefined}
@@ -620,21 +636,11 @@ export function ServerConnectionCard({
                 )}
               </div>
 
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {hasError && (
-                  <button
-                    data-server-card-context-menu-exempt
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsErrorExpanded(true);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-300/60 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-700 dark:text-red-300 cursor-pointer"
-                  >
-                    <AlertCircle className="h-3 w-3" />
-                    Error
-                  </button>
-                )}
-              </div>
+              {/* The red "Error" pill that used to sit here was the fourth
+                  red element announcing one failure — after the status dot,
+                  the "Failed" label and the error card itself — and it only
+                  opened a disclosure the card already owns. The card below is
+                  the affordance; this row stays for future status chips. */}
             </div>
 
             <div className="flex flex-col items-end gap-1.5">
@@ -651,48 +657,34 @@ export function ServerConnectionCard({
                     />
                   )}
                   <span>
-                    {server.connectionStatus === "failed"
+                    {/* "(0)" is not information. The count is only worth the
+                        parentheses once something has actually been retried. */}
+                    {!checkQueueState &&
+                    server.connectionStatus === "failed" &&
+                    server.retryCount > 0
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
-                  {needsReconnect ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        aria-label="Connection settings changed"
-                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
-                      >
-                        <Power className="h-3 w-3" />
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="top"
-                        sideOffset={4}
-                        variant="muted"
-                        className="max-w-48 px-2.5 text-left [text-wrap:normal]"
-                      >
-                        Turn the connection off and on to apply the new
-                        connection settings.
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
                 </span>
 
                 <Switch
                   data-server-card-context-menu-exempt
-                  checked={server.connectionStatus === "connected"}
+                  checked={Boolean(checkQueueState) || server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
                     track("connection_switch_toggled", {
                       location: "server_connection_card",
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode"
+                        "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
                       );
                       return;
                     }
                     if (!checked) {
+                      serverCheckQueue.cancelServer(checkProjectId, server.name);
                       onDisconnect(server.name);
                     } else {
+                      serverCheckQueue.markManual(checkProjectId, server.name);
                       void handleReconnect(getSwitchReconnectOptions());
                     }
                   }}
@@ -718,7 +710,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode"
+                            "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
                           );
                           return;
                         }
@@ -918,6 +910,7 @@ export function ServerConnectionCard({
             </button>
           </div>
 
+
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
@@ -1061,7 +1054,7 @@ export function ServerConnectionCard({
           {hasError && (
             <div className="mt-3" onClick={(e) => e.stopPropagation()}>
               {oauthFailureStep ? (
-                <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
+                <div className="mb-1 text-xs text-muted-foreground">
                   OAuth failed during {oauthFailureStep.title}
                 </div>
               ) : null}
@@ -1069,12 +1062,26 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
-                // Controlled — the Error badge above toggles
+                // Same height as the support pill. The diagnostic rows
+                // sit behind the error title so a failed card does not
+                // grow a second status report under Failed.
+                density="row"
+                // Controlled — the status row above toggles
                 // `isErrorExpanded`; the card must reflect that on every
                 // change, not just at mount.
                 open={isErrorExpanded}
                 onOpenChange={setIsErrorExpanded}
-                action={protocolPinAction}
+                action={
+                  needsConsent
+                    ? {
+                        label: "Reconnect",
+                        onClick: () =>
+                          void handleReconnect({
+                            allowInteractiveOAuthFlow: true,
+                          }),
+                      }
+                    : protocolPinAction
+                }
               />
               {server.retryCount > 0 && (
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -1085,7 +1092,11 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "failed" && (
+          {/* Only when there is no error card. The card carries its own
+              "Learn more", pointed at the specific error rather than the
+              generic index, so showing both offered two docs links for one
+              failure and the weaker one sat lower and looked more prominent. */}
+          {server.connectionStatus === "failed" && !hasError && (
             <div
               className="mt-2 text-xs text-muted-foreground"
               onClick={(e) => e.stopPropagation()}

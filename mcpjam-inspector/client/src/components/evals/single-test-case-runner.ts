@@ -98,6 +98,11 @@ const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
  * second copy would let a future filter or dedupe-key change diverge silently
  * from what the estimates price, which is exactly the mispricing this feature
  * has to avoid.
+ *
+ * Two entries of one model at different efforts (Low / High) are ONE runnable
+ * model here: a quick run's request names `{ provider, model }` only and runs
+ * at the default effort, so listing both would run (and price) the same call
+ * twice. Suite runs execute each entry as its own variant.
  */
 export function getRunnableCaseModels(
   testCase: Pick<EvalCase, "models"> | null | undefined,
@@ -265,6 +270,52 @@ export async function prepareSingleTestCaseRun({
       matchOptionsOverride,
       namedHostId,
       hostConfigOverride,
+    },
+  };
+}
+
+/**
+ * The request for an ENVIRONMENT quick run: the case, the environment, and the
+ * case CONTENT overrides — nothing the environment owns. The server resolves
+ * the environment's model, client and servers itself and refuses a request
+ * that also sets them, so no `model`, `provider`, `namedHostId`,
+ * `hostConfigOverride` or server list is sent.
+ *
+ * `modelValue` is only the caller's handle for the target (the editor keys its
+ * compare columns by it); it never reaches the server.
+ */
+export async function prepareEnvironmentTestCaseRun({
+  projectId,
+  testCase,
+  environmentId,
+  modelValue,
+  getAccessToken,
+  testCaseOverrides,
+  matchOptionsOverride,
+  idempotencyKey,
+}: {
+  projectId: string;
+  testCase: Pick<EvalCase, "_id">;
+  environmentId: string;
+  modelValue: string;
+  getAccessToken: () => Promise<string | null>;
+  testCaseOverrides?: TestCaseRunOverridesWithTurns;
+  matchOptionsOverride?: EvalMatchOptions;
+  /** One per target per Run click, so a retried request replays. */
+  idempotencyKey: string;
+}) {
+  const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();
+  return {
+    modelValue,
+    request: {
+      projectId,
+      testCaseId: testCase._id,
+      environmentId,
+      idempotencyKey,
+      serverIds: [] as string[],
+      convexAuthToken,
+      testCaseOverrides,
+      matchOptionsOverride,
     },
   };
 }

@@ -1,3 +1,6 @@
+import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
@@ -10,6 +13,7 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
+import { evalSnapshotUploadTarget } from "../../utils/snapshot-upload-target.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
@@ -28,6 +32,7 @@ import {
   finalMessageEndsWithQuestion,
 } from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
+import { buildIterationErrorMetadata } from "./iteration-error-metadata.js";
 import {
   buildHostIterationMetadata,
   type HostExecutionPolicy,
@@ -59,6 +64,7 @@ import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
+  type HostedMatcherTurnLike,
   type HostedPredicateResultLike,
 } from "./score-rows.js";
 import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
@@ -307,16 +313,16 @@ function isHostedPredicateResult(
 }
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
-function narrowEvaluation(
-  evaluation: Record<string, unknown>,
-): HostedEvaluationLike {
+function narrowMatcherTurn(
+  turn: Record<string, unknown>,
+): HostedMatcherTurnLike {
   const list = (key: string): readonly unknown[] | undefined => {
-    const value = evaluation[key];
+    const value = turn[key];
     return Array.isArray(value) ? value : undefined;
   };
   return {
-    ...(typeof evaluation.passed === "boolean"
-      ? { passed: evaluation.passed }
+    ...(typeof turn.promptIndex === "number"
+      ? { promptIndex: turn.promptIndex }
       : {}),
     ...(list("expectedToolCalls")
       ? { expectedToolCalls: list("expectedToolCalls") }
@@ -326,6 +332,28 @@ function narrowEvaluation(
     ...(list("argumentMismatches")
       ? { argumentMismatches: list("argumentMismatches") }
       : {}),
+  };
+}
+
+function narrowEvaluation(
+  evaluation: Record<string, unknown>,
+): HostedEvaluationLike {
+  // Per turn, because the matcher applies the extras cap per turn and the
+  // selection verdict has to read it the same way.
+  const promptSummaries = Array.isArray(evaluation.promptSummaries)
+    ? evaluation.promptSummaries
+        .filter(
+          (turn): turn is Record<string, unknown> =>
+            typeof turn === "object" && turn !== null,
+        )
+        .map(narrowMatcherTurn)
+    : undefined;
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...narrowMatcherTurn(evaluation),
+    ...(promptSummaries?.length ? { promptSummaries } : {}),
   };
 }
 
@@ -609,6 +637,7 @@ export function buildIterationFinishParams(args: {
   modelId?: string;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -622,6 +651,12 @@ export function buildIterationFinishParams(args: {
   startedAt: number;
   error?: string;
   errorDetails?: string;
+  /**
+   * OUR infrastructure failed this trial (`@/shared/eval-infra-error`). Only
+   * ever set with `status: "failed"`; forces the verdict to not-passed, and the
+   * backend then excludes the row from every rate and refunds its unit fee.
+   */
+  infraError?: EvalInfraError;
   /** Case-level + per-turn predicate results; persisted to metadata.predicates. */
   predicateResults?: unknown[];
   /** Fail-fast skipped steps (PR6); persisted to metadata.skippedSteps. */
@@ -755,6 +790,7 @@ export function buildIterationFinishParams(args: {
     modelId,
     systemPrompt,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -917,13 +953,17 @@ export function buildIterationFinishParams(args: {
 
   return {
     iterationId,
-    passed: effectivePassed,
+    // An infra row has no verdict to report: it is stored `failed` + `failed`
+    // and excluded by every reader, never counted as a pass.
+    passed: args.infraError ? false : effectivePassed,
+    ...(args.infraError ? { infraError: args.infraError } : {}),
     toolsCalled: evaluation.toolsCalled,
     usage,
     messages,
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
+    ...(requestPayloads?.length ? { requestPayloads } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -935,6 +975,16 @@ export function buildIterationFinishParams(args: {
     resultSource: "reported" as const,
     metadata: {
       ...iterationMetadataBase,
+      ...buildIterationErrorMetadata({
+        messages,
+        spans,
+        toolErrors: stageToolErrors,
+        browserInteractionSteps,
+        widgetRenderObservations,
+        status,
+        error,
+        stepError: args.stepError,
+      }),
       ...buildIterationMetadata(evaluation as never),
       // Written for EVERY trial, from the same helper the `noEndingQuestion`
       // check uses — not only when somebody authored that check.
@@ -983,6 +1033,12 @@ export function buildIterationFinishParams(args: {
 
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
+  /**
+   * The Convex bearer `convexClient` writes with. Screenshots and the replay
+   * video are uploaded as this identity (MJ-006); without it they are left out
+   * and the rows still persist.
+   */
+  convexAuthToken?: string;
   iterationId?: string;
   passed: boolean;
   toolsCalled: ToolCallRecord[];
@@ -991,6 +1047,7 @@ export type FinalizeEvalIterationParams = {
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
   spans?: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1043,6 +1100,8 @@ export type FinalizeEvalIterationParams = {
   startedAt?: number;
   error?: string;
   errorDetails?: string;
+  /** OUR infrastructure failed this trial; sent only with `status: "failed"`. */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
   // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -1056,6 +1115,34 @@ export type FinalizeEvalIterationParams = {
    */
   onRunDeleted?: () => void;
 };
+
+/**
+ * The terminal `updateTestIteration` write. A backend that predates
+ * `infraError` rejects the unknown argument by name (deploy skew): the row is
+ * then written once more without it — counted as it was before the field
+ * existed — rather than left `running` for the stale sweep.
+ */
+async function writeIterationResult(
+  convexClient: ConvexHttpClient,
+  args: Record<string, unknown> & { iterationId: string },
+): Promise<void> {
+  try {
+    await convexClient.action("testSuites:updateTestIteration" as any, args);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    if (args.infraError === undefined || !message.includes("infraError")) {
+      throw caught;
+    }
+    logger.warn("[evals] backend rejected infraError; writing without it", {
+      iterationId: args.iterationId,
+    });
+    const { infraError: _infraError, ...withoutInfraError } = args;
+    await convexClient.action(
+      "testSuites:updateTestIteration" as any,
+      withoutInfraError,
+    );
+  }
+}
 
 /**
  * Shared finalize step for both the multi-iteration suite-run recorder
@@ -1086,6 +1173,7 @@ export async function finalizeEvalIteration(
 ): Promise<void> {
   const {
     convexClient,
+    convexAuthToken,
     iterationId,
     passed,
     toolsCalled,
@@ -1093,6 +1181,7 @@ export async function finalizeEvalIteration(
     messages,
     modelId,
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1105,6 +1194,7 @@ export async function finalizeEvalIteration(
     startedAt,
     error,
     errorDetails,
+    infraError,
     resultSource,
     metadata,
     onRunDeleted,
@@ -1177,8 +1267,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-      ? "eval_failed"
-      : "eval_completed";
+        ? "eval_failed"
+        : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -1189,24 +1279,25 @@ export async function finalizeEvalIteration(
   // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
   // single upload pass. Owning this in the shared finalize step is what keeps
   // recorder + direct quick-run callers from double-uploading.
+  const uploadTarget = evalSnapshotUploadTarget(convexAuthToken, iterationId);
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient,
+      uploadTarget,
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient,
+      uploadTarget,
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
   // single-pass choke point. Best-effort: a failed upload is logged + dropped
   // (videoBlobId stays undefined → no player) and NEVER fails the iteration.
   let videoBlobId: string | undefined;
-  if (videoBytes && videoBytes.length > 0) {
+  if (videoBytes && videoBytes.length > 0 && uploadTarget) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes, {
+      videoBlobId = await uploadVideoBlob(uploadTarget, videoBytes, {
         ...(videoMime ? { contentType: videoMime } : {}),
       });
     } catch (err) {
@@ -1224,6 +1315,7 @@ export async function finalizeEvalIteration(
     messages,
     ...(modelId ? { modelId } : {}),
     spans,
+    requestPayloads,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1260,7 +1352,7 @@ export async function finalizeEvalIteration(
   let iterationGoneOrCancelled = false;
   const usagePayload = buildIterationUsagePayload(usage);
   try {
-    await convexClient.action("testSuites:updateTestIteration" as any, {
+    await writeIterationResult(convexClient, {
       iterationId,
       status: iterationStatus === "completed" ? "completed" : iterationStatus,
       result,
@@ -1275,6 +1367,13 @@ export async function finalizeEvalIteration(
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),
+            ...(requestPayloads?.length
+              ? {
+                  requestPayloadsJson: JSON.stringify(
+                    capRequestPayloadsForPersist(requestPayloads),
+                  ),
+                }
+              : {}),
             // Mirrors `appendEvalTurnTrace.systemPrompt`. Cursor Bugbot
             // follow-up "W1 omits systemPrompt": without this the W1
             // fallback persists a transcript with no resolved system
@@ -1327,6 +1426,9 @@ export async function finalizeEvalIteration(
         : {}),
       error,
       errorDetails,
+      // Paired with `status: "failed"` by construction; sent only when set,
+      // so every other write is byte-identical to before.
+      ...(infraError && iterationStatus === "failed" ? { infraError } : {}),
       resultSource,
       // Merge user-provided metadata with token usage breakdown, then
       // sanitize: metadata can carry nested predicate rows whose

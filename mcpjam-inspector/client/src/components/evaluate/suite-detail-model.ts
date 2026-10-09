@@ -12,13 +12,24 @@ import {
   runClientIdentity,
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
+import {
+  computeRunEffectiveStatsFromMetrics,
+  poolLatency,
+  type RunMetrics,
+  type RunMetricsByRun,
+} from "../evals/run-metrics";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import {
+  iterationTargetKey,
+  modelEffortTargetKey,
+  runTargetKey,
+} from "@/lib/eval-target-key";
 import type {
   EvalCase,
   EvalIteration,
   EvalSuite,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
@@ -36,7 +47,7 @@ export function suiteIdentityCounts(
     serverAttachment?: EvalSuite["serverAttachment"];
   },
   cases: readonly { _id: string }[],
-  runs: readonly Pick<EvalSuiteRun, "source">[],
+  runs: readonly Pick<EvalSuiteRunListItem, "source">[],
 ): SuiteIdentityCounts {
   const sources = new Set(runs.map((run) => run.source ?? "ui"));
   return {
@@ -75,7 +86,7 @@ export type SuiteRunHistoryRow = {
    * has a decision to read at all. Not a verdict — see `statusMeta` in
    * `project-runs-table.tsx` for the same distinction.
    */
-  status: EvalSuiteRun["status"];
+  status: EvalSuiteRunListItem["status"];
   /**
    * A marker for this row as currently observed. When it changes, a cached
    * decision summary for the run is describing an older reading (asynchronous
@@ -93,8 +104,11 @@ export type SuiteRunHistoryRow = {
   verdictLabel: string;
   passRate: number | null;
   platform: string;
-  source: NonNullable<EvalSuiteRun["source"]>;
+  source: NonNullable<EvalSuiteRunListItem["source"]>;
   client: string | null;
+  clientId?: string;
+  clientVersionId?: string;
+  clientVersionNumber?: number;
   hostStyle?: string;
   models: string[];
   latencyMs: number | null;
@@ -129,7 +143,7 @@ export type SuiteRunHistoryFilterOptions = {
  * `_creationTime` alone, so every reader goes through this fallback chain
  * rather than subtracting a possibly-absent field.
  */
-export function runTimestamp(run: EvalSuiteRun): number {
+export function runTimestamp(run: EvalSuiteRunListItem): number {
   return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
 }
 
@@ -145,7 +159,7 @@ export function formatSuiteRunDate(timestamp: number): string {
 }
 
 function passRateThreshold(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   suite: Pick<EvalSuite, "defaultPassCriteria">,
 ): number | null {
   return (
@@ -156,7 +170,7 @@ function passRateThreshold(
 }
 
 export function resolveRunHistoryVerdict(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   passRate: number | null,
   threshold: number | null,
 ): { verdict: RunHistoryVerdict; label: string } {
@@ -194,7 +208,7 @@ export function resolveRunHistoryVerdict(
   return { verdict: "pending", label: "Pending" };
 }
 
-export function runPlatformLabel(run: EvalSuiteRun): string {
+export function runPlatformLabel(run: EvalSuiteRunListItem): string {
   // The same resolution and the same table the badge and the filter chips use.
   // This was a fourth hand-copied label list, and it could only ever say `API`
   // for a CLI run, a GitHub Actions job or an MCP agent — the three things
@@ -206,7 +220,7 @@ export function runPlatformLabel(run: EvalSuiteRun): string {
 }
 
 function runClientLabel(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   hostNamesById: Map<string, string | null> | undefined,
   projectEnvironmentsEnabled: boolean,
 ): string | null {
@@ -216,10 +230,14 @@ function runClientLabel(
   return runHostLabel(run, hostNamesById);
 }
 
+/**
+ * The TARGETS a run's iterations ran (`targetKey`; the bare model id when
+ * default), so two efforts of one model are two filter values.
+ */
 function runModels(iterations: readonly EvalIteration[]): string[] {
   const models = new Set<string>();
   for (const iteration of iterations) {
-    const model = iteration.testCaseSnapshot?.model?.trim();
+    const model = iterationTargetKey(iteration)?.trim();
     if (model) models.add(model);
   }
   return [...models];
@@ -259,8 +277,60 @@ export function sumToolCalls(
   );
 }
 
+type RunHistoryMeasurement = Pick<
+  SuiteRunHistoryRow,
+  "passRate" | "models" | "latencyMs" | "tokens" | "toolCalls"
+>;
+
+function buildRunHistoryRows(
+  runs: readonly EvalSuiteRunListItem[],
+  suite: Pick<EvalSuite, "defaultPassCriteria">,
+  hostNamesById: Map<string, string | null> | undefined,
+  projectEnvironmentsEnabled: boolean,
+  measure: (run: EvalSuiteRunListItem) => RunHistoryMeasurement,
+): SuiteRunHistoryRow[] {
+  return [...runs]
+    .sort(
+      (a, b) =>
+        runTimestamp(b) - runTimestamp(a) ||
+        (b.runNumber ?? 0) - (a.runNumber ?? 0),
+    )
+    .map((run) => {
+      const measured = measure(run);
+      const threshold = passRateThreshold(run, suite);
+      const { verdict, label } = resolveRunHistoryVerdict(
+        run,
+        measured.passRate,
+        threshold,
+      );
+      const date = runTimestamp(run);
+      return {
+        runId: run._id,
+        runLabel: run.runNumber ? `#${run.runNumber}` : run._id.slice(0, 8),
+        date,
+        dateLabel: formatSuiteRunDate(date),
+        status: run.status,
+        revision: evalRunDecisionRevision(run),
+        verdict,
+        verdictLabel: label,
+        passRate: measured.passRate,
+        platform: runPlatformLabel(run),
+        source: run.source ?? "ui",
+        client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
+        hostStyle: runClientIdentity(run).hostStyle,
+        clientId: run.client?.namedHostId,
+        clientVersionId: run.client?.versionId,
+        clientVersionNumber: run.client?.versionNumber,
+        models: measured.models,
+        latencyMs: measured.latencyMs,
+        tokens: measured.tokens,
+        toolCalls: measured.toolCalls,
+      };
+    });
+}
+
 export function buildSuiteRunHistoryRows(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   allIterations: readonly EvalIteration[],
   suite: Pick<EvalSuite, "defaultPassCriteria">,
   hostNamesById: Map<string, string | null> | undefined,
@@ -274,50 +344,68 @@ export function buildSuiteRunHistoryRows(
     else iterationsByRun.set(iteration.suiteRunId, [iteration]);
   }
 
-  return [...runs]
-    .sort(
-      (a, b) =>
-        runTimestamp(b) - runTimestamp(a) ||
-        (b.runNumber ?? 0) - (a.runNumber ?? 0),
-    )
-    .map((run) => {
+  return buildRunHistoryRows(
+    runs,
+    suite,
+    hostNamesById,
+    projectEnvironmentsEnabled,
+    (run) => {
       const iterations = iterationsByRun.get(run._id) ?? [];
-      const stats = computeRunEffectiveStats(run, iterations);
-      const threshold = passRateThreshold(run, suite);
-      const { verdict, label } = resolveRunHistoryVerdict(
-        run,
-        stats.passRate,
-        threshold,
-      );
-      const date = runTimestamp(run);
-      const tokens = sumTokens(iterations);
-      const toolCalls = sumToolCalls(iterations);
       return {
-        runId: run._id,
-        runLabel: run.runNumber ? `#${run.runNumber}` : run._id.slice(0, 8),
-        date,
-        dateLabel: formatSuiteRunDate(date),
-        status: run.status,
-        revision: evalRunDecisionRevision(run),
-        verdict,
-        verdictLabel: label,
-        passRate: stats.passRate,
-        platform: runPlatformLabel(run),
-        source: run.source ?? "ui",
-        client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
-        hostStyle: runClientIdentity(run).hostStyle,
+        passRate: computeRunEffectiveStats(run, iterations).passRate,
         models: run.effectiveModelId
-          ? [run.effectiveModelId]
+          ? [runTargetKey(run) ?? run.effectiveModelId]
           : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
-        tokens,
-        toolCalls,
+        tokens: sumTokens(iterations),
+        toolCalls: sumToolCalls(iterations),
       };
-    });
+    },
+  );
+}
+
+/**
+ * `buildSuiteRunHistoryRows` read from per-run metrics (the server rollup, or
+ * a fold of one run's iterations) instead of the whole suite's iterations.
+ * A run with no metrics yet shows its summary pass rate and `—` elsewhere.
+ */
+export function buildSuiteRunHistoryRowsFromMetrics(
+  runs: readonly EvalSuiteRunListItem[],
+  metricsByRun: RunMetricsByRun,
+  suite: Pick<EvalSuite, "defaultPassCriteria">,
+  hostNamesById: Map<string, string | null> | undefined,
+  projectEnvironmentsEnabled: boolean,
+): SuiteRunHistoryRow[] {
+  return buildRunHistoryRows(
+    runs,
+    suite,
+    hostNamesById,
+    projectEnvironmentsEnabled,
+    (run) => {
+      const metrics = metricsByRun.get(run._id);
+      return {
+        passRate: computeRunEffectiveStatsFromMetrics(run, metrics).passRate,
+        models: run.effectiveModelId
+          ? [runTargetKey(run) ?? run.effectiveModelId]
+          : // Rollup rows are per model × effective effort; an effort-less
+            // row keys as the bare model id, exactly as before.
+            [
+              ...new Set(
+                metrics?.models.map((row) =>
+                  modelEffortTargetKey(row.model, row.reasoningEffort),
+                ) ?? [],
+              ),
+            ],
+        latencyMs: metrics?.latencyP50Ms ?? null,
+        tokens: metrics?.tokensTotal ?? null,
+        toolCalls: metrics?.toolCallsTotal ?? null,
+      };
+    },
+  );
 }
 
 export function buildSuiteRunHistoryAggregates(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   allIterations: readonly EvalIteration[],
 ): SuiteRunHistoryAggregates {
   const runIds = new Set(runs.map((run) => run._id));
@@ -343,6 +431,45 @@ export function buildSuiteRunHistoryAggregates(
     totalTokens,
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
+    tokensPerRun:
+      measuredTokenRuns > 0 && totalTokens != null
+        ? totalTokens / measuredTokenRuns
+        : null,
+    toolCallsPerRun:
+      measuredToolCallRuns > 0 && totalToolCalls != null
+        ? totalToolCalls / measuredToolCallRuns
+        : null,
+  };
+}
+
+/** `buildSuiteRunHistoryAggregates`, read from per-run metrics. */
+export function buildSuiteRunHistoryAggregatesFromMetrics(
+  runs: readonly EvalSuiteRunListItem[],
+  metricsByRun: RunMetricsByRun,
+): SuiteRunHistoryAggregates {
+  const list = runs
+    .map((run) => metricsByRun.get(run._id))
+    .filter((metrics): metrics is RunMetrics => metrics != null);
+  let totalTokens: number | null = null;
+  let totalToolCalls: number | null = null;
+  let measuredTokenRuns = 0;
+  let measuredToolCallRuns = 0;
+  for (const metrics of list) {
+    if (metrics.tokensTotal !== undefined) {
+      totalTokens = (totalTokens ?? 0) + metrics.tokensTotal;
+      measuredTokenRuns += 1;
+    }
+    if (metrics.toolCallsTotal !== undefined) {
+      totalToolCalls = (totalToolCalls ?? 0) + metrics.toolCallsTotal;
+      measuredToolCallRuns += 1;
+    }
+  }
+  const { latencyP50, latencyP95 } = poolLatency(list);
+  return {
+    runCount: runs.length,
+    totalTokens,
+    latencyP50,
+    latencyP95,
     tokensPerRun:
       measuredTokenRuns > 0 && totalTokens != null
         ? totalTokens / measuredTokenRuns

@@ -1,4 +1,9 @@
 import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL_DEFINITION,
+} from "../../../shared/mcpjam-agent-model.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -47,7 +52,7 @@ import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, 
  *
  * Auth to the platform worker: the worker verifies AuthKit JWTs from the
  * same issuer the inspector authenticates with (prod `login.mcpjam.com`,
- * staging `dynamic-echo-14-staging`), so the caller's bearer is forwarded
+ * staging `deep-vanilla-68-test`), so the caller's bearer is forwarded
  * as the MCP `accessToken`. Local dev tokens come from the dev AuthKit app,
  * which only the LOCAL worker (`wrangler dev --env dev`) trusts — `npm run
  * dev` starts that worker automatically, so the agent talks to it on
@@ -103,8 +108,15 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { describeError } from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import {
+  agentCapturePolicy,
+  agentRouteCapture,
+  MCPJAM_AGENT_FAILURE_CAPTURE,
+} from "../../utils/agent-failure-capture.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
@@ -126,8 +138,14 @@ const DEFAULT_SPEC_URL = "https://modelcontextprotocol.io/mcp";
  *     project instead, with nothing at the call site to reveal it.
  *
  * Deleting it by name resolves both: neither server's copy survives.
+ *
+ * `send_feedback` is the platform worker's own feedback tool, reachable here
+ * when `MCPJAM_AGENT_PLATFORM_TOOLS=1` restores that worker. Declined for the
+ * first reason above: it posts model-authored text to the MCPJam team from
+ * inside the user's chat, unattended. A person in the app reports through the
+ * Send feedback form, which shows them where the text goes.
  */
-const DECLINED_MCP_TOOL_NAMES = ["submit_feedback"] as const;
+const DECLINED_MCP_TOOL_NAMES = ["submit_feedback", "send_feedback"] as const;
 const PLATFORM_SERVER_ID = MCPJAM_PLATFORM_SERVER_ID;
 
 /**
@@ -373,6 +391,28 @@ mcpjamAgent.post("/", async (c) => {
                 : String(result.reason),
           }
         );
+        // docs.mcpjam.com is OUR docs server. The turn carries on without it,
+        // so this is a warning, not a failed turn — but it is our outage and
+        // every agent answer about MCPJam degrades while it lasts, so it is an
+        // incident. The Axiom row above stays a warning; only Sentry hears
+        // more. The protocol docs server is a third party's, and its
+        // preflight degrading the turn is not ours to page on.
+        if (serverId === DOCS_SERVER_ID) {
+          maybeCaptureOriginError(
+            result.reason,
+            describeError(result.reason),
+            {
+              source: "route:mcpjam-agent.docs-preflight",
+              extra: { serverId },
+              capture: agentCapturePolicy({
+                source: "mcpjam-agent.docs-preflight",
+                serverId,
+                pageClass: "incident",
+                level: "warning",
+              }),
+            }
+          );
+        }
         return false;
       });
 
@@ -430,6 +470,17 @@ mcpjamAgent.post("/", async (c) => {
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
+      // Ask MCPJam is paid by MCPJam for SIGNED-IN callers only. A guest keeps
+      // the path it has always had — its own cookie/IP spend buckets on the
+      // customer rail — because a cookie is free, and platform-paying for one
+      // is a farm waiting to happen (the 2026-09-15 wave). It also keeps the
+      // `guest-ai-on-mcpjam-money` page meaningful: no guest ever produces a
+      // `record_only` row on this surface.
+      //
+      // Keyed on `guestId`, not the `authMethod` label — the same rule the
+      // rest of this server uses for "is this actually a guest".
+      const isGuest = Boolean(c.get("guestId"));
+      const billingFeature = isGuest ? undefined : MCPJAM_AGENT_BILLING_FEATURE;
       const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
@@ -437,6 +488,10 @@ mcpjamAgent.post("/", async (c) => {
               authHeader,
               projectId: body.projectId,
               chatSessionId: body.chatSessionId,
+              // Web search follows the turn: platform-paid when the turn is.
+              ...(billingFeature ? { billingFeature } : {}),
+              // And its failures are the agent's failures.
+              failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
             }
           )
         : undefined;
@@ -445,7 +500,13 @@ mcpjamAgent.post("/", async (c) => {
         manager,
         prepare: {
           selectedServerIds,
-          modelDefinition: body.model as never,
+          // `body.model` is IGNORED. The agent used to ride the caller's
+          // last-used Playground model, which could be a frontier or BYOK
+          // model — fine while the customer paid for it, not something MCPJam
+          // can hand out. The backend only honours the platform-billing claim
+          // for this exact id, so sending anything else would refuse the turn
+          // rather than quietly bill someone.
+          modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION as never,
           systemPrompt: effectiveSystemPrompt,
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,
@@ -489,9 +550,24 @@ mcpjamAgent.post("/", async (c) => {
         },
         runtime: {
           authHeader,
-          clientIp: getClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
+          // The step ceiling is a product property of Ask MCPJam, not a
+          // billing decision — the same reasoning that pins the model for
+          // guests too. Gating it on the claim would hand a guest on the
+          // customer rail a LONGER agent loop (30, the chat default) than a
+          // signed-in user gets on MCPJam's, and would make the same agent
+          // behave differently here than on the v1 Slack/Discord route, which
+          // sends it unconditionally.
+          maxSteps: AGENT_MAX_STEPS,
+          // The claim itself IS a billing decision. Sent on every per-step
+          // Convex request, which authorizes it on the signed-in user's own
+          // login. Absent for guests, whose steps stay on the customer rail
+          // exactly as before.
+          ...(billingFeature ? { billingFeature } : {}),
+          // Every failure of this turn reaches Sentry, guests' included.
+          failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
           c,
         },
       });
@@ -511,14 +587,25 @@ mcpjamAgent.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
+    const routeError = mapRuntimeError(error, {
+      capture: agentRouteCapture("web.mcpjam-agent"),
+    });
     return webError(
       c,
       routeError.status,
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      {
+        ...((rpcCollector?.buildEnvelope() as
+          | Record<string, unknown>
+          | undefined) ?? {}),
+        // The outcome of the capture decision just made, for the request-log
+        // backstop: it captures only what nothing else did.
+        ...(typeof routeError.captured === "boolean"
+          ? { captured: routeError.captured }
+          : {}),
+      }
     );
   }
 });
@@ -682,13 +769,18 @@ mcpjamAgent.post("/widget-content", async (c) => {
       await manager.disconnectAllServers();
     }
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    const routeError = mapRuntimeError(error, {
+      capture: agentRouteCapture("web.mcpjam-agent.widget-content"),
+    });
     return webError(
       c,
       routeError.status,
       routeError.code,
       routeError.message,
-      routeError.details
+      routeError.details,
+      typeof routeError.captured === "boolean"
+        ? { captured: routeError.captured }
+        : undefined
     );
   }
 });

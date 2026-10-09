@@ -46,8 +46,16 @@ describe("HostRunner timeout integration", () => {
                 input: JSON.stringify({}),
               },
             ],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            finishReason: { unified: "tool-calls" as const, raw: "tool_use" },
+            usage: {
+              inputTokens: {
+                total: 5,
+                noCache: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 3, text: 3, reasoning: 0 },
+            },
             warnings: [],
           };
         }
@@ -58,8 +66,11 @@ describe("HostRunner timeout integration", () => {
 
         return {
           content: [{ type: "text" as const, text: "unexpected follow-up" }],
-          finishReason: "stop",
-          usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+          finishReason: { unified: "stop" as const, raw: "end_turn" },
+          usage: {
+            inputTokens: { total: 4, noCache: 4, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 2, text: 2, reasoning: 0 },
+          },
           warnings: [],
         };
       },
@@ -113,7 +124,9 @@ describe("HostRunner timeout integration", () => {
     expect(result.hasError()).toBe(true);
     expect(result.getError()).toEqual(expect.any(String));
     expect(elapsedMs).toBeLessThan(1000);
-    expect(currentModel.doGenerateCalls).toHaveLength(2);
+    // AI SDK 7 stops at the timeout: no model call after the aborted tool.
+    // (AI SDK 6 made one more, answered by the "unexpected follow-up" below.)
+    expect(currentModel.doGenerateCalls).toHaveLength(1);
     expect(mockCreateModelFromString).toHaveBeenCalledWith(
       "openai/gpt-4o",
       expect.objectContaining({ apiKey: "test-key" })

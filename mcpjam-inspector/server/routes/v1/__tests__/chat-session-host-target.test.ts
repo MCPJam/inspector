@@ -42,6 +42,10 @@ const {
   runUnifiedAssistantTurnMock,
   persistChatSessionToConvexMock,
   getToolsMock,
+  acquirePlaygroundHarnessBoxMock,
+  releaseBoxMock,
+  resolvePlaygroundCredentialEnvironmentMock,
+  playgroundCredentialRefusalMock,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -54,6 +58,25 @@ const {
   runUnifiedAssistantTurnMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   getToolsMock: vi.fn(),
+  acquirePlaygroundHarnessBoxMock: vi.fn(),
+  releaseBoxMock: vi.fn(),
+  resolvePlaygroundCredentialEnvironmentMock: vi.fn(),
+  playgroundCredentialRefusalMock: vi.fn(),
+}));
+
+// The box is the conversation's throwaway machine: a harness turn here binds
+// it and never resolves a persistent computer. Only the acquisition, and the
+// two credential reads a Cursor turn makes before it, are faked.
+vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/playground-box.js")
+  >()),
+  acquirePlaygroundHarnessBox: (...args: unknown[]) =>
+    acquirePlaygroundHarnessBoxMock(...args),
+  resolvePlaygroundCredentialEnvironment: (...args: unknown[]) =>
+    resolvePlaygroundCredentialEnvironmentMock(...args),
+  playgroundCredentialRefusal: (...args: unknown[]) =>
+    playgroundCredentialRefusalMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -143,6 +166,7 @@ import {
   assertHostPointerAgreement,
   engineLabel,
   harnessOfRuntimeConfig,
+  hostRoutingSelectionForModel,
   resolveChatSessionEngine,
 } from "../chat-session-host-target.js";
 import {
@@ -249,6 +273,19 @@ beforeEach(() => {
     sessionDocId: "cs_1",
     version: 1,
   });
+  releaseBoxMock.mockResolvedValue(undefined);
+  acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+    ok: true,
+    box: {
+      binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+      release: releaseBoxMock,
+    },
+  });
+  resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
+    ok: true,
+    environmentId: "env_hidden",
+  });
+  playgroundCredentialRefusalMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -284,6 +321,57 @@ describe("host targeting dispatches the real harness", () => {
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.hostId).toBe(HOST);
+  });
+
+  it("binds the conversation's throwaway box to a harness turn and releases it", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT,
+        harness: "claude-code",
+        projectEnvironmentId: ENVIRONMENT,
+      }),
+    );
+    // The box reaches the engine as the harness's sandbox binding, so
+    // `resolveHarnessSandbox` (the persistent computer) is never asked.
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessSandboxBinding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+      }),
+    );
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the turn, before any model call, when no box can be had", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: { status: 429, error: "limit reached", code: "user_terminal_cap" },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(429);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("an emulated turn acquires no box", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ harnessSandboxBinding: expect.anything() }),
+    );
   });
 
   it("runs the harness an explicit hostId names, using the host's own servers", async () => {
@@ -322,6 +410,326 @@ describe("host targeting dispatches the real harness", () => {
     expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
       expect.not.objectContaining({ harness: expect.anything() }),
     );
+  });
+});
+
+describe("the conversation's box is released on every exit", () => {
+  beforeEach(() => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+  });
+
+  it("answers without waiting on the release", async () => {
+    // The release's `ended` touch can take up to 10s; the caller must not.
+    releaseBoxMock.mockReturnValue(new Promise<void>(() => {}));
+
+    const answered = await Promise.race([
+      (async () =>
+        (await turn(firstTurn({ environmentId: ENVIRONMENT }))).status)(),
+      new Promise<"held">((resolve) =>
+        setTimeout(() => resolve("held"), 1_000),
+      ),
+    ]);
+
+    expect(answered).toBe(200);
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "throws",
+      () => runUnifiedAssistantTurnMock.mockRejectedValue(new Error("boom")),
+    ],
+    [
+      "reports a failure",
+      () =>
+        runUnifiedAssistantTurnMock.mockImplementation(
+          async (args: { onEngineError: (e: { message: string }) => void }) => {
+            args.onEngineError({ message: "engine failed" });
+            return {
+              messages: [],
+              assistantMessages: [],
+              toolCalls: [],
+              toolResults: [],
+              aborted: false,
+            };
+          },
+        ),
+    ],
+  ])("releases it when the engine %s", async (_label, fail) => {
+    fail();
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(500);
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases it when the caller goes away mid-turn", async () => {
+    const request = new AbortController();
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      request.abort();
+      return {
+        messages: [],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        aborted: true,
+      };
+    });
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", chatSessions);
+
+    await app.request("/api/v1/chat-sessions/messages", {
+      method: "POST",
+      body: JSON.stringify(firstTurn({ environmentId: ENVIRONMENT })),
+      headers: { "content-type": "application/json" },
+      signal: request.signal,
+    });
+
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a refused box provision", () => {
+  beforeEach(() => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+  });
+
+  it("maps a 403 to FORBIDDEN", async () => {
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: { status: 403, error: "not_member" },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.code).toBe("FORBIDDEN");
+    expect(body.details.reason).toBe("PLAYGROUND_SANDBOX_PROVISION_FAILED");
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a 503 at capacity to RATE_LIMITED and keeps the control plane's wait", async () => {
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: {
+        status: 503,
+        error: "Playground computer capacity did not become available in time",
+        code: "at_capacity",
+        retryAfterMs: 2_500,
+      },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    // The public contract has no 503: capacity is a rate limit to the caller.
+    expect(response.status).toBe(429);
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.details).toMatchObject({
+      reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+      code: "at_capacity",
+    });
+    expect(response.headers.get("retry-after")).toBe("3");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a harness that signs in with the member's own account", () => {
+  // Cursor's key reaches only a box the project provisioned, so the turn's own
+  // credential check runs BEFORE one is booted: a refused turn pays for no box
+  // and never reaches the model call that would hold the lease to its TTL.
+  // Cursor picks its own model on the customer's account, so the engine gate
+  // holds the turn's model to the runtime's sentinel. No request body can send
+  // it (the route refuses `cursor/auto` before the lease), so the resolver
+  // hands it back here: the box pre-check must not lean on that gate.
+  const CURSOR_MODEL = "cursor/auto";
+  const cursorHost = {
+    ok: true,
+    config: {
+      hostId: HOST,
+      harness: "cursor",
+      modelId: CURSOR_MODEL,
+      selectedServerIds: ["srv_1"],
+    },
+  };
+  const NO_KEY =
+    "No usable CURSOR_API_KEY. Add or fix it under Project Settings → Secrets, then send again.";
+
+  beforeEach(() => {
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: CURSOR_MODEL,
+      provider: "cursor",
+    });
+  });
+
+  it("refuses a host-only turn with no key, before any box", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+    resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: NO_KEY,
+    });
+
+    const response = await turn(firstTurn({ hostId: HOST }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "CONFLICT",
+      message: NO_KEY,
+      details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+    });
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    // Refused before the model call, so the caller's retry may run.
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatSessions:releaseTurnLease",
+      expect.objectContaining({ turnId: "turn_1" }),
+    );
+  });
+
+  it("refuses a turn whose environment grants no key, before any box", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
+    );
+    playgroundCredentialRefusalMock.mockResolvedValue(
+      "The Cursor harness found a brokered CURSOR_API_KEY project secret, but the environment this run uses does not select it.",
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("CONFLICT");
+    expect(body.details.reason).toBe("EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE");
+    // The session's own environment is the grant: nothing hidden is minted.
+    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
+    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessId: "cursor",
+        projectId: PROJECT,
+        environmentId: ENVIRONMENT,
+      }),
+    );
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("boots a host-only turn's box under the hidden environment that selects the key", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+
+    const response = await turn(firstTurn({ hostId: HOST }));
+
+    expect(response.status).toBe(200);
+    expect(resolvePlaygroundCredentialEnvironmentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT,
+        hostId: HOST,
+        harnessId: "cursor",
+      }),
+    );
+    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: "env_hidden" }),
+    );
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harness: "cursor",
+        projectEnvironmentId: "env_hidden",
+      }),
+    );
+  });
+
+  it("a harness on MCPJam's own key makes no credential read", async () => {
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: MODEL,
+      provider: "anthropic",
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
+    expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the host's saved effort reaches the runtime", () => {
+  const selection = (modelId: string) => ({
+    modelId,
+    source: "hosted",
+    settings: { reasoningEffort: "high" },
+    fallback: { provider: "none", model: "none" },
+  });
+
+  it("hands the selection and its effort to the runtime and prepare, for the same model", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection(MODEL) }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    expect(response.status).toBe(200);
+    expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelSelection: expect.objectContaining({ modelId: MODEL }),
+        settings: { reasoningEffort: "high" },
+      }),
+    );
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffort: "high" }),
+    );
+  });
+
+  it("drops an explicit temperature from the prepare call AND the resume config when the effort is the host's", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection(MODEL) }),
+    );
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, temperature: 0.3 }),
+    );
+    expect(response.status).toBe(200);
+    expect(prepareChatV2Mock.mock.calls.at(-1)![0]).not.toHaveProperty(
+      "temperature",
+    );
+    const [args] = persistChatSessionToConvexMock.mock.calls.at(-1) as [
+      { resumeConfig: Record<string, unknown> },
+    ];
+    expect(args.resumeConfig).not.toHaveProperty("temperature");
+    expect(args.resumeConfig.reasoningEffort).toBe("high");
+  });
+
+  it("never carries the saved effort onto a different model", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelSelection: selection("openai/gpt-5") }),
+    );
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const args = resolveTurnRuntimeMock.mock.calls.at(-1)![0];
+    expect("modelSelection" in args).toBe(false);
+    expect("settings" in args).toBe(false);
+  });
+
+  it("a host with no saved selection is unchanged", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const args = resolveTurnRuntimeMock.mock.calls.at(-1)![0];
+    expect("modelSelection" in args).toBe(false);
+    expect("settings" in args).toBe(false);
   });
 });
 
@@ -465,6 +873,88 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
     expect(body.details.kind).toBe("model-not-hosted");
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a hosted-catalog model the host saved to run on the user's own key", async () => {
+    // The id is in MCPJam's catalog, but the host's stored legacy selection
+    // means own key only. A harness authenticates with MCPJam's credential,
+    // so running it would bill MCPJam for a turn the user chose to pay for.
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: { source: "legacy", modelId: MODEL },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("model-not-hosted");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses the host's saved effort a harness has not verified — never drops it", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: MODEL,
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("setting-unsupported");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an effort sent WITH THE TURN on a harness host that saved none", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code" }),
+    );
+
+    const response = await turn(
+      firstTurn({
+        environmentId: ENVIRONMENT,
+        toolMode: "auto",
+        reasoningEffort: "high",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("setting-unsupported");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a saved effort that belongs to a different model than the turn's", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    );
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, toolMode: "auto" }),
+    );
+    const body = await response.json();
+    expect(body.details?.kind).not.toBe("setting-unsupported");
   });
 
   it("refuses a read_only harness turn rather than dropping the narrowing", async () => {
@@ -1085,7 +1575,7 @@ describe("browser turn integration", () => {
   afterEach(() => vi.restoreAllMocks());
   function browserFixture() {
     mutationMock.mockImplementation(async (name: string) => name === "chatSessions:claimTurnLease" ? { status: "claimed", turnId: "turn_1", executionOwnerToken: "owner" } : null);
-    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://storage.test/shot" }] } : null);
+    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://convex.test/web/artifact?t=shot.sig" }] } : null);
     resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL }));
     vi.spyOn(BrowserSessionService.prototype, "agentRequest").mockImplementation(async op => op === "create_shell" ? { sessionId: "cs_1", chatSessionId: "wire" } : { ok: true });
     vi.spyOn(sessionBrowser, "getConversationBrowser").mockResolvedValue(null);
@@ -1115,7 +1605,7 @@ describe("browser turn integration", () => {
     const response = await turn(input);
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://storage.test/shot" }] });
+    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://convex.test/web/artifact?t=shot.sig" }] });
     expect(body.chatSessionId).toBe("wire");
     const pixels = Buffer.from([137,80,78,71,13,10,26,10]).toString("base64");
     expect(JSON.stringify(body)).not.toContain(pixels);
@@ -1129,6 +1619,13 @@ describe("browser turn integration", () => {
     await turn(input);
     expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("close", expect.objectContaining({ body: { sessionId: "logical", expectedBootId: "boot" } }));
     expect(mutationMock).toHaveBeenCalledWith("chatSessions:transitionTurnLease", expect.objectContaining({ op: "fail", executionOwnerToken: "owner" }));
+  });
+  it("records the turn's effort on begin_model so a failed turn still leaves its pin", async () => {
+    const input = browserFixture();
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL, modelSelection: { modelId: MODEL, source: "hosted", settings: { reasoningEffort: "high" }, fallback: { provider: "none", model: "none" } } }));
+    runUnifiedAssistantTurnMock.mockRejectedValueOnce(new Error("engine failed"));
+    await turn(input);
+    expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("begin_model", expect.objectContaining({ body: expect.objectContaining({ resumeConfig: expect.objectContaining({ reasoningEffort: "high" }) }) }));
   });
   it("flushes screenshot writes again at turn settlement", async () => {
     const input = browserFixture();
@@ -1159,5 +1656,117 @@ describe("browser turn integration", () => {
     expect(response.status).toBe(409);
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
     expect(mutationMock).toHaveBeenCalledWith("chatSessions:releaseTurnLease", { turnId: "turn_1", executionOwnerToken: "owner" });
+  });
+});
+
+describe("hostRoutingSelectionForModel — what decides a v1 session turn's rail", () => {
+  const none = { provider: "none", model: "none" } as const;
+
+  it("reads a full selection or a STORED legacy one, only for the turn's model", () => {
+    const hosted = { modelId: "openai/gpt-5", source: "hosted", fallback: none };
+    expect(
+      hostRoutingSelectionForModel({ modelSelection: hosted }, { id: "openai/gpt-5" }),
+    ).toEqual(hosted);
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "openai/gpt-5" },
+      ),
+    ).toEqual({ source: "legacy", modelId: "openai/gpt-5" });
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "anthropic/claude-haiku-4.5" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("an unlabelled host has none: today's path", () => {
+    expect(hostRoutingSelectionForModel({}, { id: "openai/gpt-5" })).toBeUndefined();
+    expect(hostRoutingSelectionForModel(undefined, { id: "openai/gpt-5" })).toBeUndefined();
+  });
+});
+
+describe("the turn deadline after a harness turn delivered", () => {
+  // A Claude Code turn waiting on background agents ends that wait at the
+  // deadline and keeps the answer it already streamed
+  // (`claude-code-background-drain.ts`). The route must not then call the
+  // delivered turn a TIMEOUT.
+  function turnThatHitsItsDeadline(result: Record<string, unknown>) {
+    const request = new AbortController();
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      request.abort();
+      return result;
+    });
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", chatSessions);
+    return (body: Record<string, unknown>) =>
+      app.request("/api/v1/chat-sessions/messages", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        signal: request.signal,
+      });
+  }
+  const delivered = {
+    messages: [],
+    assistantMessages: [
+      { role: "assistant", content: [{ type: "text", text: "the plan" }] },
+    ],
+    toolCalls: [],
+    toolResults: [],
+    turnTrace: { turnId: "turn_1", spans: [] },
+    usage: { inputTokens: 1, outputTokens: 2 },
+    finishReason: "stop",
+    aborted: false,
+    backgroundDrainEnded: true,
+  };
+
+  it("answers a finished harness turn instead of a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const response = await turnThatHitsItsDeadline(delivered)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("harness:claude-code");
+  });
+
+  it("a harness turn that was cut short is still a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const {
+      turnTrace: _dropped,
+      backgroundDrainEnded: _ended,
+      ...cutShort
+    } = delivered;
+    const response = await turnThatHitsItsDeadline(cutShort)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+
+  it("a harness turn with a trace but no drain report (paused) is still a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const { backgroundDrainEnded: _ended, ...paused } = delivered;
+    const response = await turnThatHitsItsDeadline(paused)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+
+  it("an emulated turn past its deadline is still a TIMEOUT", async () => {
+    const response = await turnThatHitsItsDeadline(delivered)(
+      firstTurn({ serverIds: ["srv_1"] }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
   });
 });

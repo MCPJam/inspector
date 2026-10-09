@@ -153,6 +153,13 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     // hand a guest any future mutation added at the same URL for free.
     methods: ["GET"],
   },
+  // The published-study reads. GET-ONLY on both, and the method matters on the
+  // canonical detail path: `PATCH /studies/:studyId` (update_study) now lives
+  // at the same URL, and a method-less rule would hand a share-link guest the
+  // ability to rename a study or widen who can open it. The deprecated
+  // `/scenarios` twins keep their method-less rules — nothing writes there.
+  { pattern: /^\/projects\/[^/]+\/studies$/, methods: ["GET"] },
+  { pattern: /^\/projects\/[^/]+\/studies\/[^/]+$/, methods: ["GET"] },
   { pattern: /^\/projects\/[^/]+\/scenarios$/ },
   { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
   // Directory reads only. Backing Convex queries are publicQuery and the

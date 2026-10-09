@@ -20,6 +20,7 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { requireProjectIdArg } from "../v1/convex-id-param.js";
 import {
   CloudSkillsError,
   listCloudSkills,
@@ -30,7 +31,6 @@ import {
   deleteCloudSkill,
   promoteCloudSkill,
   listCloudSkillFiles,
-  generateCloudSkillFileUploadUrl,
   attachCloudSkillFiles,
   removeCloudSkillFile,
   readCloudSkillFile,
@@ -85,10 +85,17 @@ async function ctxFrom(
   c: Context,
   projectId: string,
 ): Promise<CloudSkillsContext> {
+  // A malformed id is a 404 here, before Convex's `v.id("projects")` rejects
+  // it as a masked 500 "Server Error" (the same gate v1 uses, #5799).
+  const checkedProjectId = requireProjectIdArg(projectId, "web.skills");
   // Exchange the request bearer for a Convex-usable bearer (handles WorkOS
   // API-key → delegated-JWT; a session JWT passes through).
   const bearer = await getConvexBearerForRequest(c);
-  return { authHeader: bearer, projectId, signal: c.req.raw.signal };
+  return {
+    authHeader: bearer,
+    projectId: checkedProjectId,
+    signal: c.req.raw.signal,
+  };
 }
 
 const projectOnly = z.object({ projectId: z.string().min(1) });
@@ -342,21 +349,8 @@ skills.post("/files/list", async (c) =>
   }),
 );
 
-// Mint a browser→Convex direct upload URL (blob bypasses the inspector body
-// limit by design). The manage-gate runs in Convex before the URL is issued.
-skills.post("/files/upload-url", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
-    const { uploadUrl } = await run(async () =>
-      generateCloudSkillFileUploadUrl(
-        await ctxFrom(c, body.projectId),
-        body.skillId,
-      ),
-    );
-    return { uploadUrl };
-  }),
-);
-
+// Supporting-file bytes go from the browser to the backend's upload route
+// (MJ-006), which applies the same manage gate; `attach` then binds them.
 skills.post("/files/attach", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(

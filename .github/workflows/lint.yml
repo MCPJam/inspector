@@ -29,10 +29,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -40,13 +40,29 @@ jobs:
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
+      - name: Verify MCP deploy workflow path filters
+        run: node --test .github/scripts/mcp-workflow-paths.test.mjs
+
+      # The scripts behind prepare-release.yml, release-trigger.yml and
+      # release.yml's plan. Release itself runs rarely, so this is where a
+      # break shows up first.
+      - name: Release script tests
+        run: |
+          node --test \
+            .github/scripts/unpublished-versions.test.mjs \
+            .github/scripts/release-plan.test.mjs \
+            .github/scripts/release-pr.test.mjs \
+            .github/scripts/release-trigger.test.mjs \
+            .github/scripts/local-harness-bot-pr.test.mjs \
+            .github/scripts/check-workos-loopback.test.mjs
+
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
       # ubuntu-latest rather than the Playwright container, and the tree carries
       # prebuilt native artifacts that should not be shared across the two.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -63,6 +79,20 @@ jobs:
 
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
+
+      # Advisory: a moved fingerprint on a PR is what the next release will
+      # publish, not a defect. Starting that release (`prepare-release.yml`)
+      # builds the pack and pins it in the version PR, so this only says which
+      # harness moves (in the job summary). The release gate is still strict.
+      - name: Report local runtime input fingerprints
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
+
+      # No `check-local-harness-release.mjs --assets` here. It compares the
+      # PUBLISHED packs with this checkout, and packs publish only from main,
+      # so a PR that changes a pack input could never pass it and had to merge
+      # red. It also downloaded every pinned pack (~1.1 GB) on every PR. The
+      # published-asset check runs where it can be satisfied: before a release
+      # is versioned (prepare-release.yml) and before it publishes (release.yml).
 
       - name: Typecheck releasable packages
         run: npm run typecheck

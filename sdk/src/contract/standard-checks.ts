@@ -22,7 +22,7 @@ export type StandardCheck =
       name: string;
       label: string;
       kind: "runner";
-      measuredBy: "connection" | "discovery";
+      measuredBy: "connection" | "discovery" | "call" | "response";
     }
   | {
       id: string;
@@ -130,6 +130,22 @@ export const STANDARD_CHECKS: readonly StandardCheck[] = [
     kind: "runner",
     measuredBy: "discovery",
   },
+  {
+    id: "call.completed",
+    name: "Tool call completed",
+    stage: "call",
+    label: "Tool call",
+    kind: "runner",
+    measuredBy: "call",
+  },
+  {
+    id: "response.returned",
+    name: "Result returned to the model",
+    stage: "response",
+    label: "Response",
+    kind: "runner",
+    measuredBy: "response",
+  },
   ...Object.entries(presets).map(
     ([key, { name, label, rule }]): StandardCheck => {
       const id = key as StandardAssertionCheckId;
@@ -151,6 +167,39 @@ export const STANDARD_CHECKS: readonly StandardCheck[] = [
     kind: "judge",
   },
 ];
+
+/**
+ * The predicate kinds a standard check implements.
+ *
+ * Every kind here has exactly one standard check, which is what makes the name
+ * map below total and unambiguous; `standard-checks.test.ts` pins that.
+ */
+export type StandardCheckPredicateKind =
+  (typeof STANDARD_CHECK_ASSERTION_KINDS)[StandardAssertionCheckId];
+
+/**
+ * The name a reader recognises a standard check by, keyed by the predicate kind
+ * that implements it.
+ *
+ * A run page titles a row by WHAT it evaluates ("Tool errors (isError)"), and
+ * shows the configured rule as the row's expectation underneath. The authoring
+ * page uses the same title, because a scorer the reader met on a run and the
+ * scorer they edit are the same object — the vocabulary split this module's
+ * docblock exists to close.
+ *
+ * Derived from `presets` rather than restated beside it, so a renamed check
+ * cannot leave a stale title behind.
+ */
+export const STANDARD_CHECK_NAME_BY_KIND: Readonly<
+  Record<StandardCheckPredicateKind, string>
+> = Object.fromEntries(
+  (
+    Object.entries(STANDARD_CHECK_ASSERTION_KINDS) as [
+      StandardAssertionCheckId,
+      StandardCheckPredicateKind
+    ][]
+  ).map(([id, kind]) => [kind, presets[id].name])
+) as Record<StandardCheckPredicateKind, string>;
 
 /** Explicit [] clears suppression; omission preserves it at update boundaries. */
 export const suppressedSuiteStandardCheckIdsSchema = z

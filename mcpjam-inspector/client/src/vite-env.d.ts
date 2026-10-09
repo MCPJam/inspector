@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
   readonly VITE_DISABLE_POSTHOG_LOCAL: string;
+  readonly VITE_DISABLE_SENTRY?: string;
   readonly VITE_DOCKER?: string;
   readonly VITE_RUNTIME?: string;
   readonly VITE_MCPJAM_HOSTED_MODE?: string;
@@ -20,3 +21,5 @@ interface ImportMeta {
 declare const __APP_VERSION__: string;
 /** Sentry `dist` — which build emitted this bundle. See `SENTRY_BUILD_SURFACES`. */
 declare const __BUILD_SURFACE__: import("../../shared/sentry-config").SentryBuildSurface;
+
+declare const __BUILD_SHA__: string;

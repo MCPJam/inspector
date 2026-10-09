@@ -52,6 +52,7 @@ function goal(states: Partial<Record<JourneyStageId, StageState>>) {
     runId: "cluster-export",
     title: "Export the board",
     sessions: 2,
+    notRun: false,
     sentiment: { label: "Stalled", tone: "fail" },
     stages,
     diagnosisStage: null,
@@ -69,13 +70,14 @@ function chipsFromLastCall(): UsageFilterState["chips"] | undefined {
 function renderInspect(
   model: GoalFindingsModel,
   selectedStage: JourneyStageId,
+  onOpenSession: (sessionId: string) => void = vi.fn(),
 ) {
   return render(
     <FindingsGoalInspect
       goal={model}
       selectedStage={selectedStage}
       onSelectStage={vi.fn()}
-      onOpenSession={vi.fn()}
+      onOpenSession={onOpenSession}
       sessionScope={{ kind: "scenario", scenarioId: "scn-1" }}
     />,
   );
@@ -308,5 +310,79 @@ describe("which sessions a selected stage narrows to", () => {
     // The panel around it survives: the reader can still move between stages.
     expect(screen.getByTestId("findings-stage-connection")).toBeInTheDocument();
     expect(screen.getByTestId("findings-stage-discovery")).toBeInTheDocument();
+  });
+});
+
+describe("reaching sessions from a stage with several findings", () => {
+  /**
+   * The expand rule was written for the footer — one session is a link, not
+   * something to expand — and reused for the evidence rows, where it means
+   * only row 0 renders the list. A stage that failed two rubric checks over
+   * the same session then shows the second one as text with nothing to click,
+   * which is what "none of the sessions link to anything" looked like.
+   */
+  function goalWithRows(rows: number, sessions: number): GoalFindingsModel {
+    const model = goal({ value: "fail" });
+    return {
+      ...model,
+      sessions,
+      stages: {
+        ...model.stages,
+        value: {
+          state: "fail",
+          evidence: Array.from({ length: rows }, (_, i) => ({
+            tone: "fail" as const,
+            observation: `Rubric check "check-${i}" failed`,
+            meta: `1 of ${sessions} session`,
+          })),
+        },
+      },
+    };
+  }
+
+  /** The panel opens one row at a time, so each finding is walked on its own. */
+  async function expandRow(toggle: HTMLElement) {
+    if (toggle.getAttribute("aria-expanded") === "true") return;
+    await userEvent.click(toggle);
+  }
+
+  it("gives every finding a way in when one session backs several of them", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            _id: "sess-shared",
+            firstMessagePreview: "Export the board",
+            lastActivityAt: 1,
+          },
+        ],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const onOpenSession = vi.fn();
+    renderInspect(goalWithRows(2, 1), "value", onOpenSession);
+
+    const toggles = screen.getAllByTestId("findings-evidence-sessions-toggle");
+    expect(toggles).toHaveLength(2);
+
+    // Walked one row at a time, all the way to the callback: a toggle that
+    // renders but lists nothing, or lists a session that opens nothing, is
+    // the same dead end to the reader as no toggle at all.
+    for (const [i, toggle] of toggles.entries()) {
+      await expandRow(toggle);
+      await userEvent.click(await screen.findByTestId("findings-goal-session"));
+      // One argument: `FindingsGoalSessions` passes the id alone.
+      expect(onOpenSession).toHaveBeenNthCalledWith(i + 1, "sess-shared");
+    }
+  });
+
+  it("still shows a lone finding's session without a toggle", () => {
+    renderInspect(goalWithRows(1, 1), "value");
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle"),
+    ).toBeNull();
   });
 });

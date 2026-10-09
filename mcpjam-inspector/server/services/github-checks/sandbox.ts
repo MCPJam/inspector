@@ -39,6 +39,7 @@ import {
 } from "./egress-policy.js";
 import { startNetworkMonitor, stopNetworkMonitor } from "./network-monitor.js";
 import { logger } from "../../utils/logger.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import type { CheckRecipe } from "./recipes.js";
 
 /** Outcomes this module can produce. A subset of the worker's full taxonomy. */
@@ -865,7 +866,11 @@ export async function buildAndStart(
   const probe = await probeMcpInitialize(url, {
     timeoutMs: options?.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
     intervalMs: options?.healthIntervalMs ?? HEALTH_INTERVAL_MS,
-    fetchImpl: options?.fetchImpl,
+    // The host is the sandbox's public edge, but the code answering it is the
+    // pull request's, and a POST it redirects would otherwise be followed by
+    // the global fetch to wherever the Location points. The hosted MCP
+    // transport re-checks every hop; it is plain `fetch` outside hosted mode.
+    fetchImpl: options?.fetchImpl ?? hostedMcpBaseFetch(),
   });
   if (probe === "unhealthy") {
     throw new CheckStepError(

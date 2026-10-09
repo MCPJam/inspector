@@ -1,13 +1,23 @@
+import type { DesktopActivity } from "../shared/desktop-diagnostics";
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  SENTRY_ACTOR_CHANNEL,
+  SENTRY_INSTALLATION_ARGUMENT,
+  type SentryActor,
+} from "../shared/sentry-identity";
 
-// Mirror of the main-process UpdateStatus union (kept inline to avoid a shared module).
-type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string };
+import type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../shared/desktop-update";
 
 // Define the API interface
 interface ElectronAPI {
+  sentry?: {
+    installationId: string;
+    setActor: (actor: SentryActor | null) => void;
+  };
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;
@@ -91,10 +101,12 @@ interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
-    onUpdateError: (callback: () => void) => void;
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => void;
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
+    retryDownload: () => void;
+    relaunchToRetry: () => void;
     simulateUpdate?: () => void; // Dev only - for testing
     simulateUpdateDownloaded?: () => void; // Dev only - for testing
     simulateUpdateError?: () => void; // Dev only - for testing
@@ -103,6 +115,16 @@ interface ElectronAPI {
 
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
+  sentry: {
+    installationId:
+      process.argv
+        .find((arg) => arg.startsWith(SENTRY_INSTALLATION_ARGUMENT))
+        ?.slice(SENTRY_INSTALLATION_ARGUMENT.length) ?? "",
+    setActor: (actor) => ipcRenderer.send(SENTRY_ACTOR_CHANNEL, actor),
+  },
+  diagnostics: {
+    record: (activity) => ipcRenderer.send("desktop:diagnostic", activity),
+  },
   app: {
     getVersion: () => ipcRenderer.invoke("app:version"),
     getPlatform: () => ipcRenderer.invoke("app:platform"),
@@ -144,8 +166,10 @@ const electronAPI: ElectronAPI = {
   oauth: {
     onCallback: (callback: (url: string) => void) => {
       ipcRenderer.on("oauth-callback", (_, url: string) => callback(url));
+      ipcRenderer.send("oauth:listener-ready", true);
     },
     removeCallback: () => {
+      ipcRenderer.send("oauth:listener-ready", false);
       ipcRenderer.removeAllListeners("oauth-callback");
     },
   },
@@ -159,13 +183,17 @@ const electronAPI: ElectronAPI = {
     removeUpdateStatusListener: () => {
       ipcRenderer.removeAllListeners("update-status");
     },
-    onUpdateError: (callback: () => void) => {
-      ipcRenderer.on("update-error", () => callback());
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => {
+      ipcRenderer.on("update-error", (_event, status: FailedUpdateStatus) =>
+        callback(status),
+      );
     },
     removeUpdateErrorListener: () => {
       ipcRenderer.removeAllListeners("update-error");
     },
     getUpdateStatus: () => ipcRenderer.invoke("app:get-update-status"),
+    retryDownload: () => ipcRenderer.send("app:retry-update-download"),
+    relaunchToRetry: () => ipcRenderer.send("app:relaunch-update-download"),
     restartAndInstall: () => {
       ipcRenderer.send("app:restart-for-update");
     },
@@ -209,3 +237,8 @@ contextBridge.exposeInMainWorld(
   "isElectronPackaged",
   process.argv.includes("--mcpjam-packaged"),
 );
+
+// Unlike beforeunload, pagehide does not fire for a canceled departure.
+window.addEventListener("pagehide", () => {
+  ipcRenderer.send("oauth:listener-ready", false);
+});

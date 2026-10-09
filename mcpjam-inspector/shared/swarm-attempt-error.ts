@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "./error-page.js";
 /**
  * Turning a swarm attempt's raw failure into something a developer can act on.
  *
@@ -30,10 +31,218 @@ import {
 } from "./xaa-connect-failure.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
-const AGENT_ERROR_ENVELOPE = /^swarm-agent\s+\S+\s+failed\s+\((\d{3})\):\s*/i;
+const AGENT_ERROR_ENVELOPE =
+  /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Backend stream error:\s*(\d{3}))\s*/i;
 
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
+
+/**
+ * The detail `drainAssistantTurn` appends to an engine error:
+ * "<message> (provider_error)", "<message> (user_rate_limit, HTTP 429)" or
+ * "<message> (HTTP 502)". The code must contain an underscore so an ordinary
+ * trailing parenthetical like "(timeout)" stays part of the sentence.
+ *
+ * Anchored at the "(" with no leading `\s*`: that prefix is retried from every
+ * position in a whitespace run, which is quadratic on a long raw error. The
+ * space left before the match is trimmed by `scrub`.
+ */
+const ENGINE_DETAIL_SUFFIX =
+  /\((?:([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:, HTTP (\d{3}))?|HTTP (\d{3}))\)$/;
+
+export const SPEND_REFUSAL_REASONS = [
+  "holds_committed",
+  "wallet_locked",
+  "budget_reached",
+  "allowance_exhausted",
+  "admission_invalid",
+  "insufficient_for_request",
+] as const;
+
+/**
+ * The backend's sentence for a `holds_committed` refusal
+ * (`buildSpendRefusalBody` in the backend's `convex/lib/spendRefusal.ts`):
+ * "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the
+ * remaining credits and release them as they finish."
+ *
+ * A stored attempt row keeps that sentence and the generic `user_rate_limit`
+ * code, but not the `refusalReason`, so on a row the sentence is the only
+ * signal left that the credits were HELD rather than spent. Anchored on the
+ * backend's own words: "in-flight" alone turns up in unrelated text.
+ */
+const HOLDS_COMMITTED_SENTENCE =
+  /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
+
+/**
+ * The whole held-credits sentence, for taking it OUT of a text so what is left
+ * can be read for anything else the text says.
+ */
+const HOLDS_COMMITTED_SENTENCE_TEXT =
+  /MCPJam model limit reached for the moment\b[^.]*\.?|in-flight request\(s\) hold the remaining credits[^.]*\.?/gi;
+
+/** `text` without the backend's held-credits sentence. */
+export function withoutHeldCreditsSentence(text: string): string {
+  return text.replace(HOLDS_COMMITTED_SENTENCE_TEXT, " ");
+}
+
+/**
+ * What an exhaustion SAYS, in words. Kept apart from the codes because the
+ * codes also ride a hold (`user_rate_limit` is the generic code for both), so
+ * only these phrases can tell a text that also states an exhaustion from a text
+ * that is only a hold.
+ */
+export const EXHAUSTION_PHRASES: readonly RegExp[] = [
+  /mcpjam[\w\s-]{0,40}model limit/i,
+  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
+  /\bThis request needs about \d+ MCPJam credits\b/i,
+  /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i,
+];
+
+/**
+ * The exhaustion codes that never ride a hold. A hold answers with the generic
+ * `user_rate_limit` (`buildSpendRefusalBody`), so that one says nothing next to
+ * the sentence; these three do.
+ */
+const EXHAUSTION_ONLY_CODES =
+  /\b(?:mcpjam_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
+
+/**
+ * Does this text state an exhaustion once the held-credits sentence is taken
+ * out of it? The sentence is a hold; what is left may not be.
+ */
+export function statesExhaustion(text: string): boolean {
+  const rest = withoutHeldCreditsSentence(text);
+  return (
+    EXHAUSTION_PHRASES.some((phrase) => phrase.test(rest)) ||
+    EXHAUSTION_ONLY_CODES.test(rest)
+  );
+}
+
+/**
+ * Codes that name a refusal other than a hold. A hold answers with the generic
+ * `user_rate_limit` (not here); a flattened message has no code at all, and a
+ * stored row can carry the runner's own generic code (`rate_limited`,
+ * `session_failed`) when the backend's was lost. None of those rules a hold
+ * out. These do: a locked wallet answers `wallet_locked` with the same
+ * sentence, and the rest are an exhaustion in their own right or a limit no
+ * purchase of credits lifts.
+ */
+const NON_HOLD_CODES: ReadonlySet<string> = new Set([
+  "wallet_locked",
+  "spend_budget_reached",
+  "organization_spend_budget_reached",
+  "platform_free_budget_exhausted",
+  "platform_capacity",
+  "account_suspended",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+  "mcpjam_rate_limit",
+  "org_rate_limit",
+  "billing_limit_reached",
+]);
+
+/** The code names a refusal other than a hold; see {@link NON_HOLD_CODES}. */
+export function namesAnotherRefusal(code?: string | null): boolean {
+  return !!code && NON_HOLD_CODES.has(code.toLowerCase());
+}
+
+/**
+ * `holds_committed`: other in-flight requests hold the last credits and
+ * release them as they finish.
+ *
+ * This is the one reading of a hold: the card, the retry, the describer and the
+ * dialog all come through it (the dialog by way of `isHoldRefusal`, which reads
+ * a refusal's fields and calls this).
+ *
+ * - A code that names a different refusal rules it out first (see
+ *   {@link namesAnotherRefusal}): a locked wallet answers `wallet_locked` with
+ *   the same sentence, and can carry the structured reason too.
+ * - A structured `refusalReason` is the backend's own verdict and decides alone:
+ *   the sentence is only a fallback for a stored attempt row, which keeps the
+ *   sentence and loses the reason. Reading the sentence first would let a
+ *   refusal that quotes one (or aggregates several) outvote its own reason.
+ * - The sentence is anchored on the backend's own words, and a text that also
+ *   states an exhaustion is an exhaustion: the hold must not hide it.
+ *
+ * Split from {@link isTransientSpendRefusal} because a hold and a busy
+ * reservation are both waits but read differently to the user: a hold is about
+ * credits, a busy reservation is not.
+ */
+export function isHeldCreditsRefusal(
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  if (namesAnotherRefusal(code)) return false;
+  if (refusalReason) return refusalReason === "holds_committed";
+  return (
+    !!message &&
+    HOLDS_COMMITTED_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
+ * `spending_reservation_busy` (503): MCPJam's own reservation lost its
+ * concurrency race on every retry and committed nothing, so the model was not
+ * called, so asking again is safe (`runSpendingReservationWithOccRetry` in the
+ * backend's `convex/lib/occRetry.ts`).
+ *
+ * A wait on MCPJam's side: no provider throttled anything and no purchase
+ * helps, so a surface must not call it either.
+ */
+export function isBusyReservation(code?: string | null): boolean {
+  return code === "spending_reservation_busy";
+}
+
+/**
+ * The busy reservation's own sentences: the backend's ("could not reserve
+ * spending capacity because ...", and its older "spend capacity" and "MCPJam
+ * is temporarily busy" wordings) and the one {@link humanizeSwarmAttemptError}
+ * words it with. All of them say MCPJam is the one waiting.
+ */
+const BUSY_RESERVATION_SENTENCE =
+  /\bcould not reserve (?:spend|spending) capacity\b|\bMCPJam is temporarily busy\b|\btemporarily busy reserving spending capacity\b/i;
+
+/**
+ * A busy reservation by its code, or by its own sentence when the code was
+ * lost: a live event carries only the humanized message, and a stored row can
+ * carry the runner's generic code (or, from before the runner kept the busy
+ * code, the credit denial) beside it. The same fallback a hold has.
+ *
+ * A code that names a different refusal rules the sentence out, and a text
+ * that also states an exhaustion is an exhaustion.
+ */
+export function isBusyReservationRefusal(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (isBusyReservation(code)) return true;
+  return (
+    !!message &&
+    !namesAnotherRefusal(code) &&
+    BUSY_RESERVATION_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
+ * A refusal that lifts in seconds on its own: a wait, never an exhausted
+ * wallet.
+ *
+ * - `holds_committed`: see {@link isHeldCreditsRefusal}.
+ * - A busy reservation: see {@link isBusyReservation}.
+ */
+export function isTransientSpendRefusal(
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  return (
+    isBusyReservation(code) ||
+    isHeldCreditsRefusal(code, refusalReason, message)
+  );
+}
 
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
@@ -52,21 +261,33 @@ export type SwarmAttemptErrorInfo = {
   retryAfterMs?: number;
   /** The user can lift this themselves by purchasing credit. */
   canTopUp?: boolean;
+  refusalReason?: string;
+  isRetryable?: boolean;
+  outstandingHolds?: number;
   /** HTTP status from the failing call, when the envelope carried one. */
   httpStatus?: number;
 };
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{")) return null;
+/**
+ * The JSON object an error string wraps. Error envelopes often prefix the
+ * response body with a URL and a status, so this starts at the first `{`.
+ */
+export function parseJsonEnvelope(text: string): Record<string, unknown> | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
   try {
-    const parsed: unknown = JSON.parse(trimmed);
+    const parsed: unknown = JSON.parse(text.slice(start));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") ? parseJsonEnvelope(trimmed) : null;
 }
 
 function str(value: unknown): string | undefined {
@@ -152,8 +373,15 @@ const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
  */
 export function humanizeSwarmAttemptError(
   raw: string | undefined | null,
-  errorCode?: string | null
+  errorCode?: string | null,
 ): SwarmAttemptErrorInfo {
+  if (errorCode === "stale_runner") {
+    return {
+      code: errorCode,
+      message:
+        "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
+    };
+  }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
     : undefined;
@@ -161,11 +389,30 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  if (errorCode === "spending_reservation_busy") {
+    return {
+      code: errorCode,
+      message:
+        "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    };
+  }
+  // Older backend failures were truncated JSON envelopes. Recognize this
+  // specific reservation conflict even when the JSON can no longer be parsed.
+  if (
+    input.includes("streamSpendingReservations") &&
+    input.includes("changed while this mutation was being run")
+  ) {
+    return {
+      code: "spending_reservation_busy",
+      message:
+        "MCPJam could not reserve spending capacity because concurrent requests kept changing it. This is an internal execution failure. Retry this attempt.",
+    };
+  }
   if (isXaaConnectFailureReason(errorCode)) {
     return {
       message: (scrub(input) || XAA_REASON_FALLBACK_MESSAGES[errorCode]).slice(
         0,
-        MAX_ATTEMPT_ERROR_CHARS
+        MAX_ATTEMPT_ERROR_CHARS,
       ),
       code: errorCode,
       ...(isRerunnableXaaFailure(errorCode) ? { rerunnable: true } : {}),
@@ -178,35 +425,74 @@ export function humanizeSwarmAttemptError(
 
   const envelope = AGENT_ERROR_ENVELOPE.exec(input);
   if (envelope) {
-    httpStatus = Number(envelope[1]);
+    httpStatus = Number(envelope[1] ?? envelope[2]);
     body = input.slice(envelope[0].length).trim();
   }
 
+  if (looksLikeErrorPage(body)) {
+    return {
+      code: "upstream_error_page",
+      message: `The request was answered with an HTML error page instead of a response${
+        httpStatus ? ` (HTTP ${httpStatus})` : ""
+      }. This usually means a proxy or CDN blocked it.`,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+    };
+  }
   const parsed = parseJsonObject(body);
   if (!parsed) {
-    const cleaned = scrub(body) || scrub(input);
+    const detail = ENGINE_DETAIL_SUFFIX.exec(body);
+    const engineCode = detail?.[1];
+    if (detail) {
+      body = body.slice(0, detail.index);
+      const status = detail[2] ?? detail[3];
+      if (status && httpStatus === undefined) httpStatus = Number(status);
+    }
+    const stripped = scrub(body);
+    // `scrub(input)` rescues an envelope that consumed the whole string. Past a
+    // stripped suffix the raw input only holds that suffix again, and a
+    // remainder with no letters or digits (a lone ".") says nothing either.
+    const cleaned = detail
+      ? /[\p{L}\p{N}]/u.test(stripped)
+        ? stripped
+        : ""
+      : stripped || scrub(input);
     return {
       message: (cleaned || "The session failed for an unknown reason.").slice(
         0,
-        MAX_ATTEMPT_ERROR_CHARS
+        MAX_ATTEMPT_ERROR_CHARS,
       ),
+      ...(engineCode ? { code: engineCode } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
     };
   }
 
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
-  const details = str(parsed.details);
   const code = str(parsed.code);
+  // `provider_not_allowlisted` carries the gateway's own instruction to its
+  // account owner ("Update your Provider Allowlist settings…") in `details`.
+  // That is MCPJam's setting, not the reader's; the headline already names
+  // the provider and the fix, so the upstream sentence stays out of it.
+  const details =
+    code === "provider_not_allowlisted" ? undefined : str(parsed.details);
   const retryAfterMs = num(parsed.retryAfter);
   const canTopUp = parsed.canTopUp === true;
 
   return {
     message: scrub(compose(headline, details)).slice(
       0,
-      MAX_ATTEMPT_ERROR_CHARS
+      MAX_ATTEMPT_ERROR_CHARS,
     ),
     ...(code ? { code } : {}),
+    ...(str(parsed.refusalReason)
+      ? { refusalReason: str(parsed.refusalReason) }
+      : {}),
+    ...(typeof parsed.isRetryable === "boolean"
+      ? { isRetryable: parsed.isRetryable }
+      : {}),
+    ...(num(parsed.outstandingHolds) !== undefined
+      ? { outstandingHolds: num(parsed.outstandingHolds) }
+      : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(canTopUp ? { canTopUp } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
@@ -215,7 +501,7 @@ export function humanizeSwarmAttemptError(
 
 /** Convenience for the producer, which stores a string and nothing else. */
 export function humanizeSwarmAttemptErrorMessage(
-  raw: string | undefined | null
+  raw: string | undefined | null,
 ): string {
   return humanizeSwarmAttemptError(raw).message;
 }
@@ -230,9 +516,17 @@ export function humanizeSwarmAttemptErrorMessage(
  * another host could escape the limit, and they already disagree on
  * `mcpjam_rate_limit`. A parity test pins the overlap so a code added there is
  * not silently missed here.
+ *
+ * The three MCPJam-paid refusals are all whole-run stops, for the same reason
+ * from three directions: `platform_capacity` is MCPJam's own daily budget for
+ * the feature, so every remaining target meets the same wall;
+ * `agent_turn_limit` is keyed on the USER, and every session in a fan-out is
+ * the same user; and `agent_billing_rejected` means the attestation did not
+ * hold, which is a property of the deployment, not of one host. Burning the
+ * run's remaining targets against any of them buys nothing.
  */
 const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|spend_cap_exceeded)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i;
 
 /**
  * True when a rate-limited attempt was stopped by MCPJam's account-wide limit
@@ -248,6 +542,36 @@ export function isAccountLimit(
   message?: string | null,
   code?: string | null,
 ): boolean {
-  if (code && ACCOUNT_LIMIT_CODE.test(code)) return true;
-  return !!message && ACCOUNT_LIMIT_CODE.test(message);
+  if (accountLimitCode(message, code)) return true;
+  return !!message && MCPJAM_MODEL_LIMIT_SENTENCE.test(message);
+}
+
+/**
+ * The backend's own sentence for the free/credit model allowance
+ * (`user_rate_limit` in `convex/stream/routes.ts` and `lib/llmCallShell.ts`).
+ *
+ * Only for rows written before the runner kept the denial code: those stored
+ * this humanized sentence under the generic `rate_limited` code, so the
+ * sentence is the one signal left that MCPJam — not the user's provider —
+ * stopped the session.
+ */
+const MCPJAM_MODEL_LIMIT_SENTENCE =
+  /\b(?:Daily|Monthly) MCPJam model limit reached\b/i;
+
+/**
+ * The account-limit denial code carried by a code or a raw failure message, in
+ * its canonical lowercase spelling — or `undefined` when neither names one.
+ *
+ * The runner stores this as the attempt's `errorCode`. It has to be read off
+ * the RAW message: the humanized sentence it stores beside it has already lost
+ * the code.
+ */
+export function accountLimitCode(
+  message?: string | null,
+  code?: string | null,
+): string | undefined {
+  const match =
+    (code ? ACCOUNT_LIMIT_CODE.exec(code) : null) ??
+    (message ? ACCOUNT_LIMIT_CODE.exec(message) : null);
+  return match?.[0].toLowerCase();
 }

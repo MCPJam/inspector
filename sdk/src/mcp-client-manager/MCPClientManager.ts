@@ -1,3 +1,4 @@
+import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
@@ -28,6 +29,7 @@ import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
 import type {
   MCPClientManagerConfig,
   MCPClientManagerOptions,
+  ExtensionRequestBinding,
   MCPServerConfig,
   StdioServerConfig,
   HttpServerConfig,
@@ -143,10 +145,7 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
-import {
-  resolveSkillsSupport,
-  type SkillsSupport,
-} from "./skills-dispatch.js";
+import { resolveSkillsSupport, type SkillsSupport } from "./skills-dispatch.js";
 import {
   getSkillExt,
   listSkillsExt,
@@ -175,10 +174,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
-import {
-  runToolTaskSeam,
-  type ToolTaskSeamOptions,
-} from "./tool-task-seam.js";
+import { runToolTaskSeam, type ToolTaskSeamOptions } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
@@ -219,7 +215,6 @@ import {
   type MrtrInputCollector,
   type MrtrLegSender,
 } from "./mrtr-driver.js";
-
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -395,7 +390,8 @@ export class MCPClientManager {
    * it on the final complete result. Fail-open on an unknown dialect, matching
    * upstream's tool-output behavior (see `DialectAwareJsonSchemaValidator`).
    */
-  private readonly mrtrToolOutputValidator = new DialectAwareJsonSchemaValidator();
+  private readonly mrtrToolOutputValidator =
+    new DialectAwareJsonSchemaValidator();
 
   // Default options
   private readonly defaultClientName: string | undefined;
@@ -433,6 +429,10 @@ export class MCPClientManager {
   private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
+  private readonly extensionRequestHandlers: ReadonlyMap<
+    string,
+    readonly ExtensionRequestBinding[]
+  >;
   private readonly elicitationTimeoutExtensionMs: number;
 
   // Progress token counter for uniqueness
@@ -469,13 +469,31 @@ export class MCPClientManager {
     this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
+    this.extensionRequestHandlers = new Map(
+      Object.entries(options.extensionRequestHandlers ?? {}).map(
+        ([id, handlers]) => {
+          const seen = new Set<string>();
+          const owned = handlers.map((binding) => {
+            // A vendor extension cannot replace a standard MCP handler.
+            if (
+              !/^[^/]+\/[^/]+\/.+/.test(binding.method) ||
+              seen.has(binding.method)
+            )
+              throw new Error("Invalid or duplicate extension request method");
+            seen.add(binding.method);
+            return Object.freeze({ ...binding });
+          });
+          return [id, Object.freeze(owned)];
+        }
+      )
+    );
     this.elicitationTimeoutExtensionMs = Math.max(
       0,
       options.elicitationTimeoutExtensionMs ??
         DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS
     );
 
-    // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
+    // Start connecting to all configured servers (unless lazyConnect: replay connects explicitly)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
         // Fire-and-forget prefetch: a failure here is NOT lost — the failed
@@ -641,9 +659,10 @@ export class MCPClientManager {
         transportType = "streamable-http";
       } else {
         const url = new URL(config.url);
-        transportType = (config.preferSSE ?? url.pathname.endsWith("/sse"))
-          ? "sse"
-          : "streamable-http";
+        transportType =
+          config.preferSSE ?? url.pathname.endsWith("/sse")
+            ? "sse"
+            : "streamable-http";
       }
     }
 
@@ -673,23 +692,29 @@ export class MCPClientManager {
    *
    * @param serverId - Unique identifier for the server
    * @param config - Server configuration
+   * @param options - Optional startup cancellation; success detaches the signal.
    * @returns The connected MCP Client
    */
   async connectToServer(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    options?: { signal?: AbortSignal }
   ): Promise<ManagedMcpClient> {
+    options?.signal?.throwIfAborted();
     const liveState = this.liveClientStates.get(serverId);
     if (liveState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
     if (liveState?.retryPromise) {
-      return liveState.retryPromise;
+      return this.awaitWithAbort(liveState.retryPromise, options?.signal);
     }
 
     const timeout = config.timeout ?? this.defaultTimeout;
     this.registerServer(serverId, config, timeout);
-    const { signal, cleanup } = this.createRetrySignal(serverId);
+    const { signal, cleanup } = this.createRetrySignal(
+      serverId,
+      options?.signal
+    );
 
     const state: LiveClientState = liveState ?? {};
     const retryPromise = Promise.resolve().then(() =>
@@ -756,8 +781,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-            ? "auto"
-            : "modern-pin";
+          ? "auto"
+          : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -980,7 +1005,7 @@ export class MCPClientManager {
    * @param options - Schema options
    * @returns AiSdkTool compatible with Vercel AI SDK's generateText()
    */
-  async getToolsForAiSdk(
+  async getToolsForAiSdkByServer(
     serverIds?: string[] | string,
     options: {
       schemas?: ToolSchemaOverrides | "automatic";
@@ -1020,12 +1045,12 @@ export class MCPClientManager {
        */
       toolDescriptionOverrides?: Readonly<Record<string, string>>;
     } = {}
-  ): Promise<AiSdkTool> {
+  ): Promise<Record<string, AiSdkTool>> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-        ? [serverIds]
-        : this.listServers();
+      ? [serverIds]
+      : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1118,12 +1143,17 @@ export class MCPClientManager {
       })
     );
 
-    // Flatten (last-in wins for name collisions)
-    const flattened: AiSdkTool = {};
-    for (const toolset of perServerTools) {
-      Object.assign(flattened, toolset);
-    }
-    return flattened;
+    return Object.fromEntries(
+      ids.map((id, index) => [id, perServerTools[index]])
+    );
+  }
+
+  async getToolsForAiSdk(
+    serverIds?: string[] | string,
+    options: Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1] = {}
+  ): Promise<AiSdkTool> {
+    const perServer = await this.getToolsForAiSdkByServer(serverIds, options);
+    return Object.assign({}, ...Object.values(perServer));
   }
 
   /**
@@ -1156,6 +1186,13 @@ export class MCPClientManager {
     taskOptions?: TaskOptions
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
+    const baseCallParams = {
+      name: toolName,
+      arguments: args,
+      ...(request.metadata !== undefined
+        ? { _meta: structuredClone(request.metadata) }
+        : {}),
+    };
 
     // Modern multi-round-trip: when a collector is registered and this is not a
     // task-augmented call, drive the manual `input_required` loop. A complete
@@ -1169,7 +1206,7 @@ export class MCPClientManager {
       // envelope is unwrapped from whatever the loop terminates with.
       const mrtrResult = await this.executeToolWithInputRequired(
         serverId,
-        { name: toolName, arguments: args },
+        baseCallParams,
         request,
         mrtrCollect
       );
@@ -1182,10 +1219,11 @@ export class MCPClientManager {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
-      const callParams = this.withTaskEligibilityDeclaration(serverId, request, {
-        name: toolName,
-        arguments: args,
-      });
+      const callParams = this.withTaskEligibilityDeclaration(
+        serverId,
+        request,
+        baseCallParams
+      );
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
@@ -1761,9 +1799,10 @@ export class MCPClientManager {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
     // the request's declared client capabilities before embedding an
     // elicitation, so a collector must be registrable BEFORE connect for
-    // `elicitation` to be advertised on the connect envelope (see
-    // `buildCapabilities`). Registering for an as-yet-unknown server is a no-op
-    // until that server connects.
+    // `elicitation` to be advertised on a modern connection's request envelope
+    // (see `buildCapabilities`; never on a 2025 `initialize`, which a
+    // collector cannot answer). Registering for an as-yet-unknown server is a
+    // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
   }
 
@@ -2375,29 +2414,38 @@ export class MCPClientManager {
         serverId,
         registeredState.config,
         registeredState.timeout,
-        state
+        state,
+        signal
       )
     );
-    // Mark handled without affecting awaiters (they hold the original
-    // promise): awaitWithAbort abandons connectionPromise when the caller's
-    // signal fires first, and an abandoned rejection escapes as a
-    // process-level unhandledRejection.
+    // Duplicate callers may stop waiting independently; keep startup failures
+    // observed while the owning attempt waits for transport cleanup.
     connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
-    return this.awaitWithAbort(connectionPromise, signal);
+    return connectionPromise;
   }
 
   private async performConnection(
     serverId: string,
     config: MCPServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<ManagedMcpClient> {
     let client: ManagedMcpClient | undefined;
     let transport: Transport | undefined;
+    let closing: Promise<void> | undefined;
+    const abort = () => {
+      closing ??= (async () => {
+        await client?.close().catch(() => undefined);
+        if (state.transport) await this.safeCloseTransport(state.transport);
+      })();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
+      signal?.throwIfAborted();
       // Resolve clientInfo from (in order): per-server `clientInfo` >
       // per-server `version` (legacy) > manager defaults. Extras (e.g.
       // `title` and future spec fields) merge through verbatim so the
@@ -2566,7 +2614,7 @@ export class MCPClientManager {
         () => this.perRequestLogLevels.get(serverId),
         this.traceContextProvider
           ? () => this.traceContextProvider?.(serverId)
-          : undefined,
+          : undefined
       );
       client = managedClient;
 
@@ -2587,6 +2635,19 @@ export class MCPClientManager {
         );
       }
 
+      for (const binding of this.extensionRequestHandlers.get(serverId) ?? []) {
+        client.setRequestHandler(
+          binding.method,
+          (request) =>
+            binding.waitsForInput
+              ? this.elicitationManager.trackInput(serverId, () =>
+                  binding.handler(request)
+                )
+              : binding.handler(request),
+          binding.schemas
+        );
+      }
+
       if (config.onError) {
         client.onerror = (error) => config.onError?.(error);
       }
@@ -2603,18 +2664,53 @@ export class MCPClientManager {
           client,
           config,
           timeout,
-          state
+          state,
+          signal
         );
       } else {
-        transport = await this.connectViaHttp(
-          serverId,
-          client,
-          config,
-          timeout,
-          state
-        );
+        // Startup cancellation must reach discovery fetches as well as the
+        // initialize RPC. Detach it after startup so later caller cancellation
+        // cannot close a successfully established connection.
+        let startupSignal = signal;
+        const configuredFetch = config.baseFetch ?? this.defaultBaseFetch;
+        const startupConfig = {
+          ...config,
+          baseFetch: async (
+            input: Parameters<typeof fetch>[0],
+            init?: RequestInit
+          ) => {
+            // Resolve the default at request time so fetch instrumentation
+            // added after startup still observes established connections.
+            const baseFetch = configuredFetch ?? globalThis.fetch;
+            const caller = startupSignal;
+            if (!caller) return baseFetch(input, init);
+            caller.throwIfAborted();
+            const requestSignal =
+              init?.signal ??
+              (input instanceof globalThis.Request ? input.signal : undefined);
+            return baseFetch(input, {
+              ...init,
+              signal: requestSignal
+                ? AbortSignal.any([caller, requestSignal])
+                : caller,
+            });
+          },
+        };
+        try {
+          transport = await this.connectViaHttp(
+            serverId,
+            client,
+            startupConfig,
+            timeout,
+            state,
+            signal
+          );
+        } finally {
+          startupSignal = undefined;
+        }
       }
 
+      signal?.throwIfAborted();
       if (this.liveClientStates.get(serverId) !== state) {
         await client.close().catch(() => undefined);
         // Transport is undefined for the stateless preview path (the
@@ -2660,13 +2756,16 @@ export class MCPClientManager {
       } catch {
         // Ignore close errors
       }
-      if (transport) {
-        await this.safeCloseTransport(transport);
+      if (transport ?? state.transport) {
+        await this.safeCloseTransport((transport ?? state.transport)!);
       }
       this.clearLiveState(serverId, {
         preserveRetryPromise: Boolean(state.retryPromise),
       });
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      await closing;
     }
   }
 
@@ -2675,7 +2774,8 @@ export class MCPClientManager {
     client: ManagedMcpClient,
     config: StdioServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<Transport> {
     const underlying = new StdioClientTransport({
       command: config.command,
@@ -2701,7 +2801,10 @@ export class MCPClientManager {
     const stderrDrain = this.createStdioStderrDrain(underlying);
 
     try {
-      await client.connect(transport, { timeout });
+      signal?.throwIfAborted();
+      state.transport = underlying;
+      // Await negotiation teardown too: it may own a disposable stdio probe.
+      await client.connect(transport, { timeout, signal });
     } catch (error) {
       const stderrOutput = stderrDrain.getCapturedOutput();
       stderrDrain.cleanup();
@@ -2717,7 +2820,8 @@ export class MCPClientManager {
     client: ManagedMcpClient,
     config: HttpServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<Transport | undefined> {
     const url = new URL(config.url);
 
@@ -2763,7 +2867,8 @@ export class MCPClientManager {
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
         trimmedRefresh,
-        trimmedClientSecret
+        trimmedClientSecret,
+        config.onTokensRotated
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
@@ -2777,7 +2882,6 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
-
 
     let streamableError: unknown;
 
@@ -2838,12 +2942,19 @@ export class MCPClientManager {
             )
           )
         );
-        await client.connect(wrapped, {
-          timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
-        });
+        signal?.throwIfAborted();
+        state.transport = streamableTransport;
+        await this.awaitWithAbort(
+          client.connect(wrapped, {
+            signal,
+            timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
+          }),
+          signal
+        );
         client.onclose = pendingOnClose;
         return streamableTransport;
       } catch (error) {
+        signal?.throwIfAborted();
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
         client.onclose = pendingOnClose;
@@ -2890,9 +3001,13 @@ export class MCPClientManager {
           // `describeError` degrades from a specific transport slug to
           // message-regex guessing.
           throw new Error(
-            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
-              error
-            )}`,
+            connectionErrorMessage(
+              url,
+              [error],
+              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
+                error
+              )}`
+            ),
             { cause: error }
           );
         }
@@ -2945,7 +3060,12 @@ export class MCPClientManager {
           )
         )
       );
-      await client.connect(wrapped, { timeout });
+      signal?.throwIfAborted();
+      state.transport = sseTransport;
+      await this.awaitWithAbort(
+        client.connect(wrapped, { timeout, signal }),
+        signal
+      );
       return sseTransport;
     } catch (error) {
       await this.safeCloseTransport(sseTransport);
@@ -3002,7 +3122,11 @@ export class MCPClientManager {
       // `transport/*` slug instead of message-regex guessing.
       throw attachStreamableCause(
         new Error(
-          `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          connectionErrorMessage(
+            url,
+            [streamableError, error],
+            `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
+          ),
           { cause: error }
         ),
         streamableError
@@ -3487,7 +3611,12 @@ export class MCPClientManager {
     options: RequestOptions,
     run: (options: RequestOptions) => Promise<T>
   ): Promise<T> {
-    if (!this.elicitationManager.hasHandler(serverId)) {
+    if (
+      !this.elicitationManager.hasHandler(serverId) &&
+      !this.extensionRequestHandlers
+        .get(serverId)
+        ?.some((binding) => binding.waitsForInput)
+    ) {
       return run(options);
     }
 
@@ -3512,7 +3641,7 @@ export class MCPClientManager {
         this.elicitationManager.hasPendingForServer(
           serverId,
           this.elicitationTimeoutExtensionMs,
-          pendingSequenceAtStart,
+          pendingSequenceAtStart
         ),
     });
 
@@ -3562,8 +3691,22 @@ export class MCPClientManager {
     // it. `era` is undefined at connect time, so the legacy fulfiller is
     // still counted then and `applyModernEraCapabilities` narrows once the
     // connection actually classifies as modern.
+    //
+    // The MRTR collector, conversely, fulfils `elicitation` ONLY on a modern
+    // connection: it answers embedded `input_required` requests and cannot
+    // answer a server-to-client `elicitation/create`. A connect-time build
+    // (`era` undefined) becomes the 2025 `initialize` whenever the
+    // connection can land on a legacy era (unpinned Auto, or a 2025 pin), so
+    // it counts the collector only for a connection pinned to a 2026 era.
+    // Otherwise a collector-only connection that falls back to 2025 would
+    // claim elicitation there and answer the server's form with `-32601`.
+    // `applyModernEraCapabilities` restores the claim once the connection
+    // classifies as modern.
     const mrtrDisabled = config.supportsMrtr === false;
-    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const mrtrFulfils =
+      !mrtrDisabled &&
+      this.mrtrInputCollectors.has(serverId) &&
+      (era === "modern" || this.isPinnedModern(config));
     const legacyFulfils =
       this.elicitationManager.hasHandler(serverId) &&
       !(mrtrDisabled && era === "modern");
@@ -3580,7 +3723,11 @@ export class MCPClientManager {
         delete exactCapabilities.elicitation;
       }
 
-      return exactCapabilities as ClientCapabilityOptions;
+      return (
+        era === "modern"
+          ? this.withoutLegacyClaims(serverId, exactCapabilities)
+          : exactCapabilities
+      ) as ClientCapabilityOptions;
     }
 
     let configuredCapabilities = mergeClientCapabilities(
@@ -3617,7 +3764,44 @@ export class MCPClientManager {
     if (mrtrDisabled && era === "modern") {
       delete (resolved as Record<string, unknown>).elicitation;
     }
-    return resolved;
+    return era === "modern"
+      ? (this.withoutLegacyClaims(
+          serverId,
+          resolved as Record<string, unknown>
+        ) as ClientCapabilityOptions)
+      : resolved;
+  }
+
+  /** The `extensions` keys only a legacy server-to-client request handler on
+   *  this server answers (see {@link ExtensionRequestBinding.legacyClaim}). */
+  private legacyClaims(serverId: string): string[] {
+    return (this.extensionRequestHandlers.get(serverId) ?? []).flatMap(
+      (binding) => (binding.legacyClaim ? [binding.legacyClaim] : [])
+    );
+  }
+
+  /** A 2026-era connection has no server-to-client requests, so a claim only
+   *  such a request could honor is withheld there. Narrowing only. */
+  private withoutLegacyClaims(
+    serverId: string,
+    capabilities: Record<string, unknown>
+  ): Record<string, unknown> {
+    const claims = this.legacyClaims(serverId);
+    const extensions = capabilities.extensions;
+    if (
+      !claims.length ||
+      !extensions ||
+      typeof extensions !== "object" ||
+      Array.isArray(extensions)
+    )
+      return capabilities;
+    const kept = Object.fromEntries(
+      Object.entries(extensions).filter(([key]) => !claims.includes(key))
+    );
+    const next = { ...capabilities };
+    if (Object.keys(kept).length) next.extensions = kept;
+    else delete next.extensions;
+    return next;
   }
 
   /**
@@ -3665,8 +3849,17 @@ export class MCPClientManager {
     // silently no-op. Re-running is safe for an exact set: `buildCapabilities`
     // applies the same gate to it and otherwise advertises it verbatim.
     const narrowsForMrtr = config.supportsMrtr === false;
+    // A legacy-only extension claim (a binding's `legacyClaim`) narrows on
+    // the same pass, exact sets included: withholding is never a widening.
+    const narrowsLegacyClaims = this.legacyClaims(serverId).length > 0;
+    // An MRTR collector's `elicitation` is withheld from a connect-time set
+    // that may become a 2025 `initialize` (see `buildCapabilities`); a
+    // modern-classified connection restores it here, exact sets included.
+    const restoresMrtrElicitation = this.mrtrInputCollectors.has(serverId);
     if (
       !narrowsForMrtr &&
+      !narrowsLegacyClaims &&
+      !restoresMrtrElicitation &&
       (!config.eraCapabilities?.modern || config.clientCapabilities)
     ) {
       return connectCapabilities;
@@ -3710,9 +3903,10 @@ export class MCPClientManager {
       // No declaration on record: mirror the inbound path, which allows form
       // (the legacy default) and rejects url absent an explicit declaration.
       if (declared === undefined) return ["form"];
-      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
-        declared as Parameters<typeof getSupportedElicitationModes>[0]
-      );
+      const { supportsFormMode, supportsUrlMode } =
+        getSupportedElicitationModes(
+          declared as Parameters<typeof getSupportedElicitationModes>[0]
+        );
       const modes: ElicitationMode[] = [];
       if (supportsFormMode) modes.push("form");
       if (supportsUrlMode) modes.push("url");
@@ -3846,13 +4040,25 @@ export class MCPClientManager {
     return "command" in config;
   }
 
+  /** A connection pinned to a 2026 era: it can never land on a 2025 one.
+   *  Mirrors `wantsStateless` in the connect path (stdio carries no pin). */
+  private isPinnedModern(config: MCPServerConfig): boolean {
+    const pin = this.isStdioConfig(config)
+      ? undefined
+      : config.mcpProtocolVersion;
+    return pin !== undefined && isStatelessProtocolVersion(pin);
+  }
+
   private isExecuteToolRequest(
     value: ClientRequestOptions | ExecuteToolRequest | undefined
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-      typeof value === "object" &&
-      ("request" in value || "retry" in value || "allowTaskResult" in value)
+        typeof value === "object" &&
+        ("request" in value ||
+          "retry" in value ||
+          "allowTaskResult" in value ||
+          "metadata" in value)
     );
   }
 
@@ -3899,7 +4105,11 @@ export class MCPClientManager {
 
   private async executeToolWithInputRequired(
     serverId: string,
-    callParams: { name: string; arguments?: Record<string, unknown> },
+    callParams: {
+      name: string;
+      arguments?: Record<string, unknown>;
+      _meta?: Record<string, unknown>;
+    },
     request: ExecuteToolRequest,
     collect: MrtrInputCollector
   ): Promise<CallToolResult> {
@@ -3986,8 +4196,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -4003,11 +4212,14 @@ export class MCPClientManager {
     collect: MrtrInputCollector
   ): Promise<ReadResourceResult> {
     const sender: MrtrLegSender<ReadResourceResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.readResource(req.params as ReadResourceParams, {
-          ...this.withProgressHandler(serverId, options),
-          allowInputRequired: true,
-        }) as Promise<ReadResourceResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.readResource(req.params as ReadResourceParams, {
+            ...this.withProgressHandler(serverId, options),
+            allowInputRequired: true,
+          }) as Promise<ReadResourceResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4016,8 +4228,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -4035,15 +4246,18 @@ export class MCPClientManager {
     // also exercises the modern per-request log-level `_meta` injection end to
     // end at the manager level.
     const sender: MrtrLegSender<GetPromptResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.requestWithSchema(
-          req as Request,
-          withInputRequired(defaultResultSchemaForMethod("prompts/get")),
-          {
-            ...this.withProgressHandler(serverId, options),
-            allowInputRequired: true,
-          }
-        ) as Promise<GetPromptResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.requestWithSchema(
+            req as Request,
+            withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+            {
+              ...this.withProgressHandler(serverId, options),
+              allowInputRequired: true,
+            }
+          ) as Promise<GetPromptResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -4052,8 +4266,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -4242,9 +4455,7 @@ export class MCPClientManager {
      * call's day-long timer with nothing to end it: the await driver's own
      * deadline abandons the in-flight promise rather than aborting its request.
      */
-    readRequestOptions:
-      | { signal?: AbortSignal; timeout?: number }
-      | undefined;
+    readRequestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
     // Resolve the era from what the connection actually negotiated — the same
@@ -4263,7 +4474,6 @@ export class MCPClientManager {
     const leaves = override ?? config?.toolCallCancellation;
     const suppressed =
       leaves?.[cancellationLeafForVersion(negotiated)] === false;
-
 
     if (abortSignal === undefined) {
       return {
@@ -4457,9 +4667,9 @@ export class MCPClientManager {
       await this.ensureConnected(serverId);
       const client = this.getClientOrThrow(serverId);
       const list = await client.listTools();
-      const tool = list.tools.find((candidate) => candidate.name === toolName) as
-        | { outputSchema?: unknown }
-        | undefined;
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { outputSchema?: unknown } | undefined;
       outputSchema = tool?.outputSchema;
     } catch {
       return;

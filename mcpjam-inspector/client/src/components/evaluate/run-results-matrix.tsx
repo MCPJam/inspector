@@ -1,3 +1,4 @@
+import { useSelectedRun } from "../evals/use-selected-run";
 import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
@@ -12,13 +13,12 @@ import {
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@mcpjam/design-system/sheet";
+  EvalInspectBody,
+  EvalInspectHeader,
+  EvalInspectSheet,
+} from "./eval-inspect-sheet";
 import { cn } from "@mcpjam/design-system/cn";
+import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import {
   average,
@@ -29,11 +29,16 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   runClientLogo,
+  runClientIdentity,
 } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import { computeIterationResult } from "../evals/pass-criteria";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import {
   ALL_EVAL_FILTER_VALUES,
   EvalListFilter,
@@ -42,6 +47,7 @@ import { runHistoryFilterClass } from "../evals/run-history-table";
 import {
   buildRunResultsMatrix,
   resultCounts,
+  cellResult,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
@@ -85,20 +91,16 @@ type MatrixView = "results" | "metrics";
 
 function CellResults({ items }: { items: EvalIteration[] }) {
   const counts = resultCounts(items);
-  const status = counts.pending
-    ? "Running"
-    : counts.failed
-      ? "Fail"
-      : counts.cancelled
-        ? "Cancelled"
-        : "Pass";
-  const statusTone = counts.pending
-    ? "text-pending"
-    : counts.failed
-      ? "text-destructive"
-      : counts.cancelled
-        ? "text-muted-foreground"
-        : "text-success";
+  const result = cellResult(items);
+  const status =
+    result === "pending"
+      ? "Running"
+      : result === "failed"
+        ? "Fail"
+        : result === "cancelled"
+          ? "Cancelled"
+          : "Pass";
+  const statusTone = outcomeTextTone(result ?? "passed");
   const breakdown = `${counts.passed} passed, ${counts.failed} failed, ${counts.pending} in progress, ${counts.cancelled} cancelled`;
   return (
     <span className="w-full space-y-2">
@@ -240,9 +242,10 @@ export function RunResultsMatrix({
   onEditCase,
   onEditEvaluator,
 }: {
+  /** Target keys to show (`comparisonKey`; the bare model id when default). */
   modelIds?: readonly string[];
   run: EvalSuiteRun;
-  runs?: readonly EvalSuiteRun[];
+  runs?: readonly EvalSuiteRunListItem[];
   iterations: readonly EvalIteration[];
   hostNamesById?: ReadonlyMap<string, string | null>;
   diagnostics?: readonly EvalRunDecisionDiagnostic[];
@@ -257,7 +260,7 @@ export function RunResultsMatrix({
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
-    const matrix = buildRunResultsMatrix({
+    const matrix = buildRunResultsMatrix<EvalSuiteRunListItem>({
       run,
       runs,
       iterations,
@@ -266,7 +269,7 @@ export function RunResultsMatrix({
     return {
       ...matrix,
       targets: modelIds
-        ? matrix.targets.filter((target) => modelIds.includes(target.modelId))
+        ? matrix.targets.filter((target) => modelIds.includes(target.targetKey))
         : matrix.targets,
     };
   }, [run, runs, iterations, hostNamesById, modelIds]);
@@ -288,23 +291,21 @@ export function RunResultsMatrix({
           ? counts.cancelled > 0
           : true,
     )
-    .filter(
-      (value) =>
-        value === status ||
-        data.rows.some(
-          (row) =>
-            row.title.toLowerCase().includes(query) &&
-            data.targets.some(
-              (target) =>
-                resultCounts(target.cells.get(row.key) ?? [])[value] > 0,
-            ),
-        ),
+    .filter((value) =>
+      data.rows.some(
+        (row) =>
+          row.title.toLowerCase().includes(query) &&
+          data.targets.some(
+            (target) => cellResult(target.cells.get(row.key) ?? []) === value,
+          ),
+      ),
     );
+  const activeStatus = statusOptions.includes(status as StatusFilter)
+    ? status
+    : ALL_EVAL_FILTER_VALUES;
   useEffect(() => {
-    if (status === "pending" && !showPending) setStatus(ALL_EVAL_FILTER_VALUES);
-    if (status === "cancelled" && counts.cancelled === 0)
-      setStatus(ALL_EVAL_FILTER_VALUES);
-  }, [showPending, status, counts.cancelled]);
+    if (status !== activeStatus) setStatus(activeStatus);
+  }, [status, activeStatus]);
   const [selection, setSelection] = useState<{
     caseKey: string;
     targetKey: string;
@@ -312,12 +313,6 @@ export function RunResultsMatrix({
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
     null,
   );
-  const activeStatus =
-    status === "pending" && !showPending
-      ? ALL_EVAL_FILTER_VALUES
-      : status === "cancelled" && counts.cancelled === 0
-        ? ALL_EVAL_FILTER_VALUES
-        : status;
   useEffect(() => {
     onFilterChange?.({ search: query, status: activeStatus });
   }, [query, activeStatus, onFilterChange]);
@@ -327,9 +322,7 @@ export function RunResultsMatrix({
       (activeStatus === ALL_EVAL_FILTER_VALUES ||
         data.targets.some(
           (target) =>
-            resultCounts(target.cells.get(row.key) ?? [])[
-              activeStatus as StatusFilter
-            ] > 0,
+            cellResult(target.cells.get(row.key) ?? []) === activeStatus,
         )),
   );
   const hasActiveFilters =
@@ -587,7 +580,7 @@ export function RunResultsMatrix({
           </div>
         )}
       </div>
-      <Sheet
+      <EvalInspectSheet
         open={Boolean(selectedRow && selectedTarget)}
         onOpenChange={(open) => {
           if (!open) {
@@ -596,101 +589,96 @@ export function RunResultsMatrix({
           }
         }}
       >
-        <SheetContent className="w-full gap-0 sm:max-w-[960px]">
-          {selectedRow &&
-            selectedTarget &&
-            (selectedIteration ? (
-              <IterationDrawer
-                iteration={selectedIteration}
-                iterationNumber={
-                  selectedIteration.iterationNumber ??
-                  selectedItems.findIndex(
-                    (item) => item._id === selectedIteration._id,
-                  ) + 1
-                }
-                target={selectedTarget}
-                caseTitle={selectedRow.title}
-                suiteName={suiteName}
-                diagnostic={diagnostics.find(
-                  (item) => item.iterationId === selectedIteration._id,
-                )}
-                chain={chains?.get(selectedIteration._id)}
-                onBack={() => setSelectedIterationId(null)}
-                onEditEvaluator={
-                  onEditEvaluator && selectedRow.testCaseId
-                    ? () => {
-                        setSelection(null);
-                        setSelectedIterationId(null);
-                        onEditEvaluator(selectedRow.testCaseId!);
-                      }
-                    : undefined
-                }
+        {selectedRow &&
+          selectedTarget &&
+          (selectedIteration ? (
+            <IterationDrawer
+              iteration={selectedIteration}
+              iterationNumber={
+                selectedIteration.iterationNumber ??
+                selectedItems.findIndex(
+                  (item) => item._id === selectedIteration._id,
+                ) + 1
+              }
+              target={selectedTarget}
+              caseTitle={selectedRow.title}
+              suiteName={suiteName}
+              diagnostic={diagnostics.find(
+                (item) => item.iterationId === selectedIteration._id,
+              )}
+              chain={chains?.get(selectedIteration._id)}
+              onBack={() => setSelectedIterationId(null)}
+              onEditEvaluator={
+                onEditEvaluator && selectedRow.testCaseId
+                  ? () => {
+                      setSelection(null);
+                      setSelectedIterationId(null);
+                      onEditEvaluator(selectedRow.testCaseId!);
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <>
+              <EvalInspectHeader
+                title={selectedRow.title}
+                description="Test case averages and recorded iterations."
+                descriptionSrOnly
               />
-            ) : (
-              <>
-                <SheetHeader className="px-6 py-5 pr-12">
-                  <SheetTitle className="break-words text-xl">
-                    {selectedRow.title}
-                  </SheetTitle>
-                  <SheetDescription className="sr-only">
-                    Test case averages and recorded iterations.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="flex-1 overflow-y-auto p-6">
-                  <div
-                    className="mb-2 flex flex-wrap items-center justify-between gap-3"
-                    aria-label="Viewing client and model"
-                  >
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                      Test case averages
-                    </span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {data.targets.map((target) => (
-                        <Button
-                          key={target.key}
-                          size="sm"
-                          className="h-7 rounded-full px-2.5 text-xs"
-                          variant={
-                            target.key === selectedTarget.key
-                              ? "secondary"
-                              : "outline"
-                          }
-                          aria-pressed={target.key === selectedTarget.key}
-                          onClick={() => {
-                            setSelectedIterationId(null);
-                            setSelection({
-                              caseKey: selectedRow.key,
-                              targetKey: target.key,
-                            });
-                          }}
-                        >
-                          {target.client} · {target.model}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                  <CaseIterations
-                    target={selectedTarget}
-                    caseKey={selectedRow.key}
-                    onSelectIteration={setSelectedIterationId}
-                  />
-                  {onEditCase && selectedRow.testCaseId && (
-                    <div className="mt-4 flex justify-end">
+              <EvalInspectBody>
+                <div
+                  className="mb-2 flex flex-wrap items-center justify-between gap-3"
+                  aria-label="Viewing client and model"
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                    Test case averages
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {data.targets.map((target) => (
                       <Button
+                        key={target.key}
+                        size="sm"
+                        className="h-7 rounded-full px-2.5 text-xs"
+                        variant={
+                          target.key === selectedTarget.key
+                            ? "secondary"
+                            : "outline"
+                        }
+                        aria-pressed={target.key === selectedTarget.key}
                         onClick={() => {
-                          setSelection(null);
-                          onEditCase(selectedRow.testCaseId!);
+                          setSelectedIterationId(null);
+                          setSelection({
+                            caseKey: selectedRow.key,
+                            targetKey: target.key,
+                          });
                         }}
                       >
-                        Edit test case
+                        {target.client} · {target.model}
                       </Button>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
-              </>
-            ))}
-        </SheetContent>
-      </Sheet>
+                <CaseIterations
+                  target={selectedTarget}
+                  caseKey={selectedRow.key}
+                  onSelectIteration={setSelectedIterationId}
+                />
+                {onEditCase && selectedRow.testCaseId && (
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      onClick={() => {
+                        setSelection(null);
+                        onEditCase(selectedRow.testCaseId!);
+                      }}
+                    >
+                      Edit test case
+                    </Button>
+                  </div>
+                )}
+              </EvalInspectBody>
+            </>
+          ))}
+      </EvalInspectSheet>
     </section>
   );
 }
@@ -873,30 +861,28 @@ function IterationDrawer({
   onEditEvaluator?: () => void;
 }) {
   const result = computeIterationResult(iteration);
+  const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
   const authored = authoredForTrial({
     trial: { kind: "persisted", iteration, source: "route" },
     draft: { steps: [], toolsChoice: "unset" },
-    run: target.run,
+    run: "tests" in (target.run.configSnapshot ?? {}) ? target.run as EvalSuiteRun : fullRun,
     forceSnapshot: true,
   }).authored;
   const decisionChain = diagnostic?.chain ?? chain;
 
   return (
     <>
-      <SheetHeader className="border-b border-border px-6 py-5 pr-12">
-        <button
-          type="button"
-          className="w-fit text-left text-sm text-muted-foreground hover:text-foreground"
-          onClick={onBack}
-          aria-label="Back to test case iterations"
-        >
-          {caseTitle} <span aria-hidden="true">›</span> Run #
-          {target.run.runNumber}
-        </button>
-        <div className="flex flex-wrap items-center gap-2">
-          <SheetTitle className="text-xl">
-            #{iterationNumber} {suiteName ?? target.run.name ?? "Run"}
-          </SheetTitle>
+      <EvalInspectHeader
+        crumb={
+          <>
+            {caseTitle} <span aria-hidden="true">›</span> Run #
+            {target.run.runNumber}
+          </>
+        }
+        onBack={onBack}
+        backAriaLabel="Back to test case iterations"
+        title={`#${iterationNumber} ${suiteName ?? target.run.name ?? "Run"}`}
+        badge={
           <span
             className={cn(
               "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -909,43 +895,56 @@ function IterationDrawer({
           >
             {outcomeLabel(result)}
           </span>
+        }
+        description={
+          <>
+            {target.client} · {target.model} ·{" "}
+            {formatRelativeTime(
+              iteration.createdAt ?? iteration.startedAt ?? iteration.updatedAt,
+            )}{" "}
+            · {formatRunId(iteration._id)}
+          </>
+        }
+      />
+      {/* `fill` keeps IterationDetails / TraceViewer in a definite flex
+          height so the Trace tab paints instead of collapsing to the resize
+          handle. */}
+      <EvalInspectBody fill>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <IterationDetails
+            hostSnapshot={hostSnapshotFromStyle(
+              runClientIdentity(target.run).hostStyle,
+            )}
+            iteration={iteration}
+            testCase={null}
+            layoutMode="full"
+            trialVerdictWord={outcomeLabel(result)}
+            scorecard={{
+              render: (context) => (
+                <>
+                  <IterationReportScorecard
+                    authored={authored}
+                    iteration={iteration}
+                    steps={authored.steps}
+                    chain={decisionChain}
+                    envelope={context.envelope}
+                    trace={context.trace}
+                    scoresSection={context.scoresSection}
+                    judgeHidden={context.judgeHidden}
+                  />
+                  {onEditEvaluator && (
+                    <div className="mt-4 flex justify-end">
+                      <Button onClick={onEditEvaluator}>
+                        Configure test case evaluators
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ),
+            }}
+          />
         </div>
-        <SheetDescription>
-          {target.client} · {target.model} ·{" "}
-          {formatRelativeTime(
-            iteration.createdAt ?? iteration.startedAt ?? iteration.updatedAt,
-          )}{" "}
-          · {formatRunId(iteration._id)}
-        </SheetDescription>
-      </SheetHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        <IterationDetails
-          iteration={iteration}
-          testCase={null}
-          layoutMode="full"
-          trialVerdictWord={outcomeLabel(result)}
-          scorecard={{
-            render: (context) => (
-              <>
-                <IterationReportScorecard
-                  authored={authored}
-                  iteration={iteration}
-                  steps={authored.steps}
-                  chain={decisionChain}
-                  envelope={context.envelope}
-                  scoresSection={context.scoresSection}
-                  judgeHidden={context.judgeHidden}
-                />
-                {onEditEvaluator && (
-                  <div className="mt-4 flex justify-end">
-                    <Button onClick={onEditEvaluator}>Edit evaluators</Button>
-                  </div>
-                )}
-              </>
-            ),
-          }}
-        />
-      </div>
+      </EvalInspectBody>
     </>
   );
 }

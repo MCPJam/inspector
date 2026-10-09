@@ -32,7 +32,7 @@
  * Seeding never writes — only user edits do.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvexAuth, useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import {
@@ -49,9 +49,15 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import {
+  clientNameResolver,
+  composerMissingServerGroup,
+  describeSkippedModelCells,
+} from "@/components/environment-composer/resolve-stacks";
+import { useHostList } from "@/hooks/useClients";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import {
   useModelMatrixCapability,
   useProjectEnvironments,
@@ -184,7 +190,13 @@ function EnvironmentModeBar({
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,
   });
-  const resolveTargets = useComposerResolver(projectId);
+  const resolveTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+  });
+  // Names for the skipped client × model pairs toast — a raw host id means
+  // nothing to the person reading it.
+  const { isAuthenticated } = useConvexAuth();
+  const { hosts } = useHostList({ isAuthenticated, projectId });
   const setSuiteEnvironments = useMutation(
     "testSuites:setSuiteEnvironments" as any
   ) as unknown as (args: {
@@ -223,40 +235,44 @@ function EnvironmentModeBar({
     ? 0
     : attachedIds.length - attachedEnvironments.length;
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // The image slot rides `sandbox-images-enabled`, not `computers-enabled`.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrix = useModelMatrixCapability(projectId);
   const modelsEnabled = modelMatrix === true;
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
       return composerStateFromEnvironments(attachedEnvironments, {
         skillsEnabled,
-        computersEnabled,
+        computersEnabled: sandboxImagesEnabled,
         modelsEnabled,
       });
     }
-    // Not an environment suite yet: show what it runs today, so converting
-    // preserves it rather than starting from blank.
+    // Not an environment suite yet: show its clients, so converting keeps
+    // them rather than starting from blank. NOT its legacy server group: an
+    // environment suite does not read `serverAttachmentId`, and most older
+    // suites keep their servers somewhere else — seeding it is how a
+    // converted suite ended up with no servers. The first edit asks for a
+    // group instead.
     return {
       environmentIds: [],
       stack: {
         hostIds: (suite.hostAttachments ?? []).map((a) => a.namedHostId),
-        serverAttachmentId: suite.serverAttachmentId ?? null,
+        serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: false,
     };
   }, [
     attachedEnvironments,
     attachedIds.length,
-    computersEnabled,
     modelsEnabled,
+    sandboxImagesEnabled,
     skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
-    suite.serverAttachmentId,
   ]);
   /**
    * The ATTACHMENTS cannot be represented as one stack — two on a single client,
@@ -275,7 +291,7 @@ function EnvironmentModeBar({
   const collapsesByHost =
     environmentsExceedOneStack(attachedEnvironments, {
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
       modelsEnabled,
     }) ||
     (seeded.customized && environmentsCarryPluginPins(attachedEnvironments)) ||
@@ -322,6 +338,18 @@ function EnvironmentModeBar({
   const commitVersion = useRef(0);
   const commit = useCallback(
     async (next: EnvironmentComposerState) => {
+      // An eval run takes its servers from the group alone, so a setup with no
+      // group (and no plugin pin) would run with no tools. Refuse before the
+      // optimistic update rather than after a round trip.
+      if (
+        composerHasTarget(next) &&
+        composerMissingServerGroup(next, liveEnvironments)
+      ) {
+        toast.error(
+          "Pick a server or group first. An eval run takes its servers from the group alone.",
+        );
+        return;
+      }
       const previous = state;
       const mine = ++commitVersion.current;
       setState(next);
@@ -334,15 +362,21 @@ function EnvironmentModeBar({
         const emptied = !composerHasTarget(next);
         // Resolve BEFORE writing: a failure mid-way leaves at most some
         // deduped ad-hoc rows nothing points at, never a half-updated suite.
-        const environmentIds = emptied
+        const resolved = emptied
           ? null
-          : (
-              await resolveTargets({
-                state: next,
-                liveEnvironments,
-                max: MAX_SUITE_ENVIRONMENTS,
-              })
-            ).environmentIds;
+          : await resolveTargets({
+              state: next,
+              liveEnvironments,
+              max: MAX_SUITE_ENVIRONMENTS,
+            });
+        const skippedSummary = resolved
+          ? describeSkippedModelCells(
+              resolved.skipped,
+              clientNameResolver(hosts),
+            )
+          : undefined;
+        if (skippedSummary) toast.warning(skippedSummary);
+        const environmentIds = resolved ? resolved.environmentIds : null;
         await setSuiteEnvironments({
           suiteId: suite._id,
           // The backend rejects an empty array; `null` is how a field clears.
@@ -359,6 +393,7 @@ function EnvironmentModeBar({
       }
     },
     [
+      hosts,
       liveEnvironments,
       resolveTargets,
       setSuiteEnvironments,
@@ -367,10 +402,30 @@ function EnvironmentModeBar({
     ]
   );
 
+  /**
+   * Every environment this suite runs takes its servers from a group it does
+   * not have, and contributes none through a plugin pin either — so the run
+   * will connect nothing. Read from the PERSISTED attachments rather than the
+   * environment preview, which resolves the client's own servers and would
+   * therefore describe a set these runs never use.
+   */
+  const noServers =
+    !environmentsLoading &&
+    unresolvedCount === 0 &&
+    attachedEnvironments.length > 0 &&
+    attachedEnvironments.every(
+      (env) => !env.serverAttachmentId && !env.pluginVersionIds?.length
+    );
+
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <EnvironmentComposer
+          // "Servers · client default" is the resolver's rule for journeys and
+          // scenarios, not for evals: an eval run takes its servers from the
+          // group alone, so the slot is required here.
+          emptyServerLabel="Pick a server or group"
+          serverOptional={false}
           projectId={projectId}
           environments={liveEnvironments}
           value={state}
@@ -396,6 +451,14 @@ function EnvironmentModeBar({
           testIdPrefix="suite-env"
         />
       </div>
+      {noServers ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="suite-env-no-servers-hint"
+        >
+          No server group picked. Runs will have no tools.
+        </p>
+      ) : null}
       {unresolvedCount > 0 ? (
         <p
           className="text-[11px] text-muted-foreground"
@@ -496,7 +559,7 @@ function LegacyModeBar({
    * here (there is no suite-level skills axis), so they stay hidden until the
    * suite is in environment mode.
    */
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const handleSandboxImageChange = useCallback(
     async (next: string | null) => {
       try {
@@ -598,7 +661,10 @@ function LegacyModeBar({
         )}
       </div>
 
-      {computersEnabled && !omitComputers && editable && suite.projectId ? (
+      {sandboxImagesEnabled &&
+      !omitComputers &&
+      editable &&
+      suite.projectId ? (
         <div className="shrink-0">
           <SandboxImagePill
             projectId={suite.projectId}

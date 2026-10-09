@@ -151,7 +151,7 @@ export function resolveUiNavigationTarget(
     trackNavigationRejected(tab, "hosted_blocked");
     return {
       ok: false,
-      reason: `"${tab}" is not available in hosted mode. Valid targets: ${listUiNavigationTargets().join(", ")}.`,
+      reason: `"${tab}" isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app. Valid targets: ${listUiNavigationTargets().join(", ")}.`,
     };
   }
   return { ok: true, path: navigationTargetToPath(trimmed), tab };

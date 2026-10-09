@@ -8,10 +8,12 @@ vi.mock("@sentry/node", () => ({
 }));
 
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: vi.fn(),
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 // Spy on the mint so the test can prove the identity error blocks the mint
@@ -54,9 +56,11 @@ vi.mock("@mcpjam/sdk", async () => {
   );
   return {
     ...actual,
-    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
-      disconnectAllServers: vi.fn(),
-    })),
+    MCPClientManager: mcpClientManagerMock.mockImplementation(function () {
+      return {
+        disconnectAllServers: vi.fn(),
+      };
+    }),
   };
 });
 vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
@@ -134,6 +138,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
               serverConfig: {
                 transportType: "http",
                 url: "https://xaa.example.com/mcp",
+                secretsBoundOrigin: "https://xaa.example.com",
                 useOAuth: false,
                 useXaa: true,
                 authServerMode: "mcpjam",
@@ -195,6 +200,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
               serverConfig: {
                 transportType: "http",
                 url: "https://xaa.example.com/mcp",
+                secretsBoundOrigin: "https://xaa.example.com",
                 useOAuth: false,
                 useXaa: true,
                 authServerMode: "mcpjam",
@@ -285,6 +291,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
           clientId: "client-1",
@@ -332,6 +339,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
           clientId: "client-1",
@@ -342,6 +350,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://broken.example.com/mcp",
+          secretsBoundOrigin: "https://broken.example.com",
           useXaa: true,
           authServerMode: "mcpjam",
           xaaIdentityError: "Complete or clear the server identity override",
@@ -372,6 +381,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
           clientId: "client-1",
@@ -426,6 +436,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://dcr.example.com/mcp",
+          secretsBoundOrigin: "https://dcr.example.com",
           authMethod: "xaa",
           registrationMode: "dcr",
         },
@@ -684,6 +695,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
           clientId: "client-1",
@@ -721,6 +733,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
           clientId: "client-1",

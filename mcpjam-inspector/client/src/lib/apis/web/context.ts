@@ -12,7 +12,9 @@ import {
   type XaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 
-type GetAccessTokenFn = () => Promise<string | undefined | null>;
+type GetAccessTokenFn = (options?: {
+  forceRefresh?: boolean;
+}) => Promise<string | undefined | null>;
 
 export interface ApiContext {
   projectId: string | null;
@@ -120,6 +122,46 @@ export function resetTokenCache() {
   cachedBearerToken = null;
 }
 
+/** How long renewing a refused session bearer may take. */
+const SESSION_BEARER_RENEW_TIMEOUT_MS = 10_000;
+
+/**
+ * A signed-in actor's bearer was refused as expired: drop the cached one and
+ * ask AuthKit for a freshly refreshed token. Null for guests (their own retry
+ * lives in `authFetch`), on failure, or when nothing answers in time.
+ */
+export async function renewSessionBearer(): Promise<string | null> {
+  if (shouldPreferGuestBearer()) return null;
+  const getAccessToken = apiContext.getAccessToken;
+  if (!getAccessToken) return null;
+  const revision = apiContextRevision;
+  resetTokenCache();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const token = await Promise.race([
+      getAccessToken({ forceRefresh: true }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(
+          () => resolve(null),
+          SESSION_BEARER_RENEW_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    // A different actor now: never hand its predecessor a token.
+    if (!token || revision !== apiContextRevision) return null;
+    cachedBearerToken = {
+      token,
+      expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+      kind: "session",
+    };
+    return token;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function notifyApiContextChanged() {
   apiContextRevision += 1;
   for (const listener of apiContextListeners) {
@@ -189,10 +231,10 @@ export function setApiContext(next: ApiContext | null): void {
   // actor's handles when the project/org actually changes (logout, switch).
   //
   // Only an actual actor change clears them: `useApiContext` tears the context
-  // down (`setApiContext(null)`) on every dependency change and remounts it
-  // immediately, so treating "scope went away" as a logout would delete live
-  // task handles on ordinary re-renders. A clear therefore requires a
-  // different, DEFINED next scope.
+  // down (`setApiContext(null)`) when it unmounts or is disabled, and a remount
+  // publishes it again immediately, so treating "scope went away" as a logout
+  // would delete live task handles. A clear therefore requires a different,
+  // DEFINED next scope.
   const previousProjectId = apiContext.projectId ?? undefined;
   const nextProjectId = next?.projectId ?? undefined;
   if (

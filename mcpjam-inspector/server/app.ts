@@ -1,10 +1,13 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -18,6 +21,7 @@ import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
@@ -27,6 +31,7 @@ import {
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
+import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import slackLinkRoutes from "./routes/slack-link/index.js";
@@ -44,18 +49,18 @@ import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS, LOCAL_HARNESS_ENABLED } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
 // Security imports
 import {
   generateSessionToken,
-  getSessionToken,
+  validateToken,
 } from "./services/session-token.js";
 import {
   mayServeGuestBootstrap,
-  mayServeSessionToken,
+  isAllowedHost,
 } from "./utils/localhost-check.js";
 import { getActiveTunnelDomains } from "./services/tunnel-registry.js";
 import {
@@ -68,21 +73,28 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
-import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import {
+  documentScriptNonce,
+  securityHeadersMiddleware,
+  withScriptNonce,
+} from "./middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
-import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
+import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
-import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { fetchGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import {
   applyHostedPartition,
   mountHostedOpenRoutes,
@@ -121,10 +133,12 @@ export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
+  if (!HOSTED_MODE) void startPluginFormFileJanitor();
   // One line, after the env is loaded: which grading-engine mode this process
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
   logGradingEngineModeOnce();
+  logGuestAuthorityOnce(appLogger);
 
   // Under Electron this process IS the main process, and it is the one that
   // ran out of heap in INSPECTOR-ELECTRON-W3 with no session telemetry at all.
@@ -146,14 +160,20 @@ export async function createHonoApp() {
   // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
   // dispatch classifies newly-added hosted models correctly. Memoized.
   startHostedModelCatalogRefresh();
+  // The revoked-session list (MJ-011). Mirror of the call in server/index.ts:
+  // loads in the background, idempotent, a no-op without the service token.
+  startRevokedSessionCache();
 
-  startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
-  // Reports whether a local-harness runtime pack is present. Deliberately
-  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-  // kill switch and a consent grant is installed when the user asks, never
-  // at startup and never during a session start.
-  reportLocalHarnessRuntimeStatusInBackground();
+  // Local runtime maintenance, after the janitor has reclaimed orphaned
+  // sessions: this Inspector's liveness record, GC of packs no live
+  // Inspector may select, and — only on a machine where somebody durably
+  // authorized the harness, under the `auto` update policy — a background
+  // prefetch of the desired pack. Never during a session start.
+  if (!HOSTED_MODE) {
+    const janitor = startLocalHarnessJanitor();
+    if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+  }
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -161,6 +181,8 @@ export async function createHonoApp() {
   // `isComputersDataPlaneConfigured()`, which is only truthful once the
   // credential bootstrap has resolved — no requests before that.
   await initComputersStartup();
+  // Mirror of the call in server/index.ts: capability report + hosted check.
+  reportServiceCredentialAtBoot(HOSTED_MODE);
 
   const app = new Hono();
   // Computer terminal WebSocket support (Project Computers). Mirror of
@@ -256,6 +278,7 @@ export async function createHonoApp() {
   // session auth, 403s from origin validation, and hosted-mode 410 partition
   // responses are still observed in Axiom — those are exactly the requests
   // SREs want to see during an outage or attack).
+  app.use("/api/*", sentryRequestIdentityMiddleware);
   app.use("/api/*", requestLogContextMiddleware);
 
   // ===== SECURITY MIDDLEWARE STACK =====
@@ -263,6 +286,10 @@ export async function createHonoApp() {
 
   // 1. Security headers (always applied)
   app.use("*", securityHeadersMiddleware);
+
+  // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+  // than another line in the security headers — see indexing-headers.ts.
+  app.use("*", indexingHeadersMiddleware);
 
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
@@ -292,13 +319,10 @@ export async function createHonoApp() {
       }),
     );
   }
-  app.use(
-    "*",
-    cors({
-      origin: CORS_ORIGINS,
-      credentials: true,
-    }),
-  );
+  // Load-bearing for the header middleware above, not only for CORS. See the
+  // same mount in server/index.ts: raw-`Response` handlers only carry the
+  // headers prepared by `c.header()` because `cors()` materializes `c.res`.
+  app.use("*", cors(CORS_OPTIONS));
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
   // folder upload, which is multipart and bounded by the service caps. Audio
@@ -335,6 +359,7 @@ export async function createHonoApp() {
   // judge doorbell above — the ring is a wake-up, and the pass claims from the
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
+  app.route("/api/internal/agent-turns", internalAgentTurns);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in
@@ -387,7 +412,7 @@ export async function createHonoApp() {
     );
     app.get(
       "/api/web/computers/local-browser/frames",
-      createLocalBrowserFramesWsHandler(upgradeWebSocket)
+      createLocalBrowserFramesWsHandler(upgradeWebSocket),
     );
   }
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
@@ -411,24 +436,12 @@ export async function createHonoApp() {
     createComputerUploadHandler(),
   );
 
-  // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
+  // Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+  // artifact upload carved out; see `v1BodyLimit`); the canonical
   // resource-oriented routes wrap the same core helpers and emit the v1
   // envelope. Read-only diagnostics first; mutating ops land behind the
   // X-MCPJam-Approval flow in a follow-up.
-  app.use(
-    "/api/v1/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
-  );
+  app.use("/api/v1/*", v1BodyLimit());
   app.route("/api/v1", v1Routes);
 
   // Fail the deploy, not the user's first sign-in: `WORKOS_API_BASE_URL` is a
@@ -491,7 +504,7 @@ export async function createHonoApp() {
   // Guest JWT JWKS compatibility endpoint — public, no auth required.
   // The canonical JWKS now lives on Convex; Inspector proxies it here.
   app.get("/guest/jwks", async () => {
-    const response = await fetchRemoteGuestJwks();
+    const response = await fetchGuestJwks();
     if (!response) {
       return Response.json(
         { error: "Guest JWKS unavailable" },
@@ -516,39 +529,27 @@ export async function createHonoApp() {
     });
   });
 
-  // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
-  // in BOTH hosted and self-hosted mode); tunnel hosts are always vetoed.
+  // Validate a credential delivered by the launcher. Never disclose one over HTTP.
   app.get("/api/session-token", (c) => {
-    if (HOSTED_MODE) {
-      return strictModeResponse(c, "/api/session-token");
-    }
-
-    const host = c.req.header("Host");
-    const forwardedHost = c.req.header("X-Forwarded-Host");
-
-    // SECURITY INVARIANT: tunnel hosts never receive the session token, even
-    // if a tunnel domain is ever allowlisted — see mayServeSessionToken. This
-    // used to call `isAllowedHost` directly, which is the same allowlist
-    // WITHOUT the tunnel veto, so `index.ts` and this file disagreed about the
-    // one rule they must not disagree about.
+    c.header("Cache-Control", "no-store");
+    if (HOSTED_MODE) return strictModeResponse(c, "/api/session-token");
+    const authorization = c.req.header("X-MCP-Session-Auth");
     if (
-      !mayServeSessionToken({
-        host,
-        forwardedHost,
-        allowedHosts: ALLOWED_HOSTS,
-        activeTunnelDomains: getActiveTunnelDomains(),
-      })
+      authorization?.startsWith("Bearer ") &&
+      validateToken(authorization.slice(7))
     ) {
-      appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${
-          forwardedHost || host
-        }`,
-      );
-      return c.json({ error: "Token only available via allowed hosts" }, 403);
+      return c.json({ ok: true });
     }
-
-    return c.json({ token: getSessionToken() });
+    if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS)) {
+      return c.json({ code: "HOST_NOT_ALLOWED" }, 403);
+    }
+    return c.json(
+      {
+        code: "ACCESS_LINK_REQUIRED",
+        hint: "Open the link printed in your terminal. If you use @mcpjam/cli, update it.",
+      },
+      401,
+    );
   });
 
   // Static hosting / dev redirect behavior
@@ -593,40 +594,18 @@ export async function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost or hosts in
-        // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
-        // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
-
-        // Same invariant as the /api/session-token route above, and the same
-        // bug: this path already captured `forwardedHost` for the guest
-        // bootstrap below but did not consult it here, so a request arriving
-        // through the relay edge — which puts the real tunnel host in
-        // X-Forwarded-Host — got the token injected into its document.
-        if (
-          mayServeSessionToken({
-            host,
-            forwardedHost,
-            allowedHosts: ALLOWED_HOSTS,
-            activeTunnelDomains: getActiveTunnelDomains(),
-          })
-        ) {
-          const token = getSessionToken();
-          const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
-          html = html.replace("</head>", `${tokenScript}</head>`);
-        } else {
-          // Host not allowed - no token (security measure)
-          appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
-          );
-          const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
-          html = html.replace("</head>", `${warningScript}</head>`);
-        }
+        // Every inline script written into the document carries this
+        // response's nonce (see middleware/security-headers.ts).
+        const scriptNonce = documentScriptNonce(c);
 
         const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
         if (runtimeConfigScript) {
-          html = html.replace("</head>", `${runtimeConfigScript}</head>`);
+          html = html.replace(
+            "</head>",
+            `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
+          );
         }
 
         // Guest bootstrap blob: mint a guest bearer server-side and inject it
@@ -646,10 +625,14 @@ export async function createHonoApp() {
           })
         ) {
           try {
-            const { session, setCookies } =
-              await mintGuestSessionForDocument(c);
+            const { session, setCookies } = await mintGuestSessionForDocument(
+              c,
+            );
             if (session && session.expiresAt > Date.now()) {
-              const bootstrapScript = buildGuestBootstrapScript(session);
+              const bootstrapScript = withScriptNonce(
+                buildGuestBootstrapScript(session),
+                scriptNonce,
+              );
               html = html.replace("</head>", `${bootstrapScript}</head>`);
               for (const cookie of setCookies) {
                 appendGuestSessionSetCookie(c, cookie);

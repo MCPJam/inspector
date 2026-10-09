@@ -77,6 +77,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // server as the failing boundary. Keep protocol codes that can also be
   // caused by the client or transport out of this bucket.
   "jsonrpc/internal_error": "user_server",
+  "jsonrpc/invalid_response_format": "user_server",
   // Parse errors, missing methods, invalid params, and unsupported versions
   // are direction-dependent protocol signals. A client can send malformed
   // JSON, call an unadvertised method, or request a version the server does
@@ -105,6 +106,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Default only. A refresh failure on a credential MCPJam itself holds is
   // ours — callers pass `credentialOwner: "mcpjam"` to say so.
   "auth/oauth_refresh_failed": "user_config",
+  // Nothing has failed on the wire: the user simply has not granted consent
+  // yet. Config-side because only the user can complete it.
+  "auth/consent_required": "user_config",
   "oauth/invalid_client": "user_config",
   "oauth/invalid_grant": "user_config",
   "oauth/redirect_mismatch": "user_config",
@@ -115,12 +119,23 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Deliberately NOT credential-owned: MCPJam holds the key, but a spent
   // allowance is an account state the user resolves, never an outage of ours.
   "provider/mcpjam_limit": "user_config",
+  "provider/mcpjam_platform_budget": "user_config",
+  "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
+  "provider/mcpjam_limit_insufficient": "user_config",
+  // The provider failed and the saved selection forbids a fallback. Whose
+  // failure it was is not settled by the refusal itself — MCPJam's Gateway,
+  // the upstream model provider, or a transient network fault — so it never
+  // pages and never blames the user's key.
+  "provider/fallback_prohibited": "ambiguous",
   // The MCP server under test throttled US. That is the server's own
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
   "server/rate_limited": "user_server",
+  // The MCP server under test answered with an HTTP error status. Recognized
+  // only from an MCP transport error, so the answer is the server's own.
+  "server/http_error": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -139,6 +154,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
+  // The hosted AI gateway refused the provider because MCPJam's own gateway
+  // team has not enabled it. No user input can change that; the fix is ours.
+  "provider/not_allowlisted": "mcpjam",
 
   // A missing challenge alone does not establish who must act.
   "oauth/no_bearer_challenge": "ambiguous",
@@ -270,6 +288,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Retry the request once the server is healthy.",
     ],
     "internal-error",
+  ),
+  "jsonrpc/invalid_response_format": entry(
+    "jsonrpc/invalid_response_format",
+    "Invalid response format (-32603)",
+    "The server replied, but the result was not a valid MCP tool, resource, or prompt payload.",
+    [
+      "The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).",
+    ],
+    [
+      "Inspect the result in the Traffic Log and compare it to the MCP result shape.",
+      "Return `{ content: [{ type: \"text\", text: \"...\" }] }` from the handler, or the matching resource/prompt result.",
+    ],
+    "invalid-response-format",
   ),
   "jsonrpc/connection_closed": entry(
     "jsonrpc/connection_closed",
@@ -525,6 +556,26 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "oauth-refresh-failed",
   ),
+  /**
+   * Not a failure. The server is reachable and nothing was rejected — the
+   * user has simply not authorized MCPJam yet, or a reconnect ran on a path
+   * that deliberately refuses to open the consent window unprompted.
+   *
+   * `warning`, not `error`: rendering an expected, one-click state in the
+   * same red as a dead transport is what made this surface read as broken.
+   */
+  "auth/consent_required": entry(
+    "auth/consent_required",
+    "Sign-in required",
+    "This server needs your permission before it can connect.",
+    [
+      "Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.",
+    ],
+    ["Click Reconnect and approve the request in the window that opens."],
+    "consent-required",
+    "warning",
+  ),
+
   "auth/missing_bearer": entry(
     "auth/missing_bearer",
     "Missing bearer token",
@@ -720,7 +771,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Disable progressive tool discovery for this server, or move headers into the server config.",
     ],
-    "paginated-tool-header-discovery-unsupported",
+    "paginated-tool-and-header-discovery-unsupported",
     "warning",
   ),
 
@@ -754,56 +805,115 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "provider-auth-error",
   ),
+  // The backend's `provider_not_allowlisted` code: the hosted gateway's
+  // provider allowlist, not a key, refused the request. Deliberately carries
+  // no API-key remedy — the user's keys were never involved, and retrying
+  // sends the same request into the same refusal.
+  "provider/not_allowlisted": entry(
+    "provider/not_allowlisted",
+    "Model provider not enabled on MCPJam",
+    "This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. Retrying or changing your API key won't help.",
+    [
+      "MCPJam's hosted gateway does not have this model's provider on its provider allowlist.",
+    ],
+    [
+      "Choose a model from a different provider.",
+      "Add your own key for this provider under Settings → LLM Providers (BYOK) to run the model on your key instead of MCPJam's gateway.",
+    ],
+    "provider-not-allowlisted",
+    "warning",
+  ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the
   // reader pick. The unlabelled slug below stays as the net for copy that
   // names no period.
   "provider/mcpjam_limit_daily": entry(
     "provider/mcpjam_limit_daily",
-    "Daily MCPJam limit reached",
-    "This account's free daily MCPJam allowance is spent. It resets tomorrow.",
+    "Out of MCPJam credits",
+    "Your organization's daily MCPJam credits are used up. They reset tomorrow.",
     [
       "Chat, evals and swarm generation all draw on one daily bucket, shared across the organization.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the daily allowance to reset.",
       // Named precisely because the generic advice costs people an afternoon:
       // a swarm's generation and persona-driver calls are platform-billed and
       // have no BYOK path, so adding a key does nothing for them.
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_limit_monthly": entry(
     "provider/mcpjam_limit_monthly",
-    "Monthly MCPJam credits spent",
-    "This team's monthly MCPJam credits are spent for the current billing period.",
+    "Out of MCPJam credits",
+    "Your organization's available MCPJam credits are used up for this billing period.",
     [
-      "Team plans draw on one monthly per-seat allowance instead of the daily bucket, and it renews when the billing period does.",
+      "Paid plans include a monthly credit allowance shared across the organization. It renews with the billing period.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the billing period to renew.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
+  ),
+  "provider/mcpjam_limit_insufficient": entry(
+    "provider/mcpjam_limit_insufficient",
+    "Not enough MCPJam credits",
+    "Your organization has MCPJam credits left, but not enough for this request.",
+    [
+      "MCPJam reserves a request's worst-case cost before it runs, so an expensive model or a long conversation can need more than the remaining balance.",
+    ],
+    [
+      "Try a cheaper model or a shorter conversation.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+    ],
+    "out-of-mcpjam-credits",
+    "warning",
+  ),
+  "provider/fallback_prohibited": entry(
+    "provider/fallback_prohibited",
+    "Provider failed, fallback not permitted",
+    "The model's provider failed and this model selection does not allow a fallback provider, so the request stopped rather than running somewhere other than where it was asked to.",
+    [
+      "The provider serving this model returned an error or was unreachable, and the selection's fallback policy is \"none\" — the default for evals, swarms and judges, so a result never silently comes from a different provider.",
+    ],
+    [
+      "Retry — the provider's failure may be temporary.",
+      "Pick a different model, or a model on a connection you control.",
+    ],
+    "provider-failed-fallback-not-permitted",
+    "warning",
+  ),
+  "provider/mcpjam_platform_budget": entry(
+    "provider/mcpjam_platform_budget", "MCPJam shared free allowance unavailable",
+    "The shared free allowance is exhausted or temporarily paused.",
+    ["This limit applies across free usage, not just your account."],
+    ["Wait until the supplied reset time, if present.", "Use purchased credits or your own provider key for chat."],
+    "mcpjam-platform-budget", "warning",
+  ),
+  "account/suspended": entry(
+    "account/suspended", "Account suspended",
+    "This account has been suspended by MCPJam.", ["Support has suspended this account."],
+    ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",
-    "MCPJam model limit reached",
-    "This account's MCPJam model allowance is spent, so the call was refused before it reached a provider.",
+    "Out of MCPJam credits",
+    "Your organization is out of MCPJam credits, so this request could not continue.",
     [
       "Chat, evals and swarm generation all draw on the same MCPJam allowance.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the allowance to reset.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/quota": entry(
@@ -839,6 +949,21 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "server-rate-limited",
     "warning",
+  ),
+  "server/http_error": entry(
+    "server/http_error",
+    "MCP server returned an HTTP error",
+    "The MCP server answered the request with an HTTP error status.",
+    [
+      "404: the URL points at the wrong endpoint path (for example, a missing `/mcp`).",
+      "405: the endpoint does not accept MCP requests (POST).",
+      "5xx: the server hit an error of its own while handling the request.",
+    ],
+    [
+      "Check the server URL, including the MCP endpoint path.",
+      "Check the server's logs for the failed request.",
+    ],
+    "server-http-error",
   ),
 
   "provider/empty_response": entry(

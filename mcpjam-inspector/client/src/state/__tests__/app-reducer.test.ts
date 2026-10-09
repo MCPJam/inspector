@@ -787,6 +787,33 @@ describe("appReducer", () => {
       });
     });
 
+    describe("UPDATE_PROJECT_SERVER", () => {
+      it("preserves servers added after a connection save began", () => {
+        const state = createInitialState();
+        const anotherServer = createServer("another-server");
+        const currentState = appReducer(state, {
+          type: "UPDATE_PROJECT",
+          projectId: "project-1",
+          updates: { servers: { "another-server": anotherServer } },
+        });
+        const authorizedServer = createServer("authorized-server", {
+          useOAuth: true,
+        });
+
+        const result = appReducer(currentState, {
+          type: "UPDATE_PROJECT_SERVER",
+          projectId: "project-1",
+          name: "authorized-server",
+          server: authorizedServer,
+        });
+
+        expect(result.projects["project-1"].servers).toEqual({
+          "another-server": anotherServer,
+          "authorized-server": authorizedServer,
+        });
+      });
+    });
+
     describe("DELETE_PROJECT", () => {
       it("removes project from state", () => {
         const extraProject: Project = {
@@ -951,5 +978,17 @@ describe("appReducer", () => {
         expect(result.projects["imported"]).toEqual(imported);
       });
     });
+  });
+});
+
+
+describe("hosted queued reconnect state", () => {
+  it("keeps an existing connection while the check is queued and restores it on cancel", () => {
+    const server = createServer("test", { connectionStatus: "connected", enabled: true });
+    const state = createInitialState({ servers: { test: server } });
+    const queued = appReducer(state, { type: "RECONNECT_REQUEST", name: "test", config: server.config, preserveConnected: true });
+    expect(queued.servers.test.connectionStatus).toBe("connected");
+    const cancelled = appReducer(queued, { type: "CONNECT_CANCELLED", name: "test", wasConnected: true });
+    expect(cancelled.servers.test.connectionStatus).toBe("connected");
   });
 });

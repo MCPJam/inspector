@@ -370,6 +370,18 @@ export function finalizeScoreResult(
     ...(evidence ? { evidence } : {}),
     ...(model ? { model } : {}),
     ...(outcome.promptHash ? { promptHash: outcome.promptHash } : {}),
+    ...(outcome.judgeTemplateVersion !== undefined
+      ? { judgeTemplateVersion: outcome.judgeTemplateVersion }
+      : {}),
+    ...(outcome.judgeTemplateHash !== undefined
+      ? { judgeTemplateHash: outcome.judgeTemplateHash }
+      : {}),
+    ...(outcome.evidenceHash !== undefined
+      ? { evidenceHash: outcome.evidenceHash }
+      : {}),
+    ...(outcome.evidenceManifest !== undefined
+      ? { evidenceManifest: outcome.evidenceManifest }
+      : {}),
     ...(scope ? { scope } : {}),
   };
 }

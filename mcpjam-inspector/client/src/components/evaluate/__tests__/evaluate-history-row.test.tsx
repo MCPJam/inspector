@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
+  EvaluateHistoryRowSkeleton,
   historyResult,
 } from "../evaluate-history-row";
 import type { ProjectRunRow } from "../../evals/project-runs-table";
@@ -171,5 +172,77 @@ describe("Evaluate history rows", () => {
     expect(cells[4]).toHaveTextContent("—");
     expect(cells[9]).toHaveTextContent("—");
     expect(cells[10]).toHaveTextContent("—");
+  });
+
+  it("draws an all-skeleton row, since an unread launch is not yet a row", () => {
+    render(
+      <table>
+        <tbody>
+          <EvaluateHistoryRowSkeleton showSuite />
+        </tbody>
+      </table>,
+    );
+    // aria-hidden, so the row is absent from the a11y tree by design: the
+    // table's footer already announces that the history is loading.
+    expect(screen.queryByRole("row")).toBeNull();
+    const cells = screen
+      .getByTestId("run-history-row-skeleton")
+      .querySelectorAll("td");
+    // One per header column, so the columns do not jump when the row lands.
+    expect(cells).toHaveLength(12);
+    for (const cell of cells) {
+      expect(cell.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+      expect(cell).not.toHaveTextContent("—");
+    }
+  });
+
+  it("deletes from its own button without opening the run", async () => {
+    const onOpen = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <table>
+        <EvaluateHistoryHeader showActions />
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[row()]}
+            details={new Map()}
+            historyRows={new Map()}
+            showActions
+            onOpen={onOpen}
+            onDelete={onDelete}
+          />
+        </tbody>
+      </table>,
+    );
+    // The column has no visible title, only a screen-reader label.
+    expect(screen.getByText("Actions")).toHaveClass("sr-only");
+
+    const button = screen.getByRole("button", { name: "Delete run #3" });
+    await userEvent.click(button);
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onDelete).toHaveBeenCalledTimes(2);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps the actions column but hides the button when the row cannot be deleted", () => {
+    render(
+      <table>
+        <EvaluateHistoryHeader showActions />
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[row()]}
+            details={new Map()}
+            historyRows={new Map()}
+            showActions
+          />
+        </tbody>
+      </table>,
+    );
+    expect(screen.queryByRole("button", { name: /Delete run/ })).toBeNull();
+    const [headerRow, bodyRow] = screen.getAllByRole("row");
+    expect(within(bodyRow).getAllByRole("cell")).toHaveLength(
+      within(headerRow).getAllByRole("columnheader").length,
+    );
   });
 });

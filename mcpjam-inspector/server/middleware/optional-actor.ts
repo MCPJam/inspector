@@ -32,6 +32,10 @@
  * refusal the user would get for someone else's link. Answering 401 here instead
  * would break the guest flow for anyone whose browser happens to send a stale
  * token.
+ *
+ * The same goes for the session behind a token that verifies (MJ-011): a
+ * session known to be revoked, or one that cannot be checked because the
+ * revoked-session list is not current, yields no actor.
  */
 
 import type { Context, Next } from "hono";
@@ -40,6 +44,7 @@ import {
   verifyAuthKitToken,
 } from "../services/authkit-jwt.js";
 import { resolveUserByExternalId } from "../services/identity.js";
+import { checkSessionRevocation } from "../services/revoked-session-cache.js";
 import { logger } from "../utils/logger.js";
 
 export type OptionalActorDeps = {
@@ -74,10 +79,21 @@ export function resolveOptionalActor(deps: OptionalActorDeps = defaultDeps) {
 
     try {
       const session = await deps.verify(token);
-      c.set("workosUserId", session.sub);
-      const user = await deps.resolveUser(session.sub);
-      if (user) {
-        c.set("mcpjamUserId", user._id);
+      const servable = checkSessionRevocation(session.sid, {
+        requireFresh: true,
+      });
+      if (servable.ok) {
+        c.set("workosUserId", session.sub);
+        const user = await deps.resolveUser(session.sub);
+        if (user) {
+          c.set("mcpjamUserId", user._id);
+        }
+      } else {
+        logger.info("Did not resolve an optional actor for this session", {
+          event: "auth.optional_actor_session_refused",
+          reason: servable.reason,
+          path: c.req.path,
+        });
       }
     } catch (error) {
       if (error instanceof AuthKitConfigError) {

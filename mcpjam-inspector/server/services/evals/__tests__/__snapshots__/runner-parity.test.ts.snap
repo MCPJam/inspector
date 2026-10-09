@@ -4,6 +4,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -31,6 +68,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -71,6 +109,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -315,6 +354,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: search on "Asana"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "Asana",
+            "toolName": "search",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe it",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -421,6 +497,16 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "setup",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -566,6 +652,39 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -586,6 +705,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -671,6 +791,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"},{"role":"assistant","content":[{"type":"text","text":"Done"}]},{"role":"user","content":"Again"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -914,6 +1035,34 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -934,6 +1083,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -1157,6 +1307,43 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -1184,6 +1371,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1224,6 +1412,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1486,6 +1675,34 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "claude-haiku-4.5",
+        "provider": "anthropic",
+        "query": "Hello",
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "anthropic/claude-haiku-4.5",
@@ -1506,6 +1723,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -1720,6 +1938,44 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch case predicate + per-turn check (ordering): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "assertion": {
+              "needle": "Done",
+              "type": "responseContains",
+            },
+            "id": "turn-1-check-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -1961,6 +2217,56 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch interact fires widget tool call (merged into matcher): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [
+          {
+            "arguments": {
+              "id": 1,
+            },
+            "toolName": "add-to-cart",
+          },
+        ],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Add it",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Add it",
+          },
+          {
+            "assertion": {
+              "args": {
+                "args": {
+                  "id": 1,
+                },
+              },
+              "toolName": "add-to-cart",
+              "type": "toolCalledWith",
+            },
+            "id": "turn-1-expect-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2265,6 +2571,40 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Pinned tool call: search on "Asana"",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "Asana",
+            "toolName": "search",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "eval/unknown",
@@ -2331,6 +2671,16 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "setup",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -2467,6 +2817,41 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch multi-turn: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -2723,6 +3108,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": true,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -2927,6 +3342,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -3124,6 +3569,56 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch tool call matches expected: convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [
+          {
+            "arguments": {
+              "q": "x",
+            },
+            "toolName": "search",
+          },
+        ],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Search",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Search",
+          },
+          {
+            "assertion": {
+              "args": {
+                "args": {
+                  "q": "x",
+                },
+              },
+              "toolName": "search",
+              "type": "toolCalledWith",
+            },
+            "id": "turn-1-expect-0",
+            "kind": "assert",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -3390,6 +3885,38 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": {
+          "failOnToolError": false,
+        },
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -3471,6 +3998,12 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "boom",
+            "reason": "protocolError",
+          },
+        ],
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3604,6 +4137,38 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": {
+          "failOnToolError": true,
+        },
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -3685,6 +4250,12 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "boom",
+            "reason": "protocolError",
+          },
+        ],
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3816,6 +4387,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch unrendered widget fail-closed (scriptedCheckFailures gate): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -4015,6 +4616,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
 
 exports[`runner parity (golden Convex payload + event sequence) > local-batch widget rendered (widgetRendered predicate passes): convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -4233,6 +4864,45 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
 
 exports[`runner parity (golden Convex payload + event sequence) > local-stream hybrid pinned (toolCall + prompt): events + convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Pinned tool call: show_map on "srv-1"",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "arguments": {
+              "city": "SF",
+            },
+            "id": "turn-1",
+            "kind": "toolCall",
+            "serverName": "srv-1",
+            "toolName": "show_map",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Describe the widget",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",
@@ -4521,6 +5191,41 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+          {
+            "id": "turn-2",
+            "kind": "prompt",
+            "prompt": "Again",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -4792,6 +5497,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
 [
   {
     "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
+  {
+    "payload": {
       "iterationId": "iter-1",
       "lastActivityAt": "<scrubbed>",
       "modelId": "gpt-4-turbo",
@@ -4845,6 +5580,16 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "provider stream exploded",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "execution",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4966,6 +5711,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
 
 exports[`runner parity (golden Convex payload + event sequence) > local-stream prompt-only: events + convex payload > convex 1`] = `
 [
+  {
+    "payload": {
+      "iterationNumber": 1,
+      "startedAt": "<scrubbed>",
+      "testCaseId": "case-1",
+      "testCaseSnapshot": {
+        "advancedConfig": undefined,
+        "expectedOutput": undefined,
+        "expectedToolCalls": [],
+        "hostConfigOverride": undefined,
+        "isNegativeTest": undefined,
+        "matchOptions": undefined,
+        "model": "gpt-4-turbo",
+        "passThreshold": undefined,
+        "provider": "openai",
+        "query": "Hello",
+        "repetitions": undefined,
+        "runs": 1,
+        "steps": [
+          {
+            "id": "turn-1",
+            "kind": "prompt",
+            "prompt": "Hello",
+          },
+        ],
+        "title": "Case",
+      },
+    },
+    "ref": "testSuites:startQuickRunIteration",
+  },
   {
     "payload": {
       "iterationId": "iter-1",

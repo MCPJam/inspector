@@ -6,6 +6,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -125,6 +131,11 @@ vi.mock("@/components/hosts/server-picker", () => ({
       server group
     </button>
   ),
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -437,6 +448,34 @@ describe("SwarmsTab — generate persona", () => {
     expect(
       screen.getByRole("button", { name: /generate persona/i }),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. An inline card under the form would say the same thing twice with
+   * nothing to act on — so the dialog suppresses its own copy on the FLAG, not
+   * on the class (persona-cap failures share this catch and must keep showing).
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    generatePersonaMock.mockRejectedValue(
+      new SwarmGenerateError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true,
+      ),
+    );
+
+    openGeneratePersona();
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    await waitFor(() => expect(generatePersonaMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /generate persona/i }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(createPersonaMutation).not.toHaveBeenCalled();
   });
 });
 

@@ -38,9 +38,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -87,6 +91,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 
@@ -407,6 +412,53 @@ describe("eval suite settings manifest — render parity", () => {
     expect(
       container.querySelector('[data-setting-key="computerEnvironment"]'),
     ).toBeTruthy();
+  });
+
+  /**
+   * The image row rides `sandbox-images`, split from `computers` so the
+   * personal computer can widen without exposing custom images. A backend that
+   * predates the split has no `sandbox-images` key and still gates images on
+   * `computers`, so that is the fallback.
+   */
+  describe("the image row reads sandbox-images, not computers", () => {
+    const allFeatures = readyCapabilities().capabilities.features;
+    function imageRowReason(features: Record<string, unknown>) {
+      mocks.capabilities.mockReturnValue(readyCapabilities({ features }));
+      const { container } = renderSettingsSheet();
+      showSettingsKey(container, "computerEnvironment");
+      return container
+        .querySelector('[data-setting-key="computerEnvironment"]')
+        ?.getAttribute("data-disabled-reason");
+    }
+
+    it("disables the row when sandbox images are off, even with computers on", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: true },
+          "sandbox-images": { enabled: false, reason: "flag_false" },
+        }),
+      ).toBe("Not enabled for this organization");
+    });
+
+    it("enables the row when sandbox images are on, even with computers off", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: false, reason: "flag_false" },
+          "sandbox-images": { enabled: true },
+        }),
+      ).toBeNull();
+    });
+
+    it("falls back to computers on a backend without the sandbox-images key", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: false, reason: "flag_false" },
+        }),
+      ).toBe("Not enabled for this organization");
+    });
   });
 
   it("keeps triggers hidden without schedule permission", () => {

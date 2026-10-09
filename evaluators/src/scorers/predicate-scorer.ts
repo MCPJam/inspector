@@ -106,7 +106,14 @@ export function predicateScorer(
           rationale: "predicate evaluator returned no verdict",
         };
       }
-      if (predicate.type === "responseCloseTo" && result.status === "error")
+      // An unscored row from these kinds is "we could not measure", not a 0:
+      // throwing routes it to the runner's error result instead.
+      if (
+        (predicate.type === "responseCloseTo" ||
+          predicate.type === "toolInputMatches" ||
+          predicate.type === "toolResultMatches") &&
+        result.status === "error"
+      )
         throw new Error(result.reason);
       return {
         kind: "scored",

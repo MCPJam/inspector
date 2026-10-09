@@ -192,7 +192,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
@@ -926,6 +929,43 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  // A caller that pins a model through `executionConfig.modelId` gets it
+  // resolved against the list THIS hook builds. An org-key model is only in
+  // that list when the org config is passed in; otherwise the pinned id is
+  // missing, `createLockedInitialModel` guesses the provider from the bare id
+  // as `ollama`, and that is what the server then asks the org to resolve.
+  it("resolves a pinned org-key model only when the org config is forwarded", async () => {
+    const orgConfig = {
+      providers: [
+        {
+          providerKey: "anthropic",
+          enabled: true,
+          hasSecret: true,
+        },
+      ],
+    };
+    const pinned = {
+      selectedServers: [] as string[],
+      executionConfig: { modelId: orgAnthropicModel.id },
+      hostedContext: { projectId: "project-1", selectedServerIds: [] },
+    };
+
+    const { result: withoutConfig } = renderHook(() =>
+      useChatSession(pinned)
+    );
+    expect(withoutConfig.current.selectedModel).toMatchObject({
+      id: orgAnthropicModel.id,
+      provider: "ollama",
+      disabled: true,
+    });
+
+    const { result: withConfig } = renderHook(() =>
+      useChatSession({ ...pinned, hostedOrgModelConfig: orgConfig })
+    );
+    expect(withConfig.current.selectedModel).toEqual(orgAnthropicModel);
+    expect(withConfig.current.selectedModel.provider).toBe("anthropic");
+  });
+
   it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);
@@ -1374,6 +1414,232 @@ describe("useChatSession minimal mode parity", () => {
     expect(getTransportRequests().at(-1)).toMatchObject({
       selectedServers: ["server-2"],
       chatSessionId: initialChatSessionId,
+    });
+  });
+  describe("reasoning effort", () => {
+    const effortModel = {
+      ...mcpJamModel,
+      hosted: true,
+      supportedReasoningEfforts: ["low", "high"],
+    };
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      mockModelState.availableModels = [effortModel];
+      mockModelState.selectedModelId = String(effortModel.id);
+    });
+
+    it("sends a picked effort as a top-level field and omits temperature", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(result.current.reasoningEffortLevels).toEqual(["low", "high"]);
+
+      act(() => {
+        result.current.setReasoningEffort("high");
+      });
+      expect(result.current.reasoningEffort).toBe("high");
+
+      act(() => {
+        result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      const body = getTransportRequests().at(-1);
+      expect(body.reasoningEffort).toBe("high");
+      expect(body).not.toHaveProperty("temperature");
+    });
+
+    it("a compare card sends its own fixed effort, not the remembered pick", async () => {
+      window.localStorage.setItem(
+        "mcp-inspector-reasoning-efforts",
+        JSON.stringify({ [`hosted:${String(effortModel.id)}`]: "high" })
+      );
+      const low = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          executionConfig: { modelId: String(effortModel.id) },
+          pinnedModelProvider: String(effortModel.provider),
+          reasoningEffortEnabled: true,
+          fixedReasoningEffort: "low",
+        })
+      );
+      expect(low.result.current.reasoningEffort).toBe("low");
+      act(() => {
+        low.result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      expect(getTransportRequests().at(-1).reasoningEffort).toBe("low");
+
+      // Default (`null`) sends nothing even though "high" is remembered.
+      const defaultCard = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          executionConfig: { modelId: String(effortModel.id) },
+          reasoningEffortEnabled: true,
+          fixedReasoningEffort: null,
+        })
+      );
+      expect(defaultCard.result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("sends temperature and no effort when none is set", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      const body = getTransportRequests().at(-1);
+      expect(body).not.toHaveProperty("reasoningEffort");
+      expect(body.temperature).toBe(0.7);
+    });
+
+    it("remembers the pick per model and restores it on a new session", () => {
+      const first = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        first.result.current.setReasoningEffort("low");
+      });
+      first.unmount();
+
+      const second = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(second.result.current.reasoningEffort).toBe("low");
+    });
+
+    it("never reports an effort the model does not offer, or when disabled", () => {
+      window.localStorage.setItem(
+        "mcp-inspector-reasoning-efforts",
+        JSON.stringify({ "hosted:openai/gpt-5-mini": "max" })
+      );
+      const supported = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      expect(supported.result.current.reasoningEffort).toBeUndefined();
+
+      const off = renderHook(() => useChatSession({ selectedServers: [] }));
+      expect(off.result.current.reasoningEffortLevels).toEqual([]);
+      expect(off.result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("seeds a restored session's pinned effort for its model, not the current pick", async () => {
+      const restoredModel = {
+        ...effortModel,
+        id: "openai/gpt-5-restored",
+        name: "Restored",
+      };
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "pinned-session",
+            messagesBlobUrl: null,
+            resumeConfig: { reasoningEffort: "high" },
+            version: 1,
+          },
+          { restoredModel: restoredModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.chatSessionId).toBe("pinned-session");
+      });
+      // The picker is still on `effortModel`: the pin is not seeded onto it.
+      expect(result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("a reopened chat with no saved effort ignores the remembered pick", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({ selectedServers: [], reasoningEffortEnabled: true })
+      );
+      act(() => {
+        result.current.setReasoningEffort("low");
+      });
+      expect(result.current.reasoningEffort).toBe("low");
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "unpinned-session",
+            messagesBlobUrl: null,
+            resumeConfig: {},
+            version: 1,
+          },
+          { restoredModel: effortModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.chatSessionId).toBe("unpinned-session");
+      });
+      expect(result.current.reasoningEffort).toBeUndefined();
+    });
+
+    it("a restored chat's effort does not leak into the next new chat", async () => {
+      const { result } = renderHook(() =>
+        useChatSession({ selectedServers: [], reasoningEffortEnabled: true })
+      );
+      act(() => {
+        result.current.setReasoningEffort("low");
+      });
+      act(() => {
+        void result.current.loadChatSession(
+          {
+            chatSessionId: "pinned-high",
+            messagesBlobUrl: null,
+            resumeConfig: { reasoningEffort: "high" },
+            version: 1,
+          },
+          { restoredModel: effortModel as any }
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.reasoningEffort).toBe("high");
+      });
+      act(() => {
+        result.current.resetChat();
+      });
+      expect(result.current.reasoningEffort).toBe("low");
+    });
+
+    it("seeds a host default without remembering it", () => {
+      const { result } = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          reasoningEffortEnabled: true,
+        })
+      );
+      act(() => {
+        result.current.seedReasoningEffort(effortModel as any, "high");
+      });
+      expect(result.current.reasoningEffort).toBe("high");
+      expect(window.localStorage.getItem("mcp-inspector-reasoning-efforts")).toBeNull();
     });
   });
 });

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
+import { useInsightSignIn } from "./use-insight-sign-in";
 import { useRunGroupQuality } from "./use-run-group-quality";
 import { GroupFindingList } from "./run-group-diagnosis-presentation";
 import { InsightBannerShell } from "./insight-banner-shell";
@@ -14,11 +15,11 @@ import { insightHighlightNarrativeClass } from "./insight-highlight-chrome";
 export interface InsightGroupScope {
   suiteId: string;
   runGroupId: string;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
 }
 
 export interface SuiteInsightsCollapsibleProps {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   /** Header label, e.g. "Run insights" vs "Commit insights" */
   title?: string;
   /**
@@ -69,7 +70,7 @@ function RunInsightsBanner({
   title,
   selectedRunId,
 }: {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   title: string;
   selectedRunId?: string | null;
 }) {
@@ -89,6 +90,7 @@ function RunInsightsBanner({
     failedGeneration,
     requestRunInsights,
     unavailable,
+    signInRequired,
     requested,
     errorMessage,
   } = useRunInsights(targetRun, { autoRequest: true });
@@ -162,7 +164,9 @@ function RunInsightsBanner({
     );
   } else if (narrative) {
     body = (
-      <p className="min-w-0 flex-1 text-sm text-muted-foreground">{narrative}</p>
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        {narrative}
+      </p>
     );
   } else {
     body = (
@@ -176,7 +180,14 @@ function RunInsightsBanner({
     <InsightBannerShell
       label={title}
       trailing={
-        failedGeneration ? (
+        // A guest gets SIGN IN here, not Retry. Retrying is the one thing that
+        // cannot work — the backend refused because of who is asking, and
+        // pressing again asks the same way. `failedGeneration` and
+        // `signInRequired` cannot both hold (a refused request never reached
+        // generation), so the order below is documentation, not a tiebreak.
+        signInRequired ? (
+          <InsightSignInAction />
+        ) : failedGeneration ? (
           <button
             type="button"
             className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
@@ -189,6 +200,30 @@ function RunInsightsBanner({
     >
       {body}
     </InsightBannerShell>
+  );
+}
+
+/**
+ * The sign-in affordance for a banner whose insights were refused because the
+ * viewer is anonymous.
+ *
+ * A control rather than the full {@link GuestSignInMessage} pane: this banner
+ * is a single thin row, and the refusal's own copy is already rendered as the
+ * narrative beside it. What is missing is the one click that fixes it.
+ *
+ * The click itself is {@link useInsightSignIn}, shared with the server-quality
+ * card so the two sign-in controls cannot drift.
+ */
+function InsightSignInAction() {
+  const signIn = useInsightSignIn("run_insights_banner");
+  return (
+    <button
+      type="button"
+      className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+      onClick={signIn}
+    >
+      Sign in
+    </button>
   );
 }
 
@@ -264,7 +299,8 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
   } else if (!allRunsTerminal) {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-        Cross-client diagnosis runs once every client in this group has finished.
+        Cross-client diagnosis runs once every client in this group has
+        finished.
       </p>
     );
   } else if (pending || requested) {
@@ -275,9 +311,7 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
       </span>
     );
   } else if (error) {
-    body = (
-      <p className="min-w-0 flex-1 text-sm text-destructive">{error}</p>
-    );
+    body = <p className="min-w-0 flex-1 text-sm text-destructive">{error}</p>;
   } else {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">

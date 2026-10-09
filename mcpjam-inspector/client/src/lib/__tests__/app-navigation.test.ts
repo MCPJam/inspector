@@ -2,6 +2,9 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildConformanceRunPath,
+  buildEvalsPath,
+  buildEvalsRunsPath,
+  legacyEvalCasePathToEvaluatePath,
   buildConformanceSharePath,
   buildEvalSharePath,
   buildOrganizationPath,
@@ -13,7 +16,7 @@ import {
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
   isLegacyUserTestingEditTab,
-  legacyCiEvalsPathToRunsPath,
+  legacyEvalPathToEvaluatePath,
   legacyHashBookmarkToPath,
   navigateApp,
   navigationTargetToPath,
@@ -74,12 +77,15 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
   });
 
-  it("omits findings (default) from the query and includes other tabs", () => {
+  it("includes the selected tab in the query, findings included", () => {
     expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
-      "/swarms/wave-1"
+      "/swarms/wave-1?tab=findings"
     );
     expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
       "/swarms/wave-1?tab=insights"
+    );
+    expect(buildSwarmPath("wave-1", { tab: "run" })).toBe(
+      "/swarms/wave-1?tab=run"
     );
     expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
       "/swarms/wave-1?tab=sessions"
@@ -96,6 +102,7 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
   });
 
   it("parses known tabs, maps legacy aliases to insights, defaults to findings", () => {
+    expect(parseSwarmDetailTab("?tab=run")).toBe("run");
     expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
@@ -108,7 +115,7 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
   it("parses the findings tab", () => {
     expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
     expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
-      "/swarms/wave-1"
+      "/swarms/wave-1?tab=findings"
     );
   });
 });
@@ -568,56 +575,56 @@ describe("legacy /ci-evals redirects", () => {
   // post-sign-in return path. Without an explicit redirect they fall through
   // to the router's catch-all, which renders Servers — silently wrong, not a
   // 404 the user can recognize.
-  it("rewrites every legacy shape onto /evals/runs", () => {
+  it("rewrites every legacy shape onto /evaluate", () => {
     const cases: Array<[string, string]> = [
-      ["/ci-evals", "/evals/runs"],
-      ["/ci-evals/create", "/evals/runs/create"],
-      ["/ci-evals/commit/abc1234567890", "/evals/runs/commit/abc1234567890"],
-      ["/ci-evals/suite/s_123", "/evals/runs/suite/s_123"],
-      ["/ci-evals/suite/s_123/edit", "/evals/runs/suite/s_123/edit"],
-      ["/ci-evals/suite/s_123/runs/r_9", "/evals/runs/suite/s_123/runs/r_9"],
-      ["/ci-evals/suite/s_123/test/t_7", "/evals/runs/suite/s_123/test/t_7"],
+      ["/ci-evals", "/evaluate"],
+      ["/ci-evals/create", "/evaluate/create"],
+      ["/ci-evals/commit/abc1234567890", "/evaluate"],
+      ["/ci-evals/suite/s_123", "/evaluate/suite/s_123"],
+      ["/ci-evals/suite/s_123/edit", "/evaluate/suite/s_123/edit"],
+      ["/ci-evals/suite/s_123/runs/r_9", "/evaluate/suite/s_123/runs/r_9"],
+      ["/ci-evals/suite/s_123/test/t_7", "/evaluate/suite/s_123/test/t_7"],
       [
         "/ci-evals/suite/s_123/test/t_7/edit",
-        "/evals/runs/suite/s_123/test/t_7/edit",
+        "/evaluate/suite/s_123/test/t_7/edit",
       ],
     ];
     for (const [from, to] of cases) {
-      expect(legacyCiEvalsPathToRunsPath(from), from).toBe(to);
+      expect(legacyEvalPathToEvaluatePath(from), from).toBe(to);
     }
   });
 
-  it("carries query and hash through", () => {
+  it("preserves run context and drops retired commit filters", () => {
     expect(
-      legacyCiEvalsPathToRunsPath(
+      legacyEvalPathToEvaluatePath(
         "/ci-evals/commit/abc123",
         "?suite=s_1&iteration=i_4"
       )
-    ).toBe("/evals/runs/commit/abc123?suite=s_1&iteration=i_4");
+    ).toBe("/evaluate");
     expect(
-      legacyCiEvalsPathToRunsPath(
+      legacyEvalPathToEvaluatePath(
         "/ci-evals/suite/s_1/runs/r_2",
         "?iteration=i_4&case=c_1&compareTo=r_1&project=p_9"
       )
     ).toBe(
-      "/evals/runs/suite/s_1/runs/r_2?iteration=i_4&case=c_1&compareTo=r_1&project=p_9"
+      "/evaluate/suite/s_1/runs/r_2?iteration=i_4&case=c_1&compareTo=r_1&project=p_9"
     );
     expect(
-      legacyCiEvalsPathToRunsPath("/ci-evals", "?project=p_9", "#frag")
-    ).toBe("/evals/runs?project=p_9#frag");
+      legacyEvalPathToEvaluatePath("/ci-evals", "?project=p_9", "#frag")
+    ).toBe("/evaluate?project=p_9#frag");
   });
 
   it("preserves encoded path segments verbatim", () => {
     // Rebuilding from decoded router params would split an id containing a
     // reserved character into extra segments and fail to match.
-    expect(legacyCiEvalsPathToRunsPath("/ci-evals/suite/suite%20one")).toBe(
-      "/evals/runs/suite/suite%20one"
+    expect(legacyEvalPathToEvaluatePath("/ci-evals/suite/suite%20one")).toBe(
+      "/evaluate/suite/suite%20one"
     );
   });
 
   it("only rewrites the leading segment", () => {
-    expect(legacyCiEvalsPathToRunsPath("/ci-evals/suite/ci-evals")).toBe(
-      "/evals/runs/suite/ci-evals"
+    expect(legacyEvalPathToEvaluatePath("/ci-evals/suite/ci-evals")).toBe(
+      "/evaluate/suite/ci-evals"
     );
   });
 });
@@ -676,5 +683,17 @@ describe("scoped paths survive return-target normalization", () => {
 
   it("keeps a scoped path with an unusable project id out of the canonical position", () => {
     expect(normalizeReturnTargetPath("/p/none/servers")).toBe("/servers");
+  });
+});
+
+
+describe("Ding Dong case destinations", () => {
+  it.each([buildEvalsPath, buildEvalsRunsPath])("routes cases and their subtabs to Ding Dong", build => {
+    expect(build({type: "test-detail", suiteId: "s1", testId: "c1", iteration: "i1"})).toBe("/evaluate/suite/s1/test/c1?iteration=i1");
+    expect(build({type: "test-edit", suiteId: "s1", testId: "c1", checks: true})).toBe("/evaluate/suite/s1/test/c1/edit?checks=1");
+    expect(build({type: "test-edit", suiteId: "s1", testId: "c1", openCompare: true, iteration: "i1"})).toBe("/evaluate/suite/s1/test/c1/edit?compare=1&iteration=i1");
+  });
+  it.each(["/evals", "/evals/runs"])("redirects old %s case bookmarks and preserves query state", prefix => {
+    expect(legacyEvalCasePathToEvaluatePath(`${prefix}/suite/s%201/test/c%202/edit`, "?checks=1&project=p1", "#trace")).toBe("/evaluate/suite/s%201/test/c%202/edit?checks=1&project=p1#trace");
   });
 });

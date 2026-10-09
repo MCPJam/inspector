@@ -26,10 +26,7 @@ import {
 } from "@/shared/eval-matching";
 import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn";
 import type { PinnedTurnSsePayload } from "./pinned-turn-sse";
-import type {
-  StepEngineOutcome,
-  StepExecutorHandlers,
-} from "./step-executor";
+import type { StepEngineOutcome, StepExecutorHandlers } from "./step-executor";
 
 /**
  * Everything `driveLocalEvalTurn` needs except the per-step `promptIndex`/
@@ -59,6 +56,7 @@ export function buildLocalStepHandlers(
     turnOrdinal: number,
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.conversationMessages.length;
+    const spansBefore = acc.capturedSpans.length;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -74,6 +72,7 @@ export function buildLocalStepHandlers(
 
     // Delta the acc mutated into a return-style outcome.
     const messages = acc.conversationMessages.slice(messagesBefore);
+    const spans = acc.capturedSpans.slice(spansBefore);
     const toolCalls = acc.toolsCalledByPrompt[turnOrdinal] ?? [];
     const toolErrors = acc.toolErrorsByPrompt[turnOrdinal] ?? [];
     const usage = {
@@ -91,6 +90,7 @@ export function buildLocalStepHandlers(
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
+      ...(spans.length ? { spans } : {}),
       usage,
       // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
       // this bridge has no business crashing over one it did not get.
@@ -156,6 +156,7 @@ export function buildLocalStepHandlers(
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
+      ...(spans.length ? { spans } : {}),
       usage,
       // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
       // this bridge has no business crashing over one it did not get.
@@ -239,6 +240,7 @@ export function buildHostedStepHandlers(
     turnOrdinal: number,
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.messageHistory.length;
+    const spansBefore = acc.capturedSpans.length;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -251,6 +253,7 @@ export function buildHostedStepHandlers(
     });
 
     const messages = acc.messageHistory.slice(messagesBefore);
+    const spans = acc.capturedSpans.slice(spansBefore);
     const toolCalls = acc.toolsCalledByPrompt[turnOrdinal] ?? [];
     const usage = {
       inputTokens: (acc.accumulatedUsage.inputTokens ?? 0) - inBefore,
@@ -261,6 +264,7 @@ export function buildHostedStepHandlers(
     return {
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
+      ...(spans.length ? { spans } : {}),
       usage,
       ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
@@ -285,6 +289,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };
@@ -328,6 +333,7 @@ export function buildHostedStepHandlers(
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
+      ...(spans.length ? { spans } : {}),
       usage,
       ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
@@ -352,6 +358,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };
@@ -447,8 +454,7 @@ export function buildHostedStepHandlers(
   }
 
   return {
-    onPrompt: ({ step, turnOrdinal }) =>
-      drivePrompt(step.prompt, turnOrdinal),
+    onPrompt: ({ step, turnOrdinal }) => drivePrompt(step.prompt, turnOrdinal),
     onToolCall: ({ step, turnOrdinal }) => drivePinned(step, turnOrdinal),
     onFollowUp: ({ text, turnOrdinal }) => driveTurn(text, turnOrdinal),
   };

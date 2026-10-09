@@ -1,16 +1,24 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+import {
+  createQueryRequestCache,
+  queryFailureTags,
+  queryPageLocation,
+  safeQueryError,
+} from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
-import { ConvexError } from "convex/values";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+  isUnauthenticatedError,
+} from "./authorization-refusal";
 import {
   describeError,
   isNormalizedError,
   originOf,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
-import {
-  isCredentialBearingPath,
-  isErrorCaptureSurface,
-} from "./PosthogUtils";
+import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
 import { getConvexRequestId } from "./convex-error";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
@@ -23,12 +31,18 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+  /** Captured from the observed Convex client, never query arguments. */
+  queryBackend?: string;
   /**
-   * Extra Sentry tags for this report. Tags are indexed and searchable, which
-   * `extra` is not, so anything support has to look an issue up BY belongs
-   * here. `source` always wins: a caller cannot rename its own call site.
+   * Extra Sentry tags, merged under `source` (e.g. `surface`, `page_class` —
+   * what Ask MCPJam's alert rules filter on). Tags are indexed and searchable,
+   * which `extra` is not, so anything support has to look an issue up BY
+   * belongs here. `source` always wins: a caller cannot rename its own call
+   * site. Sentry only.
    */
   tags?: Record<string, string>;
+  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  fingerprint?: string[];
 }
 
 /**
@@ -85,7 +99,12 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error)) return false;
+    if (
+      isAuthorizationRefusal(error) ||
+      isSessionRevokedError(error) ||
+      isUnauthenticatedError(error)
+    )
+      return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
     // the real failure with the error object in hand and puts the verdict on
@@ -120,6 +139,8 @@ export function reportPossiblyOurFailure(
   }
 }
 
+const duplicateQueryReport = createQueryRequestCache();
+
 function toError(error: unknown): Error {
   if (error instanceof Error) return error;
   try {
@@ -127,30 +148,6 @@ function toError(error: unknown): Error {
   } catch {
     return new Error(String(error));
   }
-}
-
-/**
- * Did the backend refuse, or did it fail?
- *
- * A `ConvexError` carrying `kind: 'forbidden'` is the server declining to
- * answer — the caller is not a member, the role is too low. The UI already
- * handles that (it hides the surface), so it is not a defect and must not reach
- * the error sinks: an expected refusal that pages the team trains everyone to
- * ignore the channel.
- *
- * This is deliberately narrow. Only the explicit `forbidden` shape is quiet;
- * every other `ConvexError`, and every plain throw, still reports. Convex masks
- * plain throws as `Server Error` on production, so a backend that wants silence
- * here has to say so.
- */
-function isAuthorizationRefusal(error: unknown): boolean {
-  if (!(error instanceof ConvexError)) return false;
-  const data: unknown = error.data;
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { kind?: unknown }).kind === "forbidden"
-  );
 }
 
 /**
@@ -166,9 +163,26 @@ function isAuthorizationRefusal(error: unknown): boolean {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error)) return;
+  if (
+    isAuthorizationRefusal(error) ||
+    isSessionRevokedError(error) ||
+    isUnauthenticatedError(error)
+  )
+    return;
 
-  const normalized = toError(error);
+  const normalized = safeQueryError(toError(error));
+  const queryTags = queryFailureTags(normalized.message);
+  if (queryTags && options.queryBackend)
+    queryTags.convex_backend = options.queryBackend;
+  if (
+    queryTags &&
+    duplicateQueryReport(queryTags.convex_backend, queryTags.request_id)
+  )
+    return;
+  const page =
+    queryTags && typeof window !== "undefined"
+      ? queryPageLocation(window.location.href)
+      : undefined;
   // The Convex request id is the join key support already has from the user:
   // it is stamped on every function exception, it is what the toast shows as
   // `Reference <id>`, and the Convex -> Sentry integration tags the BACKEND
@@ -177,17 +191,35 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   // Derived here rather than at each call site: every existing `reportCaught`
   // gains it with no churn.
   const requestId = getConvexRequestId(error);
-  const tags: Record<string, string> = {
-    ...(options.tags ?? {}),
-    source: options.source,
-    ...(requestId ? { convex_request_id: requestId } : {}),
-  };
+  const requestIdTag = requestId ? { convex_request_id: requestId } : {};
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags,
-      ...(options.extra ? { extra: options.extra } : {}),
+      tags: {
+        ...(options.tags ?? {}),
+        source: options.source,
+        ...requestIdTag,
+        ...queryTags,
+        ...recoveryTags,
+      },
+      ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
+      ...(queryTags
+        ? {
+            extra: {
+              boundary: options.extra?.boundary,
+              componentStack: options.extra?.componentStack,
+              page_location: page,
+            },
+          }
+        : options.extra
+          ? { extra: options.extra }
+          : {}),
     });
   } catch {
     // ignore — see doc comment
@@ -209,8 +241,10 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
-        ...(requestId ? { convex_request_id: requestId } : {}),
-        ...(options.extra ?? {}),
+        ...requestIdTag,
+        ...(queryTags
+          ? { ...queryTags, page_location: page }
+          : (options.extra ?? {})),
       });
     }
   } catch {

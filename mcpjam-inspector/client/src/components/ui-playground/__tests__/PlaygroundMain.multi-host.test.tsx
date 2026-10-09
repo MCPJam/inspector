@@ -197,6 +197,20 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+// The project's installed plugins, as the hidden environment reads them.
+// None here, so nothing is composed.
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    plugins: [],
+    pluginServers: [],
+    wanted: false,
+    environmentId: null,
+    pluginServerIds: [],
+    failed: false,
+    recover: async () => ({ ok: false }),
+  }),
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
@@ -215,6 +229,16 @@ vi.mock("convex/react", () => ({
   // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
   // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
   useAction: () => () => Promise.resolve({ token: "test-token" }),
+}));
+
+// Client creation is project-admin only; default to an admin so the seed tests
+// exercise the seed itself. The member case opts out explicitly.
+const clientsRoleFixture = vi.hoisted(() => ({
+  value: { canManage: true, isLoading: false },
+}));
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useCanManageProjectClients: () => clientsRoleFixture.value,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -488,6 +512,8 @@ const multiHostFixture = {
   hosts: {} as Record<string, HostDetail>,
 };
 
+const previewedHostFixture = { resolve: false };
+
 // Track the project id `PlaygroundMain` passes to `usePersistedHost`
 // (a.k.a. `multiHostProjectId`). After Blocker 2 (project-id alignment)
 // the picker must receive the SAME id; we assert both reads.
@@ -573,7 +599,15 @@ vi.mock("@/hooks/use-playground-host-slots", () => ({
 }));
 
 vi.mock("@/hooks/useClients", () => ({
-  useHost: () => ({ host: null, isLoading: false }),
+  // Resolves only when a test opts in: most of this file is about the
+  // compare lineup and wants no previewed host at all.
+  useHost: ({ hostId }: { hostId: string | null }) => ({
+    host:
+      previewedHostFixture.resolve && hostId
+        ? multiHostFixture.hosts[hostId] ?? null
+        : null,
+    isLoading: false,
+  }),
   useHostList: () => ({
     hosts: multiHostFixture.hostList,
     isLoading: false,
@@ -702,6 +736,7 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    previewedHostFixture.resolve = false;
     browserFixture.guest = false;
     browserFixture.granted = false;
     browserFixture.setting = null;
@@ -758,6 +793,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     environmentsFlag.value = false;
     environmentPreviewFixture.value = null;
     environmentPreviewLoading.value = false;
+    clientsRoleFixture.value = { canManage: true, isLoading: false };
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -771,6 +807,19 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("does not seed clients for a project member who can't create them", async () => {
+    clientsRoleFixture.value = { canManage: false, isLoading: false };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
@@ -1345,13 +1394,15 @@ describe("PlaygroundMain — multi-host render path", () => {
   //
   // The regression: `localHarnessExecution` was computed once from the
   // PREVIEWED host and handed to every column. In a grid whose lead runs
-  // Claude Code, a Codex column inherited `requested: true` — a local
-  // authorization it can never satisfy, because the local target is not a
-  // thing a Codex turn can have. `use-chat-session` then refuses the send,
-  // and the only screen that could clear it authorizes a different host.
+  // Claude Code, a Codex column inherited `requested: true`: Claude Code's
+  // local authorization, which a Codex turn can never satisfy.
+  // `use-chat-session` then refuses the send, and the only screen that could
+  // clear it authorizes a different harness.
   //
-  // Each column runs its own host, so each answers this for itself.
-  it("asks the local-execution question per column, not once per page", () => {
+  // Each column runs its own host, so each answers this for itself. The page
+  // has one local controller, for the previewed host's harness, so only the
+  // columns running THAT harness can take its target.
+  function seedClaudeCodeAndCodexGrid(previewed: "h-cc" | "h-codex") {
     const claudeCode = makeHost("h-cc", "Claude Code", {
       hostStyle: "claude",
       harness: "claude-code",
@@ -1367,15 +1418,36 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
     multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
     multiHostFixture.multiHostEnabled = true;
+    previewedHostFixture.resolve = true;
+    savePreviewedHostId("default", previewed);
+  }
 
-    render(<PlaygroundMain {...defaultProps} />);
-
+  function requestedByColumn() {
     const byColumn = new Map<string, boolean>();
     for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
       byColumn.set(props.compareId, props.localHarnessExecution?.requested);
     }
+    return byColumn;
+  }
+
+  it("asks the local-execution question per column, not once per page", () => {
+    seedClaudeCodeAndCodexGrid("h-cc");
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const byColumn = requestedByColumn();
     expect(byColumn.get("h-cc")).toBe(true);
     expect(byColumn.get("h-codex")).toBe(false);
+  });
+
+  it("gives the local target to the Codex column when Codex is previewed", () => {
+    seedClaudeCodeAndCodexGrid("h-codex");
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const byColumn = requestedByColumn();
+    expect(byColumn.get("h-codex")).toBe(true);
+    expect(byColumn.get("h-cc")).toBe(false);
   });
 
   // The other half of the same rule: nothing is local when nothing asked for

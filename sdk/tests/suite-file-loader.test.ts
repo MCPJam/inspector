@@ -86,7 +86,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("round-trips every roundTrip row through serialize → load", () => {
-    expect(data.roundTrip).toHaveLength(3);
+    expect(data.roundTrip).toHaveLength(5);
     for (const row of data.roundTrip) {
       const authored = payload(row) as EvalSuiteFile;
       const reloaded = loadOrThrow(serializeEvalSuiteFile(authored));
@@ -738,4 +738,36 @@ it("round-trips case family suppression without inventing defaults", () => {
   expect(reloaded.authored.cases[0].suppressedSuiteStandardCheckIds).toEqual([
     "response.errors",
   ]);
+});
+
+describe("judge settings file parity", () => {
+  it.each([MINIMAL, MINIMAL_V2])(
+    "round trips instructions, manual mode and case opt-outs in both dialects",
+    (minimal) => {
+      const judge = {
+        enabled: true,
+        autoRun: false,
+        model: "openai/gpt-5.4-mini",
+        threshold: 0.8,
+        rubric: {
+          instructions: "Require a confirming tool result",
+          criteria: [{ id: "confirmed", label: "Confirmed", required: true }],
+        },
+      };
+      const input = {
+        ...minimal,
+        defaults: { ...minimal.defaults, judge },
+        cases: minimal.cases.map((item) => ({
+          ...item,
+          judge: { enabled: false },
+        })),
+      };
+      const loaded = loadOrThrow(JSON.stringify(input));
+      expect(loaded.resolved.defaults.judge).toEqual(judge);
+      expect(loaded.resolved.cases[0].judge).toEqual({ enabled: false });
+      const reloaded = loadOrThrow(serializeEvalSuiteFile(loaded.authored));
+      expect(reloaded.resolved.defaults.judge).toEqual(judge);
+      expect(reloaded.resolved.cases[0].judge).toEqual({ enabled: false });
+    }
+  );
 });

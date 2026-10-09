@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stepFailureFindingKey } from "@mcpjam/sdk/browser";
 import {
   BROWSER_IGNORE_ERRORS,
   buildClientSentryConfig,
@@ -9,6 +10,7 @@ import {
   electronBuildSurface,
   type FingerprintableEvent,
   groupDomMutationConflicts,
+  groupOAuthDebuggerStepFailures,
   isSentryBuildSurface,
   resolveClientBuildSurface,
   SENTRY_BUILD_SURFACES,
@@ -36,7 +38,11 @@ describe("buildSentryConfig", () => {
   });
 
   it("defaults enabled to true and honors an explicit false", () => {
-    const base = { dsn: "dsn", environment: "dev", deployment: "hosted" as const };
+    const base = {
+      dsn: "dsn",
+      environment: "dev",
+      deployment: "hosted" as const,
+    };
     expect(buildSentryConfig(base).enabled).toBe(true);
     expect(buildSentryConfig({ ...base, enabled: false }).enabled).toBe(false);
   });
@@ -122,8 +128,37 @@ describe("buildSentryConfig", () => {
     expect(convexPattern.test("https://u:p@x.convex.cloud/")).toBe(false);
   });
 
+  it("propagates traces to the first-party Convex custom domains, exactly", () => {
+    // Production is served on rt.mcpjam.com (Convex API) and
+    // rt-http.mcpjam.com (HTTP actions) through our own Cloudflare zone. The
+    // host must match exactly — no suffix look-alikes, subdomains or userinfo.
+    const patterns = buildSentryConfig({
+      dsn: "dsn",
+      environment: "prod",
+      deployment: "hosted",
+    }).tracePropagationTargets.filter((t): t is RegExp => t instanceof RegExp);
+
+    const customPattern = patterns.find((p) => p.source.includes("mcpjam"))!;
+    expect(customPattern.test("https://rt.mcpjam.com/api/1.29.0/sync")).toBe(
+      true,
+    );
+    expect(customPattern.test("https://rt-http.mcpjam.com/stream")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com:443/x")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com.evil/api")).toBe(false);
+    expect(customPattern.test("https://x.rt.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://rt-https.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://app.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://rt.mcpjam.com@evil.test/")).toBe(false);
+    expect(customPattern.test("https://u:p@rt.mcpjam.com/")).toBe(false);
+  });
+
   it("defaults tracesSampleRate to 0.1 and honors an override", () => {
-    const base = { dsn: "dsn", environment: "prod", deployment: "hosted" as const };
+    const base = {
+      dsn: "dsn",
+      environment: "prod",
+      deployment: "hosted" as const,
+    };
     expect(buildSentryConfig(base).tracesSampleRate).toBe(0.1);
     expect(
       buildSentryConfig({ ...base, tracesSampleRate: 0 }).tracesSampleRate,
@@ -191,23 +226,271 @@ describe("surface builders", () => {
     expect(BROWSER_IGNORE_ERRORS).toContain(
       "ResizeObserver loop completed with undelivered notifications",
     );
-    expect(BROWSER_IGNORE_ERRORS).toContain("Failed to fetch");
     expect(BROWSER_IGNORE_ERRORS).toContain("Load failed");
-    const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
-    expect((abort as RegExp).test("AbortError: The user aborted a request")).toBe(
-      true,
+    const regexes = BROWSER_IGNORE_ERRORS.filter(
+      (e): e is RegExp => e instanceof RegExp,
     );
+    const matches = (message: string) => regexes.some((r) => r.test(message));
+    expect(matches("AbortError: The user aborted a request")).toBe(true);
+    expect(matches("Failed to fetch")).toBe(true);
+    expect(matches("TypeError: Failed to fetch")).toBe(true);
   });
 
-  it("groups DOM mutation conflicts on the browser client only", () => {
+  it("keeps reporting stale code-split chunk loads", () => {
+    // Sentry matches string entries by substring, so a bare "Failed to fetch"
+    // would also swallow this — the client's only signal that a deploy
+    // orphaned a chunk an open tab still references.
+    const message =
+      "TypeError: Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-CtNEAoFZ.js";
+    for (const entry of BROWSER_IGNORE_ERRORS) {
+      const hit =
+        entry instanceof RegExp ? entry.test(message) : message.includes(entry);
+      expect(hit, String(entry)).toBe(false);
+    }
+  });
+
+  // Behaviour, not identity: `beforeSend` is a composition now, so asserting
+  // it IS one of the rules would pass only while there is exactly one.
+  it("applies both fingerprinting rules on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
-    expect(buildClientSentryConfig(ctx).beforeSend).toBe(
-      groupDomMutationConflicts,
-    );
+    const beforeSend = buildClientSentryConfig(ctx).beforeSend;
+
+    const dom = beforeSend<FingerprintableEvent>({
+      environment: "prod",
+      exception: {
+        values: [
+          {
+            type: "NotFoundError",
+            value:
+              "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
+          },
+        ],
+      },
+    });
+    expect(dom?.fingerprint).toEqual(["dom-mutation-conflict", "prod"]);
+
+    const step = beforeSend<FingerprintableEvent>({
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { step: "request_client_registration" },
+      exception: {
+        values: [
+          { type: "Error", value: "Dynamic Client Registration failed (400)." },
+        ],
+      },
+    });
+    expect(step?.fingerprint?.[0]).toBe("oauth-debugger-step");
+
     // A server-side NotFoundError is an upstream or storage failure, so
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects — and the
+    // OAuth debugger never runs off the browser client.
     expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+  });
+
+  // Sentry keeps its own window.onerror handler, so filtering PostHog alone
+  // left it opening issues for the same injected-script crash.
+  it("drops an injected-script crash on the browser client", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const injected = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: `${origin}/p/v97d1szz/playground` }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(injected)).toBeNull();
+
+    const ours = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: `${origin}/assets/index-Ct2CwjTH.js` }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(ours)).toBe(ours);
+  });
+
+  // Sentry's globalHandlersIntegration invents a frame when the parsed stack
+  // is empty, stamped with the document URL. Counting it as attribution would
+  // invert the rule: the frameless exceptions it spares elsewhere would be the
+  // only ones it dropped here.
+  it("spares an exception whose only frame Sentry synthesised", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "Script error.",
+            stacktrace: {
+              // What _enhanceEventWithInitialFrame pushes: UNKNOWN_FUNCTION,
+              // and the document URL when window.onerror gave no usable one.
+              frames: [
+                { filename: `${origin}/p/v97d1szz/home`, function: "?" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
+  // Discarding a value's frames is not free. A lone `"?"` frame pointing at a
+  // real script is a parsed stack, not an invention, and erasing it let the
+  // other values' document frames read as an entirely injected stack.
+  it("keeps a chained exception whose lone anonymous frame is third-party", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "inner",
+            stacktrace: {
+              frames: [
+                { filename: "https://js.stripe.com/v3/", function: "?" },
+              ],
+            },
+          },
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/playground`, function: "Tk" },
+                { filename: `${origin}/p/v97d1szz/tasks`, function: "Rk" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
+  // The invented frame erases its value's stack, and an empty value is
+  // unattributed. It must keep the event, not vanish and let the other value's
+  // document frames drop it.
+  it("keeps a chained exception where one value has only the synthesised frame", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "inner",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/home`, function: "?" },
+              ],
+            },
+          },
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/playground`, function: "Tk" },
+                { filename: `${origin}/p/v97d1szz/tasks`, function: "Rk" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
+  // The same lone document frame, but from a real parsed stack, still drops.
+  it("still drops a lone document frame that Sentry did not synthesise", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    expect(
+      beforeSend({
+        exception: {
+          values: [
+            {
+              type: "RangeError",
+              value: "Maximum call stack size exceeded.",
+              stacktrace: {
+                frames: [
+                  {
+                    filename: `${origin}/p/v97d1szz/playground`,
+                    function: "Tk",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  // Without an origin there is nothing to compare against, so the filter is
+  // inert and only the fingerprint pass runs.
+  it("drops nothing when no document origin is supplied", () => {
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+    }).beforeSend;
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: "https://app.mcpjam.com/p/x/tasks" }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
   });
 });
 
@@ -355,4 +638,211 @@ describe("build surfaces", () => {
       /not a client build surface/,
     );
   });
+});
+
+describe("groupOAuthDebuggerStepFailures", () => {
+  // Built the way the reporting adapter builds them: `extra.finding` from the
+  // real SDK key. So these exercise the composition that ships — SDK key plus
+  // this rule — not the rule against hand-picked keys.
+  function stepEvent(
+    value: string,
+    {
+      step = "request_client_registration",
+      environment = "prod",
+      source = "oauth_debugger_step",
+      withFinding = true,
+    }: {
+      step?: string;
+      environment?: string;
+      source?: string;
+      withFinding?: boolean;
+    } = {},
+  ): FingerprintableEvent {
+    return {
+      environment,
+      tags: { source },
+      extra: {
+        step,
+        ...(withFinding ? { finding: stepFailureFindingKey(value) } : {}),
+      },
+      exception: { values: [{ type: "Error", value }] },
+    };
+  }
+
+  const fingerprint = (event: FingerprintableEvent) =>
+    groupOAuthDebuggerStepFailures(event).fingerprint;
+
+  // INSPECTOR-CLIENT-2FE: nine events titled "Dynamic Client Registration
+  // failed (400)" that were five unrelated findings, one stack between them.
+  it("splits the findings that shared one stack", () => {
+    const findings = [
+      stepEvent("Dynamic Client Registration failed (400)."),
+      stepEvent("Dynamic Client Registration failed (401)."),
+      stepEvent(
+        "Token request failed: 400: invalid_client: invalid_client_secret",
+        {
+          step: "token_request",
+        },
+      ),
+      stepEvent(
+        "MCP server returned HTTP 404 Not Found where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+      stepEvent(
+        "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        { step: "request_resource_metadata" },
+      ),
+    ].map((event) => JSON.stringify(fingerprint(event)));
+
+    expect(new Set(findings).size).toBe(5);
+  });
+
+  it("keeps a registration failure together with and without the advisory", () => {
+    const withHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (401). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    // Pinned to a value, not only to its twin: two absent fingerprints would
+    // compare equal too.
+    expect(withHint).toEqual([
+      "oauth-debugger-step",
+      "request_client_registration",
+      "Dynamic Client Registration failed (401)",
+      "prod",
+    ]);
+    expect(withHint).toEqual(
+      fingerprint(stepEvent("Dynamic Client Registration failed (401).")),
+    );
+  });
+
+  // INSPECTOR-CLIENT-2FD: six events titled "Token request failed: 403
+  // Forbidden: invalid_target", which only one of them was. The other five were
+  // two more findings, from different servers and users.
+  it("splits the findings that shared the 2FD stack", () => {
+    const invalidTarget = fingerprint(
+      stepEvent(
+        "Token request failed: 403 Forbidden: invalid_target: Unauthorized resource: http://localhost:8080/v2/local",
+        { step: "token_request" },
+      ),
+    );
+    const registration = fingerprint(
+      stepEvent("Dynamic Client Registration failed (400)."),
+    );
+    const registrationWithHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    const wrongStatus = fingerprint(
+      stepEvent(
+        "MCP server returned HTTP 405 Method Not Allowed where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+    );
+
+    expect(
+      new Set(
+        [invalidTarget, registration, wrongStatus].map((f) =>
+          JSON.stringify(f),
+        ),
+      ).size,
+    ).toBe(3);
+    // The two registration events were one finding, one with the advisory.
+    expect(registrationWithHint).toEqual(registration);
+    // The server's own resource URL is free text, not part of the finding.
+    expect(invalidTarget?.[2]).not.toContain("localhost");
+  });
+
+  // Review of #5473: the cause of a discovery failure comes after the first
+  // period. The first version cut there and merged all of these.
+  it("keeps discovery failures with different causes apart", () => {
+    // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532).
+    const prefix = "Could not discover authorization server metadata.";
+    const url =
+      "https://auth.example.com/.well-known/oauth-authorization-server";
+    const keys = [
+      `${prefix} ${url}/t returned HTTP 404; ${url} returned HTTP 404.`,
+      `${prefix} ${url} returned HTTP 500.`,
+      `${prefix} ${url} failed: Failed to fetch.`,
+    ].map((value) =>
+      JSON.stringify(
+        fingerprint(
+          stepEvent(value, { step: "request_authorization_server_metadata" }),
+        ),
+      ),
+    );
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  // Review of #5473: the server writes part of a token failure, so keyed on
+  // the whole text one finding opened an issue per server wording.
+  it("keeps one token failure together across servers' wording", () => {
+    // Asserts the value, not that the three agree: with the rule off, all
+    // three fingerprints are `undefined` and would agree too.
+    for (const value of [
+      "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
+      "Token request failed: 400: invalid_grant: code already used",
+      "Token request failed: 400 Client Error: invalid_grant",
+    ]) {
+      expect(fingerprint(stepEvent(value, { step: "token_request" }))).toEqual([
+        "oauth-debugger-step",
+        "token_request",
+        "Token request failed: 400: invalid_grant",
+        "prod",
+      ]);
+    }
+  });
+
+  it("separates the same finding on different steps", () => {
+    expect(fingerprint(stepEvent("boom", { step: "a" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { step: "b" })),
+    );
+  });
+
+  it("keeps environments apart", () => {
+    expect(fingerprint(stepEvent("boom", { environment: "prod" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { environment: "dev" })),
+    );
+  });
+
+  it("files a report with no step under a stable bucket", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { finding: "boom" },
+      exception: { values: [{ type: "Error", value: "boom" }] },
+    };
+    expect(groupOAuthDebuggerStepFailures(event).fingerprint).toEqual([
+      "oauth-debugger-step",
+      "unknown",
+      "boom",
+      "prod",
+    ]);
+  });
+
+  it("falls back to the capped message, never a first-sentence cut", () => {
+    // No `finding` should reach here — the adapter and this rule ship
+    // together — but if one does, it must split rather than merge.
+    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(
+      300,
+    )}`;
+    const [, , finding] = fingerprint(
+      stepEvent(value, { withFinding: false }),
+    )!;
+    expect(finding).toBe(value.slice(0, 160));
+    expect(finding).toContain("returned HTTP 404");
+  });
+
+  it.each(["oauth_debugger_advance", "react_boundary", undefined])(
+    "leaves source %j on default grouping",
+    (source) => {
+      const event: FingerprintableEvent = {
+        environment: "prod",
+        ...(source ? { tags: { source } } : {}),
+        exception: { values: [{ type: "Error", value: "boom" }] },
+      };
+      expect(groupOAuthDebuggerStepFailures(event).fingerprint).toBeUndefined();
+    },
+  );
 });

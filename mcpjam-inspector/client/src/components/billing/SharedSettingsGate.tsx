@@ -66,43 +66,54 @@ function SharedSettingsAccess({
       : sharedSettingsAccess(
           isLoading || (isAuthenticated && (!ready || user === undefined))
             ? undefined
-            : (user?._id ?? null),
+            : user?._id ?? null,
           creatorId,
           billing,
         );
   if (access === "allowed") return <>{children}</>;
   return (
-    <section
-      className="space-y-3 rounded-lg border border-border p-4"
-      aria-label="Settings access"
-    >
-      <p
-        role={access === "loading" ? "status" : "alert"}
-        className="text-sm text-muted-foreground"
+    <>
+      <section
+        className="space-y-3 rounded-lg border border-border p-4"
+        aria-label="Settings access"
       >
-        {access === "loading"
-          ? "Checking access…"
-          : access === "upgrade"
-            ? `Editing someone else’s ${resource} requires Basic RBAC, included with Team and Enterprise.`
+        <p
+          role={access === "loading" ? "status" : "alert"}
+          className="text-sm text-muted-foreground"
+        >
+          {access === "loading"
+            ? "Checking access…"
+            : access === "upgrade"
+            ? `Editing someone else’s ${resource} requires Team or Enterprise.`
             : "We couldn’t verify your access to these settings. Refresh the page or ask a project admin."}
-      </p>
-      {access === "upgrade" && organizationId && (
-        <>
-          <p className="text-xs text-muted-foreground">
-            Your project role still determines what you can edit.
-          </p>
-          <Button asChild variant="outline" size="sm">
-            <a
-              href={`/organizations/${encodeURIComponent(
-                organizationId,
-              )}/plans`}
-            >
-              View Team plans
-            </a>
-          </Button>
-        </>
+        </p>
+        {access === "upgrade" && organizationId && (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Your project role still determines what you can edit.
+            </p>
+            <Button asChild variant="outline" size="sm">
+              <a
+                href={`/organizations/${encodeURIComponent(
+                  organizationId,
+                )}/plans`}
+              >
+                View Team plans
+              </a>
+            </Button>
+          </>
+        )}
+      </section>
+      {access === "upgrade" && (
+        <fieldset
+          disabled
+          className="min-w-0 flex-1"
+          aria-label="Read-only settings"
+        >
+          {children}
+        </fieldset>
       )}
-    </section>
+    </>
   );
 }
 

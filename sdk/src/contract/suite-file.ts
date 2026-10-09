@@ -1,3 +1,7 @@
+import {
+  suiteJudgeSettingsSchema,
+  caseJudgeSettingsSchema,
+} from "./judge-settings.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 /**
  * The versioned eval **suite file** — one declarative document describing a
@@ -59,10 +63,9 @@ import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
  * Two dialects exist:
  *
  *   - `"1"` — the original. The configured count is `repetitions`; the case's
- *     rules are `checks` with `assertions` as a deprecated alias. It is FROZEN:
- *     its zod shape and its published JSON Schema (`…/eval-suite/v1.json`) do
- *     not change, so an older strict reader can never misread a new file under
- *     the version it already knows.
+ *     rules are `checks` with `assertions` as a deprecated alias. Its field
+ *     vocabulary stays fixed; optional case metadata shared by both dialects
+ *     is added symmetrically and mirrored in its published JSON Schema.
  *   - `"2"` — the pinned evaluator vocabulary (`docs/evals-vocabulary-
  *     consolidation.md`): the configured count is `iterations`, the case's
  *     rules are `assertions`, and the dialect-1 spellings are unknown keys.
@@ -340,8 +343,8 @@ export type EvalSuiteFileToolPolicy = z.infer<
  * differs by dialect. Everything else is spelled identically in both, and
  * declaring it twice would be two places for the next field to be added to
  * one of. Key order matters: it is the order the generated JSON Schema lists
- * properties in, and dialect 1's document is frozen — so the count is spliced
- * in at its original position rather than appended.
+ * properties in, and dialect 1's defaults layout is stable — so the count is
+ * spliced in at its original position rather than appended.
  */
 function defaultsShape(version: EvalSuiteSchemaVersion) {
   return {
@@ -356,6 +359,7 @@ function defaultsShape(version: EvalSuiteSchemaVersion) {
       temperature: z.number().optional(),
     },
     tail: {
+      judge: suiteJudgeSettingsSchema.optional(),
       /** Fraction of iterations a case must pass to pass. Never a percent. */
       passThreshold: unitIntervalSchema,
       validity: evalSuiteFileValiditySchema,
@@ -517,13 +521,15 @@ export type EvalSuiteFileCaseImport = z.infer<
  *
  * Same arrangement as {@link defaultsShape}: the dialect-specific fields (the
  * rule list and the configured count) are spliced in at their dialect-1
- * positions so dialect 1's generated JSON Schema stays byte-identical.
+ * positions, while shared optional metadata stays common to both dialects.
  */
 const caseHeadShape = {
   id: opaqueIdSchema,
   title: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
   /** Optional analytics grouping label. `null` explicitly clears it. */
   intent: caseIntentUpdateSchema.optional(),
+  /** Optional case scenario/context note; absent means no scenario binding. */
+  scenario: z.string().min(1).optional(),
   /**
    * Authored case kind. Absent means the editor derives it from
    * matchOptions. `null` explicitly clears it.
@@ -538,6 +544,7 @@ const caseHeadShape = {
   steps: stepsSchema.min(1),
 };
 const caseMiddleShape = {
+  judge: caseJudgeSettingsSchema.optional(),
   /** Reference output for judge scorers. */
   expectedOutput: z.string().optional(),
   /** The case passes only when NO tool was called. */
@@ -786,8 +793,8 @@ export type EvalSuiteFileV2 = z.infer<typeof evalSuiteFileV2ObjectSchema>;
 /**
  * The strictly-structural half of the contract, without the cross-field
  * refinements — one per dialect, because each dialect publishes its own JSON
- * Schema document at its own `$id`. A `oneOf` over both would have changed the
- * dialect-1 document, and that document is frozen.
+ * Schema document at its own `$id`. A `oneOf` over both would blur the
+ * dialect-specific fields in each published document.
  *
  * Exported for ONE purpose: generating the JSON Schema, and proving in a test
  * that the generated schema and the zod validator agree on everything that is

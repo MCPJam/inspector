@@ -18,12 +18,26 @@ export const SUITE_SETTINGS_GROUPS = [
     rows: ["policy", "iterations", "qualityGate", "passOrFail"],
   },
   { id: "runs", label: "Where it runs", rows: ["environments"] },
+  {
+    id: "limits",
+    label: "Time & retry limits",
+    // Ordered by how the clocks NEST — turn inside tool call inside iteration
+    // inside run — so a reader scanning down moves outward, and the retry
+    // count that multiplies the innermost sits last.
+    rows: [
+      "turnTimeoutMs",
+      "toolCallTimeoutMs",
+      "iterationTimeoutMs",
+      "runTimeoutMs",
+      "turnRetries",
+    ],
+  },
   { id: "triggers", label: "Triggers", rows: ["schedule", "githubChecks"] },
 ] as const;
 
 /**
  * Placement manifest for the fixed sections of one settings page. Grading
- * spans Quality gate and Checks by stage, with Where it runs between them.
+ * spans Quality gate and Evaluators, with Where it runs between them.
  * Trigger configuration remains hidden; these groups support key lookup and
  * parity checks, rather than selecting tabs.
  */
@@ -50,11 +64,11 @@ export const NESTED_SETTING_KEYS: Record<
   // only the condition that never needed a baseline.
   qualityGate: ["qualityGateNoGatingScoreErrors"],
   passOrFail: [
-    "assertionBacktest",
     "matchOptions",
     "judge",
     "judgeRubric",
     "judgeGroundedness",
+    "judgeRubricChecks",
     "checks",
   ],
   environments: ["computerEnvironment"],

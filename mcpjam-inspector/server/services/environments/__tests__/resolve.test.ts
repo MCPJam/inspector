@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import {
   environmentEffectiveServerIds,
@@ -9,9 +9,12 @@ import {
   environmentServerRefsForManager,
   isEnvironmentLaunchConflict,
   resolveEnvironmentForLaunch,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../resolve";
 import { WebRouteError } from "../../../routes/web/errors";
+import { machineUnattendedLocalHarnesses } from "../../../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities } from "../../evals/runner-capabilities.js";
 
 const RESOLVED: ResolvedEnvironmentForLaunch = {
   environmentRef: { environmentId: "env-1", name: "Staging", revision: 4 },
@@ -63,7 +66,7 @@ describe("environmentServerIds", () => {
         ...RESOLVED,
         selectedServerIds: ["ps_stale"],
         servers: [{ serverId: "ps_live", name: "linear" }],
-      })
+      }),
     ).toEqual(["ps_live"]);
   });
 
@@ -81,7 +84,7 @@ describe("environmentServerIds", () => {
       environmentServerIds({
         ...RESOLVED_WITH_PLUGIN,
         servers: undefined,
-      })
+      }),
     ).toEqual(["ps_1", "ps_plugin"]);
   });
 
@@ -91,7 +94,7 @@ describe("environmentServerIds", () => {
         ...RESOLVED,
         effectiveServerIds: undefined,
         servers: undefined,
-      })
+      }),
     ).toEqual(["ps_1", "ps_2"]);
   });
 });
@@ -106,7 +109,7 @@ describe("environmentServerNames", () => {
       environmentServerNames({
         ...RESOLVED,
         servers: undefined,
-      })
+      }),
     ).toEqual([]);
     expect(environmentServerNames({ ...RESOLVED, servers: [] })).toEqual([]);
   });
@@ -119,7 +122,7 @@ describe("environmentServerRefsForManager", () => {
 
   it("keeps the ids an id-keyed (hosted) manager already holds", () => {
     expect(
-      environmentServerRefsForManager(RESOLVED, managerWith(["ps_1", "ps_2"]))
+      environmentServerRefsForManager(RESOLVED, managerWith(["ps_1", "ps_2"])),
     ).toEqual(["ps_1", "ps_2"]);
   });
 
@@ -127,8 +130,8 @@ describe("environmentServerRefsForManager", () => {
     expect(
       environmentServerRefsForManager(
         RESOLVED,
-        managerWith(["linear", "asana"])
-      )
+        managerWith(["linear", "asana"]),
+      ),
     ).toEqual(["linear", "asana"]);
   });
 
@@ -136,8 +139,8 @@ describe("environmentServerRefsForManager", () => {
     expect(
       environmentServerRefsForManager(
         { ...RESOLVED, servers: undefined },
-        managerWith([])
-      )
+        managerWith([]),
+      ),
     ).toEqual(["ps_1", "ps_2"]);
   });
 });
@@ -166,7 +169,7 @@ describe("environmentEffectiveServerIds", () => {
       environmentEffectiveServerIds({
         ...RESOLVED,
         effectiveServerIds: undefined,
-      })
+      }),
     ).toEqual(["ps_1", "ps_2"]);
   });
 });
@@ -175,7 +178,7 @@ describe("resolveEnvironmentForLaunch", () => {
   it("returns the resolver's closed set untouched", async () => {
     const resolved = await resolveEnvironmentForLaunch(
       fakeConvexClient(RESOLVED),
-      { projectId: "p_1", environmentId: "env-1" }
+      { projectId: "p_1", environmentId: "env-1" },
     );
     expect(resolved).toEqual(RESOLVED);
   });
@@ -183,7 +186,7 @@ describe("resolveEnvironmentForLaunch", () => {
   it("parses the newer backend fields (effectiveServerIds, pluginVersions)", async () => {
     const resolved = await resolveEnvironmentForLaunch(
       fakeConvexClient(RESOLVED_WITH_PLUGIN),
-      { projectId: "p_1", environmentId: "env-1" }
+      { projectId: "p_1", environmentId: "env-1" },
     );
     expect(resolved.effectiveServerIds).toEqual(["ps_1", "ps_plugin"]);
     expect(resolved.pluginVersions).toEqual([
@@ -206,7 +209,7 @@ describe("resolveEnvironmentForLaunch", () => {
     };
     const resolved = await resolveEnvironmentForLaunch(
       fakeConvexClient(legacy),
-      { projectId: "p_1", environmentId: "env-1" }
+      { projectId: "p_1", environmentId: "env-1" },
     );
     expect(resolved.effectiveServerIds).toBeUndefined();
     expect(environmentEffectiveServerIds(resolved)).toEqual(["ps_1"]);
@@ -218,7 +221,7 @@ describe("resolveEnvironmentForLaunch", () => {
         resolveEnvironmentForLaunch(fakeConvexClient(bad), {
           projectId: "p_1",
           environmentId: "env-1",
-        })
+        }),
       ).rejects.toMatchObject({ status: 404 });
     }
   });
@@ -227,7 +230,7 @@ describe("resolveEnvironmentForLaunch", () => {
     const client = {
       query: async () => {
         throw new Error(
-          "Could not find public function for 'projectEnvironments:resolveEnvironmentForLaunch'"
+          "Could not find public function for 'projectEnvironments:resolveEnvironmentForLaunch'",
         );
       },
     } as unknown as Parameters<typeof resolveEnvironmentForLaunch>[0];
@@ -235,7 +238,7 @@ describe("resolveEnvironmentForLaunch", () => {
       resolveEnvironmentForLaunch(client, {
         projectId: "p_1",
         environmentId: "env-1",
-      })
+      }),
     ).rejects.toMatchObject({ status: 400 });
   });
 });
@@ -244,32 +247,32 @@ describe("isEnvironmentLaunchConflict", () => {
   it("matches the structured ConvexError codes for BOTH preconditions", () => {
     expect(
       isEnvironmentLaunchConflict(
-        new ConvexError({ code: "ENV_REVISION_CONFLICT", expected: 3 })
-      )
+        new ConvexError({ code: "ENV_REVISION_CONFLICT", expected: 3 }),
+      ),
     ).toBe(true);
     // Drift: the environment is unchanged but what it points at moved.
     expect(
-      isEnvironmentLaunchConflict(new ConvexError({ code: "ENV_HOST_DRIFT" }))
+      isEnvironmentLaunchConflict(new ConvexError({ code: "ENV_HOST_DRIFT" })),
     ).toBe(true);
     expect(
-      isEnvironmentLaunchConflict(new ConvexError({ code: "CONFLICT" }))
+      isEnvironmentLaunchConflict(new ConvexError({ code: "CONFLICT" })),
     ).toBe(true);
   });
 
   it("falls back to a message probe, but never matches unrelated errors", () => {
     expect(
       isEnvironmentLaunchConflict(
-        new Error("environment revision conflict: expected 3, found 4")
-      )
+        new Error("environment revision conflict: expected 3, found 4"),
+      ),
     ).toBe(true);
     expect(
-      isEnvironmentLaunchConflict(new Error("environment host drift detected"))
+      isEnvironmentLaunchConflict(new Error("environment host drift detected")),
     ).toBe(true);
     expect(isEnvironmentLaunchConflict(new Error("quota exceeded"))).toBe(
-      false
+      false,
     );
     expect(isEnvironmentLaunchConflict(new Error("revision conflict"))).toBe(
-      false
+      false,
     );
   });
 });
@@ -286,7 +289,7 @@ describe("environmentLaunchConflictError", () => {
     // "Reload the environment" would mislead: the environment is unchanged —
     // its host config rotated, or the pinned server group was edited.
     const err = environmentLaunchConflictError(
-      new ConvexError({ code: "ENV_HOST_DRIFT" })
+      new ConvexError({ code: "ENV_HOST_DRIFT" }),
     );
     expect(err.status).toBe(409);
     expect(err.message).toMatch(/host or server group changed/i);
@@ -304,7 +307,7 @@ describe("environmentLaunchRejectionError", () => {
         code: "VALIDATION",
         message:
           "ephemeralEnvironment requires environmentId — it names the environment to run without attaching it.",
-      })
+      }),
     )!;
     expect(err).toBeInstanceOf(WebRouteError);
     expect(err.status).toBe(400);
@@ -322,14 +325,14 @@ describe("environmentLaunchRejectionError", () => {
         code: "ENV_CROSS_PROJECT",
         message: "Environment belongs to a different project.",
         details: { environmentId: "env_someone_elses" },
-      })
+      }),
     )!;
     const missing = environmentLaunchRejectionError(
       new ConvexError({
         code: "ENV_NOT_FOUND",
         message: "Environment not found.",
         details: { environmentId: "env_never_existed" },
-      })
+      }),
     )!;
 
     for (const err of [crossProject, missing]) {
@@ -345,7 +348,7 @@ describe("environmentLaunchRejectionError", () => {
   it("keeps a non-member or ambiguous selection a 400 the caller can act on", () => {
     for (const code of ["ENV_NOT_A_MEMBER", "ENV_AMBIGUOUS", "ENV_ARCHIVED"]) {
       const err = environmentLaunchRejectionError(
-        new ConvexError({ code, message: "nope" })
+        new ConvexError({ code, message: "nope" }),
       )!;
       expect(err.status).toBe(400);
       expect((err.details as Record<string, unknown>).code).toBe(code);
@@ -354,7 +357,9 @@ describe("environmentLaunchRejectionError", () => {
 
   it("returns null for anything unrecognized so a real fault stays a logged 500", () => {
     expect(
-      environmentLaunchRejectionError(new ConvexError({ code: "SOMETHING_NEW" }))
+      environmentLaunchRejectionError(
+        new ConvexError({ code: "SOMETHING_NEW" }),
+      ),
     ).toBeNull();
     expect(environmentLaunchRejectionError(new Error("boom"))).toBeNull();
     expect(environmentLaunchRejectionError(null)).toBeNull();
@@ -369,5 +374,158 @@ describe("environmentLaunchRejectionError", () => {
     expect(environmentLaunchRejectionError({ data: { code: 42 } })).toBeNull();
     expect(environmentLaunchRejectionError({ data: [] })).toBeNull();
     expect(environmentLaunchRejectionError({ data: null })).toBeNull();
+  });
+});
+
+describe("eval-only resolution compatibility", () => {
+  const args = {
+    projectId: "p_1",
+    environmentId: "env-1",
+    serverSource: "environment_only" as const,
+  };
+  it("forwards the opt-in and preserves an explicit empty set", async () => {
+    const empty = {
+      ...RESOLVED,
+      selectedServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+    };
+    const query = vi.fn().mockResolvedValue(empty);
+    expect(await resolveEnvironmentForLaunch({ query } as any, args)).toEqual(
+      empty,
+    );
+    expect(query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      args,
+    );
+  });
+  it("retries an older validator once without serverSource", async () => {
+    const query = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `serverSource` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValueOnce(RESOLVED);
+    expect(await resolveEnvironmentForLaunch({ query } as any, args)).toEqual(
+      RESOLVED,
+    );
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "p_1", environmentId: "env-1" },
+    );
+  });
+  it.each([
+    "network failure",
+    "Object contains extra field `suiteId`. Object: {serverSource: environment_only}",
+    "ENV_NO_SERVERS",
+  ])("does not retry %s", async (message) => {
+    const error = new Error(message);
+    const query = vi.fn().mockRejectedValue(error);
+    await expect(
+      resolveEnvironmentForLaunch({ query } as any, args),
+    ).rejects.toBe(error);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+  it("does not retry the retry", async () => {
+    const error = new Error("Object contains extra field `serverSource`");
+    const query = vi.fn().mockRejectedValue(error);
+    await expect(
+      resolveEnvironmentForLaunch({ query } as any, args),
+    ).rejects.toBe(error);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+});
+describe("translateEnvironmentResolveError", () => {
+  it.each([
+    "ENV_NO_SERVERS",
+    "ENV_ATTACHMENT_MISSING",
+    "ENV_PLUGIN_UNAVAILABLE",
+  ])("maps %s to an actionable conflict", (code) => {
+    expect(
+      translateEnvironmentResolveError(
+        new ConvexError({ code, message: "Pick a valid group" }),
+      ),
+    ).toMatchObject({
+      status: 409,
+      message: "Pick a valid group",
+      details: { code },
+    });
+  });
+  it.each(["ENV_NOT_FOUND", "ENV_CROSS_PROJECT"])(
+    "hides %s behind 404",
+    (code) => {
+      expect(
+        translateEnvironmentResolveError(new ConvexError({ code })),
+      ).toMatchObject({ status: 404, message: "Environment not found" });
+    },
+  );
+  it("preserves non-environment errors", () => {
+    const error = new Error("broken");
+    expect(translateEnvironmentResolveError(error)).toBe(error);
+  });
+});
+
+describe("explicit local execution context", () => {
+  const local: ResolvedEnvironmentForLaunch = {
+    ...RESOLVED,
+    runtimeVenue: "local",
+    environmentRef: {
+      ...RESOLVED.environmentRef,
+      serverSelection: { mode: "local", names: ["filesystem"] },
+    },
+  };
+  it("retains local bindings alongside the exact project selection", () => {
+    expect(
+      environmentServerRefsForManager(local, { hasServer: () => true }),
+    ).toEqual(["ps_1", "ps_2", "filesystem"]);
+  });
+  it("refuses to discard local bindings on a hosted runner", () => {
+    expect(() =>
+      environmentServerRefsForManager(
+        { ...local, runtimeVenue: "hosted" },
+        { hasServer: () => true },
+      ),
+    ).toThrow(/local runner/);
+  });
+  it("passes the local venue through member-gated preflight", async () => {
+    const query = vi.fn().mockResolvedValue(local);
+    const resolved = await resolveEnvironmentForLaunch({ query } as any, {
+      projectId: "project",
+      environmentId: "env-1",
+      runtimeVenue: "local",
+    });
+    // A local preview names the harnesses this machine can run unattended, so
+    // the backend narrows the venue exactly as the launch will. Which ones that
+    // is depends on the released packs and this machine's target, so the
+    // expectation is the same derivation, not a hard-coded list.
+    expect(query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      {
+        projectId: "project",
+        environmentId: "env-1",
+        runtimeVenue: "local",
+        runnerCapabilities: localHarnessCapabilities(machineUnattendedLocalHarnesses()),
+      },
+    );
+    expect(resolved.runtimeVenue).toBe("local");
+  });
+
+  it("keeps a launch's own declaration, and drops it for a backend that predates it", async () => {
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error("ArgumentValidationError: Object contains extra field `runnerCapabilities` that is not in the validator."))
+      .mockResolvedValueOnce(local);
+    const resolved = await resolveEnvironmentForLaunch({ query } as any, {
+      projectId: "project",
+      environmentId: "env-1",
+      runtimeVenue: "local",
+      runnerCapabilities: ["local-harness:codex"],
+    });
+    expect(query.mock.calls[0][1]).toMatchObject({ runnerCapabilities: ["local-harness:codex"] });
+    expect(query.mock.calls[1][1]).not.toHaveProperty("runnerCapabilities");
+    expect(resolved.runtimeVenue).toBe("local");
   });
 });

@@ -31,11 +31,15 @@ export interface HostListItem {
    * depending on which rows happen to be selected.
    */
   hostStyle?: string | null;
+  /** Runtime selector returned by the client list; absent on older backends. */
+  harness?: HostConfigDtoV2["harness"] | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.
   ownerScope?: HostOwnerScope;
   hasComputer?: boolean;
+  /** Something still uses it, so `deleteHost` would refuse. Absent = unknown. */
+  inUse?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -194,6 +198,11 @@ export function useHostMutations() {
     // Set here rather than with a follow-up setScenarioMode so a scenario is
     // never briefly readable by the wrong audience. Ignored for journeys hosts.
     scenarioMode?: ScenarioMode;
+    // The secrets the private environment behind a `'user_testing'` client
+    // grants (`externalCredentialSecretSelection` builds this for Cursor). The
+    // backend refuses it for any other owner: there is no environment to
+    // attach it to.
+    secretSelection?: { mode: "explicit"; secretIds: string[] };
   }) => Promise<{
     hostId: string;
     hostConfigId: string;

@@ -8,7 +8,7 @@
  * renders it.
  */
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
@@ -16,7 +16,8 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type { RunMetricsByRun } from "../evals/run-metrics";
+import type { EvalSuiteRun, EvalSuiteRunListItem } from "../evals/types";
 import { RunContextChip } from "../evals/run-context-chip";
 import {
   RunCommitCell,
@@ -81,27 +82,26 @@ function RunResultPill({ status }: { status: RunCompareStatus }) {
   );
 }
 
-/** The arrow follows the number; the colour follows whether it helped. */
-function DeltaCell({ delta }: { delta: HeroStatDelta | null }) {
-  if (!delta) return <td className="px-3 py-2 text-muted-foreground">—</td>;
-  const Arrow =
-    delta.direction === "up"
-      ? ArrowUp
-      : delta.direction === "down"
-        ? ArrowDown
-        : null;
+/**
+ * The change sits BESIDE its number rather than in a column of its own.
+ *
+ * Four "Δ" headers said the same word four times and never which metric they
+ * belonged to, and the reader had to pair each one with the column to its
+ * left. The sign already carries the direction, so the arrow that preceded it
+ * was a third encoding of one fact — the colour says whether it helped.
+ */
+function Delta({ delta }: { delta: HeroStatDelta | null }) {
+  if (!delta) return null;
   return (
-    <td className="px-3 py-2" data-testid="run-compare-delta">
-      <span
-        className={cn(
-          "inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums",
-          DELTA_TONE_CLASS[delta.tone],
-        )}
-      >
-        {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
-        {delta.label}
-      </span>
-    </td>
+    <span
+      data-testid="run-compare-delta"
+      className={cn(
+        "ml-2 text-[11px] font-medium tabular-nums",
+        DELTA_TONE_CLASS[delta.tone],
+      )}
+    >
+      {delta.label}
+    </span>
   );
 }
 
@@ -116,10 +116,9 @@ function MetricCell({
     <td className="whitespace-nowrap px-3 py-2 tabular-nums">
       {cell.value ?? "—"}
       {cell.value != null && detail ? (
-        <span className="ml-1 text-[10px] text-muted-foreground">
-          {detail}
-        </span>
+        <span className="ml-1 text-[10px] text-muted-foreground">{detail}</span>
       ) : null}
+      <Delta delta={cell.delta} />
     </td>
   );
 }
@@ -150,7 +149,6 @@ function LaneRow({
         <RunResultPill status={row.status} />
       </td>
       <MetricCell cell={row.pass} detail={row.passDetail} />
-      <DeltaCell delta={row.pass.delta} />
       <td className="whitespace-nowrap px-3 py-2">
         <div className="flex items-center gap-2">
           <RunPlatformBadge run={row.run} neutral />
@@ -166,11 +164,8 @@ function LaneRow({
         })}
       </td>
       <MetricCell cell={row.p50} />
-      <DeltaCell delta={row.p50.delta} />
       <MetricCell cell={row.p95} />
-      <DeltaCell delta={row.p95.delta} />
       <MetricCell cell={row.tokens} />
-      <DeltaCell delta={row.tokens.delta} />
     </tr>
   );
 }
@@ -211,6 +206,7 @@ function LaneSection({
               <RunContextChip
                 run={lane.run}
                 hostNamesById={hostNamesById}
+                modelSuffix={lane.modelSuffix}
                 fallbackName="Suite default"
                 className="border-border bg-background shadow-none"
               />
@@ -231,23 +227,11 @@ function LaneSection({
                   <th className={HEADER_CLASS}>Run</th>
                   <th className={HEADER_CLASS}>Result</th>
                   <th className={HEADER_CLASS}>Pass</th>
-                  <th className={HEADER_CLASS} aria-label="Pass change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>Platform</th>
                   <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>P50</th>
-                  <th className={HEADER_CLASS} aria-label="P50 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>P95</th>
-                  <th className={HEADER_CLASS} aria-label="P95 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>Tokens</th>
-                  <th className={HEADER_CLASS} aria-label="Tokens change">
-                    Δ
-                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -277,7 +261,7 @@ function LaneSection({
 export function RunComparisonPage({
   currentRun,
   runs,
-  iterations,
+  metricsByRun,
   suiteName,
   hostNamesById,
   passThreshold,
@@ -285,8 +269,9 @@ export function RunComparisonPage({
   onOpenRun,
 }: {
   currentRun: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
-  iterations: readonly EvalIteration[];
+  runs: readonly EvalSuiteRunListItem[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   suiteName: string;
   hostNamesById: Map<string, string | null>;
   /** The suite's pass bar as a FRACTION — see `resolveSuitePassThreshold`. */
@@ -299,11 +284,11 @@ export function RunComparisonPage({
       buildRunCompareLanes({
         currentRun,
         runs,
-        iterations,
+        metricsByRun,
         hostNamesById,
         passThreshold,
       }),
-    [currentRun, runs, iterations, hostNamesById, passThreshold],
+    [currentRun, runs, metricsByRun, hostNamesById, passThreshold],
   );
 
   return (

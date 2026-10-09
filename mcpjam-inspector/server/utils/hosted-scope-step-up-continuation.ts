@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { createHash, randomUUID } from "node:crypto";
 import type { ModelMessage, ToolSet, UIMessageChunk } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -32,6 +33,7 @@ import { scopeStepUpInfoFromToolError } from "./insufficient-scope-step-up.js";
 type HostedScopeStepUpState = {
   v: 1;
   serverId: string;
+  connectionId?: string;
   resourceUrl?: string;
   toolCallId: string;
   toolName: string;
@@ -163,6 +165,7 @@ export async function createHostedScopeStepUpContinuation(input: {
   chatSessionId: string;
   manager: MCPClientManager;
   serverName?: string;
+  connectionId?: string;
   info: InsufficientScopeInfo & { toolCallId: string };
   toolName: string;
   toolInput: unknown;
@@ -188,6 +191,7 @@ export async function createHostedScopeStepUpContinuation(input: {
   const state: HostedScopeStepUpState = {
     v: 1,
     serverId: input.info.serverId,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     ...(resourceUrl ? { resourceUrl } : {}),
     toolCallId: input.info.toolCallId,
     toolName: input.toolName,
@@ -220,6 +224,7 @@ export async function createHostedScopeStepUpContinuation(input: {
   return {
     version: SCOPE_STEP_UP_VERSION,
     kind: "scope_step_up_required",
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     continuationId,
     serverId: input.info.serverId,
     ...(input.serverName ? { serverName: input.serverName } : {}),
@@ -341,6 +346,26 @@ export function buildHostedScopeStepUpResume(input: {
           kind: "halted",
           outcome: "failed",
           reason: "The saved operation no longer matches this conversation.",
+        };
+      }
+
+      if (
+        state.connectionId &&
+        toolConnectionAttribution(
+          originalTool,
+          state.toolInput,
+          state.toolCallId,
+        )?.connectionId !== state.connectionId
+      ) {
+        await cancelContinuation(input.bearer, {
+          continuationId: input.request.continuationId,
+          reason: "original account is no longer available",
+        });
+        return {
+          kind: "halted",
+          outcome: "failed",
+          reason:
+            "The original account is no longer available. The operation was not retried.",
         };
       }
 

@@ -469,6 +469,113 @@ describe("mcp-oauth", () => {
     ).mockResolvedValue(undefined);
   });
 
+  it("does not redirect after the initiating connect is canceled", async () => {
+    let current = true;
+    mockRunOAuthStateMachine.mockImplementationOnce(async (config: any) => {
+      current = false;
+      await config.onAuthorizationRequest({
+        authorizationUrl: "https://auth.example.com/authorize",
+      });
+      throw new Error("unreachable");
+    });
+
+    const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+    const redirectSpy = vi
+      .spyOn(MCPOAuthProvider.prototype, "redirectToAuthorization")
+      .mockResolvedValue(undefined);
+
+    const result = await initiateOAuth(
+      {
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+      } as any,
+      { shouldContinue: () => current }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "OAuth authorization was canceled.",
+    });
+    expect(redirectSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a hosted pending marker when cancellation wins during session creation", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        projectId: "proj_default",
+        serverId: "srv_example",
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        returnPath: "/servers",
+        startedAt: Date.now(),
+      }),
+    );
+    let resolveSession!: (response: Response) => void;
+    const sessionResponse = new Promise<Response>((resolve) => {
+      resolveSession = resolve;
+    });
+    const sessionToken = await import("@/lib/session-token");
+    const hostedAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
+    hostedAuthFetch.mockImplementation((input: RequestInfo | URL) =>
+      getUrlString(input) === "/api/web/oauth/session"
+        ? sessionResponse
+        : Promise.resolve(createJsonResponse({}))
+    );
+    const contextModule = await import("@/lib/apis/web/context");
+    contextModule.setApiContext({
+      projectId: "proj_default",
+      serverIdsByName: { example: "srv_example" },
+      getAccessToken: async () => null,
+    });
+    let current = true;
+    mockRunOAuthStateMachine.mockImplementationOnce(async (config: any) => {
+      config.updateState({
+        clientId: "registered-client-id",
+        codeVerifier: "test-verifier",
+        state: "mock-state",
+        authorizationUrl: "https://auth.example.com/authorize",
+        authorizationServerMetadata: {
+          issuer: "https://auth.example.com",
+        },
+      });
+      await config.onAuthorizationRequest({
+        authorizationUrl: "https://auth.example.com/authorize",
+      });
+      throw new Error("unreachable");
+    });
+    const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+    const redirectSpy = vi
+      .spyOn(MCPOAuthProvider.prototype, "redirectToAuthorization")
+      .mockResolvedValue(undefined);
+
+    const resultPromise = initiateOAuth(
+      { serverName: "example", serverUrl: "https://example.com/mcp" },
+      { shouldContinue: () => current }
+    );
+    await vi.waitFor(() =>
+      expect(hostedAuthFetch).toHaveBeenCalledWith(
+        "/api/web/oauth/session",
+        expect.any(Object)
+      )
+    );
+    current = false;
+    localStorage.removeItem("mcp-hosted-oauth-pending");
+    resolveSession(
+      createJsonResponse({ success: true, sessionId: "late-session" })
+    );
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false,
+      error: "OAuth authorization was canceled.",
+    });
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    expect(redirectSpy).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -3018,6 +3125,26 @@ describe("mcp-oauth", () => {
       expect(authFetch).toHaveBeenCalledTimes(2);
     });
 
+    it("rechecks identity immediately before token import", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import("@/lib/apis/hosted-oauth-import-tokens-api");
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client",
+        undefined,
+        { projectId: "proj_xyz", serverId: "srv_abc", kind: "generic" },
+        () => {
+          throw new Error("identity changed");
+        },
+      );
+      await expect(
+        provider.saveTokens({ access_token: "issued", token_type: "Bearer" }),
+      ).rejects.toThrow("identity changed");
+      expect(importSpy).not.toHaveBeenCalled();
+    });
     it("fails loudly instead of storing OAuth tokens in localStorage without a binding", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
       const importApi = await import(

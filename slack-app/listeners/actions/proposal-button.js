@@ -27,6 +27,50 @@ import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
 
 /**
+ * The permalink resource types a Swarms goal run is announced under.
+ *
+ * `journey_run` is the pre-rename spelling and `goal_run` the canonical one.
+ * Both are accepted for as long as the API may emit either, which is decided
+ * by the `x-mcpjam-api-vocabulary` negotiation on the other side — not by
+ * anything this app can see, so it never stops accepting the old one on its
+ * own initiative. They go together at general availability.
+ */
+const GOAL_RUN_RESOURCE_TYPES = new Set(['goal_run', 'journey_run']);
+
+/**
+ * True when this permalink resource TYPE names a goal run.
+ *
+ * The TYPE alone, deliberately. The null and id checks stay inline at the
+ * call site because that is where TypeScript narrows `outcome.resource`: a
+ * predicate over the whole object does not narrow an optional property path
+ * through it, and the accesses that follow would each be `possibly null`.
+ *
+ * @param {string | undefined} type
+ * @returns {boolean}
+ */
+function isGoalRunResourceType(type) {
+  return type !== undefined && GOAL_RUN_RESOURCE_TYPES.has(type);
+}
+
+/**
+ * Whether an approved action was a CANCELLATION.
+ *
+ * One definition, because the copy and the routing both need the answer and
+ * two of them would drift. It recognises the two spellings the copy below
+ * uses: `kind` when the server sends one, and the operation name as the
+ * fallback for a server that predates `kind`. A build that matched only the
+ * first would leave every cancellation from an older server announced, and
+ * routed, as an approval.
+ *
+ * @param {{ operation: string, kind?: string | null }} outcome
+ * @returns {boolean}
+ */
+export function isCancellation(outcome) {
+  if (outcome.kind === 'cancel') return true;
+  return outcome.kind == null && outcome.operation === 'cancel_eval_run';
+}
+
+/**
  * What to say once the action has actually run.
  *
  * KIND FIRST. The server tells us what the approved action does — start,
@@ -37,7 +81,9 @@ import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
  *
  * A URL wins over the copy when there is one, because "follow it here" is the
  * most useful thing we can say — but only when the SERVER built it. A link
- * assembled here would need to know each operation's result shape.
+ * assembled here would need to know each operation's result shape. The one
+ * exception is a cancellation: the link line says "Approved", so a
+ * cancellation keeps its own copy even when it carries a URL.
  *
  * @param {{ operation: string, kind?: string | null, resource?: { url?: string } | null, runUrl?: string | null }} outcome
  * @param {string} userId
@@ -47,7 +93,12 @@ export function announcementFor(outcome, userId) {
     (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+
+  // A cancellation is not an approval, so the URL shortcut must not speak for
+  // one.
+  if (url && !isCancellation(outcome)) {
+    return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+  }
 
   switch (outcome.kind) {
     case 'cancel':
@@ -187,12 +238,19 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   // operation-name ternary stays as the mixed-version fallback for a server
   // that predates `kind`.
   const text = announcementFor(outcome, userId);
+
+  // A cancellation started nothing, so it must not be routed into a run
+  // watcher. Both branches below post their OWN "running…" copy and return,
+  // which would throw away the truthful text above and announce a cancel as a
+  // started run — the same lie the wording was just fixed to stop telling.
+  const watchable = !isCancellation(outcome);
+
   try {
     // A run gets a LIVE message: the same "running… → here's how it went"
     // surface the retired Run-it button gave, now reached through the approval
     // path. Recognised by the server-sent resource type rather than by an
     // operation name, so a future op that also produces a run gets it free.
-    if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
+    if (watchable && outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
       const runId = outcome.resource.id;
       await announceAndWatchRun(client, {
         runId,
@@ -223,12 +281,25 @@ export async function handleProposalButton({ ack, body, client, context, logger,
       });
       return;
     }
-    // A JOURNEY run gets the same live surface, through its own watcher — the
+    // A GOAL run gets the same live surface, through its own watcher — the
     // status vocabulary, verdict location, and evidence shape all differ from
     // eval runs (see surface-core's journey-run-watcher header), so routing it
     // into the eval watcher would report a rate-limited fan-out as a pass.
     // Same recognition rule as above: the server-sent resource TYPE.
-    if (outcome.resource?.type === 'journey_run' && outcome.resource.id && outcome.resource.url) {
+    //
+    // BOTH spellings, and this app has to tolerate both BEFORE the API starts
+    // sending the new one: Slack deploys from its own workflow, so there is a
+    // window where a proposal carrying `goal_run` reaches an app that has not
+    // shipped yet. An unrecognised type falls through to the plain
+    // acknowledgement below — the run still starts, but nobody gets the live
+    // surface, which is the failure this dual read exists to prevent.
+    if (
+      watchable &&
+      outcome.resource &&
+      isGoalRunResourceType(outcome.resource.type) &&
+      outcome.resource.id &&
+      outcome.resource.url
+    ) {
       await announceAndWatchJourneyRun(client, {
         runId: outcome.resource.id,
         url: outcome.resource.url,

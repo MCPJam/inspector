@@ -1,4 +1,6 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
+
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 type DbUserReadyContextValue = {
   isEnsuringUser: boolean;
@@ -19,8 +21,19 @@ export function DbUserReadyProvider({
   isEnsuringUser?: boolean;
   isUserReady: boolean;
 }) {
+  const queriesPaused = useSessionRefreshStore((state) => state.queriesPaused);
+  const authConfirmed = useSessionRefreshStore((state) => state.authConfirmed);
+  useEffect(() => {
+    // The current connection must confirm auth AND finish user setup. A stale
+    // readiness value or a token fetch alone must never reopen subscriptions.
+    if (isUserReady && authConfirmed) {
+      useSessionRefreshStore.getState().resumeQueries();
+    }
+  }, [isUserReady, authConfirmed]);
   return (
-    <DbUserReadyContext.Provider value={{ isEnsuringUser, isUserReady }}>
+    <DbUserReadyContext.Provider
+      value={{ isEnsuringUser, isUserReady: isUserReady && !queriesPaused }}
+    >
       {children}
     </DbUserReadyContext.Provider>
   );

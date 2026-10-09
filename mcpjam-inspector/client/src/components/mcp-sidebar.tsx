@@ -46,6 +46,7 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
@@ -250,35 +251,43 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      {
-        title: "User Testing",
-        url: "/user-testing",
-        icon: Users,
-        featureFlag: "sandboxes-enabled",
-        billingFeature: "scenarios",
-      },
+      // Both are behind `sandboxes-enabled`, which is the rollout control.
+      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
+      // signed-out visitor sees the items too, and the route decides what they
+      // get — a signed-out visitor gets the preview, a member the real tab.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
+        // Same pill XAA Debugger carries. It marks a NEW feature, not an
+        // access state: the earlier LOG IN / UPGRADE markers described who the
+        // reader was, and there is no longer a plan to report on.
+        badge: "New",
         billingFeature: "scenarios",
       },
       {
-        title: "Evaluate",
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        featureFlag: "sandboxes-enabled",
+        badge: "New",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "Evaluate (Legacy)",
         url: "/evals",
+        featureFlag: "evaluate-enabled",
         icon: FlaskConical,
         billingFeature: "evals",
       },
       {
-        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
-        // is dogfooded — the point of a second tab is being able to compare
-        // them. When the redesign wins, this item takes the "Evaluate" name
-        // and the one above is deleted.
-        title: "Ding Dong",
+        title: "Evaluate",
         url: "/evaluate",
         icon: FlaskConical,
-        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
@@ -537,21 +546,39 @@ export function MCPSidebar({
   const {
     status: updateStatus,
     restartRequested,
+    showUpdateError,
+    retryUpdate,
     restartAndInstall,
   } = useUpdateNotification();
-  const showUpdateButton =
-    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
-  // Two ways to be mid-install, and both must disable the button: waiting on a
-  // download that was asked to install when it finishes, and waiting on the
-  // app to quit for one already downloaded. The second is the one a repeat
-  // click used to get through.
-  const updateInstalling =
-    restartRequested ||
-    (updateStatus.kind === "pending" && updateStatus.installRequested);
+  const showUpdateButton = updateStatus.kind !== "idle";
+  const updateFailed = updateStatus.kind === "failed";
+  const updateRecovering = updateStatus.kind === "recovering";
+  const updateInstalling = updateRecovering || restartRequested;
+  const updateBusy =
+    updateInstalling ||
+    updateStatus.kind === "pending" ||
+    updateStatus.kind === "retry-waiting";
+  const updateLabel = updateRecovering
+    ? "Restarting to retry update…"
+    : restartRequested
+      ? "Updating…"
+      : updateStatus.kind === "pending"
+        ? "Downloading…"
+        : updateStatus.kind === "retry-waiting"
+          ? "Retrying download…"
+          : updateStatus.kind === "failed"
+            ? updateStatus.action === "retry-download"
+              ? "Retry download"
+              : updateStatus.action === "relaunch-retry"
+                ? "Relaunch to retry"
+                : "Update failed"
+            : "Relaunch to update";
   const handleUpdateClick = () => {
-    if (!updateInstalling) {
-      restartAndInstall();
-    }
+    if (updateBusy) return;
+    if (updateFailed) {
+      if (updateStatus.action === "instructions") showUpdateError();
+      else retryUpdate();
+    } else restartAndInstall();
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
@@ -604,7 +631,9 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
+      // reach the REEV-6 preview once the flag is on.
+      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -776,16 +805,16 @@ export function MCPSidebar({
               <Button
                 size="sm"
                 onClick={handleUpdateClick}
-                aria-disabled={updateInstalling}
+                disabled={updateBusy}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
+                  updateBusy && "pointer-events-none hover:bg-primary",
                 )}
               >
-                {updateInstalling && (
+                {updateBusy && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateInstalling ? "Updating…" : "Update"}
+                {updateLabel}
               </Button>
             </div>
           )}
@@ -886,6 +915,13 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
+      {!authResolving && (
+        <PlatformLaunchAnnouncement
+          onNavigate={appNavigate}
+          audience={user ? "signed_in" : "guest"}
+          sandboxesEnabled={sandboxesEnabled === true}
+        />
+      )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
         <InviteTeamMembersDialog
           key={activeOrganizationId}

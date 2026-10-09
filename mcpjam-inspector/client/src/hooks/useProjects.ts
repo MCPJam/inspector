@@ -207,6 +207,31 @@ export function useProjectQueries({
   };
 }
 
+export const PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE =
+  "Only project admins can create clients.";
+
+// Whether the viewer may create clients (hosts) in `projectId`. `hosts.ts`
+// `requireAdminAccess` refuses anyone `canManageProjectMembers` rejects, and
+// `getMyProjects` already ships that exact decision per project as
+// `canDeleteProject` — including project-level admin grants (which the org-role
+// `canManageHosts` misses) and anonymous owners of their personal project
+// (which `getProjectMembers.canManageMembers` reports false for). Reuses the
+// app shell's `getMyProjects` subscription, so no extra query. `isLoading`
+// means "not decided yet": callers must not create while it is true.
+export function useCanManageProjectClients({
+  isAuthenticated,
+  projectId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null | undefined;
+}): { canManage: boolean; isLoading: boolean } {
+  const { allProjects, isLoading } = useProjectQueries({ isAuthenticated });
+  const project = projectId
+    ? allProjects?.find((p) => p._id === projectId)
+    : undefined;
+  return { canManage: project?.canDeleteProject === true, isLoading };
+}
+
 export function useProjectMembers({
   isAuthenticated,
   projectId,

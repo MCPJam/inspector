@@ -6,9 +6,14 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  dismissRail,
+  revealRail,
+  type ExtensionStore,
+} from "@/components/host-workspace/ExtensionWorkspaceProvider";
 
 // PlaygroundTab pulls in a large hook + provider graph. We only care about the
 // `loadingState` branch that decides whether the branded first-run loading
@@ -19,6 +24,10 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserEnabledState: () => true,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
+const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
+const mockCenterStore = vi.hoisted(() => ({
+  current: null as ExtensionStore | null,
+}));
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
 }));
@@ -42,7 +51,7 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ themeMode: "light" }),
+    selector({ themeMode: "light", hostStyle: "claude" }),
 }));
 vi.mock("@/hooks/useClients", () => ({ useHost: () => ({ host: null }) }));
 vi.mock("@/hooks/use-previewed-client-id", () => ({
@@ -67,40 +76,12 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     consent: null,
   }),
 }));
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => {},
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
 }));
-vi.mock("@/lib/scenario-client-style", () => ({
-  getScenarioShellStyle: () => ({}),
-}));
-vi.mock("@/lib/client-config-v2", () => ({
-  gateMcpToolResultImageRenderingByModelVisibility: () => undefined,
-}));
-
-// The non-skeleton branch renders a deep provider/panel tree; stub each piece
-// to a trivial passthrough so a "ready" render doesn't need the whole app.
-vi.mock("@/contexts/scenario-client-style-context", () => ({
-  ScenarioChatUiOverrideProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-  ScenarioHostStyleProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-  ScenarioHostThemeProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-}));
-vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
-  ScenarioHostCapabilitiesOverrideProvider: ({
-    children,
-  }: {
-    children?: ReactNode;
-  }) => children,
-}));
-vi.mock("@/contexts/active-mcp-profile-context", () => ({
-  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-}));
-vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
-  ActiveHostCapsResolverScope: ({ children }: { children?: ReactNode }) =>
-    children,
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => ({ catalog: null }),
 }));
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children?: ReactNode }) => children,
@@ -108,16 +89,70 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => null,
 }));
 vi.mock("@/components/ui/collapsed-panel-strip", () => ({
-  CollapsedPanelStrip: () => null,
+  CollapsedPanelStrip: ({ side }: { side: string }) => (
+    <div data-testid={`collapsed-${side}-rail`} />
+  ),
 }));
-vi.mock("@/components/playground/PlaygroundRightRail", () => ({
-  PlaygroundRightRail: () => null,
-}));
+// The rail's own tab strip: each tab's close, and Collapse panel.
+vi.mock("@/components/playground/PlaygroundRightRail", async () => {
+  const { useExtensionRail } = await import(
+    "@/components/host-workspace/use-extension-rail"
+  );
+  return {
+    PlaygroundRightRail: ({ onClose }: { onClose: () => void }) => {
+      const rail = useExtensionRail();
+      return (
+        <div>
+          {rail.tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              aria-label={`Close ${tab.title}`}
+              onClick={() => rail.close(tab.id)}
+            />
+          ))}
+          <button type="button" aria-label="Collapse panel" onClick={onClose} />
+        </div>
+      );
+    },
+  };
+});
 // Relative to PlaygroundTab.tsx, so "../X" from this __tests__ dir resolves to
 // the same module the source imports as "./X".
-vi.mock("../PlaygroundCenter", () => ({
-  PlaygroundCenter: () => <div data-testid="playground-center" />,
-}));
+vi.mock("../PlaygroundCenter", async () => {
+  const style = await import("@/contexts/scenario-client-style-context");
+  const caps = await import(
+    "@/contexts/scenario-client-capabilities-override-context"
+  );
+  const profile = await import("@/contexts/active-mcp-profile-context");
+  const resolver = await import(
+    "@/contexts/active-host-client-capabilities-context"
+  );
+  const extensions = await import(
+    "@/components/host-workspace/ExtensionWorkspaceProvider"
+  );
+  return {
+    PlaygroundCenter: (props: unknown) => {
+      mockPlaygroundCenter(props);
+      mockCenterStore.current = extensions.useExtensionStore();
+      return (
+        <>
+          <div data-testid="playground-center">
+            {JSON.stringify({
+              style: style.useScenarioHostStyle(),
+              theme: style.useScenarioHostTheme(),
+              chatUi: style.useScenarioChatUiOverride(),
+              capabilities: caps.useScenarioHostCapabilitiesOverride(),
+              profile: profile.useActiveMcpProfile(),
+              clientCapabilities: resolver.useActiveHostCapsResolver()(),
+            })}
+          </div>
+          <textarea data-chat-composer-input="" aria-label="Composer" />
+        </>
+      );
+    },
+  };
+});
 vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
 }));
@@ -141,7 +176,17 @@ describe("PlaygroundTab loading branch", () => {
     });
     useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
+    mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
+    mockUseAutoConnectProjectServers.mockClear();
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<PlaygroundTab {...baseProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
+    );
   });
 
   it("does not close a persisted panel while conversation metadata is restoring", () => {
@@ -182,5 +227,199 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).not.toHaveBeenCalled();
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
+  });
+
+  it("reports readiness again when an already-ready Playground starts its first-run handoff", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const beforeHandoff = vi.fn();
+    const duringHandoff = vi.fn();
+    const view = render(<PlaygroundTab {...baseProps} onReady={beforeHandoff} />);
+    expect(beforeHandoff).toHaveBeenCalledOnce();
+
+    view.rerender(<PlaygroundTab {...baseProps} onReady={duringHandoff} />);
+    expect(duringHandoff).toHaveBeenCalledOnce();
+  });
+
+  it("passes the one-shot first-run prompt into the Playground center", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const onFirstRunPromptConsumed = vi.fn();
+
+    render(
+      <PlaygroundTab
+        {...baseProps}
+        firstRunPrompt="What can this server do?"
+        onFirstRunPromptConsumed={onFirstRunPromptConsumed}
+      />,
+    );
+
+    expect(mockPlaygroundCenter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+        onFirstRunPromptConsumed,
+      }),
+    );
+  });
+});
+
+it("keeps the project host's style, overrides, profile, and saved capabilities", () => {
+  mockLoadingState.current = { kind: "ready" };
+  const host = {
+    hostStyle: "codex",
+    chatUiOverride: { label: "Custom" },
+    hostCapabilitiesOverride: { tools: {} },
+    mcpProfile: { version: 1 },
+    clientCapabilities: { extensions: { "test/saved": {} } },
+  } as any;
+  render(<PlaygroundTab {...baseProps} activeHost={host} />);
+  expect(
+    JSON.parse(screen.getByTestId("playground-center").textContent!),
+  ).toMatchObject({
+    style: "codex",
+    theme: "light",
+    chatUi: host.chatUiOverride,
+    capabilities: host.hostCapabilitiesOverride,
+    profile: host.mcpProfile,
+    clientCapabilities: host.clientCapabilities,
+  });
+});
+
+describe("PlaygroundTab — leaving a model App's fullscreen in the side panel", () => {
+  beforeEach(() => {
+    useActiveChatSessionStore.setState({
+      sessionId: null,
+      restoredSession: null,
+      restorationPending: false,
+    });
+    useBrowserWorkspaceStore.setState({ conversations: {} });
+    mockLoadingState.current = { kind: "ready" };
+    mockCenterStore.current = null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** The Playground's width (the chat/side-panel group is measured). */
+  function renderAt(width: number) {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      width,
+      height: 800,
+      top: 0,
+      left: 0,
+      right: width,
+      bottom: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    render(<PlaygroundTab {...baseProps} />);
+  }
+  /**
+   * A model App goes fullscreen: it becomes the rail's selected tab and the
+   * rail opens. Its exit returns it inline, which ends the tab.
+   */
+  function enterFullscreen() {
+    const store = mockCenterStore.current!;
+    const exit = vi.fn(() => store.setState({ modelFullscreen: null }));
+    act(() => {
+      store.setState({
+        enabled: true,
+        modelFullscreen: { label: "Bits & Bolts", exit },
+      });
+      revealRail(store);
+    });
+    return { store, exit };
+  }
+  const overlay = () => document.querySelector("[data-right-rail-overlay]");
+  const railCollapsed = () => screen.queryByTestId("collapsed-right-rail");
+  const composer = () => screen.getByRole("textbox", { name: "Composer" });
+
+  it("narrow: the rail covers the chat while fullscreen; Exit full screen gives the chat and composer back", () => {
+    renderAt(531);
+    const { store } = enterFullscreen();
+    expect(overlay()).not.toBeNull();
+    expect(railCollapsed()).toBeNull();
+
+    // The App's own Exit: it returns inline and dismisses the rail.
+    act(() => {
+      store.setState({ modelFullscreen: null });
+      dismissRail(store);
+    });
+    expect(overlay()).toBeNull();
+    expect(railCollapsed()).not.toBeNull();
+    expect(composer()).toHaveFocus();
+  });
+
+  it("wide: the chat stays beside the rail, and Exit full screen leaves the rail open", () => {
+    renderAt(1280);
+    const { store } = enterFullscreen();
+    expect(overlay()).toBeNull();
+    expect(railCollapsed()).toBeNull();
+    act(() => {
+      store.setState({ modelFullscreen: null });
+      dismissRail(store);
+    });
+    expect(overlay()).toBeNull();
+    expect(railCollapsed()).toBeNull();
+    expect(composer()).not.toHaveFocus();
+  });
+
+  it.each([
+    ["narrow", 531],
+    ["wide", 1280],
+  ])(
+    "%s: closing the fullscreen tab returns the App inline and never leaves an empty panel over the chat",
+    (name, width) => {
+      renderAt(width);
+      const { exit } = enterFullscreen();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Close Bits & Bolts" }),
+      );
+      expect(exit).toHaveBeenCalled();
+      expect(
+        screen.queryByRole("button", { name: "Close Bits & Bolts" }),
+      ).toBeNull();
+      expect(overlay()).toBeNull();
+      // Only a narrow window gives up the rail to show the chat.
+      expect(railCollapsed() !== null).toBe(name === "narrow");
+      if (name === "narrow") expect(composer()).toHaveFocus();
+    },
+  );
+
+  it.each([
+    ["narrow", 531],
+    ["wide", 1280],
+  ])(
+    "%s: collapsing the panel ends the fullscreen instead of leaving the App over the window",
+    (_name, width) => {
+      renderAt(width);
+      const { exit } = enterFullscreen();
+      fireEvent.click(screen.getByRole("button", { name: "Collapse panel" }));
+      expect(exit).toHaveBeenCalledTimes(1);
+      expect(overlay()).toBeNull();
+      expect(railCollapsed()).not.toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Close Bits & Bolts" }),
+      ).toBeNull();
+    },
+  );
+
+  it("narrow: Escape dismisses the covering rail and returns focus to the composer", () => {
+    renderAt(531);
+    const { exit } = enterFullscreen();
+    screen.getByRole("button", { name: "Collapse panel" }).focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(overlay()).toBeNull();
+    expect(railCollapsed()).not.toBeNull();
+    expect(composer()).toHaveFocus();
   });
 });

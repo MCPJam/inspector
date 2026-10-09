@@ -63,12 +63,28 @@ describe("Suite Health", () => {
     data.details.get("old")!.run.runGroupId = "shared-launch";
     data.details.get("new")!.run.runGroupId = "shared-launch";
     data.details.get("new")!.run.client = {
-      source: "suite_default", name: "Cursor", hostStyle: "cursor",
+      source: "suite_default",
+      name: "Cursor",
+      hostStyle: "cursor",
     };
     const onSelectRun = vi.fn();
-    render(<SuiteHealth {...data} complete failed={false} onRetry={vi.fn()} hostNamesById={new Map()} onSelectRun={onSelectRun} />);
+    render(
+      <SuiteHealth
+        {...data}
+        complete
+        failed={false}
+        onRetry={vi.fn()}
+        hostNamesById={new Map()}
+        onSelectRun={onSelectRun}
+      />,
+    );
     // The newest client is Cursor, but both clients share row #1.
-    const point = buildSuiteHealth(data.rows, data.details, "s1", "style:cursor").points[0];
+    const point = buildSuiteHealth(
+      data.rows,
+      data.details,
+      "s1",
+      "style:cursor",
+    ).points[0];
     expect(point.runNumber).toBe(1);
     expect(point.rate).toBeCloseTo(100 / 3);
     await userEvent.setup().click(screen.getByTestId("suite-health-bar"));
@@ -184,6 +200,29 @@ describe("Suite Health", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it("holds the card's full height while the history loads", () => {
+    render(
+      <SuiteHealth
+        {...fixture()}
+        complete={false}
+        failed={false}
+        onRetry={vi.fn()}
+        hostNamesById={new Map()}
+      />,
+    );
+    // No number at all until it is real — a skeleton cannot be misread as one.
+    expect(screen.queryByTestId("suite-health-average")).toBeNull();
+    const loading = screen.getByRole("status", {
+      name: "Loading run history",
+    });
+    expect(
+      loading.querySelectorAll('[data-slot="skeleton"]').length,
+    ).toBeGreaterThan(0);
+    // The axis is the card's real one, so the chart does not resize on load.
+    expect(loading).toHaveTextContent("100%");
+    expect(loading).toHaveTextContent("0%");
+  });
+
   it("excludes in-flight runs and does not invent empty results", () => {
     const { rows, details } = fixture();
     rows[0].status = "running";
@@ -191,5 +230,22 @@ describe("Suite Health", () => {
     expect(
       buildSuiteHealth(rows, details, "s1", "style:claude").average,
     ).toBeNull();
+  });
+
+  it("skips a finished run whose detail was read while it was still running", () => {
+    const { rows, details } = fixture();
+    details.get("new")!.run.status = "running";
+    const result = buildSuiteHealth(rows, details, "s1", "style:claude");
+    expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
+  });
+
+  it("never charts or averages a subset rerun", () => {
+    const { rows, details } = fixture();
+    // "new" re-ran only what failed in "old": it is listed, never measured.
+    details.get("new")!.run.rerunOfRunId = "old";
+    details.get("new")!.run.rerunScope = "failed_cases";
+    const result = buildSuiteHealth(rows, details, "s1", "style:claude");
+    expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
+    expect(result.average).toBe(100);
   });
 });

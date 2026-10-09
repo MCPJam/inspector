@@ -1,4 +1,18 @@
 import * as Sentry from "@sentry/react";
+import {
+  isSentryId,
+  type SentryActor as SharedSentryActor,
+} from "../../../shared/sentry-identity";
+
+export function desktopSentryFallback() {
+  const id =
+    typeof window === "undefined"
+      ? undefined
+      : window.electronAPI?.sentry?.installationId;
+  return isSentryId(id) && id.startsWith("installation:")
+    ? { user: { id }, tags: { actor_kind: "installation" } }
+    : undefined;
+}
 
 /**
  * The one place the Sentry scope learns who is using the app.
@@ -16,10 +30,9 @@ import * as Sentry from "@sentry/react";
  * client Sentry issue and the server log line for the same request should be
  * filterable by the same word rather than by two dialects of it.
  */
-export type SentryActorKind = "signedIn" | "guest";
+export type SentryActorKind = SharedSentryActor["kind"];
 
-export interface SentryActor {
-  kind: SentryActorKind;
+export interface SentryActor extends SharedSentryActor {
   /**
    * The same key PostHog identifies on (`useActorKey`): the WorkOS user id when
    * signed in, the cookie-backed guest id otherwise. Shared deliberately — it
@@ -46,9 +59,17 @@ export interface SentryActor {
  * field on purpose.
  */
 export function setSentryActor(actor: SentryActor | null): void {
+  try {
+    window.electronAPI?.sentry?.setActor(
+      actor ? { id: actor.id, kind: actor.kind } : null,
+    );
+  } catch {
+    /* Telemetry must not interrupt sign-in or sign-out. */
+  }
   if (!actor) {
-    Sentry.setUser(null);
-    Sentry.setTag("actor_kind", undefined);
+    const fallback = desktopSentryFallback();
+    Sentry.setUser(fallback?.user ?? null);
+    Sentry.setTag("actor_kind", fallback?.tags.actor_kind);
     return;
   }
 
@@ -76,7 +97,7 @@ export function setSentryActor(actor: SentryActor | null): void {
  * reads, in a filter dropdown, as an org whose name failed to load.
  */
 export function setSentryOrganization(
-  organizationId: string | null | undefined
+  organizationId: string | null | undefined,
 ): void {
   const trimmed = organizationId?.trim();
   Sentry.setTag("organization_id", trimmed ? trimmed : undefined);

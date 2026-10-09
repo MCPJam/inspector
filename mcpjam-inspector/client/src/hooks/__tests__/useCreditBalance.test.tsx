@@ -18,7 +18,17 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mocks.convexAuth,
-  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
+}));
+
+// The balance is a soft read. Route it through `mocks.useQuery` so the
+// assertions keep reading as (name, args), "skip" included.
+vi.mock("@/hooks/use-soft-query", () => ({
+  useSoftQuery: (name: string, args: unknown) => {
+    const result = mocks.useQuery(name, args);
+    return result instanceof Error
+      ? { data: undefined, error: result }
+      : { data: result, error: undefined };
+  },
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -81,6 +91,9 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
+      platformPaidFallback: false,
+      platformFreeBudgetExhausted: false,
+      platformFreeBudgetResetAt: null,
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
@@ -113,6 +126,25 @@ describe("useCreditBalance", () => {
     expect(result.current.balance?.freeDailyPercentUsed).toBe(65);
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.hasWorkOsUser).toBe(true);
+  });
+
+  // The sidebar and the chat input read this on every page; a failed balance
+  // has to leave them rendering, with no balance and no endless skeleton.
+  it("reads a failed balance as settled with no balance, without throwing", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
+      args === "skip"
+        ? undefined
+        : new Error("[CONVEX Q(billing:getCreditBalance)] Server Error")
+    );
+
+    const { result } = renderHook(() =>
+      useCreditBalance({ organizationId: "org-1" })
+    );
+
+    expect(result.current.balance).toBeUndefined();
+    expect(result.current.isLoading).toBe(false);
   });
 
   it("skips signed-in fetches until an organization is selected", () => {

@@ -63,6 +63,7 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 
 import { ProjectRunsTable, type ProjectRunRow } from "../project-runs-table";
 import { SuiteDetailOverview } from "../../evaluate/suite-detail-overview";
+import { metricsByRunFromIterations } from "../run-metrics";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
@@ -163,7 +164,7 @@ function makeProjectRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
     runNumber: 1,
     status: "completed",
     result: "passed",
-    summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
+    summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 },
     source: "sdk",
     ciMetadata: null,
     createdBy: "user_1",
@@ -481,7 +482,7 @@ function historyElement(
       cases={CASES}
       runs={runs}
       runsLoading={false}
-      allIterations={iterations}
+      metricsByRun={metricsByRunFromIterations(iterations)}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}

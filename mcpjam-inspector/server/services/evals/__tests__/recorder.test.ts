@@ -7,13 +7,16 @@ import {
 
 describe("startSuiteRunWithRecorder", () => {
   it("forwards the GitHub server replacement and omits undefined overrides", async () => {
-    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
     const githubCheckServerOverride = [
       { serverName: "gh-check-trigger-1", projectServerId: "server-1" },
     ];
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation } as any,
+      convexClient: { mutation, action } as any,
       suiteId: "suite-1",
       source: "github_check",
       githubCheckServerOverride,
@@ -26,11 +29,11 @@ describe("startSuiteRunWithRecorder", () => {
 
     mutation.mockClear();
     await startSuiteRunWithRecorder({
-      convexClient: { mutation } as any,
+      convexClient: { mutation, action } as any,
       suiteId: "suite-1",
     });
     expect(mutation.mock.calls[0][1]).not.toHaveProperty(
-      "githubCheckServerOverride"
+      "githubCheckServerOverride",
     );
   });
 
@@ -39,8 +42,11 @@ describe("startSuiteRunWithRecorder", () => {
     // a field nobody names here never reaches Convex — and an approval that
     // never arrives surfaces to the caller as the backend refusing a run they
     // did approve. Asserting the exact args is the only thing that catches it.
-    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
-    const convexClient = { mutation } as any;
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation, action } as any;
     const importApprovals = [
       { testCaseId: "tc-1", reason: "Reviewed against the upstream rubric." },
     ];
@@ -70,10 +76,11 @@ describe("startSuiteRunWithRecorder", () => {
     // the `benchmarkRunId` of a live parent run (mcpjam-backend#1160). A field
     // nobody names here never reaches Convex, and dropping THIS one fails every
     // benchmark child at the mutation.
+    const action = vi.fn().mockResolvedValue(undefined);
     const mutation = vi
       .fn()
       .mockResolvedValue({ runId: "run-1", testCases: [] });
-    const convexClient = { mutation } as any;
+    const convexClient = { mutation, action } as any;
 
     await startSuiteRunWithRecorder({
       convexClient,
@@ -100,6 +107,7 @@ describe("startSuiteRunWithRecorder", () => {
   });
 
   it("forwards tool snapshot metadata when creating a suite run", async () => {
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -133,6 +141,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     const convexClient = {
       mutation: mutationMock,
+      action: actionMock,
     } as any;
 
     const toolSnapshot = {
@@ -218,12 +227,11 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
         toolSnapshotDebug: sanitizedToolSnapshotDebug,
-      })
+      }),
     );
-    expect(mutationMock).toHaveBeenNthCalledWith(
-      2,
-      "testSuites:precreateIterationsForRun",
-      { runId: "run-1" }
+    expect(actionMock).toHaveBeenCalledWith(
+      "testSuites:startSuiteRunIterations",
+      { runId: "run-1" },
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -261,8 +269,21 @@ describe("startSuiteRunWithRecorder", () => {
             servers: ["alpha"],
           },
         },
-      })
+      }),
     );
+  });
+
+  it.each(["local", "hosted"] as const)("uses the backend's frozen %s venue for fresh and deduped runs", async (venue) => {
+    for (const deduped of [false, true]) {
+      const result = await startSuiteRunWithRecorder({
+        convexClient: { mutation: vi.fn().mockResolvedValue({
+          runId: "run-1", testCases: [], deduped, status: "running",
+          configSnapshot: { environment: { servers: [] }, executionVenue: venue },
+        }), action: vi.fn() } as any,
+        suiteId: "suite-1", serverIds: [], runtimeVenue: venue === "local" ? "hosted" : "local",
+      });
+      expect(result.harnessRuntimeVenue).toBe(venue);
+    }
   });
 
   it("runs against the environment Convex snapshotted for the suite run", async () => {
@@ -275,6 +296,7 @@ describe("startSuiteRunWithRecorder", () => {
         },
       ],
     };
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -297,7 +319,7 @@ describe("startSuiteRunWithRecorder", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock } as any,
+      convexClient: { mutation: mutationMock, action: actionMock } as any,
       suiteId: "suite-1",
       serverIds: ["request-server"],
     });
@@ -311,13 +333,14 @@ describe("startSuiteRunWithRecorder", () => {
     // dereferenced live, so a host rotation or server-group edit drifts the
     // resolution at an UNCHANGED revision. All three echoes must reach Convex
     // or that drift is undetectable.
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
       .mockResolvedValueOnce(undefined);
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock } as any,
+      convexClient: { mutation: mutationMock, action: actionMock } as any,
       suiteId: "suite-1",
       serverIds: ["ps_1", "ps_plugin"],
       environmentId: "env-1",
@@ -334,18 +357,19 @@ describe("startSuiteRunWithRecorder", () => {
         expectedEnvironmentRevision: 4,
         expectedEnvironmentHostConfigId: "hc_1",
         expectedEnvironmentServerIds: ["ps_1", "ps_plugin"],
-      })
+      }),
     );
   });
 
   it("omits the environment preconditions entirely for a non-environment run", async () => {
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
       .mockResolvedValueOnce(undefined);
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock } as any,
+      convexClient: { mutation: mutationMock, action: actionMock } as any,
       suiteId: "suite-1",
       serverIds: ["alpha"],
     });
@@ -359,20 +383,21 @@ describe("startSuiteRunWithRecorder", () => {
 
   it("translates a host-drift rejection into the 409 that names the cause", async () => {
     const { ConvexError } = await import("convex/values");
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockRejectedValueOnce(new ConvexError({ code: "ENV_HOST_DRIFT" }));
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock } as any,
+        convexClient: { mutation: mutationMock, action: actionMock } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
         expectedEnvironmentRevision: 4,
         expectedEnvironmentHostConfigId: "hc_1",
         expectedEnvironmentServerIds: ["ps_1"],
-      })
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringMatching(/host or server group changed/i),
@@ -384,20 +409,21 @@ describe("startSuiteRunWithRecorder", () => {
     // echoed only host config / servers still needs its conflict translated
     // rather than surfacing as a raw 500.
     const { ConvexError } = await import("convex/values");
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi
       .fn()
       .mockRejectedValueOnce(
-        new ConvexError({ code: "ENV_REVISION_CONFLICT" })
+        new ConvexError({ code: "ENV_REVISION_CONFLICT" }),
       );
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock } as any,
+        convexClient: { mutation: mutationMock, action: actionMock } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
         expectedEnvironmentHostConfigId: "hc_1",
-      })
+      }),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -408,21 +434,22 @@ describe("startSuiteRunWithRecorder", () => {
     // it is. NOT gated on the drift echoes: this refusal is a property of the
     // environment itself, not of a precondition we sent.
     const { ConvexError } = await import("convex/values");
+    const actionMock = vi.fn().mockResolvedValue(undefined);
     const mutationMock = vi.fn().mockRejectedValueOnce(
       new ConvexError({
         code: "ENV_MODEL_REQUIRED",
         message: 'Environment "Prod" has no model to run.',
         details: { environmentId: "env-1", hostId: "h1" },
-      })
+      }),
     );
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock } as any,
+        convexClient: { mutation: mutationMock, action: actionMock } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
-      })
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: 'Environment "Prod" has no model to run.',
@@ -436,7 +463,71 @@ describe("startSuiteRunWithRecorder", () => {
     });
   });
 
+  it("forwards a rerun's lineage only when one is asked for", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation, action } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+    });
+    // An ordinary replay sends exactly the args it always sent.
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("rerunOfRunId");
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("rerunScope");
+  });
+
+  it.each([
+    ["RERUN_NOTHING_TO_RERUN", 409],
+    ["RERUN_SOURCE_NOT_TERMINAL", 409],
+    ["RERUN_SOURCE_SUITE_MISMATCH", 400],
+  ])(
+    "translates a %s rerun refusal into a %i naming the reason",
+    async (code, status) => {
+      const { ConvexError } = await import("convex/values");
+      const mutation = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ConvexError({ code, message: "The backend says why." }),
+        );
+      await expect(
+        startSuiteRunWithRecorder({
+          convexClient: { mutation, action: vi.fn() } as any,
+          suiteId: "suite-1",
+          replayedFromRunId: "source-run",
+          rerunOfRunId: "source-run",
+          rerunScope: "failed_cases",
+        }),
+      ).rejects.toMatchObject({
+        status,
+        message: "The backend says why.",
+        details: { reason: code },
+      });
+    },
+  );
+
   it("marks the suite run failed when iteration precreate fails", async () => {
+    // The precreate is an ACTION now, so the failure under test belongs to it.
+    const actionMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("validation exploded"));
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -453,38 +544,43 @@ describe("startSuiteRunWithRecorder", () => {
           },
         ],
       })
-      .mockRejectedValueOnce(new Error("validation exploded"))
       .mockResolvedValueOnce(undefined);
 
-    await expect(
-      startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock } as any,
-        suiteId: "suite-1",
-        serverIds: ["alpha"],
-      })
-    ).rejects.toThrow(
-      "Could not start eval because MCPJam failed to prepare the test attempts. Try again."
-    );
+    const failure = await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+    }).catch((error: unknown) => error);
 
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
+    );
+    // The failure text is recorded on the run and logged; the response
+    // carries only the run id (MJ-020, MJ-021).
+    expect((failure as { details?: unknown }).details).toEqual({
+      runId: "run-1",
+    });
+
+    expect(actionMock).toHaveBeenCalledWith(
+      "testSuites:startSuiteRunIterations",
+      { runId: "run-1" },
+    );
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
-      "testSuites:precreateIterationsForRun",
-      { runId: "run-1" }
+      "testSuites:markSetupPendingIterationsFailed",
+      { runId: "run-1", error: "validation exploded" },
     );
+    // One lower than before: the precreate left the mutation sequence.
     expect(mutationMock).toHaveBeenNthCalledWith(
       3,
-      "testSuites:markSetupPendingIterationsFailed",
-      { runId: "run-1", error: "validation exploded" }
-    );
-    expect(mutationMock).toHaveBeenNthCalledWith(
-      4,
       "testSuites:updateTestSuiteRun",
       {
         runId: "run-1",
         status: "failed",
         summary: undefined,
         notes: "Failed to prepare eval test attempts.",
-      }
+      },
     );
   });
 });
@@ -554,7 +650,7 @@ describe("createSuiteRunRecorder", () => {
 
       expect(action).toHaveBeenCalledWith(
         "testSuites:updateTestIteration",
-        expect.any(Object)
+        expect.any(Object),
       );
       await vi.advanceTimersByTimeAsync(2_000);
     } finally {
@@ -567,9 +663,7 @@ describe("createSuiteRunRecorder", () => {
       if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
       if (ref === "testSuites:getTestSuiteRunDetails") {
         return {
-          iterations: [
-            { _id: "iter1", testCaseId: "tc1", iterationNumber: 1 },
-          ],
+          iterations: [{ _id: "iter1", testCaseId: "tc1", iterationNumber: 1 }],
         };
       }
       throw new Error(`unexpected query ${ref}`);
@@ -592,19 +686,19 @@ describe("createSuiteRunRecorder", () => {
         repetitionCount: 1,
         renderConcurrencyLimit: 2,
         modelIdentifiers: [],
-      })
+      }),
     ).resolves.toBeUndefined();
     await expect(
       recorder.startIteration({
         testCaseId: "tc1",
         iterationNumber: 1,
         startedAt: Date.now(),
-      })
+      }),
     ).resolves.toBe("iter1");
     expect(
       mutation.mock.calls.some(
-        ([ref]) => ref === "testSuites:recordEvalIterationRuntimeStart"
-      )
+        ([ref]) => ref === "testSuites:recordEvalIterationRuntimeStart",
+      ),
     ).toBe(false);
   });
 
@@ -613,9 +707,7 @@ describe("createSuiteRunRecorder", () => {
       if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
       if (ref === "testSuites:getTestSuiteRunDetails") {
         return {
-          iterations: [
-            { _id: "iter1", testCaseId: "tc1", iterationNumber: 1 },
-          ],
+          iterations: [{ _id: "iter1", testCaseId: "tc1", iterationNumber: 1 }],
         };
       }
       if (ref === "testSuites:getTestIteration") return { status: "running" };
@@ -664,10 +756,10 @@ describe("createSuiteRunRecorder", () => {
     expect(refs).toContain("testSuites:recordEvalIterationRuntimeEnd");
     expect(refs).toContain("testSuites:finalizeEvalRuntimeAttempt");
     expect(refs.indexOf("testSuites:finalizeEvalRuntimeAttempt")).toBeLessThan(
-      refs.indexOf("testSuites:updateTestSuiteRun")
+      refs.indexOf("testSuites:updateTestSuiteRun"),
     );
     const endCall = mutation.mock.calls.find(
-      ([ref]) => ref === "testSuites:recordEvalIterationRuntimeEnd"
+      ([ref]) => ref === "testSuites:recordEvalIterationRuntimeEnd",
     );
     expect(endCall?.[1]).toMatchObject({
       iterationId: "iter1",
@@ -675,7 +767,7 @@ describe("createSuiteRunRecorder", () => {
       executionOutcome: "completed",
     });
     expect((endCall?.[1] as any).endOffsetMs).toBeGreaterThanOrEqual(
-      (endCall?.[1] as any).startOffsetMs
+      (endCall?.[1] as any).startOffsetMs,
     );
   });
 

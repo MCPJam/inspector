@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
-  EVALS_EMPTY_HERO_MAX_SERVERS,
+  EVALS_EMPTY_HERO_DENSE_THRESHOLD,
   EvalsEmptyHero,
 } from "../evals-empty-hero";
 
@@ -94,28 +94,20 @@ describe("EvalsEmptyHero", () => {
     });
   });
 
-  it("caps server cards so the hero does not overflow", () => {
-    const servers = Array.from({ length: EVALS_EMPTY_HERO_MAX_SERVERS + 2 }, (_, i) => ({
-      id: `srv-${i}`,
-      name: `server-${i}`,
-    }));
+  it("shows a card for every server, however many there are", () => {
+    const servers = Array.from(
+      { length: EVALS_EMPTY_HERO_DENSE_THRESHOLD + 4 },
+      (_, i) => ({ id: `srv-${i}`, name: `server-${i}` }),
+    );
     render(
       <EvalsEmptyHero {...defaultProps} servers={servers} onEvalServer={vi.fn()} />,
     );
 
-    expect(
-      screen.getByRole("button", { name: "Eval my server: server-0" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", {
-        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS - 1}`,
-      }),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", {
-        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS}`,
-      }),
-    ).toBeNull();
+    for (const server of servers) {
+      expect(
+        screen.getByRole("button", { name: `Eval my server: ${server.name}` }),
+      ).toBeTruthy();
+    }
   });
 
   it("holds the CTAs until project servers finish loading", () => {

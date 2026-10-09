@@ -16,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, ChevronDown, Server, X } from "lucide-react";
+import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
   Popover,
@@ -109,29 +109,6 @@ export type ServerPickerProps = {
    */
   variant?: "pill" | "field";
 };
-
-/**
- * BB-234: a swarm's agents act for real on whatever is picked here — they
- * write and they delete. Inline at the moment of choice rather than a modal
- * after it, which was the call in the thread. It lives here, not in the
- * panel: the design system ships primitives, and which surfaces must carry
- * this is a product question with an open answer.
- */
-const PRODUCTION_WARNING = (
-  <div className="flex items-start gap-1.5 px-2 pb-1 pt-0.5">
-    <AlertTriangle
-      className="mt-[1px] size-3 shrink-0 text-warning"
-      aria-hidden
-    />
-    <p
-      className="text-[11px] leading-snug text-muted-foreground"
-      data-testid="server-picker-production-warning"
-    >
-      Agents take real actions on these servers, including writing and deleting
-      data. Use development servers, not production.
-    </p>
-  </div>
-);
 
 export function ServerPicker({
   projectId,
@@ -463,6 +440,9 @@ export function ServerPicker({
         id: group._id,
         name: group.name,
         serverNames: group.resolvedServerNames ?? [],
+        deleteDisabledReason: group.inUse
+          ? "In use by a test suite."
+          : undefined,
       })),
     [attachments],
   );
@@ -686,8 +666,9 @@ export function ServerPicker({
    * Remove a group. The only caller of this mutation in the app: without it a
    * project accumulates stand-ins nothing can clear.
    *
-   * The backend refuses a group a suite still uses and says which; that
-   * message is worth more than anything phrased here, so it is passed through.
+   * Groups the listing marks `inUse` never reach here — their control is
+   * greyed out. The backend still refuses on a race, and its message is
+   * passed through.
    */
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {
@@ -852,7 +833,7 @@ export function ServerPicker({
       </div>
 
       <PopoverContent
-        className="w-72 p-1.5"
+        className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto p-1.5"
         align="start"
         sideOffset={4}
         portalled={!inModal}
@@ -873,7 +854,9 @@ export function ServerPicker({
             selection?.kind === "server" ? selection.serverId : null
           }
           selectedGroupId={
-            selection?.kind === "group" ? selection.groupId : null
+            selection && selection.kind !== "dangling"
+              ? selection.groupId
+              : null
           }
           onSelectServer={(serverId) => void handleSelectServer(serverId)}
           onSelectGroup={(groupId) => void handleSelectGroup(groupId)}
@@ -881,7 +864,6 @@ export function ServerPicker({
           deriveName={deriveName}
           catalogKnown={catalogKnown}
           busy={busy}
-          notice={PRODUCTION_WARNING}
           onDeleteGroup={
             disabled ? undefined : (id) => void handleDeleteGroup(id)
           }
@@ -889,6 +871,7 @@ export function ServerPicker({
           // is refused — so the control is withheld rather than offered and
           // then denied.
           canDeleteSelected={Boolean(onClearSelection)}
+          onAddServer={() => navigateApp(routePaths.servers)}
         />
       </PopoverContent>
     </Popover>

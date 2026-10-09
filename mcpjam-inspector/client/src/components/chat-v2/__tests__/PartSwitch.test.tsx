@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
+import { callTool, executeToolApi } from "@/lib/apis/mcp-tools-api";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -185,10 +186,102 @@ describe("PartSwitch", () => {
     onExitFullscreen: vi.fn(),
   };
 
+  it("renders titled App text as one labeled item and mention references using the same chip", () => {
+    const view = render(
+      <PartSwitch
+        {...defaultProps}
+        part={
+          {
+            type: "data-plugin-message-text",
+            data: { title: "Triangle", text: "selected triangle detail" },
+          } as any
+        }
+      />,
+    );
+    expect(screen.getByText("Triangle")).toBeInTheDocument();
+    expect(view.container.querySelector("details summary")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /Remove/ }),
+    ).not.toBeInTheDocument();
+    view.rerender(
+      <PartSwitch
+        {...defaultProps}
+        part={
+          {
+            type: "data-plugin-mention",
+            data: {
+              serverId: "s",
+              toolName: "mentions",
+              item: {
+                type: "resource_link",
+                uri: "fixture://part",
+                name: "Part",
+              },
+            },
+          } as any
+        }
+      />,
+    );
+    expect(screen.getByText("Part")).toBeInTheDocument();
+    expect(view.container.querySelector("a")).toBeNull();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockDetectUIType.mockReturnValue(null);
   });
+
+  it.each(["openai-apps", "mcp-apps", "both", null])(
+    "keeps recorded widgets static under placeholder policy (%s)",
+    (uiType) => {
+      mockDetectUIType.mockReturnValue(uiType);
+      const fetch = vi.spyOn(globalThis, "fetch");
+      const sendFollowUp = vi.fn();
+      const modelContextUpdate = vi.fn();
+      const { container } = render(
+        <PartSwitch
+          {...defaultProps}
+          role="assistant"
+          interactive={false}
+          onSendFollowUp={sendFollowUp}
+          onModelContextUpdate={modelContextUpdate}
+          widgetPolicy="placeholder"
+          part={
+            {
+              type: "dynamic-tool",
+              toolName: "search",
+              toolCallId: "call-123",
+              state: "output-available",
+              input: {},
+              output: { answer: 42 },
+            } as any
+          }
+          toolRenderOverrides={
+            {
+              "call-123": {
+                resourceUri: "ui://search",
+                cachedWidgetHtmlUrl: "https://example.com/widget",
+                frozenScreenshotUrl: "https://example.com/screenshot",
+              },
+            } as any
+          }
+        />,
+      );
+      expect(
+        container.querySelector('[data-widget-placeholder="true"]'),
+      ).not.toBeNull();
+      expect(screen.queryByTestId("tool-part")).not.toBeInTheDocument();
+      expect(mockToolPart).not.toHaveBeenCalled();
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      expect(container.querySelector("iframe, img")).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(callTool).not.toHaveBeenCalled();
+      expect(executeToolApi).not.toHaveBeenCalled();
+      expect(sendFollowUp).not.toHaveBeenCalled();
+      expect(modelContextUpdate).not.toHaveBeenCalled();
+      fetch.mockRestore();
+    },
+  );
 
   it.each([null, "browser_consent_required"])(
     "hides internal browser readiness (%s)",
@@ -467,6 +560,95 @@ describe("PartSwitch", () => {
         JSON.stringify(rawResult),
       );
     });
+
+    it.each([
+      "input-streaming",
+      "input-available",
+      "approval-requested",
+      "approval-responded",
+      "output-denied",
+      "output-error",
+    ])("does not mount an App for a pending/failed model tool: %s", (state) => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              type: "tool-invocation",
+              toolName: "pickFile",
+              toolCallId: "pending-form",
+              state,
+              input: {},
+            } as any
+          }
+          toolsMetadata={{ pickFile: { ui: { resourceUri: "ui://pick" } } }}
+        />,
+      );
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+    });
+    it("mounts only after a pending model form succeeds and does not mount error results", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "pickFile",
+        toolCallId: "pending-form",
+        state: "input-available",
+        input: {},
+      };
+      const view = render(<PartSwitch {...defaultProps} part={part as any} />);
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      view.rerender(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              ...part,
+              state: "output-available",
+              output: { isError: true, content: [] },
+            } as any
+          }
+        />,
+      );
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      view.rerender(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              ...part,
+              state: "output-available",
+              output: { content: [] },
+            } as any
+          }
+        />,
+      );
+      expect(mockWidgetReplay).toHaveBeenCalledOnce();
+    });
+
+    it.each(["error-text", "error-json"])(
+      "does not mount a guest after owned execution fails with %s",
+      (type) => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={
+              {
+                type: "tool-invocation",
+                toolName: "cad.tray",
+                toolCallId: "owned-failed",
+                state: "output-available",
+                output: { type, value: "INSTANCE_BINDING_UNAVAILABLE" },
+              } as any
+            }
+          />,
+        );
+        expect(mockWidgetReplay).not.toHaveBeenCalled();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      },
+    );
 
     describe("host capability gate (Bug 1)", () => {
       it("renders WidgetReplay when the host advertises the MCP UI extension", () => {

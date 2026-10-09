@@ -335,3 +335,12 @@ describe("a row from a newer analyzer degrades, it never throws", () => {
     expect(document.body.textContent).toContain("brandNew");
   });
 });
+
+it("marks a completed chain stale when the backend rejects its evidence version", () => {
+  const { container } = render(
+    <SessionUserValueChain
+      derivation={derivation({ source: "swarm", evidenceStale: true })}
+    />,
+  );
+  expect(container.querySelector('[data-presentation="stale"]')).toBeTruthy();
+});

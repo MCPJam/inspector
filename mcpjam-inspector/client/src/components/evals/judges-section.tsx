@@ -1,18 +1,29 @@
-import { useMemo } from "react";
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL,
+  RESERVED_JUDGE_SLOTS,
+  type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
+import {
+  findModelForStoredChoice,
+  selectionBesideLegacyId,
+} from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import {
+  selectionReasoningEffort,
+  withReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { JudgeModelPicker } from "./judge-model-picker";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -28,9 +39,17 @@ import {
  */
 
 interface JudgesSectionProps {
+  policy?: GoalJudgePolicy;
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
+  /**
+   * Save the picked row's model selection beside `judgeModel`. Defaults to
+   * whether the active project's deployment stores selections
+   * (`useModelSelectionsSupported`); when false only the legacy id is
+   * written, which every deployment accepts.
+   */
+  saveModelSelections?: boolean;
   title?: string;
   description?: string;
   /**
@@ -64,30 +83,85 @@ export function pruneEmpty(
   const gc = value.goalCompletion;
   const hasGoalCompletion = Boolean(
     gc &&
-      (gc.enabled !== undefined ||
-        (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
-        gc.threshold !== undefined ||
-        gc.autoRun !== undefined ||
-        // `role` counts, and it is the one field here that must never be dropped
-        // by accident: a suite carrying only `role: "gating"` — legal, because an
-        // absent `enabled` already resolves to on — would otherwise have its whole
-        // judge config discarded the moment someone reset the model to the managed
-        // default, silently erasing a gate the organization had to earn.
-        gc.role !== undefined ||
-        // Same for presentation severity: a suite whose only authored field is
-        // `severity: "warn"` would otherwise vanish on an unrelated model reset.
-        gc.severity !== undefined),
+    (gc.enabled !== undefined ||
+      (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
+      gc.threshold !== undefined ||
+      gc.autoRun !== undefined ||
+      // `role` counts, and it is the one field here that must never be dropped
+      // by accident: a suite carrying only `role: "gating"` — legal, because an
+      // absent `enabled` already resolves to on — would otherwise have its whole
+      // judge config discarded the moment someone reset the model to the managed
+      // default, silently erasing a gate the organization had to earn.
+      gc.role !== undefined ||
+      // Same for presentation severity: a suite whose only authored field is
+      // `severity: "warn"` would otherwise vanish on an unrelated model reset.
+      gc.severity !== undefined),
   );
-  const groundedness = value.groundedness;
-  const hasGroundedness = groundedness !== undefined;
-  if (!hasGoalCompletion && !hasGroundedness) return undefined;
+  // Every other slot is kept whenever it is present: this section edits goal
+  // completion only, and dropping a slot it does not own would read as a
+  // deliberate clear of that judge's settings.
+  const reserved = Object.fromEntries(
+    RESERVED_JUDGE_SLOTS.filter((slot) => value[slot] !== undefined).map(
+      (slot) => [slot, value[slot]],
+    ),
+  ) as Partial<Pick<EvalJudgeConfig, (typeof RESERVED_JUDGE_SLOTS)[number]>>;
+  if (!hasGoalCompletion && Object.keys(reserved).length === 0)
+    return undefined;
   return {
     ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
-    ...(hasGroundedness ? { groundedness } : {}),
+    ...reserved,
+  };
+}
+
+/**
+ * The goal-completion patch for a judge-model pick: the id plus, when the
+ * picked row can be saved as one beside that id, its model selection. Both
+ * are always written together (a stale selection naming the previous judge
+ * would be refused), and both clear for the managed default.
+ */
+export function judgeModelPatch(
+  /** The picked row itself, or a bare id (resolved like a stored choice). */
+  next: string | ModelDefinition,
+  availableModels: readonly ModelDefinition[],
+  /** The deployment stores selections (`modelSelectionsSupported`). */
+  saveModelSelection = true,
+  /**
+   * The effort saved on the previous judge. It follows the pick only when the
+   * picked row lists it (an effort belongs to the model it was chosen for).
+   */
+  previousEffort?: ModelReasoningEffort,
+): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
+  const nextId = typeof next === "string" ? next : String(next.id);
+  if (nextId === MANAGED_DEFAULT_JUDGE_MODEL) {
+    return { judgeModel: undefined, judgeSelection: undefined };
+  }
+  // The picked row when the picker hands it over; otherwise the row a stored
+  // choice of this id resolves to (`findModelForStoredChoice`, which prefers
+  // the hosted row — judges run only on MCPJam-hosted models), never simply
+  // the first row that happens to share the id (an org row of the same id
+  // would save a non-hosted judge the backend refuses).
+  const row = !saveModelSelection
+    ? undefined
+    : typeof next !== "string"
+      ? next
+      : findModelForStoredChoice({ modelId: nextId }, availableModels, undefined);
+  const base = row ? selectionBesideLegacyId(row, "judge") : undefined;
+  const keepsEffort =
+    row !== undefined &&
+    base !== undefined &&
+    previousEffort !== undefined &&
+    reasoningEffortOptions(row, reasoningEffortRouteForRow(row)).includes(
+      previousEffort,
+    );
+  return {
+    judgeModel: nextId,
+    judgeSelection:
+      base && keepsEffort ? withReasoningEffort(base, previousEffort) : base,
   };
 }
 
 export function JudgesSection({
+  policy,
   value,
   onChange,
   availableModels,
@@ -96,7 +170,11 @@ export function JudgesSection({
   chrome = "panel",
   bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
   bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
+  saveModelSelections,
 }: JudgesSectionProps) {
+  // Explicit prop wins; otherwise ask the active project's deployment.
+  const deploymentStoresSelections = useModelSelectionsSupported();
+  const saveSelections = saveModelSelections ?? deploymentStoresSelections;
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
   // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
@@ -104,61 +182,31 @@ export function JudgesSection({
   // does at run time.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
-  const autoRun = gc?.autoRun === true;
+  // The row the saved judge names; none for the managed default (no explicit
+  // model to set an effort on).
+  const judgeRow =
+    gc?.judgeModel && gc.judgeModel !== MANAGED_DEFAULT_JUDGE_MODEL
+      ? // The saved selection names the row (its source and connection), else
+        // the legacy id does, hosted first.
+        findModelForStoredChoice(
+          { modelId: gc.judgeModel, selection: gc.judgeSelection },
+          availableModels,
+          undefined,
+        )
+      : undefined;
+  const autoRun = gc?.autoRun ?? policy?.effective.autoRun;
 
-  // The bare (suite settings sheet) surface presents ONE switch that means
-  // what a developer reads it to mean: "grade every run automatically." So it
-  // binds to `enabled && autoRun` and writes both together — turning it on
-  // makes new runs grade on completion (via the backend snapshot auto-run
-  // gate), with no per-run click. The panel chrome keeps the two as separate
-  // advanced knobs. `sectionOn` drives both the switch and the model-row
-  // visibility so they never disagree.
-  const sectionOn = isBare ? enabled && autoRun : enabled;
+  const stateUnknown = enabled && autoRun === undefined;
+  const sectionOn = enabled && autoRun === true;
   const handleMainToggle = (checked: boolean) => {
-    if (isBare) {
-      // ON → enable + auto-grade every run. OFF → fully off (no auto, no
-      // manual). The nuanced "enabled but manual-only" state stays reachable
-      // from the panel chrome's separate toggles.
-      update(
-        checked
-          ? { enabled: true, autoRun: true }
-          : { enabled: false, autoRun: undefined },
-      );
-      return;
-    }
-    // Persist EXPLICIT true/false. `undefined` means "inherit the default"
-    // (enabled: true), so writing `enabled: undefined` here would silently
-    // re-enable a suite the user just disabled.
-    update({ enabled: checked });
+    update({ enabled: checked, autoRun: checked });
   };
-
-  const modelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      if (id && !map.has(id)) {
-        map.set(id, model.name ?? id);
-      }
-    }
-    // Always keep the managed default + the current selection selectable,
-    // even before the async model catalog loads.
-    if (!map.has(MANAGED_DEFAULT_JUDGE_MODEL)) {
-      map.set(MANAGED_DEFAULT_JUDGE_MODEL, MANAGED_DEFAULT_JUDGE_MODEL);
-    }
-    if (judgeModel && !map.has(judgeModel)) {
-      map.set(judgeModel, judgeModel);
-    }
-    return Array.from(map, ([id, label]) => ({ id, label }));
-  }, [availableModels, judgeModel]);
 
   const update = (
     patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
   ) => {
     const nextGC = { ...(gc ?? {}), ...patch };
-    const nextConfig: EvalJudgeConfig = {
-      goalCompletion: nextGC,
-      ...(value?.groundedness ? { groundedness: value.groundedness } : {}),
-    };
+    const nextConfig: EvalJudgeConfig = { ...value, goalCompletion: nextGC };
     onChange(pruneEmpty(nextConfig));
   };
 
@@ -180,20 +228,27 @@ export function JudgesSection({
                 LLM as Judge
               </span>
               <p className="mt-0.5 text-[11px] text-muted-foreground/80">
-                Grades each case&apos;s final answer against its objective.
+                Automatically grades the full recorded trace against each
+                case&apos;s objective. Uses credits.
               </p>
             </>
           )}
         </div>
-        <Switch
-          checked={sectionOn}
-          onCheckedChange={handleMainToggle}
-          aria-label={
-            isBare
-              ? bareAutoGradeAriaLabel
-              : "Enable LLM as Judge for this suite"
-          }
-        />
+        {stateUnknown ? (
+          <span className="text-xs text-muted-foreground">
+            Grading state unavailable
+          </span>
+        ) : (
+          <Switch
+            checked={sectionOn}
+            onCheckedChange={handleMainToggle}
+            aria-label={
+              isBare
+                ? bareAutoGradeAriaLabel
+                : "Enable LLM as Judge for this suite"
+            }
+          />
+        )}
       </div>
 
       {sectionOn ? (
@@ -204,51 +259,39 @@ export function JudgesSection({
           >
             Judge model
           </Label>
-          <Select
-            value={judgeModel}
-            onValueChange={(next) =>
-              update({
-                judgeModel:
-                  next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
-              })
-            }
-          >
-            <SelectTrigger
+          <div className="flex items-center gap-1.5">
+            <JudgeModelPicker
               id="suite-goal-judge-model"
-              className="h-8 w-[14rem] text-sm"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelOptions.map((opt) => (
-                <SelectItem key={opt.id} value={opt.id}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Threshold is hidden from the suite UI — runs grade against a
-              fixed default and surface only the model choice. Auto-run is
-              still configurable in the full panel chrome. */}
-          {!isBare ? (
-            <>
-              <Label
-                htmlFor="suite-goal-auto-run"
-                className="text-sm text-muted-foreground"
-              >
-                Auto-run on every run
-              </Label>
-              <Switch
-                id="suite-goal-auto-run"
-                checked={autoRun}
-                onCheckedChange={(checked: boolean) =>
-                  update({ autoRun: checked || undefined })
-                }
-                aria-label="Auto-run the LLM as Judge on every new completed run"
-              />
-            </>
-          ) : null}
+              className="w-[14rem]"
+              value={judgeModel}
+              availableModels={availableModels}
+              managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+              onChange={(row) =>
+                update(
+                  judgeModelPatch(
+                    row,
+                    availableModels,
+                    saveSelections,
+                    selectionReasoningEffort(gc?.judgeSelection),
+                  ),
+                )
+              }
+            />
+            <SelectionEffortControl
+              variant="suffix"
+              row={judgeRow}
+              selection={gc?.judgeSelection}
+              purpose="judge"
+              selectionsSupported={saveSelections}
+              hint="Applies to the judge model"
+              onChange={(write) =>
+                update({
+                  judgeModel: write.modelId,
+                  judgeSelection: write.selection,
+                })
+              }
+            />
+          </div>
         </div>
       ) : null}
     </>

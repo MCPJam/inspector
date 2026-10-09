@@ -246,18 +246,18 @@ export const PLATFORM_PERMALINK_ROUTES = {
   },
   eval_suite: {
     label: "Open suite",
-    segments: ["evals", "suite", ":id"],
+    segments: ["evaluate", "suite", ":id"],
   },
   /** One test case inside its suite. */
   eval_case: {
     label: "Open test case",
-    segments: ["evals", "suite", ":parent", "test", ":id"],
+    segments: ["evaluate", "suite", ":parent", "test", ":id"],
     parent: "eval_suite",
   },
   /** One finished or in-flight run of a suite. */
   eval_run: {
     label: "View run",
-    segments: ["evals", "suite", ":parent", "runs", ":id"],
+    segments: ["evaluate", "suite", ":parent", "runs", ":id"],
     parent: "eval_suite",
   },
   /**
@@ -270,7 +270,7 @@ export const PLATFORM_PERMALINK_ROUTES = {
    */
   eval_iteration: {
     label: "View iteration",
-    segments: ["evals", "suite", ":grandparent", "runs", ":parent"],
+    segments: ["evaluate", "suite", ":grandparent", "runs", ":parent"],
     idParam: "iteration",
     parent: "eval_run",
   },
@@ -283,7 +283,7 @@ export const PLATFORM_PERMALINK_ROUTES = {
    */
   eval_run_group: {
     label: "View runs",
-    segments: ["evals", "suite", ":parent"],
+    segments: ["evaluate", "suite", ":parent"],
     query: { view: "runs" },
     parent: "eval_suite",
   },
@@ -294,7 +294,11 @@ export const PLATFORM_PERMALINK_ROUTES = {
    * universal target for a session whose surface-native page does not exist
    * (an eval Quick Run, a session whose parent run was deleted).
    */
-  playground_conversation: { label: "Open in Playground", segments: ["playground"], idParam: "conversation" },
+  playground_conversation: {
+    label: "Open in Playground",
+    segments: ["playground"],
+    idParam: "conversation",
+  },
   chat_session: {
     label: "Open session",
     segments: ["sessions"],
@@ -306,26 +310,47 @@ export const PLATFORM_PERMALINK_ROUTES = {
     segments: ["conformance", "runs", ":id"],
   },
   /**
-   * One launched wave.
+   * One launched swarm run.
    *
    * `/swarms/<runId>` with the run id as the FIRST segment after `/swarms/`:
    * the client routes on that segment, so `/swarms/runs/<id>` would resolve
    * to a run named literally "runs" and dead-link the recipient.
    *
    * NOTE the asymmetry with the saved swarm DEFINITION, which deliberately has
-   * no entry here. `:swarmId` reads as a launched wave — `SwarmRunDetail`
-   * resolves it against the project's runs — so a saved swarm's id on this
-   * route renders an empty run detail. The two share a path shape and mean
-   * different things, which is exactly the confusion the registry exists to
-   * settle in one place.
+   * no entry here. `:swarmId` reads as a launched swarm run —
+   * `SwarmRunDetail` resolves it against the project's runs — so a saved
+   * swarm's id on this route renders an empty run detail. The two share a path
+   * shape and mean different things, which is exactly the confusion the
+   * registry exists to settle in one place.
+   */
+  goal_run: {
+    label: "View swarm run",
+    segments: ["swarms", ":id"],
+  },
+  /** One User Testing study's detail. */
+  study: {
+    label: "Open study",
+    segments: ["user-testing", ":id"],
+  },
+  /**
+   * The PRE-RENAME keys, resolving to the same segments.
+   *
+   * A permalink type is a wire VALUE with consumers outside this repo — the
+   * Slack and Discord apps branch on `journey_run` to decide whether an
+   * approved proposal gets a live watched surface. The deliberate difference
+   * from `host`, whose key stayed put when the public noun became `client`:
+   * these keys are also what `isPlatformResourceType` validates, so a
+   * permalink minted before the rename has to keep resolving. Both spellings
+   * therefore live in the table, a renamed operation derives the canonical
+   * one, and its deprecated twin derives the old one. Deleted at GA, once no
+   * consumer needs them.
    */
   journey_run: {
     label: "View swarm run",
     segments: ["swarms", ":id"],
   },
-  /** One User Testing scenario's detail. */
   user_testing_scenario: {
-    label: "Open scenario",
+    label: "Open study",
     segments: ["user-testing", ":id"],
   },
   /**
@@ -509,7 +534,8 @@ export function buildAppPermalink(
   for (const [key, value] of Object.entries(route.query ?? {})) {
     url.searchParams.set(key, value);
   }
-  if (resource.type === "playground_conversation" && resource.browser) url.searchParams.set("browser", "open");
+  if (resource.type === "playground_conversation" && resource.browser)
+    url.searchParams.set("browser", "open");
   if (route.idParam) {
     url.searchParams.set(route.idParam, id);
   }

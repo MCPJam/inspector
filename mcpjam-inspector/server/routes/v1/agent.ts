@@ -34,6 +34,13 @@
  *    interactive fallback, so an unattended turn must never spend on the
  *    model's own initiative. Destructive ops stay excluded entirely — a
  *    proposal makes spend deliberate, not a deletion recoverable.
+ *  - The direct tier's WRITES additionally require a human surface
+ *    (MJ-008). A caller with no chat surface — an `sk_` key or a plain JWT —
+ *    gets the read-only catalog and nothing else: its model must not mutate
+ *    the workspace unattended, whatever the request body says. The surface is
+ *    resolved from the AUTH METHOD (`approval-surface.ts`), never the body,
+ *    and the flag is the operation's own catalog `readOnly`, so neither half
+ *    of the decision is caller-supplied.
  *  - Every operation is HARD-CLAMPED to the route's `projectId`. The op
  *    catalog's `project` selector allows cross-project roaming for other
  *    surfaces; prompt instructions are not an authorization boundary, so
@@ -82,9 +89,18 @@ import {
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { parseWithSchema } from "../web/errors.js";
+import { hostedOnlyRouteError, parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
+import {
+  executeToolCallsFromMessages,
+  hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
+} from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   deriveOperationIdempotencyKey,
@@ -95,6 +111,11 @@ import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  AGENT_MAX_STEPS,
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL_DEFINITION,
+} from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
@@ -102,6 +123,12 @@ import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { MCPJAM_AGENT_FAILURE_CAPTURE } from "../../utils/agent-failure-capture.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  hasServiceCredential,
+  serviceCredentialHeaders,
+} from "../../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
@@ -140,7 +167,11 @@ export type CreatedResource = {
 export const MAX_AGENT_ACTION_ID_LENGTH = 100;
 
 export function isValidAgentActionId(actionId: string): boolean {
-  return typeof actionId === "string" && actionId.length > 0 && actionId.length <= MAX_AGENT_ACTION_ID_LENGTH;
+  return (
+    typeof actionId === "string" &&
+    actionId.length > 0 &&
+    actionId.length <= MAX_AGENT_ACTION_ID_LENGTH
+  );
 }
 
 /**
@@ -198,7 +229,7 @@ function permalinksFor(
   operation: AnyPlatformOperation,
   result: unknown,
   input: unknown,
-  projectId: string
+  projectId: string,
 ): PlatformPermalink[] {
   return derivePermalinksFor(
     operation,
@@ -213,7 +244,7 @@ function permalinksFor(
         operation: operationName,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
+    },
   );
 }
 
@@ -259,12 +290,12 @@ function alreadyExisted(result: unknown, resourceId: string): boolean {
 function createdResourcesFrom(
   operation: AnyPlatformOperation,
   permalinks: readonly PlatformPermalink[],
-  result: unknown
+  result: unknown,
 ): CreatedResource[] {
   if (
     operation.readOnly ||
     !CREATE_OPERATION_PREFIXES.some((prefix) =>
-      operation.name.startsWith(prefix)
+      operation.name.startsWith(prefix),
     )
   ) {
     return [];
@@ -443,7 +474,7 @@ async function persistProposal(opts: {
     return unpinnableError;
   }
   const missingPins = meta.requiredFrozenKeys.filter(
-    (key) => input[key] === undefined
+    (key) => input[key] === undefined,
   );
   if (missingPins.length > 0) {
     // Belt to the throw's braces: a normalizer that RETURNED without its pins
@@ -463,7 +494,7 @@ async function persistProposal(opts: {
     ? deriveOperationIdempotencyKey(
         opts.turnIdempotencyKey,
         `proposal:${operation.name}`,
-        meta.hashInput(input)
+        meta.hashInput(input),
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
@@ -566,7 +597,8 @@ async function offerRunsForCreatedSuites(opts: {
       (existing) =>
         existing.operation === runEvalSuiteOperation.name &&
         (existing.input.suite === resource.id ||
-          (resource.name !== undefined && existing.input.suite === resource.name))
+          (resource.name !== undefined &&
+            existing.input.suite === resource.name)),
     );
     if (alreadyOffered) continue;
 
@@ -651,7 +683,7 @@ function buildGatedProposalTools(opts: {
         "confirm. Say that you have proposed it — never that it has run or " +
         "started.",
       inputSchema: relaxProjectRequirement(
-        operation.inputSchema
+        operation.inputSchema,
       ) as typeof operation.inputSchema,
       execute: async (input: Record<string, unknown>, { abortSignal }) => {
         if (abortSignal?.aborted) {
@@ -672,7 +704,8 @@ function buildGatedProposalTools(opts: {
           const issues = parsed.error.issues
             .slice(0, 5)
             .map(
-              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+              (issue) =>
+                `${issue.path.join(".") || "(root)"}: ${issue.message}`,
             )
             .join("; ");
           return {
@@ -749,7 +782,7 @@ export function buildAgentApiToolSet(opts: {
    * be applied to another's write.
    */
   clientWithHeaders?: (
-    extraHeaders: Record<string, string>
+    extraHeaders: Record<string, string>,
   ) => PlatformApiClient;
   /**
    * Operations the org has switched off. Same rule as the gated tier: omitted,
@@ -758,14 +791,29 @@ export function buildAgentApiToolSet(opts: {
    * and there is nothing about a read that makes it exempt.
    */
   disabledOperations?: ReadonlySet<string>;
+  /**
+   * Whether this turn renders into a chat surface where a person sees what
+   * ran and approvals are collected (`resolveProposalSurface` — Slack/Discord
+   * service auth plus a conversation). Resolved from the AUTH METHOD, never
+   * from the request body. Absent or false, every operation that is not
+   * read-only is OMITTED, same rule as the gated tier (MJ-008): a
+   * headless caller's model must not mutate the workspace unattended, and the
+   * caller can always issue the write itself through the plain /api/v1
+   * operation under its own name.
+   */
+  hasHumanSurface?: boolean;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
     if (opts.disabledOperations?.has(operation.name)) continue;
+    // Read off the operation's own catalog flag — a missing flag counts as a
+    // write — so nothing caller-supplied can widen what a headless turn may
+    // execute (MJ-008).
+    if (operation.readOnly !== true && opts.hasHumanSurface !== true) continue;
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
-        operation.inputSchema
+        operation.inputSchema,
       ) as typeof operation.inputSchema,
       execute: async (input: Record<string, unknown>, { abortSignal }) => {
         if (abortSignal?.aborted) {
@@ -792,7 +840,8 @@ export function buildAgentApiToolSet(opts: {
           const issues = parsed.error.issues
             .slice(0, 5)
             .map(
-              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+              (issue) =>
+                `${issue.path.join(".") || "(root)"}: ${issue.message}`,
             )
             .join("; ");
           return {
@@ -813,7 +862,7 @@ export function buildAgentApiToolSet(opts: {
             [IDEMPOTENCY_KEY_HEADER]: deriveOperationIdempotencyKey(
               opts.turnIdempotencyKey,
               operation.name,
-              parsed.data
+              parsed.data,
             ),
           });
         }
@@ -829,10 +878,10 @@ export function buildAgentApiToolSet(opts: {
             operation,
             result,
             parsed.data,
-            opts.projectId
+            opts.projectId,
           );
           opts.created.push(
-            ...createdResourcesFrom(operation, permalinks, result)
+            ...createdResourcesFrom(operation, permalinks, result),
           );
           // The MODEL sees them too, which is what the system prompt's
           // "hand the user that url" rule refers to. Without this the rule
@@ -850,7 +899,7 @@ export function buildAgentApiToolSet(opts: {
           if (permalinks.length === 0) return capped;
           return withPermalinkEnvelope(
             capped,
-            permalinks.slice(0, MAX_MODEL_PERMALINKS)
+            permalinks.slice(0, MAX_MODEL_PERMALINKS),
           );
         } catch (error) {
           if (abortSignal?.aborted) {
@@ -869,23 +918,26 @@ export function buildAgentApiToolSet(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Pinned hosted model. There is no "hosted default" lookup in the catalog —
- * this is an explicit product choice, validated against the live catalog per
- * request so a catalog outage/self-hosted install fails loudly instead of
- * mis-billing.
+ * Pinned hosted model, shared with the in-app agent panel.
+ *
+ * It used to be Sonnet 5, chosen here alone. It is now the ONE model the
+ * backend will accept a platform-billing claim for
+ * (`shared/mcpjam-agent-model.ts`), so this surface and the web panel cannot
+ * diverge without one of them losing its billing — which is the point: Slack,
+ * Discord and the panel are the same agent, and MCPJam pays for all three.
+ *
+ * Still validated against the live catalog per request, so a catalog outage or
+ * a self-hosted install fails loudly instead of mis-billing.
  */
-const AGENT_API_MODEL: ModelDefinition = {
-  id: "anthropic/claude-sonnet-5",
-  name: "Claude Sonnet 5",
-  provider: "anthropic",
-  hosted: true,
-};
+const AGENT_API_MODEL: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
 
 /**
- * Default model for AUTHORED SUITES — deliberately not the agent's own
- * model. Suites run every case × iteration on a schedule, so the default
- * is the cheap eval workhorse (same one the public-API docs examples
- * use); the user can always name a bigger model.
+ * Default model for AUTHORED SUITES. The same id as the agent's own model
+ * today, but for an unrelated reason and pinned separately: suites run every
+ * case × iteration on a schedule against the CUSTOMER's credits, so the
+ * default is the cheap eval workhorse (the one the public-API docs examples
+ * use). The user can always name a bigger model; moving the agent's pin must
+ * not move this one.
  */
 const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
@@ -905,8 +957,13 @@ const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
+  "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
-  "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
+  // Names the marker `buildGatedProposalTools` puts on every gated tool's
+  // description instead of enumerating the gated operations. The tier follows
+  // each operation's `risk`, so a list here went stale with every new gated
+  // op; the examples are illustrative, not the definition.
+  "- Tools whose description says REQUIRES HUMAN APPROVAL do NOT perform the action when you call them (for example running a suite, a case, or a goal run, generating cases, cancelling a run, setting a schedule, or calling a tool on the user's own server). Calling one PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
   "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
@@ -944,7 +1001,6 @@ const MAX_MESSAGE_BYTES = 8_192;
  * smaller envelope since every byte is resent each turn and billed.
  */
 const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB
-const MAX_STEPS = 16;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
@@ -962,9 +1018,9 @@ const agentTurnSchema = z.object({
           // limit is 4x bypassable with multibyte text.
           .refine(
             (value) => Buffer.byteLength(value, "utf8") <= MAX_MESSAGE_BYTES,
-            { message: `Message exceeds ${MAX_MESSAGE_BYTES} bytes` }
+            { message: `Message exceeds ${MAX_MESSAGE_BYTES} bytes` },
           ),
-      })
+      }),
     )
     .min(1)
     .max(MAX_MESSAGES)
@@ -973,11 +1029,11 @@ const agentTurnSchema = z.object({
         messages.reduce(
           (total, message) =>
             total + Buffer.byteLength(message.content, "utf8"),
-          0
+          0,
         ) <= MAX_TOTAL_MESSAGE_BYTES,
       {
         message: `Message history exceeds ${MAX_TOTAL_MESSAGE_BYTES} total bytes`,
-      }
+      },
     ),
   /**
    * Caller's stable identity for THIS turn — the Slack bot sends
@@ -1015,6 +1071,14 @@ const agentTurnSchema = z.object({
    * another is sending `conversationId`. `conversationId` wins when both
    * arrive.
    */
+  replyHandle: z
+    .object({
+      channel: z.string().min(1).max(256),
+      ts: z.string().regex(/^\d+\.\d+$/),
+    })
+    .strict()
+    .optional(),
+  threadId: z.string().max(256).optional(),
   slackChannelId: z.string().min(1).max(256).optional(),
 });
 
@@ -1041,7 +1105,7 @@ const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 const DOCS_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 function extractAssistantText(
-  assistantMessages: Array<{ content: unknown }>
+  assistantMessages: Array<{ content: unknown }>,
 ): string {
   const parts: string[] = [];
   for (const message of assistantMessages) {
@@ -1090,24 +1154,84 @@ agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });
 
+/**
+ * The scoping read behind the job routes. A structured refusal keeps the
+ * backend's own mapping; a plain membership refusal — masked to "Server
+ * Error" in production — answers the same 404 an unknown job id does instead
+ * of escaping to the boundary's 500 (MJ-021).
+ */
+async function readAgentJobStatus(
+  convex: ReturnType<typeof createConvexClient>,
+  jobId: string,
+): Promise<{ projectId?: string } | null> {
+  try {
+    return await convex.query("agentTurnState:status" as any, { jobId });
+  } catch (error) {
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.agent",
+        notFoundMessage: "Agent job not found.",
+        redactedIsRefusal: true,
+      })
+    );
+  }
+}
+
+agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const result = await readAgentJobStatus(convex, c.req.param("jobId"));
+  if (!result || result.projectId !== c.req.param("projectId"))
+    return v1Error(c, "NOT_FOUND", "Agent job not found.");
+  return v1Resource(c, result);
+});
+agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const status = await readAgentJobStatus(convex, c.req.param("jobId"));
+  if (!status || status.projectId !== c.req.param("projectId"))
+    return v1Error(c, "NOT_FOUND", "Agent job not found.");
+  await convex.mutation("agentTurnState:cancel" as any, {
+    jobId: c.req.param("jobId"),
+  });
+  return v1Resource(c, { cancelled: true });
+});
 agent.post("/projects/:projectId/agent", async (c) => {
   const projectId = c.req.param("projectId");
 
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
-  if (!process.env.CONVEX_HTTP_URL || !process.env.INSPECTOR_SERVICE_TOKEN) {
-    return v1Error(
-      c,
-      "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint requires a hosted MCPJam deployment."
+  // The shared hosted-only answer (thrown, so the v1 envelope maps it the
+  // same way as every other credential-backed feature: 422 with
+  // `details.reason` on a self-hosted build, 500 on a misconfigured hosted
+  // one, naming what is actually missing).
+  if (!process.env.CONVEX_HTTP_URL) {
+    throw hostedOnlyRouteError(
+      "The agent endpoint",
+      undefined,
+      "CONVEX_HTTP_URL",
     );
+  }
+  if (!hasServiceCredential()) {
+    throw hostedOnlyRouteError("The agent endpoint");
   }
 
   if (!isHostedCatalogModel(String(AGENT_API_MODEL.id), "anthropic")) {
     return v1Error(
       c,
       "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint's hosted model is unavailable on this deployment."
+      "The agent endpoint's hosted model is unavailable on this deployment.",
     );
   }
 
@@ -1115,8 +1239,95 @@ agent.post("/projects/:projectId/agent", async (c) => {
     agentTurnSchema,
     await c.req.json().catch(() => {
       return {};
-    })
+    }),
   );
+
+  const durableJobId = c.req.header("x-mcpjam-agent-job");
+  const durableLease = c.req.header("x-mcpjam-agent-lease");
+  const hasDurableHeaders =
+    durableJobId !== undefined || durableLease !== undefined;
+  if (
+    hasDurableHeaders &&
+    (!isAuthorizedInternalServiceRequest(c) || !durableJobId || !durableLease)
+  )
+    return v1Error(
+      c,
+      "FORBIDDEN",
+      "Agent job and owned lease are required together.",
+    );
+  const durableClient =
+    durableJobId || process.env.DURABLE_AGENT_TURNS_ENABLED === "true"
+      ? createConvexClient(await getConvexBearerForRequest(c))
+      : undefined;
+  const durable =
+    durableJobId && durableLease
+      ? await durableClient!.query("agentTurnState:resumeContext" as any, {
+          jobId: durableJobId,
+          token: durableLease,
+        })
+      : undefined;
+  if (durableJobId && !durable)
+    return v1Error(c, "FORBIDDEN", "Agent job lease is not owned.");
+  if (durable && durable.projectId !== projectId)
+    return v1Error(c, "FORBIDDEN", "Agent job belongs to another project.");
+  if (
+    durable &&
+    (durable.phase === "complete" ||
+      (durable.phase === "tools" && !hasUnresolvedToolCalls(durable.messages)))
+  ) {
+    const lastAssistant = [...durable.messages]
+      .reverse()
+      .find((message: any) => message.role === "assistant");
+    return v1Resource(c, {
+      durableContinuation: false,
+      reply: extractAssistantText(lastAssistant ? [lastAssistant] : []),
+      toolCalls: [],
+      createdResources: durable.resources,
+      proposedActions: durable.proposals.map(toWireProposal),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+  }
+  if (durableClient && !durableJobId) {
+    const requestKey = body.idempotencyKey ?? crypto.randomUUID();
+    const surface = resolveProposalSurface(c, body);
+    const started = await fetch(
+      `${process.env.CONVEX_HTTP_URL}/internal/v1/agent-turns/start`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await getConvexBearerForRequest(c)}`,
+          ...serviceCredentialHeaders(),
+        },
+        body: JSON.stringify({
+          projectId,
+          requestKey,
+          conversationKey: surface
+            ? `${surface.surfaceKind}:${surface.tenantId}:${
+                surface.conversationId
+              }:${body.threadId ?? "root"}`
+            : `${projectId}:${body.conversationId ?? requestKey}`,
+          input: { ...body, idempotencyKey: requestKey },
+          ...(surface ? { surface } : {}),
+          ...(surface?.surfaceKind === "slack" && body.replyHandle
+            ? { replyHandle: body.replyHandle }
+            : {}),
+          ...(c.get("workosApiKeyId")
+            ? { apiKeyId: c.get("workosApiKeyId") }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!started.ok)
+      return v1Error(
+        c,
+        "INTERNAL_ERROR",
+        "Could not start the durable agent turn.",
+      );
+    const { jobId } = await started.json();
+    return c.json({ jobId, status: "pending" }, 202);
+  }
 
   // sk_ callers get their org id from bearer auth; JWT callers reach this
   // route with neither var set (their bearer is validated at Convex), so
@@ -1126,11 +1337,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
     c.get("mcpjamOrganizationId") ??
     c.get("workosUserId") ??
     `project:${projectId}`;
-  if (!acquireTurnSlot(orgKey)) {
+  if (!durable && !acquireTurnSlot(orgKey)) {
     return v1Error(
       c,
       "RATE_LIMITED",
-      `Too many concurrent agent turns for this organization (max ${MAX_CONCURRENT_TURNS_PER_ORG}).`
+      `Too many concurrent agent turns for this organization (max ${MAX_CONCURRENT_TURNS_PER_ORG}).`,
     );
   }
 
@@ -1139,7 +1350,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
   const abortController = new AbortController();
   const wallClock = setTimeout(
     () => abortController.abort(),
-    TURN_WALL_CLOCK_MS
+    TURN_WALL_CLOCK_MS,
   );
   // Caller disconnects (Slack gave up, network drop) must also stop the
   // turn — an abandoned request should not keep consuming model capacity.
@@ -1162,7 +1373,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         "INTERNAL_ERROR",
-        "In-process /api/v1 dispatch is not registered."
+        "In-process /api/v1 dispatch is not registered.",
       );
     }
     // NOTE: self-dispatched requests re-enter bearer auth carrying the
@@ -1188,15 +1399,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
       });
     const client = makeClient();
 
-    const created: CreatedResource[] = [];
-    const proposed: ProposedAction[] = [];
+    const created: CreatedResource[] = durable?.resources ?? [];
+    const proposed: ProposedAction[] = durable?.proposals ?? [];
     // Proposals need a surface to render the control on AND an org to
     // attribute the spend to. Both come from the auth context, resolved by a
     // single helper so no route re-implements "which chat product is this".
-    // Callers with neither get the read/write tiers only — the gated tools are
+    // Callers without a surface get only read-only direct tools; gated tools are
     // omitted entirely rather than offered and then refused, so the model
     // never plans around an action it cannot take.
-    const proposalSurface = resolveProposalSurface(c, body);
+    const proposalSurface = durable?.surface ?? resolveProposalSurface(c, body);
 
     // The org's capability policy, keyed off the AUTH CONTEXT's organization
     // — not the proposal surface, which is undefined for `sk_`/JWT callers who
@@ -1204,7 +1415,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Fails open (see `org-agent-policy.ts`): a Convex blip must not strip
     // every tool from every turn.
     const disabledOperations = await getOrgAgentPolicyCached(
-      c.get("mcpjamOrganizationId")
+      durable?.organizationId ?? c.get("mcpjamOrganizationId"),
     );
 
     const builtInTools = {
@@ -1217,6 +1428,9 @@ agent.post("/projects/:projectId/agent", async (c) => {
           : {}),
         clientWithHeaders: makeClient,
         disabledOperations,
+        // The same presence test that decides whether the gated tools exist
+        // at all: without it the direct tier's writes are omitted too.
+        hasHumanSurface: proposalSurface !== undefined,
       }),
       ...(proposalSurface
         ? buildGatedProposalTools({
@@ -1249,7 +1463,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         // boot rather than trusted here.
         baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      }
+      },
     );
     // The preflight must stay inside the turn's wall clock: the docs
     // client's own 30 s connect timeout would otherwise stack ON TOP of
@@ -1267,7 +1481,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
             error: reason instanceof Error ? reason.message : String(reason),
           });
           return false;
-        }
+        },
       ),
       new Promise<boolean>((resolve) => {
         preflightDeadline = setTimeout(() => {
@@ -1314,20 +1528,97 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         "INTERNAL_ERROR",
-        "Agent turn resolved to an unexpected runtime."
+        "Agent turn resolved to an unexpected runtime.",
       );
     }
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
+
+    let turnMessages = durable?.messages ?? body.messages;
+    if (durable) {
+      for (const [name, definition] of Object.entries(prepared.allTools)) {
+        const execute = definition.execute;
+        if (!execute) continue;
+        definition.execute = async (input: any, options: any) => {
+          const callId = options.toolCallId;
+          if (!callId) throw new Error("Durable tool call has no identity.");
+          const replayable =
+            WRITE_OPERATION_NAMES.has(name) ||
+            AGENT_API_GATED_OPERATIONS.some((op) => op.name === name) ||
+            AGENT_API_OPERATIONS.some(
+              (op) => op.name === name && op.readOnly,
+            ) ||
+            name.startsWith("search_") ||
+            name.startsWith("load_");
+          const prior = await durableClient!.mutation(
+            "agentTurnState:beginCall" as any,
+            {
+              jobId: durableJobId,
+              token: durableLease,
+              callId,
+              operation: name,
+              input,
+              replayable,
+            },
+          );
+          if (prior.replay) return prior.result;
+          const result = await execute(input, options);
+          await durableClient!.mutation("agentTurnState:finishCall" as any, {
+            jobId: durableJobId,
+            token: durableLease,
+            callId,
+            result: result ?? null,
+            resources: created,
+            proposals: proposed,
+          });
+          return result;
+        };
+      }
+      if (
+        durable.phase === "tools" &&
+        !hasUnresolvedApprovalResponses(turnMessages)
+      ) {
+        const results = await executeToolCallsFromMessages(turnMessages, {
+          tools: prepared.allTools,
+          skipNonExecutableTools: true,
+          abortSignal: abortController.signal,
+        });
+        turnMessages = [...turnMessages, ...results];
+        await durableClient!.mutation("agentTurnState:checkpoint" as any, {
+          jobId: durableJobId,
+          token: durableLease,
+          phase: "ready",
+          messages: turnMessages,
+          step: durable.step + 1,
+          resources: created,
+          proposals: proposed,
+        });
+      }
+    }
 
     const result = await runUnifiedAssistantTurn({
-      runtime: rt.runtime,
+      runtime: {
+        ...rt.runtime,
+        // MCPJam pays for agent turns on every surface, not just the in-app
+        // panel. The backend honours the claim on the caller's own sign-in,
+        // and only for the credentials it accepts for this — the org-scoped
+        // delegated token this route mints for `sk_` keys, Slack and Discord,
+        // or a first-party session — so a bearer minted for another audience
+        // is refused rather than billed.
+        extraBodyFields: {
+          ...(rt.runtime.extraBodyFields ?? {}),
+          billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+        },
+      },
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
-      messages: body.messages,
+      // A durable job's history is the server's own checkpoint; otherwise it
+      // is the request body's, and an unresolved tool call in it is a claim
+      // the engine answers rather than runs (MJ-008).
+      ...(durable ? {} : { clientSuppliedHistory: true }),
+      messages: turnMessages,
       modelDefinition: AGENT_API_MODEL,
       systemPrompt: prepared.enhancedSystemPrompt,
       tools: prepared.allTools,
@@ -1335,7 +1626,44 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
-      maxSteps: MAX_STEPS,
+      // Every failure of an agent turn reaches Sentry, classified — and is
+      // recorded on THIS request, so the request-log backstop does not
+      // capture the `v1Error` this route then answers with a second time.
+      failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
+      failureReporter: createRequestStreamFailureReporter(c, "v1-agent"),
+      // The SHARED ceiling, not a local 16. Now that this route sends the
+      // billing claim, the backend refuses any step at or past
+      // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy
+      // a longer answer, it would earn `agent_billing_rejected` in the middle
+      // of one.
+      maxSteps: AGENT_MAX_STEPS,
+      ...(durable
+        ? {
+            yieldAfterStep: true,
+            durableCheckpoint: async ({
+              phase,
+              messages,
+              step,
+            }: {
+              phase: "model" | "tools" | "ready" | "complete";
+              messages: any[];
+              step: number;
+            }) => {
+              await durableClient!.mutation(
+                "agentTurnState:checkpoint" as any,
+                {
+                  jobId: durableJobId,
+                  token: durableLease,
+                  phase,
+                  messages,
+                  step,
+                  resources: created,
+                  proposals: proposed,
+                },
+              );
+            },
+          }
+        : {}),
       projectId,
       chatSessionId,
       abortSignal: abortController.signal,
@@ -1363,7 +1691,14 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Skipped on ABORT, matching the gated tools: persisting a proposal for a
     // turn that answered with a timeout leaves a control behind for an
     // exchange the user never saw finish.
-    if (proposalSurface && !abortController.signal.aborted) {
+    const durableContinuation = Boolean(
+      durable && result.messages.at(-1)?.role === "tool",
+    );
+    if (
+      proposalSurface &&
+      !abortController.signal.aborted &&
+      !durableContinuation
+    ) {
       await offerRunsForCreatedSuites({
         created,
         proposed,
@@ -1403,7 +1738,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         c,
         "TIMEOUT",
         `Agent turn exceeded the ${TURN_WALL_CLOCK_MS / 1000}s limit.`,
-        errorDetails()
+        errorDetails(),
       );
     }
 
@@ -1436,7 +1771,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",
         message,
-        errorDetails()
+        errorDetails(),
       );
     }
 
@@ -1450,6 +1785,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     });
 
     return v1Resource(c, {
+      ...(durable ? { durableContinuation } : {}),
       reply,
       toolCalls: result.toolCalls.map((call) => ({
         operation: call.toolName,
@@ -1470,7 +1806,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
   } finally {
     clearTimeout(wallClock);
     requestSignal.removeEventListener("abort", onRequestAbort);
-    releaseTurnSlot(orgKey);
+    if (!durable) releaseTurnSlot(orgKey);
     // Cleanup must never clobber or delay the response — guard against a
     // SYNC throw too (a bare call would escape the finally and discard a
     // computed 200). Detached rather than awaited, but observably so: a
@@ -1502,7 +1838,7 @@ function captureTurnEvent(
     toolCallCount: number;
     opNames?: string[];
     createdCount?: number;
-  }
+  },
 ): void {
   // API-key callers never pass the Convex authorize exchange that normally
   // fills `userExternalId`; the WorkOS user id from bearer auth IS the

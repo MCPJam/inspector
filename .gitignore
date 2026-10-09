@@ -8,10 +8,8 @@ node_modules
 **/.mcpjam/skills/
 .claude/
 docs/superpowers/
-mcpjam-inspector/server/routes/apps/**/*.bundled.ts
+*.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
-mcpjam-inspector/server/services/plugins/shim/*.bundled.ts
-mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/generated/*.bundled.ts
 cli/dist/
 sdk/dist/
 chat-ui/dist/
@@ -25,3 +23,4 @@ wt-*/
 # Playwright MCP scratch output (screenshots, snapshots, console logs)
 .playwright-mcp/
 evaluators/dist/
+

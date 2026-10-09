@@ -1,8 +1,11 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ErrorCode } from "../web/errors.js";
-import { getClientIp } from "../../utils/client-ip.js";
-import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import {
+  guestIpForwardHeaders,
+  hashGuestSpendIp,
+} from "../../utils/guest-spend-ip.js";
 import {
   reportRouteFailure,
   readRequestJson,
@@ -10,7 +13,6 @@ import {
 
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
-const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
 const MCPJAM_VOICE_BUDGET_CODE = "user_rate_limit";
 const MCPJAM_VOICE_BUDGET_MESSAGE = "You've used today's voice budget.";
 const MCPJAM_VOICE_IN_PROGRESS_CODE = "voice_transcription_in_progress";
@@ -359,7 +361,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };
     const originHeader = c.req.header("origin");
-    const clientIp = getClientIp(c);
+    const clientIp = getSpendClientIp(c);
     const guestIpHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
     const upstreamResponse = await fetch(getMcpjamTranscriptionUrl(), {
       method: "POST",
@@ -368,7 +370,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         "Content-Type": "application/json",
         Authorization: authHeader,
         ...(originHeader ? { Origin: originHeader } : {}),
-        ...(guestIpHash ? { [GUEST_IP_HASH_HEADER]: guestIpHash } : {}),
+        ...guestIpForwardHeaders(guestIpHash),
       },
       body: JSON.stringify(transcriptionPayload),
     });

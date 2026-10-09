@@ -1,3 +1,7 @@
+import type { ConvexHttpClient } from "convex/browser";
+import type { SuiteRunRecorder } from "./recorder.js";
+import { logger } from "../../utils/logger.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 /**
  * Admission gate for eval runs whose resolved host config selects a HARNESS
  * (Claude Code | Codex) rather than the emulated engine.
@@ -37,8 +41,10 @@
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   checkHarnessRuntimeAvailable,
+  selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -61,6 +67,32 @@ export interface EvalHarnessCase {
   title?: string;
   model?: string;
   provider?: string;
+  /**
+   * The reasoning effort this case's model entry saved
+   * (`models[].selection.settings.reasoningEffort`). Wins over the host's own
+   * saved effort for this case, matching the precedence the runner applies.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The case's saved model-entry selection, exactly as the recorder's
+   * `config.tests` rows carry it (`selection`). This is where a persisted
+   * effort actually lives, so it is read when `reasoningEffort` is absent.
+   */
+  selection?: { settings?: { reasoningEffort?: string } } | null;
+}
+
+/** The effort a case's own model entry asks for: explicit, else its selection. */
+function caseReasoningEffort(
+  test: EvalHarnessCase,
+): ModelReasoningEffort | undefined {
+  return test.reasoningEffort ?? selectionReasoningEffort(test.selection);
+}
+
+/** The effort the host's saved selection carries, if any. */
+function hostSavedReasoningEffort(
+  hostConfig: Record<string, unknown>,
+): ModelReasoningEffort | undefined {
+  return selectionReasoningEffort(hostConfig.modelSelection);
 }
 
 /**
@@ -86,29 +118,6 @@ export function harnessOfHostConfig(
 ): Harness | undefined {
   if (!hostConfig) return undefined;
   return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
-}
-
-/**
- * A harness eval iteration runs on ONE disposable box — and a SUITE RUN is the
- * only surface that boots one.
- *
- * A single-case run passes `runId: null`, and both provisioning sites require a
- * run, so no box is ever booted for it. Without one, `runHarnessTurn` falls
- * through to `resolveHarnessSandbox` and runs on the acting member's PERSONAL
- * computer — stateful, shared, and belonging to a person rather than to the run.
- * That fallback is exactly what eval execution must never take, so the surface
- * is refused instead. Pinning an image would not help: the surface itself is
- * the constraint.
- */
-function harnessNeedsSuiteRunReason(harness: Harness): string {
-  const name = getHarnessAdapter(harness).displayName;
-  return (
-    `the ${name} harness runs each eval iteration on a fresh, disposable ` +
-    "computer, and a single-case run never provisions one. Run this case as " +
-    "part of a suite. There is deliberately no fallback to your personal " +
-    "computer: it is shared and stateful, and a run nobody pointed at it " +
-    "must not put it to work."
-  );
 }
 
 /**
@@ -225,6 +234,7 @@ function harnessCannotObserveWidgetsReason(
  */
 export function resolveEvalCaseModelDefinition(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /** The model the CASE names, already built into a definition. */
   caseModel: ModelDefinition;
 }): ModelDefinition {
@@ -254,6 +264,7 @@ export function hasSelectedMcpServersForAdmission(args: {
 
 export function checkEvalHarnessStaticAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /** The run's resolved server set (the manager connects exactly this). */
   serverIds?: readonly string[];
   /** Servers contributed by the environment's pinned plugin versions. They
@@ -280,6 +291,7 @@ export function checkEvalHarnessStaticAdmission(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
@@ -296,6 +308,14 @@ export function checkEvalHarnessStaticAdmission(args: {
     // permissive than a valid one.
     xaaEnterprisePolicyOn:
       readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
+    // Evals refuse an unverified harness × model pair ("not verified for
+    // <harness> <version>") rather than run it.
+    purpose: "eval",
+    unattended: true,
+    // The host's saved effort is known here; refusing it now costs nothing.
+    ...(hostSavedReasoningEffort(hostConfig) !== undefined
+      ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
+      : {}),
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -318,6 +338,7 @@ export function checkEvalHarnessStaticAdmission(args: {
  */
 export function checkEvalHarnessAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   serverIds?: readonly string[];
   pluginServerIds?: readonly string[];
   /** The run's snapshotted cases (the recorder's `config.tests`). */
@@ -373,11 +394,13 @@ export function checkEvalHarnessAdmission(args: {
     { reason: string; kind: HarnessUnavailableKind } | undefined
   >();
   for (const test of modelCases) {
-    const key = `${test.provider ?? ""}::${test.model}`;
+    const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
+    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
         model: {
@@ -389,6 +412,9 @@ export function checkEvalHarnessAdmission(args: {
         // more answer that than a request body can.
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
+        purpose: "eval",
+        unattended: true,
+        ...(effort !== undefined ? { reasoningEffort: effort } : {}),
       });
       verdict = availability.ok
         ? undefined
@@ -458,6 +484,7 @@ export function checkEvalHarnessAdmission(args: {
   // static half to decide them rather than admitting by default.
   if (modelCases.length === 0) {
     const staticOnly = checkEvalHarnessStaticAdmission({
+      localExecution: args.localExecution,
       hostConfig: args.hostConfig,
       ...(args.serverIds ? { serverIds: args.serverIds } : {}),
       ...(args.pluginServerIds
@@ -517,13 +544,14 @@ const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set([
  * selected, so a rule placed there would never fire for an emulated run — and
  * emulated runs are precisely the ones this is about.
  *
- * A HARNESS run is exempt on the run surface: it provisions its own disposable
- * box whether or not an image is pinned, so the premise of the rule ("there
- * will be no computer") is simply false for it. It is refused on the
- * single-case surface instead, where no box is booted at all.
+ * A HARNESS run is exempt on both surfaces: it provisions its own disposable
+ * box whether or not an image is pinned (keyed to the iteration on a
+ * single-case run), so the premise of the rule ("there will be no computer")
+ * is simply false for it.
  */
 export function checkEvalExecutionAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
+  localExecution?: boolean;
   /**
    * The environment's pinned computer image; `null`/absent means none.
    *
@@ -542,8 +570,8 @@ export function checkEvalExecutionAdmission(args: {
    * run's environment pins an image, so an image is exactly what it lacks.
    *
    * `"single-case"` — a quick or streamed one-off. These pass `runId: null`,
-   * and BOTH provisioning sites require `runId !== null`, so no box is ever
-   * booted for them. That makes "pin an image" the wrong advice: pinning one
+   * and boot a box only for a HARNESS (keyed to the iteration). Without one,
+   * no box is booted, which makes "pin an image" the wrong advice: pinning one
    * would change nothing. The surface itself is the constraint, so the refusal
    * has to say so and point at running the case in a suite instead.
    */
@@ -552,18 +580,13 @@ export function checkEvalExecutionAdmission(args: {
   const singleCase = args.surface === "single-case";
   const harness = harnessOfHostConfig(args.hostConfig);
 
-  // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
-  // this surface would run on the acting member's personal computer no matter
-  // which tools the host grants.
-  if (singleCase && harness) {
-    return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
-  }
-
   const ids = args.hostConfig?.builtInToolIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: true };
-  // A pinned image only helps the surface that can actually boot from it — and
-  // a harness run boots a box with or without one.
-  if (!singleCase && (args.pinnedComputerImageId || harness)) {
+  // A HARNESS boots its own disposable box on BOTH surfaces — per iteration on
+  // a run, keyed to the iteration on a single-case run — so a computer-backed
+  // tool has a machine either way. A pinned image only helps the surface that
+  // boots from it, which a single-case run without a harness does not.
+  if (harness || (!singleCase && args.pinnedComputerImageId)) {
     return { ok: true };
   }
 
@@ -614,7 +637,11 @@ export function executionEngineLabel(
  * which runs are admitted.
  */
 function isModelKind(kind: HarnessUnavailableKind): boolean {
-  return kind === "model-not-hosted" || kind === "model-unsupported";
+  return (
+    kind === "model-not-hosted" ||
+    kind === "model-unsupported" ||
+    kind === "model-unverified"
+  );
 }
 
 /**
@@ -657,4 +684,75 @@ function admitHarness(
     };
   }
   return { ok: true, harness };
+}
+
+export function casesAssertingWidgetRender(
+  tests: ReadonlyArray<Record<string, any>>,
+): string[] {
+  const titles = new Set<string>();
+  for (const test of tests) {
+    const steps = Array.isArray(test.steps) ? test.steps : [];
+    const asserts =
+      steps.some(
+        (step: any) =>
+          step?.kind === "assert" && step?.assertion?.type === "widgetRendered",
+      ) ||
+      (Array.isArray(test.successPredicates) &&
+        test.successPredicates.some(
+          (predicate: any) => predicate?.type === "widgetRendered",
+        ));
+    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
+  }
+  return [...titles];
+}
+
+/**
+ * Terminally fail a run that has a row but has not executed anything.
+ *
+ * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
+ * rows, so finalizing only the run leaves every attempt stuck pending — the
+ * shape an operator sees as a run that never ends. Both writes are best-effort
+ * and their failures are LOGGED, never rethrown: the caller is already
+ * reporting a real cause, and masking it with a cleanup error costs the reason
+ * the run failed.
+ *
+ * Shared by the pinned-skill setup abort and the harness admission gate: they
+ * fail at the same point in the lifecycle and must leave the same wreckage
+ * behind, which is exactly the invariant a second hand-written copy loses.
+ */
+export async function failRunBeforeExecution(
+  convexClient: ConvexHttpClient,
+  recorder: SuiteRunRecorder,
+  runId: string,
+  { reason }: { reason: string },
+): Promise<void> {
+  const cause = reason.slice(0, 500);
+  await convexClient
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId,
+      error: cause,
+    })
+    .catch((cleanupError: unknown) =>
+      logger.warn(
+        "[evals] Failed to fail pending iterations after setup abort",
+        {
+          runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        },
+      ),
+    );
+  await recorder
+    .finalize({ status: "failed", notes: cause })
+    .catch((finalizeError: unknown) =>
+      logger.warn("[evals] Failed to finalize run after setup abort", {
+        runId,
+        error:
+          finalizeError instanceof Error
+            ? finalizeError.message
+            : String(finalizeError),
+      }),
+    );
 }

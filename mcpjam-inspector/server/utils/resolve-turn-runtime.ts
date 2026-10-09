@@ -29,8 +29,9 @@
  *     have. See the branch for what wiring it would take.
  */
 
+import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
-import type { Harness } from "@mcpjam/sdk";
+import type { Harness, RequestedModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   assertOrgModelAllowed,
@@ -43,6 +44,17 @@ import {
 import { postLocalUsage } from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
+import { getHarnessAdapter } from "./harness/registry.js";
+import { buildLocalExecutionRecord } from "./local-execution-record.js";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+} from "./model-resolution-local.js";
+import { forwardableSelection } from "./selection-rail.js";
+import {
+  reasoningEffortProviderOptions,
+  type EffectiveModelSettings,
+} from "./model-selection-settings.js";
 import type {
   DirectRuntime,
   TurnRuntime,
@@ -81,6 +93,8 @@ export interface ResolveTurnRuntimeArgs {
    */
   requireToolApproval?: boolean;
   tools?: ToolSet;
+  /** Effective input transcript, used only to derive image admission. */
+  messages?: unknown;
   /** Harness selector — carried onto the hosted runtime (Omitted from HostedTurnOptions). */
   harness?: Harness;
   /**
@@ -91,7 +105,49 @@ export interface ResolveTurnRuntimeArgs {
   extraBodyFields?: Record<string, unknown>;
   /** Per-run attribution stamped onto the local-BYOK usage record. */
   attribution?: TurnRunAttribution;
+  /**
+   * The saved selection behind `modelDefinition`. It DECIDES THE RAIL
+   * (`decideTurnRail`, `selection-rail.ts`):
+   *
+   *   - `hosted` → MCPJam `/stream`;
+   *   - `org` → the org connection (`/stream/org`, or its local runtime);
+   *   - `local` and a STORED legacy selection → the own-key path (the org's
+   *     connection for the model's provider), never MCPJam credits — this
+   *     surface holds no key of the caller's own machine;
+   *   - absent → today's hosted-list check, unchanged.
+   *
+   * Sent as the body's `modelSelection` only on the rail it names: a `hosted`
+   * one on `/stream`, an `org` one on `/stream/org` and `/stream/org/resolve`
+   * (validated first). The backend re-resolves it and records it as the
+   * requested selection. A `local` or legacy one is never sent.
+   */
+  modelSelection?: RequestedModelSelection;
+  /**
+   * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
+   * backend holds credits against it. Sent on that rail ONLY, and never to a
+   * harness host (its model broker clamps `max_tokens` without touching the
+   * thinking budget). Nothing in this repo shows `/stream/org` or the direct
+   * engine reading it, so a BYOK turn keeps its own limits.
+   */
+  maxOutputTokens?: number;
+  /**
+   * The settings this turn runs with, already resolved once by
+   * `resolveEffectiveModelSettings` (per-run override > saved selection >
+   * host defaults). `temperature` is what the caller hands the engine; a
+   * `reasoningEffort` is applied HERE, where the rail is known: provider
+   * options on the direct engine, the forwarded selection on `/stream`, and the
+   * selection (or a top-level field) on `/stream/org`, which maps it per org
+   * provider. Both are recorded
+   * on the local-runtime execution record.
+   */
+  settings?: EffectiveModelSettings;
 }
+
+/** How the turn ended, for the local-runtime execution record. */
+export type TurnUsageOutcome = {
+  /** The engine's terminal error, when the turn failed mid-stream. */
+  engineError?: { message: string };
+};
 
 export interface ResolvedTurnRuntime {
   runtime: TurnRuntime;
@@ -104,7 +160,10 @@ export interface ResolvedTurnRuntime {
    * Self-guards on `result.aborted`, and the writeback itself is best-effort
    * (a telemetry outage is swallowed + logged, never thrown).
    */
-  finalizeUsage(result: UnifiedTurnResult): Promise<void>;
+  finalizeUsage(
+    result: UnifiedTurnResult,
+    outcome?: TurnUsageOutcome,
+  ): Promise<void>;
   /** Map a turn-failure message to the runner's rate-limit vs failed outcome. */
   classifyFailure(message: string): "rate_limited" | "failed";
 }
@@ -134,7 +193,19 @@ export async function resolveTurnRuntime(
     scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
+    modelWorkload: modelWorkloadFor(args),
+    // The WHOLE selection: it decides the source, and the resolver forwards
+    // only an `org` one to `/stream/org/resolve`.
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
   });
+  // Validated (and normalized) before it rides on any body; a `local` or
+  // legacy selection is never forwarded.
+  const forwarded = backendModelSelection(
+    forwardableSelection(args.modelSelection),
+  );
+  const hostedSelection =
+    forwarded?.source === "hosted" ? forwarded : undefined;
+  const orgSelection = forwarded?.source === "org" ? forwarded : undefined;
 
   // --- Local-runtime org BYOK → direct engine ---
   if (
@@ -142,6 +213,19 @@ export async function resolveTurnRuntime(
     resolution.orgRuntime?.runtimeLocation === "local"
   ) {
     const orgRuntime = resolution.orgRuntime;
+
+    // A HARNESS host never runs on the direct engine. This branch drops
+    // `harness` on the floor — the turn would run the emulated direct engine on
+    // the org's local key and be reported under the harness's name. Refused
+    // with the pre-flight's own sentence (a BYOK model is not MCPJam-provided).
+    if (args.harness) {
+      const name = getHarnessAdapter(args.harness).displayName;
+      throw new Error(
+        `This host runs the ${args.harness} harness, which isn't available: ` +
+          `the ${name} harness only runs MCPJam-provided models — pick one on ` +
+          "this host to run the real runtime.",
+      );
+    }
 
     // Local-runtime org providers have no approval loop yet — the direct turn
     // driver can't pause for a human, and a synthetic visitor can't approve.
@@ -161,12 +245,36 @@ export async function resolveTurnRuntime(
     assertOrgModelAllowed(orgRuntime.provider, modelId);
     const llmModel = buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId);
 
+    // The inspector calls the provider, so the effort is applied here, as
+    // provider options, or refused when this provider has no effort control.
+    const effort = args.settings?.reasoningEffort;
+    const providerOptions = effort
+      ? reasoningEffortProviderOptions({
+          providerKey: orgRuntime.provider.providerKey,
+          modelId: args.modelSelection?.modelId ?? modelId,
+          effort,
+        })
+      : undefined;
+    if (effort && !providerOptions) {
+      throw new ModelResolutionRefusalError([
+        {
+          code: "capability_missing",
+          reason: `reasoning effort "${effort}" is not supported for ${modelId} on the ${orgRuntime.provider.providerKey} connection`,
+          evidence: {
+            setting: "reasoningEffort",
+            providerKey: orgRuntime.provider.providerKey,
+          },
+        },
+      ]);
+    }
+
     const runtime: DirectRuntime = {
       kind: "direct",
       // Bridge the AI-SDK `LanguageModel` union to the engine's narrower
       // `createLlmModel` return — the same cast the local handlers use.
       llmModel: llmModel as unknown as DirectRuntime["llmModel"],
       modelId,
+      ...(providerOptions ? { providerOptions } : {}),
       // NOTE: intentionally NO `provider`. `runLocalOrgChatTurnHeadless` never
       // forwarded a provider string to `runDirectChatTurn`, so its llm/step
       // spans carried no `gen_ai.provider.name`. Setting it here would change
@@ -174,13 +282,42 @@ export async function resolveTurnRuntime(
     };
 
     const providerKey = orgRuntime.provider.providerKey;
-    const finalizeUsage = async (result: UnifiedTurnResult): Promise<void> => {
+    const finalizeUsage = async (
+      result: UnifiedTurnResult,
+      outcome?: TurnUsageOutcome,
+    ): Promise<void> => {
       // Bill on any NON-ABORTED completion, engine-error included: the old
       // `postLocalUsage` fired unconditionally on non-abort and billed the
       // consumed tokens even when the turn errored mid-stream. The caller
       // invokes this BEFORE throwing on an engine error, so a failed turn's
       // real spend is still recorded. Only abort suppresses the writeback.
       if (result.aborted) return;
+      // Provenance for a turn that ran under a saved org selection: what was
+      // requested (the selection), what ran (this connection's local rail,
+      // this wire id, these settings) and how the call ended. The backend
+      // checks it against its own resolution of the same selection.
+      const execution = buildLocalExecutionRecord({
+        selection: orgSelection,
+        providerKey,
+        wireModelId: modelId,
+        effectiveSettings: {
+          ...(args.settings?.temperature !== undefined
+            ? { temperature: args.settings.temperature }
+            : {}),
+          ...(providerOptions && effort ? { reasoningEffort: effort } : {}),
+        },
+        outcome: outcome?.engineError
+          ? {
+              kind: "error",
+              code:
+                classifyTurnFailure(outcome.engineError.message) ===
+                "rate_limited"
+                  ? "rate_limited"
+                  : "provider_error",
+            }
+          : { kind: "ok" },
+        at: Date.now(),
+      });
       // FIRE-AND-FORGET — exact parity with the OLD call site
       // (`postLocalUsage({...}).catch((err) => logger.warn(...))`, never
       // awaited). Awaiting the writeback would block the turn for up to the 5s
@@ -207,6 +344,9 @@ export async function resolveTurnRuntime(
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
         journeyRunId: args.attribution?.journeyRunId,
+        ...(orgSelection && execution
+          ? { modelSelection: orgSelection, execution }
+          : {}),
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
           error: err instanceof Error ? err.message : String(err),
@@ -272,6 +412,35 @@ export async function resolveTurnRuntime(
 
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
+    // `/stream` applies a reasoning effort from the forwarded selection, or the
+    // top-level `reasoningEffort` field, which it prefers. A per-run effort the
+    // selection does not carry (a chat turn's own, an override) rides as that
+    // field instead of being refused.
+    const effort = args.settings?.reasoningEffort;
+    const topLevelEffort =
+      effort && hostedSelection?.settings?.reasoningEffort !== effort
+        ? { reasoningEffort: effort }
+        : undefined;
+    // Never for a harness host: its model broker clamps `max_tokens` to a
+    // ceiling without touching the model's thinking budget, so one below the
+    // broker's own default can make every thinking turn fail. Held here, where
+    // the body is built, rather than left to whatever `runHarnessTurn` happens
+    // to read out of `extraBodyFields` today.
+    const outputCeiling = args.harness ? undefined : args.maxOutputTokens;
+    const hostedExtraBodyFields =
+      args.extraBodyFields ||
+      hostedSelection ||
+      topLevelEffort ||
+      outputCeiling !== undefined
+        ? {
+            ...(args.extraBodyFields ?? {}),
+            ...(outputCeiling !== undefined
+              ? { maxOutputTokens: outputCeiling }
+              : {}),
+            ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(topLevelEffort ?? {}),
+          }
+        : undefined;
     return {
       runtime: {
         kind: "hosted",
@@ -279,7 +448,9 @@ export async function resolveTurnRuntime(
         // set endpointPath; `resolvedEndpointPath = endpointPath ?? "/stream"`
         // makes passing "/stream" explicitly byte-identical on the wire.
         endpointPath: "/stream",
-        ...(args.extraBodyFields ? { extraBodyFields: args.extraBodyFields } : {}),
+        ...(hostedExtraBodyFields
+          ? { extraBodyFields: hostedExtraBodyFields }
+          : {}),
         ...(args.harness ? { harness: args.harness } : {}),
       },
       modelSource: "mcpjam",
@@ -314,6 +485,14 @@ export async function resolveTurnRuntime(
         ...(args.extraBodyFields ?? {}),
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
+        ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        // `/stream/org` maps the effort per org provider (and refuses one it
+        // cannot map), reading the selection's; a per-run effort the selection
+        // does not carry rides as the top-level field, which wins over it.
+        ...(args.settings?.reasoningEffort &&
+        orgSelection?.settings?.reasoningEffort !== args.settings.reasoningEffort
+          ? { reasoningEffort: args.settings.reasoningEffort }
+          : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
     },

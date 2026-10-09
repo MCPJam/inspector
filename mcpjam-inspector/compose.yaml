@@ -3,7 +3,7 @@ services:
     build:
       context: .
     ports:
-      - 6274:6274
+      - "127.0.0.1:6274:6274"
     environment:
       - NODE_ENV=production
     extra_hosts:

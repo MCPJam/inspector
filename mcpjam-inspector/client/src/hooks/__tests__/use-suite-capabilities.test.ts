@@ -27,6 +27,7 @@ vi.mock("convex/react", () => ({
 
 import {
   hasJudgeSeverityCapability,
+  hasRubricChecksCapability,
   useSuiteCapabilities,
   type SuiteCapabilitiesState,
 } from "../use-suite-capabilities";
@@ -97,6 +98,31 @@ describe("useSuiteCapabilities", () => {
     // A save that changes what someone may do next has to change the rows,
     // not leave them describing the suite as it was when the page loaded.
     await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("hasRubricChecksCapability", () => {
+  it("is true only when the deployment advertises the slot", () => {
+    expect(hasRubricChecksCapability(null)).toBe(false);
+    expect(
+      hasRubricChecksCapability({
+        judges: { goalCompletion: {}, groundedness: {} },
+      } as never),
+    ).toBe(false);
+    expect(
+      hasRubricChecksCapability({
+        judges: {
+          goalCompletion: {},
+          groundedness: {},
+          rubricChecks: {
+            role: "advisory",
+            template: { version: 1, hash: "h" },
+            execution: "wired",
+            calibration: "unavailable",
+          },
+        },
+      } as never),
+    ).toBe(true);
   });
 });
 

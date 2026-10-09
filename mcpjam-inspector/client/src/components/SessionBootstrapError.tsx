@@ -1,6 +1,10 @@
 import { type ReactElement } from "react";
 import { NetworkAccessError } from "./NetworkAccessError";
-import { isSessionTokenHostDenied } from "@/lib/session-token";
+import { AccessRequired } from "./AccessRequired";
+import {
+  SessionTokenError,
+  isSessionTokenHostDenied,
+} from "@/lib/session-token";
 
 /**
  * The generic "couldn't establish a session" screen shown at bootstrap for a
@@ -40,14 +44,14 @@ export function GenericBootstrapError() {
           style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
         />
         <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-          Authentication Error
+          MCPJam couldn't start
         </h1>
         <p style={{ marginBottom: "0.25rem" }}>
-          Failed to establish secure session.
+          Your session could not be started.
         </p>
         <p style={{ color: "#666", fontSize: "0.875rem" }}>
-          This is usually temporary. Retry below, and check the console if it
-          persists.
+          Reload MCPJam to try again. If it still won't open, check your
+          connection and try again.
         </p>
         <button
           onClick={() => location.reload()}
@@ -63,7 +67,7 @@ export function GenericBootstrapError() {
             fontWeight: 500,
           }}
         >
-          Restart App
+          Reload MCPJam
         </button>
       </div>
     </div>
@@ -87,6 +91,15 @@ export function resolveBootstrapErrorScreen(error: unknown): {
   report: boolean;
   element: ReactElement;
 } {
+  if (
+    error instanceof SessionTokenError &&
+    error.code === "ACCESS_LINK_REQUIRED"
+  ) {
+    return {
+      report: false,
+      element: <AccessRequired restarted={error.restarted} />,
+    };
+  }
   if (isSessionTokenHostDenied(error)) {
     return { report: false, element: <NetworkAccessError /> };
   }

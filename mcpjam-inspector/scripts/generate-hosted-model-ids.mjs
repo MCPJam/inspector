@@ -3,15 +3,16 @@
 // keyless model catalog (`GET <base>/v1/models`). The snapshot is the
 // offline/cold-start FLOOR for hosted-model classification (server billing
 // catalog seed + client picker fallback); the live catalog fetch is the
-// authoritative source at runtime. Run this after the backend deploys a
-// widened catalog so the floor stays reasonably current.
+// authoritative source at runtime.
 //
 // Usage:
 //   node scripts/generate-hosted-model-ids.mjs                 # prod default
 //   MCPJAM_MODELS_URL=https://<deployment>.convex.site/v1/models node scripts/...
 //
-// It intentionally does NOT run in CI/build — regeneration is a deliberate,
-// reviewed step (the diff is the audit trail).
+// It does NOT run in the PR build. `.github/workflows/refresh-model-catalog.yml`
+// runs it weekly and opens a pull request when the snapshot changed, so the
+// regeneration is still a reviewed step (the diff is the audit trail) without
+// anyone having to remember it. It never fails on how old the snapshot is.
 
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -25,7 +26,10 @@ const OUTPUT_PATH = join(
   "hosted-model-ids.generated.ts"
 );
 
-const DEFAULT_URL = "https://api.mcpjam.com/v1/models";
+// The production app's public, keyless proxy of the backend catalog
+// (`server/routes/v1/public-models.ts`). `api.mcpjam.com` serves the web app's
+// HTML for this path, not the catalog.
+const DEFAULT_URL = "https://app.mcpjam.com/api/v1/models";
 const MODELS_URL = process.env.MCPJAM_MODELS_URL || DEFAULT_URL;
 
 // A plausible catalog carries far more than this; a smaller payload is a
@@ -39,6 +43,13 @@ async function main() {
   });
   if (!response.ok) {
     throw new Error(`Catalog fetch failed: HTTP ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("json")) {
+    throw new Error(
+      `Expected a JSON catalog from ${MODELS_URL}, got "${contentType}". ` +
+        "Is this the catalog route?"
+    );
   }
   const payload = await response.json();
   // Public `/v1/models` returns a `{ items }` page.

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   Select,
   SelectContent,
@@ -7,18 +8,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { runClientIdentity } from "../evals/helpers";
+import { isSubsetRerunRun, runClientIdentity } from "../evals/helpers";
 import {
   groupProjectRuns,
   projectRunRollup,
 } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
+import { isActiveRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
-import type { EvalSuiteOverviewEntry } from "../evals/types";
+import type {
+  EvalSuiteRunListItem,
+  EvalSuiteOverviewEntry,
+} from "../evals/types";
 
 export function buildSuiteHealth(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
   suiteId: string,
   clientKey: string,
 ) {
@@ -28,12 +33,21 @@ export function buildSuiteHealth(
     .flatMap((launch) => {
       const members = launch.runs.filter((row) => {
         const run = details.get(row._id)?.run;
-        return run && runClientIdentity(run).key === clientKey;
+        // A subset rerun's pass rate is biased by its selection: it is never
+        // a point on the suite's health trend or part of its average.
+        return (
+          run &&
+          !isSubsetRerunRun(run) &&
+          runClientIdentity(run).key === clientKey
+        );
       });
+      // The detail's status too: the chart draws from the previous snapshot
+      // while a refresh is in flight, so a run that just finished can still
+      // carry the partial iterations read while it ran.
       if (
         !members.length ||
-        members.some((row) =>
-          ["pending", "running", "grading"].includes(row.status),
+        members.some(
+          (row) => isActiveRun(row) || isActiveRun(details.get(row._id)!.run),
         )
       )
         return [];
@@ -49,9 +63,10 @@ export function buildSuiteHealth(
         {
           key: launch.key,
           runNumber: representative.runNumber,
-          target: representative.suiteName !== null
-            ? { suiteId: representative.suiteId, runId: representative._id }
-            : null,
+          target:
+            representative.suiteName !== null
+              ? { suiteId: representative.suiteId, runId: representative._id }
+              : null,
           date: Math.max(...members.map((row) => row.createdAt)),
           rate: (100 * stats.passed) / stats.total,
           threshold: run.passCriteria?.minimumPassRate ?? null,
@@ -88,7 +103,7 @@ export function SuiteHealth({
   onSelectRun,
 }: {
   rows: ProjectRunRow[];
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   /** Enough has loaded to draw something. */
   complete: boolean;
   /** More runs exist than the chart has read. */
@@ -193,18 +208,16 @@ export function SuiteHealth({
           </div>
         </div>
         {!complete ? (
-          <div className="py-8 text-sm text-muted-foreground" role="status">
-            {failed ? (
-              <>
-                Could not load run history.{" "}
-                <Button variant="outline" size="sm" onClick={onRetry}>
-                  Retry
-                </Button>
-              </>
-            ) : (
-              "Loading run history…"
-            )}
-          </div>
+          failed ? (
+            <div className="py-8 text-sm text-muted-foreground" role="status">
+              Could not load run history.{" "}
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <SuiteHealthSkeleton />
+          )
         ) : average == null ? (
           <p className="py-8 text-sm text-muted-foreground">
             No completed runs with recorded results for this client.
@@ -273,7 +286,9 @@ export function SuiteHealth({
                         onMouseLeave={() => onHoverRun?.(null)}
                         onFocus={() => onHoverRun?.(point.key)}
                         onBlur={() => onHoverRun?.(null)}
-                        onClick={() => point.target && onSelectRun?.(point.target)}
+                        onClick={() =>
+                          point.target && onSelectRun?.(point.target)
+                        }
                         aria-label={`Run #${point.runNumber}, ${dateLabel(point.date)}: ${Math.round(point.rate)}%`}
                         title={`Run #${point.runNumber} · ${dateLabel(point.date)} · ${Math.round(point.rate)}%`}
                         data-testid="suite-health-bar"
@@ -295,7 +310,11 @@ export function SuiteHealth({
                   </div>
                   <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
                     {points.map((point) => (
-                      <span key={point.key} data-testid="suite-health-bar-date" className="min-w-2 flex-1 whitespace-nowrap text-center">
+                      <span
+                        key={point.key}
+                        data-testid="suite-health-bar-date"
+                        className="min-w-2 flex-1 whitespace-nowrap text-center"
+                      >
                         {dateLabel(point.date)}
                       </span>
                     ))}
@@ -312,5 +331,45 @@ export function SuiteHealth({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The loaded card's own shape, at its own height: the average, the axis, and
+ * three bars. A one-line "Loading…" collapsed the card to nothing and then
+ * shoved the whole page down when the runs arrived.
+ */
+function SuiteHealthSkeleton() {
+  return (
+    <div role="status" aria-label="Loading run history">
+      <div className="flex items-baseline gap-3">
+        <Skeleton className="h-[34px] w-[74px]" />
+        <Skeleton className="h-3 w-32" />
+      </div>
+      <div className="flex gap-2 pt-2">
+        <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
+          <span className="absolute right-0 top-0 -translate-y-1/2">100%</span>
+          <span className="absolute bottom-0 right-0 translate-y-1/2">0%</span>
+        </div>
+        <div className="min-w-0 flex-1 pt-2">
+          <div className="flex h-20 items-end gap-1.5">
+            {[62, 84, 48].map((height) => (
+              <Skeleton
+                key={height}
+                className="min-w-2 flex-1 rounded-sm rounded-b-none"
+                style={{ height: `${height}%` }}
+              />
+            ))}
+          </div>
+          <div className="mt-2 flex gap-1.5">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="flex min-w-2 flex-1 justify-center">
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

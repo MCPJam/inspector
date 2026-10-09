@@ -1,9 +1,20 @@
-export type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string };
+import type { DesktopActivity } from "../../../shared/desktop-diagnostics";
+import type { SentryActor } from "../../../shared/sentry-identity";
+import type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../../../shared/desktop-update";
+export type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../../../shared/desktop-update";
 
 export interface ElectronAPI {
+  sentry?: {
+    installationId: string;
+    setActor: (actor: SentryActor | null) => void;
+  };
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;
@@ -99,10 +110,12 @@ export interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
-    onUpdateError: (callback: () => void) => void;
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => void;
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
+    retryDownload: () => void;
+    relaunchToRetry: () => void;
     simulateUpdate?: () => void;
     simulateUpdateDownloaded?: () => void;
     simulateUpdateError?: () => void;

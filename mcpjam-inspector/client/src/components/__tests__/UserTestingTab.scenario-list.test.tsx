@@ -181,7 +181,7 @@ describe("UserTestingTab — which scenarios the list advertises", () => {
     );
 
     expect(await screen.findByTestId("scenario-detail")).toBeInTheDocument();
-    expect(screen.queryByText(/Scenario not found/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Study not found/i)).not.toBeInTheDocument();
   });
 
   it("does not filter when environments are off", async () => {

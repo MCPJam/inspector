@@ -10,14 +10,28 @@
  * is refused so the jar gets cleared. Those are all WorkOS behaviours, and a
  * stub can only assert we believe in them.
  *
- * Requests target `http://localhost:6274` deliberately: that is what
- * `isLocalHttpUrl` keys the multi-origin cookie jar off, and the hosted branch
- * writes a different cookie entirely.
+ * Requests target `http://localhost:6274` deliberately: a loopback request is
+ * what selects the per-namespace session cookie (`mcpjam_wos_<ns>`), and the
+ * hosted branch writes a different cookie entirely.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { decodeJwt } from "jose";
+
+// The Convex half of revocation is out of scope here; what matters is WHICH
+// token the proxy hands it, and that WorkOS really issued that token.
+const { revokeAuthKitSessionMock } = vi.hoisted(() => ({
+  revokeAuthKitSessionMock: vi.fn(async (_token: string) => ({
+    revoked: true,
+  })),
+}));
+vi.mock("../../services/auth-session-revocation.js", () => ({
+  revokeAuthKitSession: revokeAuthKitSessionMock,
+}));
+
 import workosAuthkitRoutes from "../workos-authkit.js";
+import { getLocalSessionNamespace } from "../../utils/local-session-namespace.js";
+import { scopedCookieName } from "../../utils/scoped-cookies.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import {
   SEED,
@@ -30,13 +44,18 @@ import {
 
 const ORIGIN = "http://localhost:6274";
 const REDIRECT_URI = `${ORIGIN}/callback`;
-const SESSION_COOKIE = "mcpjam_workos_sessions";
+/**
+ * This instance's session cookie. Resolved lazily: the namespace includes the
+ * WorkOS client id, which the emulator stubs in `beforeAll`.
+ */
+let SESSION_COOKIE = "";
 const HAS_SESSION_COOKIE = "workos-has-session";
 
 let h: WorkosEmulatorHandle;
 
 beforeAll(async () => {
   h = await startWorkosEmulator();
+  SESSION_COOKIE = scopedCookieName("workos", getLocalSessionNamespace().id);
 }, 30_000);
 
 afterAll(async () => {
@@ -149,13 +168,13 @@ describe("code exchange", () => {
     // the entire reason this proxy holds it instead of the browser.
     expect(setCookieFor(res, SESSION_COOKIE)).toContain("HttpOnly");
     expect(setCookieFor(res, HAS_SESSION_COOKIE)).toContain(
-      `${HAS_SESSION_COOKIE}=true`,
+      `${HAS_SESSION_COOKIE}=1`,
     );
   }, 30_000);
 });
 
 describe("refresh", () => {
-  it("rotates on a cookie-only refresh, and clears the jar when a spent token is replayed", async () => {
+  it("rotates on a cookie-only refresh, and clears the session when a spent token is replayed", async () => {
     const app = createApp();
     const { verifier, callback } = await authorizeThroughProxy(app);
     const exchanged = await exchangeThroughProxy(app, {
@@ -198,10 +217,16 @@ describe("refresh", () => {
     expect(replayed.status).toBe(400);
     expect(await replayed.json()).toMatchObject({ error: "invalid_grant" });
 
-    // A dead session must not leave a jar behind, or the app renders
+    // A dead session must not leave its cookie behind, or the app renders
     // signed-in chrome over a connection WorkOS has already de-authenticated.
     expect(setCookieFor(replayed, SESSION_COOKIE)).toContain("Max-Age=0");
-    expect(setCookieFor(replayed, HAS_SESSION_COOKIE)).toContain("Max-Age=0");
+    // ...but the host-wide hint stays: another instance on this host may be
+    // signed in, and clearing it would make that one load signed out.
+    expect(
+      replayed.headers
+        .getSetCookie()
+        .some((cookie) => cookie.startsWith(`${HAS_SESSION_COOKIE}=`)),
+    ).toBe(false);
   }, 30_000);
 
   it("refuses a refresh when no session cookie is present", async () => {
@@ -225,7 +250,7 @@ describe("refresh", () => {
 });
 
 describe("logout", () => {
-  it("clears the jar and hands the browser on to WorkOS", async () => {
+  it("clears this instance's session and hands the browser on to WorkOS", async () => {
     const app = createApp();
     const { verifier, callback } = await authorizeThroughProxy(app);
     const exchanged = await exchangeThroughProxy(app, {
@@ -253,5 +278,33 @@ describe("logout", () => {
       redirect: "manual",
     });
     expect(upstream.headers.get("location")).toContain(ORIGIN);
+  }, 30_000);
+
+  it("revokes, in Convex, the very session it is logging out of", async () => {
+    revokeAuthKitSessionMock.mockClear();
+    const app = createApp();
+    const { verifier, callback } = await authorizeThroughProxy(app);
+    const exchanged = await exchangeThroughProxy(app, {
+      code: callback.searchParams.get("code")!,
+      verifier,
+    });
+    const jar = cookieHeaderFrom(exchanged, [SESSION_COOKIE]);
+    const signedIn = decodeJwt(
+      ((await exchanged.json()) as { access_token: string }).access_token,
+    ) as { sid?: string; sub?: string };
+
+    const res = await app.request(
+      `${ORIGIN}/user_management/sessions/logout?session_id=session_not_ours`,
+      { headers: { Cookie: jar } },
+    );
+
+    expect(res.status).toBe(302);
+    expect(revokeAuthKitSessionMock).toHaveBeenCalledTimes(1);
+    const [revokedWith] = revokeAuthKitSessionMock.mock.calls[0];
+    // A real, freshly issued token for the same user and the same session —
+    // never the session id the query string named.
+    const verified = await verifyAuthKitToken(revokedWith);
+    expect(verified.sub).toBe(SEED.user.id);
+    expect((decodeJwt(revokedWith) as { sid?: string }).sid).toBe(signedIn.sid);
   }, 30_000);
 });

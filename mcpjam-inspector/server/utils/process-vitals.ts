@@ -142,13 +142,57 @@ export function flushProcessVitals(nowMs: number = Date.now()): void {
     heapTrendMb.push(Math.round(vitals.heapUsedBytes / (1024 * 1024)));
     if (heapTrendMb.length > HEAP_TREND_SAMPLES) heapTrendMb.shift();
 
-    Sentry.setContext("process_vitals", {
+    const scopePayload = {
       ...vitals,
       // Oldest first. On a crash report this is the shape of the session, which
       // is what tells a ramp from a spike without a heap snapshot.
       heapUsedTrendMb: [...heapTrendMb],
       sampleIntervalSeconds: SAMPLE_INTERVAL_MS / 1000,
-    });
+    };
+
+    Sentry.setContext("process_vitals", scopePayload);
+    // The SAME payload again as an extra, because on the one report that
+    // matters most the context above is silently discarded.
+    //
+    // A native OOM does not travel as a normal event. Crashpad writes a
+    // minidump, the process dies, and `sentryMinidumpIntegration` uploads it on
+    // the NEXT launch by rebuilding the event from the scope it persisted to
+    // disk during the dead run. That rebuild is where this breaks
+    // (`@sentry/electron@5.12.0`,
+    // `main/integrations/sentry-minidump/index.js`):
+    //
+    //     applyScopeDataToEvent(event, previousRun.scope); // merges our context in
+    //     event.contexts = previousRun.event?.contexts;    // ...and drops it again
+    //
+    // The second line ASSIGNS rather than merges, so every context the app set
+    // is replaced by the SDK's own defaults (app, device, os, runtime). Only
+    // `contexts`, `release` and `environment` are overwritten that way —
+    // `event.extra`, merged by the same `applyScopeDataToEvent` call, is left
+    // alone. So an extra survives the exact path a context cannot.
+    //
+    // This is not hypothetical: INSPECTOR-ELECTRON-WA crashed the main process
+    // with 2.8 GB live after 2h40m, on a build that had been shipping this
+    // sampler for two weeks, and the report carried no `process_vitals` at all.
+    // The gauge written to answer "did this ramp or spike?" was invisible on
+    // the only crash it was written for.
+    //
+    // Both are set rather than moving to `extra` alone: contexts render better
+    // in the Sentry UI and DO arrive on handled JS errors, which is most
+    // events. The extra is the copy that survives a minidump.
+    //
+    // BEFORE DELETING THIS LINE ON AN SDK UPGRADE: `extra` is the legacy
+    // concept Sentry steers away from in favour of `context`, so on a major
+    // bump this is the obvious line to drop — and dropping it restores exactly
+    // the blind spot described above. It is the copy that survives, not the
+    // redundant one. (Checked at the time of writing: `setExtra` carries no
+    // `@deprecated` marker in the pinned 8.55, and neither the v8->v9 nor the
+    // v9->v10 migration guide mentions it. So the risk is the direction of
+    // travel, not a scheduled removal.) Whoever moves off v8 should re-read
+    // `sentryMinidumpIntegration` in the version they are moving TO: if the
+    // `event.contexts = previousRun.event?.contexts` overwrite is gone, the
+    // context alone is enough and this line can go with it. If it is still
+    // there, this line has to stay whatever shape the API has taken.
+    Sentry.setExtra("process_vitals", scopePayload);
 
     const reason = emitReason(vitals, nowMs);
     if (!reason) return;

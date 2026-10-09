@@ -21,6 +21,10 @@
  */
 
 import { useId } from "react";
+import {
+  judgeRubricSchema,
+  MAX_JUDGE_INSTRUCTIONS_LENGTH,
+} from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
 import type { EvalJudgeRubric, EvalJudgeRubricCriterion } from "./types";
@@ -93,18 +97,24 @@ export function criterionError(
 
 /** True when every criterion is saveable. An empty rubric is valid: it clears. */
 export function isRubricValid(rubric: EvalJudgeRubric | undefined): boolean {
-  const criteria = rubric?.criteria ?? [];
-  if (criteria.length > MAX_JUDGE_RUBRIC_CRITERIA) return false;
-  return criteria.every(
-    (criterion, index) =>
-      criterionError(criterion, index, criteria) === undefined,
-  );
+  return rubric === undefined || judgeRubricSchema.safeParse(rubric).success;
 }
+
+/**
+ * Shown under the criteria when the deployment grades each criterion as its
+ * own rubric-check row. A criterion's wording and id ARE that row's identity,
+ * so an edit starts a new row — honest, since it is a different question, but
+ * it reads as churn against a baseline unless someone says so up front.
+ */
+export const RUBRIC_CHECK_ROW_IDENTITY_HINT =
+  "Each criterion is also graded on its own as a rubric check. Editing a criterion's wording or id starts a new rubric-check row, so baseline comparisons show it as removed and added.";
 
 export function JudgeRubricEditor({
   value,
   onChange,
   disabled = false,
+  criteriaOnly = false,
+  rowIdentityHint,
 }: {
   value: EvalJudgeRubric | undefined;
   /**
@@ -115,13 +125,26 @@ export function JudgeRubricEditor({
    */
   onChange: (next: EvalJudgeRubric | undefined) => void;
   disabled?: boolean;
+  /**
+   * Render only the criteria list, for a host that owns the instructions
+   * field itself (the suite's grading-instructions editor).
+   */
+  criteriaOnly?: boolean;
+  /** A sentence shown under the criteria, when there are any. */
+  rowIdentityHint?: string;
 }) {
   const fieldId = useId();
   const criteria = value?.criteria ?? [];
   const atCap = criteria.length >= MAX_JUDGE_RUBRIC_CRITERIA;
 
   const commit = (next: EvalJudgeRubricCriterion[]) =>
-    onChange(next.length === 0 ? undefined : { criteria: next });
+    onChange(
+      next.length === 0
+        ? value?.instructions
+          ? { instructions: value.instructions }
+          : undefined
+        : { ...value, criteria: next },
+    );
 
   const updateAt = (index: number, patch: Partial<EvalJudgeRubricCriterion>) =>
     commit(
@@ -140,10 +163,41 @@ export function JudgeRubricEditor({
 
   return (
     <div className="space-y-2">
+      {criteriaOnly ? null : (
+        <label
+          className="block space-y-1 text-xs"
+          htmlFor={`${fieldId}-instructions`}
+        >
+          <span>Grading instructions (optional)</span>
+          <textarea
+            id={`${fieldId}-instructions`}
+            className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground"
+            rows={3}
+            value={value?.instructions ?? ""}
+            disabled={disabled}
+            maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
+            placeholder="For example: check that the answer cites the source of each claim."
+            onChange={(event) => {
+              const instructions = event.target.value;
+              onChange(
+                instructions.trim()
+                  ? { ...value, instructions }
+                  : criteria.length
+                  ? { criteria }
+                  : undefined,
+              );
+            }}
+          />
+          <span className="block text-muted-foreground">
+            Additional guidance for judging the case’s task and expected
+            outcome.
+          </span>
+        </label>
+      )}
       {criteria.length === 0 ? (
         <p className="text-[11px] text-muted-foreground/60">
-          No criteria. The judge grades each case against its own expected
-          output alone.
+          The judge uses each case’s task and expected outcome. Add structured
+          criteria when you need individual requirements to be cited.
         </p>
       ) : null}
       {criteria.map((criterion, index) => {
@@ -299,6 +353,14 @@ export function JudgeRubricEditor({
           {atCap ? " — at the limit" : ""}
         </span>
       </div>
+      {rowIdentityHint && criteria.length > 0 ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-rubric-row-identity-hint
+        >
+          {rowIdentityHint}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -54,7 +54,8 @@ const {
   const appBridgeArgsRef = { current: null as any };
   const mockAppBridgeCtor = vi
     .fn()
-    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+    // Constructed with `new`, which Vitest 4 rejects for arrow implementations.
+    .mockImplementation(function (client, hostInfo, hostCapabilities, options) {
       appBridgeArgsRef.current = {
         client,
         hostInfo,
@@ -127,11 +128,20 @@ const mockPlaygroundStoreState = {
   deviceType: "desktop" as const,
 };
 
+vi.mock("sonner", () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
+vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
+
 // ── Module mocks ───────────────────────────────────────────────────────────
-vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: mockAppBridgeCtor,
-  PostMessageTransport: mockPostMessageTransport,
-}));
+vi.mock(
+  "@modelcontextprotocol/ext-apps/app-bridge",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@modelcontextprotocol/ext-apps/app-bridge")
+    >()),
+    AppBridge: mockAppBridgeCtor,
+    PostMessageTransport: mockPostMessageTransport,
+  }),
+);
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 // The renderer relocated to @mcpjam/widget-react imports `./sandboxed-iframe`
@@ -264,6 +274,10 @@ vi.mock("../../../../../../../../widget-react/src/mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import {
+  WidgetFullscreenPlacementContext,
+  WidgetHostProvider,
+} from "@mcpjam/widget-react";
+import {
   WidgetSurfaceHost,
   WidgetSurfaceHostProvider,
 } from "../widget-surface-host";
@@ -278,7 +292,19 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
-import { InspectorWidgetHostProvider } from "../use-widget-host";
+import { InspectorWidgetHostProvider, useWidgetHost } from "../use-widget-host";
+import {
+  createThreadAppHost,
+  type ThreadAppPresentation,
+} from "@/components/host-workspace/thread-app-host";
+import type { ThreadAppHandle } from "@/components/host-workspace/thread-app-api";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { toast } from "sonner";
+import { captureSentryMessage } from "@/lib/sentry";
+import {
+  registerArtifactUrls,
+  resetArtifactUrlsForTests,
+} from "@/lib/artifact-urls";
 
 // The renderer relocated to @mcpjam/widget-react reads its host through the
 // package `useWidgetHost()` context. Wrap each mount in the inspector's provider
@@ -305,6 +331,16 @@ function HostedSurfaceHost(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+/** A link shaped like the backend's short-lived artifact links. */
+function signedArtifactUrl(storageId: string, expiresAtSeconds: number) {
+  const encode = (value: string) =>
+    btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const body = encode(
+    JSON.stringify({ v: 1, s: storageId, k: "html", e: expiresAtSeconds }),
+  );
+  return `https://test.convex.site/web/artifact?t=${body}.${encode("sig")}`;
+}
+
 const baseProps = {
   serverId: "server-1",
   serverName: "test-server",
@@ -556,6 +592,38 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
     expect(sandboxedIframeMountsRef.current).toBe(1);
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("reloads the guest when its bridge is rebuilt, so it initializes the new bridge", async () => {
+    const renderTree = (override: Record<string, unknown>) => (
+      <ScenarioHostCapabilitiesOverrideProvider value={override}>
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostCapabilitiesOverrideProvider>
+    );
+    const { rerender } = render(renderTree({ openLinks: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+    });
+    const firstLoad = sandboxedIframePropsRef.current.reloadKey;
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
+
+    // New advertised capabilities need a new bridge. The guest already
+    // initialized the old one, so it must load again for the new one.
+    rerender(renderTree({ openLinks: {}, logging: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+      expect(sandboxedIframePropsRef.current.reloadKey).not.toBe(firstLoad);
+    });
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
   });
 
   it("renders separate iframes for distinct tool calls on the same widget", async () => {
@@ -1047,6 +1115,384 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | Record<string, unknown>
       | undefined;
     expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
+  it("does not feed debug-store writes back into fresh equivalent host context", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/stores/widget-debug-store")
+    >("@/stores/widget-debug-store");
+    const store = actual.useWidgetDebugStore;
+    stableStoreFns.setWidgetDebugInfo.mockImplementation(
+      store.getState().setWidgetDebugInfo,
+    );
+    stableStoreFns.setWidgetGlobals.mockImplementation(
+      store.getState().setWidgetGlobals,
+    );
+    let renders = 0;
+    function LiveDebugSubscriber() {
+      React.useSyncExternalStore(
+        store.subscribe,
+        () => store.getState().widgets,
+      );
+      renders++;
+      if (renders > 20) throw new Error("debug context feedback loop");
+      mockHostContextStoreState.draftHostContext = {
+        deviceCapabilities: { hover: true, touch: false },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        availableDisplayModes: ["fullscreen"],
+      };
+      return (
+        <HostedRenderer
+          {...baseProps}
+          hostManagedPresentation
+          displayMode="fullscreen"
+        />
+      );
+    }
+    try {
+      render(<LiveDebugSubscriber />);
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      expect(renders).toBeLessThan(20);
+      expect(store.getState().widgets.get("call-1")).toBeDefined();
+    } finally {
+      stableStoreFns.setWidgetDebugInfo.mockReset();
+      stableStoreFns.setWidgetGlobals.mockReset();
+    }
+  });
+
+  it("leaves fullscreen geometry and toolbar to its workspace while preserving protocol mode", async () => {
+    const { container, rerender } = render(
+      <HostedRenderer
+        {...baseProps}
+        hostManagedPresentation
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext.displayMode).toBe(
+      "fullscreen",
+    );
+    expect(container.querySelector(".fixed")).toBeNull();
+    expect(screen.queryByLabelText("Exit fullscreen")).not.toBeInTheDocument();
+    const mounts = sandboxedIframeMountsRef.current;
+    rerender(
+      <HostedRenderer
+        {...baseProps}
+        hostManagedPresentation
+        displayMode="inline"
+      />,
+    );
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    expect(container.querySelector(".fixed")).toBeNull();
+  });
+
+  it("draws a fullscreen App in a host-given rectangle with Exit full screen, without remounting", async () => {
+    const onEnter = vi.fn();
+    const onExit = vi.fn();
+    const onDisplayModeChange = vi.fn();
+    const placement = (rect: { top: number; left: number; width: number; height: number } | null) => ({
+      rect,
+      exitLabel: "Exit full screen",
+      onEnter,
+      onExit,
+    });
+    const view = (rect: Parameters<typeof placement>[0]) => (
+      <WidgetFullscreenPlacementContext.Provider value={placement(rect)}>
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      </WidgetFullscreenPlacementContext.Provider>
+    );
+    const { container, rerender } = render(view(null));
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    // No rectangle yet: today's window fullscreen.
+    expect(container.querySelector("[data-mcp-app-fullscreen-placed]")).toBeNull();
+    const mounts = sandboxedIframeMountsRef.current;
+    rerender(view({ top: 40, left: 600, width: 400, height: 500 }));
+    const placed = container.querySelector(
+      "[data-mcp-app-fullscreen-placed]",
+    ) as HTMLElement;
+    expect(placed).not.toBeNull();
+    expect(placed.style.top).toBe("40px");
+    expect(placed.style.left).toBe("600px");
+    expect(placed.style.width).toBe("400px");
+    expect(placed.style.height).toBe("500px");
+    // Above the host panel holding the rectangle, which a narrow window lays
+    // over the chat at z-40 — level with it, the App was hidden behind it.
+    expect(placed).toHaveClass("z-50");
+    expect(placed).not.toHaveClass("inset-0");
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    expect(onEnter).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "test-server" }),
+    );
+    const exit = screen.getByRole("button", { name: "Exit fullscreen" });
+    expect(exit).toHaveTextContent("Exit full screen");
+    // The rail tab's close uses the same exit as the header, and the host
+    // that ended it already knows: no onExit.
+    act(() => onEnter.mock.calls.at(-1)![0].exit());
+    expect(onDisplayModeChange).toHaveBeenCalledWith("inline");
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("tells the host when the person leaves a placed fullscreen from the App's own control", async () => {
+    const onExit = vi.fn();
+    const onDisplayModeChange = vi.fn();
+    render(
+      <WidgetFullscreenPlacementContext.Provider
+        value={{
+          rect: { top: 40, left: 600, width: 400, height: 500 },
+          exitLabel: "Exit full screen",
+          onExit,
+        }}
+      >
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      </WidgetFullscreenPlacementContext.Provider>,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(onDisplayModeChange).toHaveBeenCalledWith("inline");
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps covering the window, without onExit, when its fullscreen is not placed", async () => {
+    const onExit = vi.fn();
+    const { container } = render(
+      <WidgetFullscreenPlacementContext.Provider value={{ rect: null, onExit }}>
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+        />
+      </WidgetFullscreenPlacementContext.Provider>,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    const cover = container.querySelector(".fixed") as HTMLElement;
+    expect(cover).toHaveClass("inset-0", "z-40");
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  describe("a model App placed in the side panel", () => {
+    const rect = { top: 40, left: 600, width: 400, height: 500 };
+    const handle = {
+      instanceToken: "token",
+      instanceId: "instance",
+      generation: 1,
+      operationId: "operation",
+      resourceUri: baseProps.resourceUri,
+      toolTitle: "App",
+      appToolsEnabled: true,
+      widgetContent: {
+        html: "<html><body>model app</body></html>",
+        mimeTypeValid: true,
+      },
+    } as unknown as ThreadAppHandle;
+    function OwnedHost({
+      presentation,
+      children,
+    }: {
+      presentation: ThreadAppPresentation;
+      children: React.ReactNode;
+    }) {
+      const base = useWidgetHost();
+      const host = React.useMemo(
+        () =>
+          createThreadAppHost(base, handle, baseProps.serverId, presentation),
+        [base, presentation],
+      );
+      return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
+    }
+    /**
+     * The Thread + Playground contract: one displayMode, the fullscreen
+     * owner, and a placement in the side panel while that owner is
+     * fullscreen. `entered` is the side-panel tab's handle on the App.
+     */
+    function mountChat(presentation: ThreadAppPresentation = "model") {
+      const entered: { current: { label: string; exit: () => void } | null } =
+        { current: null };
+      const state = { mode: "inline" as string };
+      function Chat() {
+        const [mode, setMode] = React.useState<"inline" | "pip" | "fullscreen">(
+          "inline",
+        );
+        const [owner, setOwner] = React.useState<string | null>(null);
+        state.mode = mode;
+        const placed = mode === "fullscreen" && owner !== null;
+        return (
+          <WidgetFullscreenPlacementContext.Provider
+            value={{
+              rect: placed ? rect : null,
+              exitLabel: "Exit full screen",
+              onEnter: (app) => {
+                entered.current = app;
+              },
+              onLeave: () => {
+                entered.current = null;
+              },
+            }}
+          >
+            <InspectorWidgetHostProvider>
+              <OwnedHost presentation={presentation}>
+                <MCPAppsRenderer
+                  {...baseProps}
+                  displayMode={mode}
+                  fullscreenWidgetId={owner}
+                  onDisplayModeChange={setMode}
+                  onRequestFullscreen={setOwner}
+                  onExitFullscreen={(id) =>
+                    setOwner((current) => (current === id ? null : current))
+                  }
+                />
+              </OwnedHost>
+            </InspectorWidgetHostProvider>
+          </WidgetFullscreenPlacementContext.Provider>
+        );
+      }
+      const view = render(<Chat />);
+      return { ...view, entered, state };
+    }
+    /** An App with its own tools goes fullscreen once it initializes. */
+    async function goFullscreen() {
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      mockBridge.getAppCapabilities.mockReturnValue({
+        tools: {},
+        availableDisplayModes: ["inline", "fullscreen"],
+      });
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      mockBridge.getAppCapabilities.mockReturnValue(undefined);
+    }
+    const placedApp = (container: HTMLElement) =>
+      container.querySelector("[data-mcp-app-fullscreen-placed]");
+
+    it("opens inline in its message", async () => {
+      const { container, state, entered } = mountChat();
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      expect(state.mode).toBe("inline");
+      expect(placedApp(container)).toBeNull();
+      expect(entered.current).toBeNull();
+    });
+
+    it.each([
+      ["its side-panel tab (closing it or choosing another tab)", "tab"],
+      ["Exit full screen", "header"],
+      ["the App's own Return (a request for inline)", "app"],
+    ] as const)(
+      "leaves fullscreen for good with %s",
+      async (_name, control) => {
+        const { container, state, entered } = mountChat();
+        await goFullscreen();
+        expect(state.mode).toBe("fullscreen");
+        expect(placedApp(container)).not.toBeNull();
+        expect(entered.current?.label).toBe("test-server");
+
+        await act(async () => {
+          if (control === "tab") entered.current!.exit();
+          else if (control === "header")
+            fireEvent.click(
+              screen.getByRole("button", { name: "Exit fullscreen" }),
+            );
+          else {
+            const request = mockBridge.onrequestdisplaymode as (args: {
+              mode: "inline";
+            }) => Promise<{ mode: string }>;
+            expect((await request({ mode: "inline" })).mode).toBe("inline");
+          }
+          await Promise.resolve();
+        });
+        // Nothing snaps it back: the tab ends and the App stays inline.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        expect(state.mode).toBe("inline");
+        expect(placedApp(container)).toBeNull();
+        expect(entered.current).toBeNull();
+      },
+    );
+
+    it("keeps an entrypoint (not a model App) fullscreen only", async () => {
+      const { state } = mountChat("thread");
+      await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+    });
+  });
+
+  it("applies resource preference before the first bridge and narrows after init without remounting", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        html: "<html><body>display fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "fullscreen",
+          availableDisplayModes: ["inline", "fullscreen"],
+        },
+      }),
+    } as Response);
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext).toEqual(
+      expect.objectContaining({
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline", "fullscreen"],
+      }),
+    );
+    const mounts = sandboxedIframeMountsRef.current;
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline"],
+    });
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() =>
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          availableDisplayModes: ["inline"],
+          displayMode: "inline",
+        }),
+      ),
+    );
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    mockBridge.getAppCapabilities.mockReturnValue(undefined);
+  });
+
+  it("refuses an App with no supported post-init display mode", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        html: "<html><body>display fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: { availableDisplayModes: ["inline"] },
+      }),
+    } as Response);
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["fullscreen"],
+    });
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+    expect(
+      await screen.findByText(/This App has no supported display mode/),
+    ).toBeInTheDocument();
+    mockBridge.getAppCapabilities.mockReturnValue(undefined);
   });
 
   it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: inline + fullscreen, no pip)", async () => {
@@ -2317,6 +2763,128 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
   });
 
+  it("reads a cached artifact link through the host's fetcher, using the freshest known link", async () => {
+    resetArtifactUrlsForTests();
+    const stale = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const fresh = signedArtifactUrl("kg-widget", 1_800_003_600);
+    registerArtifactUrls([fresh]);
+
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={stale} />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(fresh);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith(stale);
+  });
+
+  it("keeps a cached replay mounted when its artifact link is re-minted for the same widget", async () => {
+    resetArtifactUrlsForTests();
+    const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+
+    const { rerender } = render(
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    const mounts = sandboxedIframeMountsRef.current;
+    vi.mocked(global.fetch).mockClear();
+
+    // Same widget, new expiry: nothing reloads.
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+
+    // A different widget still loads its own bytes.
+    const other = signedArtifactUrl("kg-other-widget", 1_800_003_600);
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={other} />);
+    await vi.waitFor(() => {
+      expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(other);
+    });
+  });
+
+  it("shows a cached replay that recovers on a re-minted link after a failed load", async () => {
+    resetArtifactUrlsForTests();
+    const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      text: () => Promise.resolve(""),
+      json: () => Promise.resolve({}),
+      headers: new Headers(),
+    } as Response);
+
+    const { rerender } = render(
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+    );
+    expect(
+      await screen.findByText(/Failed to load MCP App/),
+    ).toBeInTheDocument();
+
+    // Same widget, fresh link: the retry succeeds and must be what shows.
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />);
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(
+      screen.queryByText(/Failed to load MCP App/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the widget's declared display modes when its artifact link is re-minted", async () => {
+    resetArtifactUrlsForTests();
+    // The app declares inline only, so the advertised set is the host's
+    // modes narrowed to inline. The iframe stays mounted across a re-minted
+    // link and never re-initializes, so nothing would narrow it again.
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline"],
+    });
+    try {
+      const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+      const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+      const { rerender } = render(
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+      );
+      await vi.waitFor(() => {
+        expect(mockBridge.connect).toHaveBeenCalled();
+      });
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+          expect.objectContaining({ availableDisplayModes: ["inline"] }),
+        );
+      });
+
+      rerender(
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />,
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({ availableDisplayModes: ["inline"] }),
+      );
+    } finally {
+      mockBridge.getAppCapabilities.mockReturnValue(undefined);
+    }
+  });
+
   it("first-render cspMode derives from WidgetSurfaceProvider, not isPlaygroundActive", async () => {
     // Regression for the "draw a cat, then it vanishes" iframe re-mount
     // bug. Previously `cspMode` came from `isPlaygroundActive`, which was
@@ -3260,6 +3828,141 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([]);
     expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
   });
+
+  it.each(["inline", "modal"])(
+    "shows grouped %s client-limit details after an app boots and does not page",
+    async (surface) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const widgets = useWidgetDebugStore.getState().widgets;
+      stableStoreFns.setWidgetAppliedCsp.mockImplementation(
+        (toolCallId, applied) => {
+          widgets.set(toolCallId, {
+            csp: { appliedPoliciesByMount: { [applied.mountId]: applied } },
+          } as any);
+        },
+      );
+      const origin = "https://api.tommy-local.ngrok.app";
+      const policy =
+        "default-src 'none'; img-src data: blob:; font-src data: blob:";
+      const clientContext = {
+        clientName: "Goose",
+        surface,
+        declaredCsp: { resourceDomains: [origin] },
+        capabilities: { cspResourceDomains: { image: false, font: false } },
+      };
+      let unmount: (() => void) | undefined;
+      try {
+        ({ unmount } = render(
+          <ScenarioHostStyleProvider value="goose">
+            <HostedRenderer {...baseProps} />
+          </ScenarioHostStyleProvider>,
+        ));
+        await vi.waitFor(() =>
+          expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy(),
+        );
+        act(() => triggerReady());
+        expect(sandboxedIframePropsRef.current.clientContext).toEqual(
+          expect.objectContaining({
+            clientName: "Goose",
+            surface: "inline",
+            capabilities: expect.any(Object),
+          }),
+        );
+        const send = (data: Record<string, unknown>) =>
+          act(() => {
+            if (surface === "inline") {
+              sandboxedIframePropsRef.current.onMessage({ data });
+            } else {
+              const modal = mcpAppsModalPropsRef.current;
+              if (data.type === "mcpjam:csp-applied")
+                modal.onCspApplied({ data });
+              else modal.onCspViolation({ data });
+            }
+          });
+        const applied = (mountId: string) =>
+          send({
+            type: "mcpjam:csp-applied",
+            mountId,
+            csp: policy,
+            intent: {
+              csp: { resourceDomains: [origin] },
+              cspSubtypePolicy: clientContext.capabilities,
+              clientContext,
+              permissive: false,
+            },
+          });
+        const blocked = (directive: string, mountId = "proxy:1") =>
+          send({
+            type: "mcp-apps:csp-violation",
+            mountId,
+            directive,
+            blockedUri: origin + "/asset",
+            originalPolicy: policy,
+            disposition: "enforce",
+          });
+        applied("proxy:1");
+        expect(stableStoreFns.setWidgetAppliedCsp).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            intent: expect.objectContaining({
+              clientContext,
+              cspSubtypePolicy: clientContext.capabilities,
+            }),
+          }),
+        );
+        expect(stableStoreFns.addCspViolation).not.toHaveBeenCalled();
+        expect(captureSentryMessage).not.toHaveBeenCalled();
+        blocked("img-src");
+        blocked("font-src");
+        expect(toast.info).not.toHaveBeenCalled();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(toast.info).toHaveBeenCalledTimes(1);
+        const [title, options] = vi.mocked(toast.info).mock.calls[0];
+        expect(title).toBe("This was blocked by Goose’s CSP limits.");
+        expect(options?.duration).toBe(8000);
+        const details = render(<>{options?.description}</>);
+        expect(
+          details.getByText(
+            "cspResourceDomains.image is unsupported: img-src data: blob:.",
+          ),
+        ).toBeTruthy();
+        expect(
+          details.getByText(
+            "cspResourceDomains.font is unsupported: font-src data: blob:.",
+          ),
+        ).toBeTruthy();
+        details.unmount();
+        expect(captureSentryMessage).toHaveBeenCalledTimes(2);
+        for (const [message, context] of vi.mocked(captureSentryMessage).mock
+          .calls) {
+          expect(message).toBe("MCP App CSP violation");
+          expect(context?.level).toBe("info");
+        }
+        blocked("img-src");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(toast.info).toHaveBeenCalledTimes(1);
+        applied("proxy:2");
+        expect(toast.dismiss).toHaveBeenCalledWith(options?.id);
+        blocked("img-src", "proxy:1");
+        expect(captureSentryMessage).toHaveBeenCalledTimes(2);
+        blocked("img-src", "proxy:2");
+        unmount();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        expect(toast.info).toHaveBeenCalledTimes(1);
+      } finally {
+        unmount?.();
+        stableStoreFns.setWidgetAppliedCsp.mockReset();
+        widgets.clear();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   // ── Blocked-App notice ──────────────────────────────────────────────────
   // An App whose own resources are refused never signals ready, so the

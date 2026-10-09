@@ -1,4 +1,8 @@
-import { verifyGithubCredentialAccess, githubExecutionPolicy } from "../services/github-checks/credential-policy.js";
+import {
+  verifyGithubCredentialAccess,
+  githubExecutionPolicy,
+} from "../services/github-checks/credential-policy.js";
+import type { ModelWorkload } from "./model-workload.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
@@ -11,14 +15,25 @@ import {
   isRuntimeChosenModelSentinel,
   runtimeChosenModelSentinelName,
 } from "@/shared/model-provider";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { decideTurnRail } from "./selection-rail.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
+import {
+  selectionKey,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
   isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
 } from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
+import { backendFailureText } from "./backend-failure-text.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+  ServiceCredentialUnavailableError,
+} from "../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,8 +96,13 @@ export function isLocalRuntimeEligible(providerKey: string): boolean {
 // Resolution — call the Convex HTTP endpoint
 // ---------------------------------------------------------------------------
 
-const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 const RESOLVE_TIMEOUT_MS = 15_000;
+const ORG_MODEL_CONFIG_FEATURE = "Organization model providers";
+/** Service-credential route (hosted Inspector). */
+export const ORG_MODEL_CONFIG_SERVICE_PATH =
+  "/internal/v1/org-model-config/resolve";
+/** Bearer-only twin of the same handler (self-hosted Inspector). */
+export const ORG_MODEL_CONFIG_BEARER_PATH = "/v1/org-model-config/resolve";
 
 // ---------------------------------------------------------------------------
 // In-process cache — avoids one 15 s HTTP call per eval test case.
@@ -160,12 +180,15 @@ export async function resolveOrgModelConfig(
     throw new Error("CONVEX_HTTP_URL is not set");
   }
 
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
-
+  // With the service credential (hosted), the internal route; without it
+  // (every self-hosted build), the backend's bearer-only twin, which runs the
+  // same handler and authorizes the same user off the same bearer. Without a
+  // credential AND without a bearer there is nobody to resolve for.
+  const inspectorServiceToken = getServiceCredential();
   const authHeader = normalizeAuthHeader(auth);
+  if (!inspectorServiceToken && !authHeader) {
+    throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+  }
   const serverIds = normalizeServerIds(auth?.serverIds);
   await verifyGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
@@ -174,7 +197,11 @@ export async function resolveOrgModelConfig(
     return cached.result;
   }
 
-  const url = `${convexHttpUrl.replace(/\/$/, "")}/internal/v1/org-model-config/resolve`;
+  const url = `${convexHttpUrl.replace(/\/$/, "")}${
+    inspectorServiceToken
+      ? ORG_MODEL_CONFIG_SERVICE_PATH
+      : ORG_MODEL_CONFIG_BEARER_PATH
+  }`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
 
@@ -183,7 +210,9 @@ export async function resolveOrgModelConfig(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        ...(inspectorServiceToken
+          ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken }
+          : {}),
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({
@@ -201,14 +230,31 @@ export async function resolveOrgModelConfig(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      let message = `Org model config resolution failed (${response.status})`;
+      let parsed: { error?: unknown } | null = null;
       try {
-        const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        const value = JSON.parse(body);
+        if (value && typeof value === "object") parsed = value;
       } catch {
-        // ignore parse failure
+        // not JSON
       }
-      throw new Error(message);
+      // A 404 the handler did not write (no JSON body) is a routing miss: a
+      // backend that predates the bearer-only twin. Without the credential
+      // there is then no route at all, so answer exactly as a build with
+      // neither would — the hosted-only answer, not a route-not-found error.
+      if (!inspectorServiceToken && response.status === 404 && !parsed) {
+        throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+      }
+      const fallback = `Org model config resolution failed (${response.status})`;
+      throw new Error(
+        parsed
+          ? backendFailureText({
+              source: "org-model-config",
+              status: response.status,
+              detail: parsed.error,
+              fallback,
+            })
+          : fallback,
+      );
     }
 
     const data = (await response.json()) as {
@@ -217,7 +263,14 @@ export async function resolveOrgModelConfig(
       providers?: ResolvedProviderConfig[];
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org model config");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org model config",
+        }),
+      );
     }
 
     let providers = data.providers ?? [];
@@ -500,6 +553,8 @@ function buildRuntimeCacheKey(
   providerKey: string,
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
+  modelSelection?: ModelSelection,
+  modelWorkload?: ModelWorkload,
 ): string {
   const authHash = createHash("sha256")
     .update(
@@ -515,7 +570,18 @@ function buildRuntimeCacheKey(
       }),
     )
     .digest("hex");
-  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}`;
+  // A selection-carrying resolve is re-authorized by the backend against its
+  // connection; it must never be answered from a legacy (or another
+  // connection's) cached entry. Admission facts also scope reuse: a text
+  // chat must never authorize a tool/image call or an unattended run.
+  const selectionPart = modelSelection
+    ? `:selection:${createHash("sha256").update(selectionKey(modelSelection)).digest("hex")}`
+    : "";
+  return `runtime:${formatTargetForCache(
+    target,
+  )}:${providerKey}:${model}:auth:${authHash}${selectionPart}:workload:${JSON.stringify(
+    modelWorkload ?? null,
+  )}`;
 }
 
 /**
@@ -534,26 +600,49 @@ export async function resolveOrgProviderRuntime(
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
     providerKey,
     model,
     auth,
+    options,
   );
 }
 
+/**
+ * `options.modelSelection`: the saved org selection behind this request, sent
+ * as the body's `modelSelection` so the backend re-resolves its connection
+ * (a deleted, disabled or moved connection is refused `credential_missing`)
+ * before it decrypts any key. Only an `org` selection is sent; a backend
+ * that predates selections ignores the field and resolves the legacy way.
+ * `options.modelWorkload` carries only admission facts, never prompt content.
+ * Callers must derive it after preparing the effective tools and messages.
+ */
 export async function resolveOrgProviderRuntimeForTarget(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
+  const modelSelection =
+    options?.modelSelection?.source === "org"
+      ? options.modelSelection
+      : undefined;
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
   await verifyGithubCredentialAccess();
-  const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
+  const cacheKey = buildRuntimeCacheKey(
+    target,
+    providerKey,
+    model,
+    auth,
+    modelSelection,
+    options?.modelWorkload,
+  );
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
@@ -587,6 +676,10 @@ export async function resolveOrgProviderRuntimeForTarget(
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
+        ...(options?.modelWorkload
+          ? { modelWorkload: options.modelWorkload }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -596,7 +689,12 @@ export async function resolveOrgProviderRuntimeForTarget(
       let message = `Org runtime resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore
       }
@@ -611,7 +709,14 @@ export async function resolveOrgProviderRuntimeForTarget(
       providerKey?: unknown;
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org provider runtime");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org provider runtime",
+        }),
+      );
     }
 
     if (data.runtimeLocation === "local") {
@@ -731,9 +836,23 @@ export async function resolveSyntheticModelSource(args: {
   scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
+  /**
+   * The saved selection behind this model. It DECIDES the source
+   * (`decideTurnRail`): `hosted` is MCPJam, `org` / `local` / a stored legacy
+   * one are never MCPJam, and absent keeps today's hosted-list check. Only an
+   * `org` one is forwarded to `/stream/org/resolve`, so the backend re-checks
+   * its connection.
+   */
+  modelSelection?: RequestedModelSelection;
+  modelWorkload?: ModelWorkload;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedCatalogModel(modelIdStr)) {
+  if (
+    decideTurnRail({
+      selection: args.modelSelection,
+      model: args.modelDefinition,
+    }) === "hosted"
+  ) {
     return { source: "mcpjam" };
   }
   // A runtime-chosen sentinel resolves NO org provider — see
@@ -761,6 +880,12 @@ export async function resolveSyntheticModelSource(args: {
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
+        {
+          ...(args.modelSelection?.source === "org"
+            ? { modelSelection: args.modelSelection }
+            : {}),
+          ...(args.modelWorkload ? { modelWorkload: args.modelWorkload } : {}),
+        },
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {
@@ -778,6 +903,9 @@ export async function resolveSyntheticModelSource(args: {
 /**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchScenarioRuntimeConfig`).
+ *
+ * Optional routing provenance comes from the pinned snapshot, never the live
+ * host. Omitted keeps legacy inference; copying avoids mutating the catalog.
  *
  * Resolution order:
  *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
@@ -801,6 +929,7 @@ export async function resolveSyntheticModelSource(args: {
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
+  routing: Pick<ModelDefinition, "hosted"> = {},
 ): ModelDefinition {
   const classification = classifyModelIdProvider(modelId);
   // Both interactive host-wins call sites gate on a truthy modelId before
@@ -812,7 +941,11 @@ export function buildSyntheticModelDefinition(
   }
 
   const supported = getModelById(modelId);
-  if (supported) return supported;
+  if (supported) {
+    return routing.hosted === undefined
+      ? supported
+      : { ...supported, hosted: routing.hosted };
+  }
 
   return {
     id: modelId,
@@ -821,6 +954,7 @@ export function buildSyntheticModelDefinition(
     // The id itself is NEVER rewritten — it is what traces and eval metadata
     // record, and the whole point of the sentinel is that it names no model.
     name: runtimeChosenModelSentinelName(modelId) ?? modelId,
+    ...(routing.hosted !== undefined ? { hosted: routing.hosted } : {}),
     provider: classification.provider,
     ...(classification.customProviderName !== undefined
       ? { customProviderName: classification.customProviderName }
@@ -847,11 +981,16 @@ export function matchOrgProviderForModelId(
   for (const p of config.providers) {
     if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
       if (p.selectedModels?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: p.providerKey };
+        return {
+          id: modelId,
+          name: modelId,
+          provider: p.providerKey,
+          hosted: false,
+        };
       }
     } else if (p.providerKey === "ollama") {
       if (p.modelIds?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: "ollama" };
+        return { id: modelId, name: modelId, provider: "ollama", hosted: false };
       }
     } else if (p.providerKey.startsWith("custom:")) {
       const slug = p.providerKey.slice("custom:".length);
@@ -865,6 +1004,7 @@ export function matchOrgProviderForModelId(
           name: modelId,
           provider: "custom",
           customProviderName: slug,
+          hosted: false,
         };
       }
     }

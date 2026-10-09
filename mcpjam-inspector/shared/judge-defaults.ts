@@ -41,6 +41,12 @@ export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
   enabled: true,
   judgeModel: "openai/gpt-5.4-mini",
   threshold: 0.7,
-  autoRun: false,
+  autoRun: true,
   role: "advisory",
+};
+
+export type GoalJudgePolicy = {
+  contractVersion: 4;
+  effective: ResolvedGoalCompletionConfig;
+  automatic: boolean;
 };

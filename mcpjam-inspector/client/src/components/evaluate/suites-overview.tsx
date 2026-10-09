@@ -21,7 +21,10 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { compactModelIdTail } from "@/lib/environment-label";
-import { getEffectiveSuiteServers } from "../evals/helpers";
+import {
+  getEffectiveSuiteServers,
+  suiteHasRunnableServers,
+} from "../evals/helpers";
 import type {
   EvalSuite,
   EvalSuiteOverviewEntry,
@@ -248,7 +251,7 @@ function OverviewBody({
             <EvalListFilter
               label="Client"
               variant="header"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               value={clientFilter}
               options={clientOptions}
               onChange={setClientFilter}
@@ -258,7 +261,7 @@ function OverviewBody({
             <EvalListFilter
               label="Model"
               variant="header"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               value={modelFilter}
               options={modelOptions}
               formatOption={compactModelIdTail}
@@ -268,7 +271,7 @@ function OverviewBody({
           <div role="columnheader" aria-label="Server" className="min-w-0">
             <EvalListFilter
               label="Server"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               variant="header"
               value={serverFilter}
               options={serverOptions}
@@ -400,7 +403,9 @@ function RowRunControl({
   cancellingRunId: string | null;
 }) {
   const suiteTitle = suite.name || "Untitled suite";
-  const hasServers = getEffectiveSuiteServers(suite).length > 0;
+  // An environment suite runs its environments' servers, not its legacy
+  // server fields (which are usually empty for it).
+  const hasServers = suiteHasRunnableServers(suite);
   const latestRunInProgress =
     latestRun?.status === "running" || latestRun?.status === "pending";
   const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;

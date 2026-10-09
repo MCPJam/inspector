@@ -1,0 +1,58 @@
+name: Hosted bake notify
+
+# Tells mcpjam-backend that inspector main carries a new hosted harness bake,
+# so its computer-template.yml builds that commit's E2B template and points
+# STAGING at it — nobody repins `inspector-bake-ref` or builds from a laptop.
+# Production follows at release: release.yml sends `inspector_release_shipped`
+# once the webapp running the released commit is deployed.
+#
+# The backend's build is content-addressed and never rebuilds a template it
+# already has, so an extra notification costs one short run and nothing else.
+# The nightly run is the safety net for a bake input this path filter misses.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The committed identities, and everything the bake context generator
+      # reads that can change the bake without moving them.
+      - "mcpjam-inspector/harness-bake.lock.json"
+      - "mcpjam-inspector/scripts/harness-bake-context.mjs"
+      - "mcpjam-inspector/scripts/harness-bake/**"
+      - "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs"
+      - "mcpjam-inspector/scripts/local-harness-toolchain.json"
+      - "mcpjam-inspector/scripts/local-harness-pack-recipes/codex-vendor-checksums.json"
+      - "mcpjam-inspector/shared/harness-model-support.ts"
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    # Only main's commits: a dispatch from another branch would name a commit
+    # the backend refuses to build anyway.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the backend to build and stage this commit's template
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_bake_moved",
+              client_payload: { sha: context.sha },
+            });
+            core.summary.addRaw(
+              `Sent inspector_bake_moved for ${context.sha} to ${owner}/${repo}: ` +
+                "its Computer template workflow builds the template and stages it.",
+            );
+            await core.summary.write();

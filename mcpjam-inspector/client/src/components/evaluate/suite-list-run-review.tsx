@@ -3,7 +3,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useHostList } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { buildHostNamesById } from "../evals/helpers";
-import type { SuiteDetailsQueryResponse } from "../evals/types";
+import type { EvalCase } from "../evals/types";
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 
 /** Load run inputs without selecting a suite route. */
@@ -13,10 +13,11 @@ export function SuiteListRunReview(
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const projectId = props.projectId ?? props.suite.projectId ?? null;
-  const details = useQuery(
-    "testSuites:getAllTestCasesAndIterationsBySuite" as any,
+  // Cases only: the review needs what a run would execute, not its history.
+  const cases = useQuery(
+    "testSuites:listTestCases" as any,
     isAuthenticated && isUserReady ? { suiteId: props.suite._id } : "skip",
-  ) as SuiteDetailsQueryResponse | undefined;
+  ) as EvalCase[] | undefined;
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,
   });
@@ -26,13 +27,13 @@ export function SuiteListRunReview(
     includePrivateBacking: true,
   });
   const loading =
-    !details || Boolean(props.suite.environmentIds?.length && !environments);
+    !cases || Boolean(props.suite.environmentIds?.length && !environments);
 
   return (
     <SuiteRunReview
       {...props}
       projectId={projectId}
-      cases={details?.testCases ?? []}
+      cases={cases ?? []}
       environments={environments}
       hostNamesById={buildHostNamesById(props.suite.hostAttachments, hosts)}
       disabledReason={

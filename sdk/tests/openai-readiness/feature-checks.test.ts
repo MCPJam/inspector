@@ -40,7 +40,7 @@ const byId = (findings: OpenAIReadinessFinding[], id: string) =>
 // ------------------------------------------------------------- mcp skills
 
 function skills(
-  overrides: Partial<OpenAISkillsEvidence> = {},
+  overrides: Partial<OpenAISkillsEvidence> = {}
 ): OpenAISkillsEvidence {
   return {
     extensionAdvertised: true,
@@ -73,7 +73,7 @@ describe("mcp skills", () => {
       const findings = runOpenAIMcpSkillChecks({ mode }, STAMP);
       expect(
         findings.every((finding) => finding.status === "not-applicable"),
-        mode,
+        mode
       ).toBe(true);
     }
   });
@@ -88,10 +88,10 @@ describe("mcp skills", () => {
         mode: "mcp-imported-skills",
         evidence: skills({ paginationCapHit: true, pagesWalked: 10 }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.listing-complete").status).toBe(
-      "violated",
+      "violated"
     );
     for (const id of [
       "openai.skills.caps",
@@ -114,7 +114,7 @@ describe("mcp skills", () => {
           listError: "server closed the connection",
         }),
       },
-      STAMP,
+      STAMP
     );
     const complete = byId(findings, "openai.skills.listing-complete");
     expect(complete.status).toBe("violated");
@@ -143,7 +143,7 @@ describe("mcp skills", () => {
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     const caps = byId(findings, "openai.skills.caps");
     expect(caps.status).toBe("not-evaluated");
@@ -163,7 +163,7 @@ describe("mcp skills", () => {
           })),
         }),
       },
-      STAMP,
+      STAMP
     );
     const caps = byId(findings, "openai.skills.caps");
     expect(caps.status).toBe("violated");
@@ -183,14 +183,14 @@ describe("mcp skills", () => {
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     const digests = byId(findings, "openai.skills.digests");
     expect(digests.status).toBe("not-evaluated");
     expect(digests.notEvaluatedReason).toContain("alerts");
     // Frontmatter is in the same position for the same reason.
     expect(byId(findings, "openai.skills.frontmatter").status).toBe(
-      "not-evaluated",
+      "not-evaluated"
     );
   });
 
@@ -211,7 +211,7 @@ describe("mcp skills", () => {
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.digests").status).toBe("violated");
   });
@@ -233,7 +233,7 @@ describe("mcp skills", () => {
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     const caps = byId(findings, "openai.skills.caps");
     expect(caps.status).toBe("violated");
@@ -243,7 +243,7 @@ describe("mcp skills", () => {
   it("passes a clean single-page listing", () => {
     const findings = runOpenAIMcpSkillChecks(
       { mode: "mcp-imported-skills", evidence: skills() },
-      STAMP,
+      STAMP
     );
     for (const id of [
       "openai.skills.extension",
@@ -265,10 +265,10 @@ describe("mcp skills", () => {
         mode: "mcp-imported-skills",
         evidence: skills({ paginationCapHit: true }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.listing-complete").status).toBe(
-      "violated",
+      "violated"
     );
   });
 
@@ -284,18 +284,18 @@ describe("mcp skills", () => {
               totalBytes: OPENAI_MCP_SKILL_LIMITS.maxSkillTotalBytes + 1,
               pages: Array.from(
                 { length: OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill + 1 },
-                (_unused, index) => ({ uri: `page-${index}`, bytes: 10 }),
+                (_unused, index) => ({ uri: `page-${index}`, bytes: 10 })
               ),
             },
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     const caps = byId(findings, "openai.skills.caps");
     expect(caps.status).toBe("violated");
     const codes = (caps.details?.portalIssues as { id: string }[]).map(
-      (issue) => issue.id,
+      (issue) => issue.id
     );
     // Four different ceilings bounding four different things; collapsing them
     // would let a submission pass one gate while failing the one that applies.
@@ -312,7 +312,7 @@ describe("mcp skills", () => {
           skills: [{ name: "x", declaredDigest: "abc", observedDigest: "def" }],
         }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.digests").status).toBe("violated");
   });
@@ -336,7 +336,7 @@ describe("mcp skills", () => {
           ],
         }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.frontmatter").status).toBe("violated");
   });
@@ -345,9 +345,9 @@ describe("mcp skills", () => {
     const finding = byId(
       runOpenAIMcpSkillChecks(
         { mode: "mcp-imported-skills", evidence: skills() },
-        STAMP,
+        STAMP
       ),
-      "openai.skills.snapshot",
+      "openai.skills.snapshot"
     );
     expect(finding.status).toBe("not-evaluated");
     expect(finding.class).toBe("manual-review");
@@ -359,7 +359,7 @@ describe("mcp skills", () => {
         mode: "mcp-imported-skills",
         evidence: skills({ extensionAdvertised: false, skills: [] }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.skills.extension").status).toBe("violated");
     // Nothing below can be graded, and each says so rather than reporting a
@@ -382,14 +382,14 @@ describe("mcp skills", () => {
           listError: "readiness discovery timed out",
         }),
       },
-      STAMP,
+      STAMP
     );
     const extension = byId(findings, "openai.skills.extension");
     expect(extension.status).toBe("not-evaluated");
     expect(extension.notEvaluatedReason).toContain("timed out");
     // And nothing downstream quietly passes over the listing nobody read.
     expect(
-      findings.every((finding) => finding.status === "not-evaluated"),
+      findings.every((finding) => finding.status === "not-evaluated")
     ).toBe(true);
   });
 });
@@ -397,7 +397,7 @@ describe("mcp skills", () => {
 // ------------------------------------------------------------------ ui
 
 const uiResource = (
-  overrides: Partial<OpenAIUiResourceEvidence> = {},
+  overrides: Partial<OpenAIUiResourceEvidence> = {}
 ): OpenAIUiResourceEvidence => ({
   uri: "ui://weather/card",
   mimeType: "text/html;profile=mcp-app",
@@ -411,7 +411,7 @@ describe("plugin UI", () => {
   it("passes a conforming resource", () => {
     const findings = runOpenAIAppsUiChecks(
       { resources: [uiResource()], screenshotCount: 3 },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.ui.mime").status).toBe("satisfied");
     expect(byId(findings, "openai.ui.domain-present").status).toBe("satisfied");
@@ -426,7 +426,7 @@ describe("plugin UI", () => {
       {
         resources: [uiResource(), uiResource({ uri: "ui://weather/detail" })],
       },
-      STAMP,
+      STAMP
     );
     const unique = byId(findings, "openai.ui.domain-unique");
     expect(unique.status).toBe("violated");
@@ -445,7 +445,7 @@ describe("plugin UI", () => {
           }),
         ],
       },
-      STAMP,
+      STAMP
     );
     const csp = byId(findings, "openai.ui.csp-exact");
     expect(csp.status).toBe("violated");
@@ -462,7 +462,7 @@ describe("plugin UI", () => {
           }),
         ],
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.ui.csp-exact").status).toBe("violated");
   });
@@ -470,7 +470,7 @@ describe("plugin UI", () => {
   it("stays unevaluated on CSP when nothing was rendered", () => {
     const findings = runOpenAIAppsUiChecks(
       { resources: [uiResource({ observedDomains: undefined })] },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.ui.csp-exact").status).toBe("not-evaluated");
   });
@@ -478,10 +478,10 @@ describe("plugin UI", () => {
   it("cites apps-conformance for the MIME rule", () => {
     const findings = runOpenAIAppsUiChecks(
       { resources: [uiResource()] },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.ui.mime").derivedFrom).toContain(
-      "apps-conformance:apps-resource-mime",
+      "apps-conformance:apps-resource-mime"
     );
   });
 
@@ -494,12 +494,12 @@ describe("plugin UI", () => {
     // Screenshots without a template are the exclusion the portal reports.
     const findings = runOpenAIAppsUiChecks(
       { resources: [], screenshotCount: 3 },
-      STAMP,
+      STAMP
     );
     const screenshots = byId(findings, "openai.ui.screenshots");
     expect(screenshots.status).toBe("violated");
     expect((screenshots.details?.portalIssues as { id: string }[])[0].id).toBe(
-      "exclusion-screenshots-without-ui",
+      "exclusion-screenshots-without-ui"
     );
   });
 
@@ -508,7 +508,7 @@ describe("plugin UI", () => {
       {
         resources: [uiResource({ outputSchemaCoversRenderedData: false })],
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.ui.output-schema").status).toBe("violated");
   });
@@ -523,7 +523,7 @@ describe("plugin UI", () => {
           }),
         ],
       },
-      STAMP,
+      STAMP
     );
     const useful = byId(findings, "openai.ui.useful-without-ui");
     expect(useful.status).toBe("violated");
@@ -541,10 +541,10 @@ describe("migration", () => {
   it("passes a package with no Claude-only surfaces", async () => {
     const findings = runOpenAIMigrationChecks(
       await packageWith(cleanSkillsPackage()),
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.migration.unsupported-surfaces").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -556,7 +556,7 @@ describe("migration", () => {
         "commands/do.md": "# do",
         ".app.json": "{}",
       }),
-      STAMP,
+      STAMP
     );
     const surfaces = byId(findings, "openai.migration.unsupported-surfaces");
     expect(surfaces.status).toBe("violated");
@@ -576,7 +576,7 @@ describe("migration", () => {
         ...cleanSkillsPackage(),
         ".codex-plugin/plugin.json": "{ this is not json",
       }),
-      STAMP,
+      STAMP
     );
     for (const id of [
       "openai.migration.user-config",
@@ -589,7 +589,7 @@ describe("migration", () => {
     // The surfaces check reads the FILE LISTING, not the manifest, so it is
     // still decidable and must not be dragged down with the other two.
     expect(byId(findings, "openai.migration.unsupported-surfaces").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -606,10 +606,10 @@ describe("migration", () => {
           },
         }),
       }),
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.migration.user-config").status).toBe(
-      "violated",
+      "violated"
     );
   });
 
@@ -624,10 +624,10 @@ describe("migration", () => {
           bundle: "weather.mcpb",
         }),
       }),
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.migration.stdio-transport").status).toBe(
-      "violated",
+      "violated"
     );
   });
 
@@ -642,10 +642,10 @@ describe("migration", () => {
           ...cleanSkillsPackage(),
           ".codex-plugin/plugin.json": manifestJson({ note: value }),
         }),
-        STAMP,
+        STAMP
       );
       expect(byId(findings, "openai.migration.user-config").status, value).toBe(
-        "violated",
+        "violated"
       );
     }
   });
@@ -658,10 +658,10 @@ describe("migration", () => {
           note: "${user_config.api_key",
         }),
       }),
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.migration.user-config").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -678,11 +678,11 @@ describe("migration", () => {
         ...cleanSkillsPackage(),
         ".codex-plugin/plugin.json": manifestJson({ note: hostile }),
       }),
-      STAMP,
+      STAMP
     );
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(byId(findings, "openai.migration.user-config").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -697,7 +697,7 @@ describe("migration", () => {
           description: "A weather plugin for Claude Code.",
         }),
       }),
-      STAMP,
+      STAMP
     );
     const language = byId(findings, "openai.migration.host-language");
     expect(language.status).toBe("informational");
@@ -716,7 +716,7 @@ describe("app guidelines", () => {
   it("passes descriptive listing copy", () => {
     const findings = runOpenAIPolicyChecks({ profile: profileFor() }, STAMP);
     expect(byId(findings, "openai.policy.non-promotional-listing").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -727,7 +727,7 @@ describe("app guidelines", () => {
           description: "The #1 weather plugin, guaranteed accurate.",
         }),
       },
-      STAMP,
+      STAMP
     );
     const promo = byId(findings, "openai.policy.non-promotional-listing");
     expect(promo.status).toBe("violated");
@@ -744,10 +744,10 @@ describe("app guidelines", () => {
             "Fast, accurate forecasts for any city, with alerts and history.",
         }),
       },
-      STAMP,
+      STAMP
     );
     expect(byId(findings, "openai.policy.non-promotional-listing").status).toBe(
-      "satisfied",
+      "satisfied"
     );
   });
 
@@ -768,10 +768,10 @@ describe("app guidelines", () => {
     it(`does not read "${copy.slice(0, 32)}…" as a promotional claim`, () => {
       const findings = runOpenAIPolicyChecks(
         { profile: profileFor({ description: copy }) },
-        STAMP,
+        STAMP
       );
       expect(
-        byId(findings, "openai.policy.non-promotional-listing").status,
+        byId(findings, "openai.policy.non-promotional-listing").status
       ).toBe("satisfied");
     });
   }
@@ -789,10 +789,10 @@ describe("app guidelines", () => {
     it(`reads "${copy.slice(0, 32)}…" as a promotional claim`, () => {
       const findings = runOpenAIPolicyChecks(
         { profile: profileFor({ description: copy }) },
-        STAMP,
+        STAMP
       );
       expect(
-        byId(findings, "openai.policy.non-promotional-listing").status,
+        byId(findings, "openai.policy.non-promotional-listing").status
       ).toBe("violated");
     });
   }
@@ -807,7 +807,7 @@ describe("app guidelines", () => {
           { field: "manifest.description", text: "The world's best plugin." },
         ],
       },
-      STAMP,
+      STAMP
     );
     const pkg = byId(findings, "openai.policy.non-promotional-package");
     expect(pkg.status).toBe("violated");
@@ -824,7 +824,7 @@ describe("app guidelines", () => {
     // asking for something that shape does not have.
     const findings = runOpenAIPolicyChecks({ profile: profileFor() }, STAMP);
     expect(byId(findings, "openai.policy.non-promotional-package").status).toBe(
-      "not-applicable",
+      "not-applicable"
     );
   });
 
@@ -852,10 +852,10 @@ describe("app guidelines", () => {
       byId(
         runOpenAIPolicyChecks(
           { profile: profileFor(), hasCommerce: false },
-          STAMP,
+          STAMP
         ),
-        "openai.policy.commerce",
-      ).status,
+        "openai.policy.commerce"
+      ).status
     ).toBe("not-applicable");
   });
 
@@ -864,10 +864,10 @@ describe("app guidelines", () => {
       byId(
         runOpenAIPolicyChecks(
           { profile: profileFor(), hasCommerce: true },
-          STAMP,
+          STAMP
         ),
-        "openai.policy.commerce",
-      ).status,
+        "openai.policy.commerce"
+      ).status
     ).toBe("not-evaluated");
   });
 });
@@ -882,8 +882,9 @@ describe("badges", () => {
         uiResourceCount: 0,
         clientIdMetadataDocuments: false,
         checkout: false,
+        profileIdentification: false,
       },
-      STAMP,
+      STAMP
     );
     // Two independent guards: a class the dispositive predicate excludes, and a
     // lane no stage rolls up.
@@ -904,14 +905,14 @@ describe("badges", () => {
   it("marks an observed capability supported", () => {
     const { badges } = runOpenAIOptionalFeatureChecks(
       { importedSkills: true, uiResourceCount: 2 },
-      STAMP,
+      STAMP
     );
     expect(
       badges.find((badge) => badge.id === "openai.feature.imported-skills")
-        ?.state,
+        ?.state
     ).toBe("supported");
     expect(
-      badges.find((badge) => badge.id === "openai.feature.ui-templates")?.state,
+      badges.find((badge) => badge.id === "openai.feature.ui-templates")?.state
     ).toBe("supported");
   });
 });

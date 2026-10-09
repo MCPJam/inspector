@@ -18,6 +18,11 @@ import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata
 // (the interactive debugger state machine never enters these states).
 
 export type OAuthConformanceCheckId =
+  | "verify_profile_shape"
+  | "verify_profile_stable"
+  | "verify_profile_id_opaque"
+  | "verify_profile_identity_stable_across_flows"
+  | "verify_profile_stable_after_refresh"
   | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
   | "oauth_invalid_authorize_redirect"
@@ -36,6 +41,31 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   OAuthConformanceCheckId,
   OAuthStepInfo
 > = {
+  verify_profile_shape: {
+    title: "Profile response",
+    summary: "Validate the authenticated profile response.",
+    teachableMoments: [],
+  },
+  verify_profile_stable: {
+    title: "Stable profile identity",
+    summary: "Repeat the profile call with the same credentials.",
+    teachableMoments: [],
+  },
+  verify_profile_id_opaque: {
+    title: "Opaque profile ID",
+    summary: "Look for display metadata used as identity (heuristic).",
+    teachableMoments: [],
+  },
+  verify_profile_identity_stable_across_flows: {
+    title: "Profile identity across flows",
+    summary: "Compare flows declared to represent the same account.",
+    teachableMoments: [],
+  },
+  verify_profile_stable_after_refresh: {
+    title: "Profile identity after refresh",
+    summary: "Compare identity before and after token refresh.",
+    teachableMoments: [],
+  },
   oauth_dcr_http_redirect_uri: {
     title: "OAuth Check: DCR Redirect URI Policy",
     summary:
@@ -202,6 +232,7 @@ export type OAuthRunOutcome =
   | "not-applicable";
 
 export interface StepResult {
+  intrusiveness?: "active" | "passive";
   step: ConformanceStepId;
   title: string;
   summary: string;
@@ -224,6 +255,7 @@ export interface StepResult {
 }
 
 export interface ConformanceResult {
+  profileId?: string;
   /** True only when `outcome` is `"passed"`. */
   passed: boolean;
   outcome: OAuthRunOutcome;
@@ -294,6 +326,7 @@ export interface ClientCredentialsResult {
 
 /** Optional post-auth verification: connect to the MCP server and exercise tools. */
 export interface OAuthVerificationConfig {
+  profile?: { enabled?: boolean; expectSameAccount?: boolean };
   /** After successful OAuth, connect and call tools/list. Default: false. */
   listTools?: boolean;
   /** Also call the named tool with the given params after listing. */

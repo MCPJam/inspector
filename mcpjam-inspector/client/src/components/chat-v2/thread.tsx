@@ -1,8 +1,6 @@
-// The inspector's renderer, for surfaces that have its store/context graph.
-// A transcript without it (Sessions, Scenarios, external embedders) renders
-// through `@mcpjam/chat-ui`; see "Which renderer to use" in chat-ui/README.md
-// before adding a third — and keep anything the two must agree on in shared
-// code, not matching CSS (BB-239).
+// Inspector transcript renderer for Playground, Evals, and session review
+// (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
+// embedders use @mcpjam/chat-ui; shared adaptation and primitives live there.
 import {
   useCallback,
   useEffect,
@@ -35,6 +33,7 @@ import { TranscriptThread } from "./thread/transcript-thread";
 import {
   getLastRenderableConversationMessage,
   hasRenderableConversationContent,
+  isRenderableConversationMessage,
 } from "./thread/thread-helpers";
 import {
   WidgetSurfaceHost,
@@ -43,11 +42,15 @@ import {
 import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
 import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
+import { useEarlierRepliesNotSent } from "@/stores/history-notice-store";
 import type {
   AppToolInvocation,
   AppToolInvocationUpdate,
 } from "./thread/app-tool-invocations";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+
+/** Shared transcript width and alignment; each scroll owner supplies vertical inset. */
+export const TRANSCRIPT_COLUMN_CLASS = "min-w-0 w-full max-w-4xl mx-auto px-4";
 
 interface ThreadProps {
   chatSessionId?: string;
@@ -78,6 +81,7 @@ interface ThreadProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   focusMessageId?: string | null;
@@ -174,6 +178,7 @@ export function Thread({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   focusMessageId = null,
@@ -225,13 +230,23 @@ export function Thread({
 
   useEffect(() => {
     const liveToolCallIds = getMessageToolCallIds(messages);
+    // Avoid even scheduling a no-op state update for every streamed chunk.
+    // Synchronous chat subscriptions can keep those lower-priority updates
+    // pending through a buffered burst and exhaust React's update-depth limit.
+    if (
+      !appToolInvocations.some(
+        (invocation) => !liveToolCallIds.has(invocation.parentToolCallId)
+      )
+    ) {
+      return;
+    }
     setAppToolInvocations((current) => {
       const next = current.filter((invocation) =>
         liveToolCallIds.has(invocation.parentToolCallId)
       );
       return next.length === current.length ? current : next;
     });
-  }, [messages]);
+  }, [messages, appToolInvocations]);
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -327,6 +342,19 @@ export function Thread({
   const lastRenderableMessageId = hasVisibleAssistantResponse
     ? lastRenderableMessage.id
     : null;
+  // When the server reported that earlier replies in this chat are not sent
+  // to the model, one notice sits above the latest prompt.
+  const earlierRepliesNotSent = useEarlierRepliesNotSent(chatSessionId);
+  const historyNoticeBeforeMessageId = useMemo(() => {
+    if (!earlierRepliesNotSent) return undefined;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i]!;
+      if (message.role === "user" && isRenderableConversationMessage(message)) {
+        return message.id;
+      }
+    }
+    return undefined;
+  }, [earlierRepliesNotSent, messages]);
   const shouldShowStandaloneThinkingIndicator = hasBrandIndicator
     ? isLoading && !hasVisibleAssistantResponse
     : isLoading;
@@ -383,6 +411,7 @@ export function Thread({
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
           interactive={interactive}
+          widgetPolicy={widgetPolicy}
           reasoningDisplayMode={reasoningDisplayMode}
           mcpToolResultImageRendering={mcpToolResultImageRendering}
           focusMessageId={focusMessageId}
@@ -393,7 +422,7 @@ export function Thread({
           lastRenderableMessageId={lastRenderableMessageId}
           contentClassName={
             contentClassName ??
-            "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+            cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-16 space-y-8")
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}
@@ -403,10 +432,13 @@ export function Thread({
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
           recorder={recorder}
+          historyNoticeBeforeMessageId={historyNoticeBeforeMessageId}
         />
-        <InspectorWidgetHostProvider>
-          <WidgetSurfaceHost chatSessionId={chatSessionId} />
-        </InspectorWidgetHostProvider>
+        {widgetPolicy !== "placeholder" && (
+          <InspectorWidgetHostProvider>
+            <WidgetSurfaceHost chatSessionId={chatSessionId} />
+          </InspectorWidgetHostProvider>
+        )}
 
         {/* PR7 (§12.6) — an MCP App's App-initiated `tools/call` can return
             `input_required`; the same SDK MRTR driver that backs `callTool`
@@ -420,7 +452,7 @@ export function Thread({
         <MrtrElicitationHost />
 
         {shouldShowStandaloneThinkingIndicator && (
-          <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
+          <div className={TRANSCRIPT_COLUMN_CLASS}>
             <ThinkingIndicator model={model} />
           </div>
         )}

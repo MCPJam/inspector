@@ -1,3 +1,4 @@
+import { fetchTokenizerCount } from "../../utils/tokenizer-backend.js";
 import { Hono } from "hono";
 import "../../types/hono";
 import {
@@ -84,16 +85,7 @@ tokenizer.post("/count-tools", async (c) => {
 
           if (useBackendTokenizer && mappedModelId) {
             // Use backend tokenizer API for mapped models
-            const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                text: toolsText,
-                model: mappedModelId,
-              }),
-            });
+            const response = await fetchTokenizerCount(toolsText, mappedModelId);
 
             if (response.ok) {
               const data = (await response.json()) as {
@@ -222,16 +214,7 @@ tokenizer.post("/count-text", async (c) => {
     if (useBackendTokenizer && mappedModelId) {
       try {
         // Use backend tokenizer API for mapped models
-        const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text,
-            model: mappedModelId,
-          }),
-        });
+        const response = await fetchTokenizerCount(text, mappedModelId);
 
         if (response.ok) {
           const data = (await response.json()) as {

@@ -17,6 +17,8 @@
  * - Are static assets that don't expose sensitive data
  */
 
+import { tunnelManager } from "../services/tunnel-manager.js";
+import "../types/hono.js";
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
 
@@ -29,7 +31,7 @@ const UNPROTECTED_ROUTES = [
   "/health", // Health check - no sensitive data
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
-  "/api/session-token", // Token endpoint - protected by localhost check instead
+  "/api/session-token", // Credential confirmation endpoint; validates its own header
   // Public model catalog proxy: guests fetch it to populate the picker. It
   // forwards no auth and returns only the keyless backend /v1/models (no
   // sensitive data). Without this exemption the client's authless fetch 401s
@@ -68,8 +70,6 @@ const UNPROTECTED_PREFIXES = [
   // unauthenticated callers from filling the in-memory fileStore with up
   // to 20 MB blobs per request.
   "/api/apps/files/file/",
-  "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
-  "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers
   // CLI OAuth bridge: public front-channel (config metadata + browser
   // redirects through AuthKit). Returns no tokens or sensitive data; the
@@ -116,6 +116,7 @@ const UNPROTECTED_PREFIXES = [
   // same `startsWith` reason as above; the router's only path is
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
+  "/api/internal/agent-turns/",
 ];
 
 /**
@@ -156,7 +157,7 @@ function isSSERoute(path: string): boolean {
  */
 export async function sessionAuthMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   const path = c.req.path;
   const method = c.req.method;
@@ -167,7 +168,7 @@ export async function sessionAuthMiddleware(
   }
 
   // Only protect API routes - static files and HTML pages don't need auth
-  // The HTML page is where the token gets injected, so it must be accessible
+  // Public documents contain no session credentials.
   if (!path.startsWith("/api/")) {
     return next();
   }
@@ -195,6 +196,27 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // A tunnel bearer is valid only for its exact adapter server, on every
+  // transport path. Never infer authorization from forwarding headers.
+  const adapter = /^\/api\/mcp\/adapter-http\/([^/]+)(?:\/|$)/.exec(path);
+  const secrets = c.req.queries("k");
+  if (adapter && secrets !== undefined) {
+    let serverId: string;
+    try {
+      serverId = decodeURIComponent(adapter[1]);
+    } catch {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (
+      secrets.length !== 1 ||
+      !tunnelManager.verifyTunnelSecret("adapter-http", serverId, secrets[0])
+    ) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    c.set("bridgeCaller", "tunnel");
+    return next();
+  }
+
   // Extract token from header (preferred)
   let token: string | undefined;
   const authHeader = c.req.header("X-MCP-Session-Auth");
@@ -210,6 +232,7 @@ export async function sessionAuthMiddleware(
 
   // No token provided
   if (!token) {
+    c.header("X-MCPJam-Session", "missing");
     return c.json(
       {
         error: "Unauthorized",
@@ -218,21 +241,23 @@ export async function sessionAuthMiddleware(
           ? "SSE endpoints require ?_token=<token> query parameter"
           : "Include X-MCP-Session-Auth: Bearer <token> header",
       },
-      401
+      401,
     );
   }
 
   // Invalid token
   if (!validateToken(token)) {
+    c.header("X-MCPJam-Session", "invalid");
     return c.json(
       {
         error: "Unauthorized",
         message: "Invalid session token.",
         hint: "Try refreshing the page to get a new token.",
       },
-      401
+      401,
     );
   }
 
+  c.set("bridgeCaller", "local");
   return next();
 }

@@ -12,8 +12,9 @@ let balanceState:
       freeDailyCreditsRemaining: number;
       freeDailyCreditsTotal: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
+      rolloverCreditsRemaining?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
     }
@@ -21,14 +22,19 @@ let balanceState:
 let isLoadingState = false;
 let evalQuotaState:
   | {
+      starterRemaining?: number;
       used: number;
       allowed: number | null;
       resetsAt: number;
       windowKind: "day" | "month";
     }
   | undefined;
+let allowanceState: { remaining: number; granted: number } | null = null;
 let billingStatusState:
-  | { effectivePlan: "free" | "team" | "enterprise" }
+  | {
+      effectivePlan: "free" | "team" | "enterprise";
+      pricingVersion?: "v1" | "v2";
+    }
   | undefined;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
@@ -40,11 +46,15 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
-  useEvalIterationQuota: () => ({
-    quota: evalQuotaState,
+  useEvalIterationQuota: ({ enabled = true }: { enabled?: boolean }) => ({
+    quota: enabled ? evalQuotaState : undefined,
     isLoading: false,
     isAtLimit: false,
   }),
+}));
+
+vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
+  useSwarmSponsorshipAllowance: () => allowanceState,
 }));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
@@ -112,11 +122,72 @@ describe("SidebarCredits", () => {
     };
     isLoadingState = false;
     evalQuotaState = undefined;
+    allowanceState = null;
     billingStatusState = { effectivePlan: "free" };
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("uses the same rollover capacity as Billing for low credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 550,
+      rolloverCreditsRemaining: 550,
+    };
+    renderCredits();
+    expect(screen.getByText("Low credits")).toBeInTheDocument();
+    expect(screen.getByText("550 / 5,550")).toBeInTheDocument();
+  });
+
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    renderCredits();
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
+  it.each([75, 100, 5])(
+    "shows credit balance at %s percent with a text warning only when low",
+    (percent) => {
+      balanceState = {
+        ...balanceState!,
+        freeDailyCreditsRemaining: percent * 3,
+      };
+      renderCredits();
+      const meter = screen.getByRole("progressbar", {
+        name: "Free daily credits",
+      });
+      expect(meter).toHaveAttribute("aria-valuetext", `${percent * 3} / 300`);
+      expect(meter).not.toHaveClass(
+        "[&_[data-slot=progress-indicator]]:bg-foreground/60",
+      );
+      expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+    },
+  );
+
+  it("shows the remaining sponsored swarm conversations when the user has an allowance", () => {
+    allowanceState = { remaining: 412, granted: 500 };
+    renderCredits();
+
+    const row = screen.getByTestId("sidebar-usage-swarm-sponsored");
+    expect(row).toHaveTextContent("Sponsored swarm conversations");
+    expect(row).toHaveTextContent("412 / 500 remaining");
+    expect(row).not.toHaveTextContent(/free|guarantee/i);
+  });
+
+  it("shows no sponsored row when sponsorship does not apply here", () => {
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-swarm-sponsored"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the current plan visible in the collapsed hover trigger", () => {
@@ -237,6 +308,34 @@ describe("SidebarCredits", () => {
     expect(evalRow).toHaveTextContent("38 / 50 remaining");
   });
 
+  it("keeps the V2 starter allowance while hiding recurring eval allowances", () => {
+    billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 50000,
+      monthlyAllowanceRemaining: 30000,
+    };
+    evalQuotaState = {
+      starterRemaining: 420,
+      used: 12,
+      allowed: 500,
+      resetsAt: 0,
+      windowKind: "month",
+    };
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-eval-iterations"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Free daily credits")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
+      "30,000 / 50,000",
+    );
+    expect(screen.getByText(/Free starter eval iterations:/)).toHaveTextContent(
+      "420 remaining · one-time allowance of 500",
+    );
+  });
+
   it("offers Explore plans on the free plan", () => {
     renderCredits();
 
@@ -282,4 +381,24 @@ describe("SidebarCredits", () => {
       "Free daily credits",
     );
   });
+});
+
+it("shows daily credits for a v2 free org", () => {
+  billingStatusState = { effectivePlan: "free", pricingVersion: "v2" };
+  isLoadingState = false;
+  balanceState = {
+    paidCreditsRemaining: 330,
+    hasPurchaseHistory: false,
+    freeDailyPercentUsed: 25,
+    freeDailyResetAt: Date.now() + 86400000,
+    freeDailyCreditsRemaining: 150,
+    freeDailyCreditsTotal: 200,
+    walletLocked: false,
+    billingModel: "daily",
+  };
+  renderCredits();
+  expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+    "150 / 200",
+  );
+  expect(screen.queryByTestId("sidebar-usage-monthly")).not.toBeInTheDocument();
 });

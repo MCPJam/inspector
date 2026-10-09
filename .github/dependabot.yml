@@ -9,6 +9,26 @@
 # Grouping is load-bearing, not cosmetic. There are ~400 open alerts; turning
 # security updates on WITHOUT groups opens a PR per advisory, and a flood of
 # several hundred PRs gets ignored in exactly the way the alerts did.
+#
+# Majors are grouped too, for the same reason. Before they were, each major
+# opened its own PR and auto-merge held every one of them: from 2026-09-01 to
+# 2026-09-23 about twenty major PRs sat open and one Dependabot PR merged.
+# Majors now arrive as one `*-major` group per dependency type, and
+# dependabot-auto-merge.yml queues them like any other update once the checks
+# that exercise them are required on main.
+#
+# THE CARVE-OUT RULE. A group lands only if EVERY update in it passes CI, so
+# one package that needs a real migration holds every other update in its
+# group hostage. The production group was rebuilt about ten times between
+# #4556 and #5474 and never landed, each time because of a package that now
+# has a carve-out below. When a bump breaks CI and the fix is not a small edit
+# that can ride along in the group PR:
+#   1. give the package its own version-updates AND security-updates group,
+#   2. add it to EVERY exclude-patterns list in this block,
+#   3. write down what broke, in which PR, and when to delete the carve-out.
+# The carve-out group still opens its own PR, and that PR is where the
+# migration lands. NEVER use `ignore` for this: it suppresses security
+# updates as well.
 
 version: 2
 updates:
@@ -29,10 +49,11 @@ updates:
       # first weekly sync's 29-update dev group (#4558) was held for one
       # packaging package while 28 auto-mergeable bumps sat behind it. Carving
       # them out keeps the hold blast radius to exactly the packages it is for.
+      # Majors are included: an Electron major is held for a human either way,
+      # and grouping it stops it opening a PR of its own (#4581).
       desktop-packaging:
         applies-to: version-updates
         patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
-        update-types: [minor, patch]
       desktop-packaging-security:
         applies-to: security-updates
         patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
@@ -52,6 +73,137 @@ updates:
       xmldom-security:
         applies-to: security-updates
         patterns: ["@xmldom/xmldom"]
+      # Playwright decides which Chromium the WebMCP stack runs, and what we
+      # know about that browser is written down against one exact build
+      # (mcpjam-inspector/docs/chromium-bump-checklist.md). A bump is a
+      # re-measurement, not a dependency update: pinned-chromium.test.ts fails
+      # until PINNED_PLAYWRIGHT, the CI container images and the prose move
+      # together, and Dependabot can do none of that. It broke #5474
+      # (1.62.1 → 1.63.0). This group's PR goes red on purpose; follow the
+      # checklist on that PR. Permanent while the pin is exact.
+      pinned-browser:
+        applies-to: version-updates
+        patterns: ["playwright", "playwright-core", "@playwright/test"]
+      pinned-browser-security:
+        applies-to: security-updates
+        patterns: ["playwright", "playwright-core", "@playwright/test"]
+      # The AI SDK harness adapters are pinned to the exact version the local
+      # harness evidence was gathered against (`adapterVersion` in
+      # mcpjam-inspector/server/utils/harness/local/compatibility.ts), because
+      # a patch release can change a command shape. They broke #5474 twice:
+      # the manifest pin test, and a real runtime break in the pre-seeded
+      # skills path (1.0.117 throws "Invalid homePath: expected a non-empty
+      # string"). Bump them in this group's PR, together with the manifest
+      # and a re-read of the evidence. Permanent while adapterVersion is an
+      # exact pin.
+      harness-adapters:
+        applies-to: version-updates
+        patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      harness-adapters-security:
+        applies-to: security-updates
+        patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      # zod has to move in lockstep with mcpjam-backend. 4.3 → 4.6 changes
+      # `z.toJSONSchema` output (intersections are emitted differently and the
+      # date-time pattern now requires seconds), so bumping it here alone
+      # regenerates the published eval-suite JSON Schema and breaks the step
+      # schema fixture that the backend worker mirrors byte for byte
+      # (scripts/check-authoring-mirror.mjs). It broke #5474 (4.3.6 → 4.6.5).
+      # DELETE this carve-out once both repos are on the same zod and the
+      # fixture has been regenerated in both.
+      zod:
+        applies-to: version-updates
+        patterns: ["zod"]
+      zod-security:
+        applies-to: security-updates
+        patterns: ["zod"]
+      # The seven carve-outs below were split out of production-major #5772
+      # (2026-10-03). Each one failed typecheck or needs a product decision.
+      #
+      # The AI SDK family moves as one: ai 7 needs the provider majors and the
+      # providers need ai 7. ai 7 makes `TimeoutConfiguration` generic (TS2314
+      # in sdk/src/HostExecutor.ts, which fails the SDK declaration build and
+      # everything behind it), plus about 15 errors across the SDK,
+      # shared/tools.ts and live-trace-prelude.ts. ai is also pinned exactly
+      # inside 6.x (#5823), because ai >= 6.0.259 breaks the HostRunner tests,
+      # so even its patches need a person. The harness adapters keep their own
+      # group above. DELETE once the SDK, inspector and chat-ui are on ai 7 and
+      # the exact pins are lifted.
+      ai-sdk:
+        applies-to: version-updates
+        patterns:
+          [
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+          ]
+        exclude-patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      ai-sdk-security:
+        applies-to: security-updates
+        patterns:
+          [
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+          ]
+        exclude-patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      # react-resizable-panels 4 changes the panel component API (about 30 type
+      # errors in 7 inspector files). DELETE once the inspector is on 4.
+      resizable-panels:
+        applies-to: version-updates
+        patterns: ["react-resizable-panels"]
+      resizable-panels-security:
+        applies-to: security-updates
+        patterns: ["react-resizable-panels"]
+      # recharts 3 fails typecheck in the chart wrapper (client/src/components/
+      # ui/chart.tsx) and 3 more inspector files. DELETE once they are on 3.
+      recharts:
+        applies-to: version-updates
+        patterns: ["recharts"]
+      recharts-security:
+        applies-to: security-updates
+        patterns: ["recharts"]
+      # @mcp-ui/client 7 removes `UIResourceRenderer`, which
+      # mcp-ui-resource-part.tsx is built on, so taking it is a rewrite of that
+      # renderer. DELETE once it is rewritten against 7.
+      mcp-ui:
+        applies-to: version-updates
+        patterns: ["@mcp-ui/*"]
+      mcp-ui-security:
+        applies-to: security-updates
+        patterns: ["@mcp-ui/*"]
+      # The Sentry SDKs move together: @sentry/electron pins its own
+      # @sentry/node and @sentry/browser, so node/react must match the major
+      # it ships (@sentry/electron 7 is on 10.x; the group offered 11).
+      # @sentry/node 11 also fails typecheck in sdk/src/sentry.ts
+      # (`sendDefaultPii`), and the SDK's peer range would jump ^8 -> ^11,
+      # which breaks every SDK consumer on 8. DELETE once all three are on one
+      # major and the SDK peer range change has been decided.
+      sentry:
+        applies-to: version-updates
+        patterns: ["@sentry/node", "@sentry/react", "@sentry/electron"]
+      sentry-security:
+        applies-to: security-updates
+        patterns: ["@sentry/node", "@sentry/react", "@sentry/electron"]
+      # commander 15 requires Node >= 22.12, but @mcpjam/cli declares
+      # `engines.node >= 20`. Raising that floor is a product decision, not a
+      # dependency bump. DELETE once the CLI's Node floor is 22.12 or higher.
+      commander:
+        applies-to: version-updates
+        patterns: ["commander"]
+      commander-security:
+        applies-to: security-updates
+        patterns: ["commander"]
+      # @modelcontextprotocol/ext-apps 2 is built on the v2 MCP TypeScript
+      # SDK, and it fails typecheck in mcp/ and widget-react/. DELETE once mcp,
+      # widget-react, the SDK and the inspector are migrated to 2.
+      ext-apps:
+        applies-to: version-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
+      ext-apps-security:
+        applies-to: security-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
       production-dependencies:
         applies-to: version-updates
         dependency-type: production
@@ -63,13 +215,183 @@ updates:
             "@electron/*",
             "@electron-forge/*",
             "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       development-dependencies:
         applies-to: version-updates
         dependency-type: development
         update-types: [minor, patch]
         exclude-patterns:
-          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+          [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
+            "electron",
+            "sharp",
+            "@electron/*",
+            "@electron-forge/*",
+            "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
+          ]
+      # Majors, split by dependency type so a runtime major that needs work
+      # and a tooling major that needs work (an ESLint or TypeScript major is
+      # a migration of its own) do not hold each other hostage. When one
+      # major in a group needs more than a small fix, carve it out (above).
+      production-major:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [major]
+        exclude-patterns:
+          [
+            "electron",
+            "sharp",
+            "@electron/*",
+            "@electron-forge/*",
+            "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
+          ]
+      # Tooling majors carved out of development-major #5544 (2026-10-03),
+      # each a migration of its own; each group's PR is where it lands. They
+      # are dev-only, so only the three development groups exclude them.
+      #
+      # TypeScript 7 (5.9 -> 7.0) drops `baseUrl` (TS5102 in soundcheck and
+      # three inspector tsconfigs), no longer loads @types by default (TS2584
+      # `console` in the @mcpjam/vitest .d.ts build), and ships no JS API, so
+      # tsup and the `npm ci --legacy-peer-deps` jobs lose `typescript`.
+      # slack-app, surface-core, discord-app and mcp-check-fixture are on 7
+      # already. DELETE once every workspace is on TypeScript 7.
+      typescript:
+        applies-to: version-updates
+        patterns: ["typescript"]
+      typescript-security:
+        applies-to: security-updates
+        patterns: ["typescript"]
+      # Vitest 4 -> 5 moves with @vitest/*, jest-dom 7 and jsdom 30, and
+      # jest-dom 7 does not load in the client tests. The repo is on 4.1.11
+      # (the GHSA-82fw-gwwq-j7x9 fix), with the inspector on `test.projects`
+      # and vitest pinned at the root so it stays hoisted for jest-dom.
+      # DELETE once every workspace is on Vitest 5.
+      vitest:
+        applies-to: version-updates
+        patterns: ["vitest", "@vitest/*", "@testing-library/jest-dom", "jsdom"]
+      vitest-security:
+        applies-to: security-updates
+        patterns: ["vitest", "@vitest/*", "@testing-library/jest-dom", "jsdom"]
+      # ESLint 10 + eslint-config-next 16: soundcheck still lints with
+      # .eslintrc.cjs and `next lint`, both gone in those majors, so it needs a
+      # flat-config migration (sdk and the inspector are on ESLint 10 already).
+      # DELETE once soundcheck is on flat config.
+      eslint:
+        applies-to: version-updates
+        patterns: ["eslint", "eslint-config-next"]
+      eslint-security:
+        applies-to: security-updates
+        patterns: ["eslint", "eslint-config-next"]
+      # es-module-lexer is pinned exactly so vite-lexer-safe-minify lexes
+      # chunks the way Vite's bundled copy does; 3.0.2 no longer has the 1.7.0
+      # `of /` bug, so vite-lexer-safe-minify.test.ts fails. Vite 8.3 bundles
+      # ^2.3.2, which is fixed too, so this group's PR is where the guard is
+      # re-pinned or deleted. DELETE this carve-out with that decision.
+      es-module-lexer:
+        applies-to: version-updates
+        patterns: ["es-module-lexer"]
+      es-module-lexer-security:
+        applies-to: security-updates
+        patterns: ["es-module-lexer"]
+      development-major:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [major]
+        exclude-patterns:
+          [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
+            "electron",
+            "sharp",
+            "@electron/*",
+            "@electron-forge/*",
+            "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
+          ]
       # Security updates group separately so an advisory PR is never queued
       # behind a routine version bump.
       security-production:
@@ -82,23 +404,78 @@ updates:
             "@electron/*",
             "@electron-forge/*",
             "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       security-development:
         applies-to: security-updates
         dependency-type: development
         exclude-patterns:
-          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
-    # Deliberately NO `ignore` rules for electron / sharp majors. `ignore`
-    # suppresses SECURITY updates as well as version updates, so such a rule
-    # would have hidden the Electron 37 → 43 bump (#4081) that cleared 31
-    # advisories. Those packages are held back from AUTO-MERGE instead — see
-    # dependabot-auto-merge.yml — so a human reads them, never so they vanish.
+          [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
+            "electron",
+            "sharp",
+            "@electron/*",
+            "@electron-forge/*",
+            "@xmldom/xmldom",
+            "playwright",
+            "playwright-core",
+            "@playwright/test",
+            "@ai-sdk/harness",
+            "@ai-sdk/harness-*",
+            "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
+          ]
+    # Deliberately NO `ignore` rules, for carve-outs or for electron / sharp
+    # majors. `ignore` suppresses SECURITY updates as well as version updates,
+    # so such a rule would have hidden the Electron 37 → 43 bump (#4081) that
+    # cleared 31 advisories. The desktop chain is held back from AUTO-MERGE
+    # instead — see dependabot-auto-merge.yml — so a human reads it, never so
+    # it vanishes.
 
   # ------------------------------------------------------------ example apps
   # Each example ships its own lockfile, so each is a separate Dependabot
   # target. Together they are ~70% of open-alert volume while shipping nothing
   # to users, which is why extracting them to a public examples repo is under
   # discussion. Keep this block contiguous so it deletes in one cut.
+  #
+  # Neither required check builds these apps; examples-build.yml does. So
+  # dependabot-auto-merge.yml queues an example major or runtime update only
+  # while "Build examples" is a required check on main.
   - package-ecosystem: npm
     directories:
       - "/examples/conformance/basic"
@@ -112,13 +489,37 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # @modelcontextprotocol/ext-apps 2.x is built on the v2 MCP TypeScript
+      # SDK: its server helpers take a v2 `McpServer` from
+      # `@modelcontextprotocol/server`, and it needs the v2 `client`/`core`
+      # peers. Every MCP Apps example still runs on `@modelcontextprotocol/sdk`
+      # v1, so taking 2.x means moving each app's server, HTTP transport
+      # (server-utils.ts) and View to the v2 packages together, which is a
+      # migration per app, not a fix that rides along. It broke example-major
+      # #5767 (2026-10-03; 0.3/0.4/1.x -> 2.0.3: TS2353 on `mimeType`, and
+      # registerAppTool/registerAppResource reject a v1 server). This group's
+      # PR is where that migration lands. DELETE this carve-out once every
+      # example is on ext-apps 2 and the v2 SDK.
+      example-ext-apps:
+        applies-to: version-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
+      example-ext-apps-security:
+        applies-to: security-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
       example-dependencies:
         applies-to: version-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
         update-types: [minor, patch]
+      example-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
+        update-types: [major]
       example-security:
         applies-to: security-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
 
   # --------------------------------------------------------- GitHub Actions
   - package-ecosystem: github-actions

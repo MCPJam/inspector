@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
+import { convexErrMessage } from "@/lib/convex-error";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -23,6 +24,10 @@ import {
   getEnvironmentConflictMessage,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import {
+  cancelEvalRun,
+  isCancelEvalRunError,
+} from "@/lib/apis/eval-cancel-api";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import { disambiguateLabels, environmentLabel } from "@/lib/environment-label";
@@ -51,8 +56,14 @@ import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
   getRunnableCaseModels,
+  prepareEnvironmentTestCaseRun,
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
+import {
+  ensureLocalEnvironmentServers,
+  planEnvironmentSuiteCaseRun,
+  resolveQuickRunEnvironments,
+} from "./environment-quick-run";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 /**
@@ -210,6 +221,12 @@ export type HandleGenerateEvalTestsOptions = {
    * to the backend. Absent → today's default generation.
    */
   generationOptions?: GenerationOptions;
+  /**
+   * Environment suites: the environment to generate against. Its servers
+   * (group plus pinned plugin servers) are resolved server-side, so the
+   * browser's server list and connections are not consulted.
+   */
+  environmentId?: string;
 };
 
 /**
@@ -259,6 +276,23 @@ interface UseEvalHandlersProps {
 /**
  * Hook for all eval event handlers (rerun, delete, duplicate, etc.)
  */
+/**
+ * Did this cancel fail because the run had ALREADY stopped?
+ *
+ * The launch fans out into one run per client-model pairing, and a sibling can
+ * settle between render and click. Both paths say so in their own words: the
+ * platform route as `notCancellable`, the Convex mutation as a bare
+ * `Cannot cancel run with status: …`. Neither leaves anything running, so
+ * neither belongs in a count of runs the user still has to worry about.
+ */
+function isAlreadySettled(reason: unknown): boolean {
+  if (isCancelEvalRunError(reason)) return reason.kind === "notCancellable";
+  return (
+    reason instanceof Error &&
+    /Cannot cancel (a )?run/i.test(reason.message)
+  );
+}
+
 export function useEvalHandlers({
   mutations,
   selectedSuiteEntry,
@@ -396,15 +430,21 @@ export function useEvalHandlers({
   );
 
   const getSuiteExecutionContext = useCallback(
-    async (suite: EvalSuite) => {
+    async (
+      suite: EvalSuite,
+      // Where "not ready" reasons go; a caller that shows them inline passes
+      // its own.
+      report: (message: string) => void = toast.error,
+    ) => {
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
-        toast.error("No test cases found in this suite");
+        report("No test cases found in this suite");
         return null;
       }
 
       const tests: any[] = [];
       const providersNeeded = new Set<string>();
+      const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Resolve the fallback model definition for cases with no per-case models.
       // Disambiguate by provider when stored, so OpenRouter gpt-4o doesn't
@@ -461,20 +501,28 @@ export function useEvalHandlers({
           continue;
         }
         const hasModels = testCase.models && testCase.models.length > 0;
-        if (!hasModels && !suiteDefaultModelDef) {
+        const usesEnvironmentModel = !hasModels && isEnvironmentSuite;
+        if (!hasModels && !usesEnvironmentModel && !suiteDefaultModelDef) {
           continue;
         }
 
         // Use per-case models when present; fall back to suite default model.
+        // An environment suite never needs the suite default: the server runs
+        // every prompt case on the environment's model (backend
+        // `projectTestCasesForEnvironment`), so a model-less case goes out once
+        // with a placeholder the server ignores. Resolving the suite default
+        // here would block that run whenever it is missing from the picker.
         const modelConfigs: Array<{ model: string; provider: string }> =
           hasModels
             ? testCase.models
-            : [
-                {
-                  model: suiteDefaultModelDef!.id as string,
-                  provider: suiteDefaultModelDef!.provider,
-                },
-              ];
+            : usesEnvironmentModel
+              ? [{ model: "environment-model", provider: "none" }]
+              : [
+                  {
+                    model: suiteDefaultModelDef!.id as string,
+                    provider: suiteDefaultModelDef!.provider,
+                  },
+                ];
 
         for (const modelConfig of modelConfigs) {
           tests.push({
@@ -493,7 +541,10 @@ export function useEvalHandlers({
             testCaseId: testCase._id,
           });
 
-          if (!isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)) {
+          if (
+            !usesEnvironmentModel &&
+            !isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)
+          ) {
             providersNeeded.add(modelConfig.provider);
           }
         }
@@ -504,17 +555,17 @@ export function useEvalHandlers({
           const label = suite.defaultConfig?.provider
             ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
             : suite.defaultConfig?.modelId;
-          toast.error(
+          report(
             `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`,
           );
         } else if (probesSkippedMissingConfig > 0) {
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
-          toast.error(
+          report(
             "No tests to run. The suite's render checks are missing their configuration.",
           );
         } else {
-          toast.error("No tests to run. Please add models to your test cases.");
+          report("No tests to run. Please add models to your test cases.");
         }
         return null;
       }
@@ -545,18 +596,26 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
-      options?: { minimumPassRate?: number },
+      options?: { minimumPassRate?: number; throwOnFailure?: boolean },
     ) => {
-      if (rerunningSuiteId || replayingRunId) return;
+      if (rerunningSuiteId || replayingRunId) {
+        if (options?.throwOnFailure)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
+      const fail = (message: string) => {
+        if (options?.throwOnFailure) throw new Error(message);
+        toast.error(message);
+      };
 
       if (!run.hasServerReplayConfig) {
-        toast.error(
+        fail(
           "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
 
-      const executionContext = await getSuiteExecutionContext(suite);
+      const executionContext = await getSuiteExecutionContext(suite, fail);
       if (!executionContext) {
         return;
       }
@@ -645,6 +704,11 @@ export function useEvalHandlers({
         if (openEvalIterationWall(error)) {
           // The wall carries the message now; leave no orphaned loading toast.
           toast.dismiss(replayToastId);
+        } else if (options?.throwOnFailure) {
+          toast.dismiss(replayToastId);
+          throw new Error(
+            getBillingErrorMessage(error, "Failed to replay eval run"),
+          );
         } else {
           toast.error(
             getBillingErrorMessage(error, "Failed to replay eval run"),
@@ -668,7 +732,7 @@ export function useEvalHandlers({
   );
 
   // Rerun handler
-  const handleRerun = useCallback(
+  const runSuiteRerun = useCallback(
     async (
       suite: EvalSuite,
       options?: {
@@ -713,19 +777,30 @@ export function useEvalHandlers({
         caseIds?: string[];
         /** The selected case explicitly opts out of launch-triggered judging. */
         skipJudge?: boolean;
+        /**
+         * Throw a launch failure instead of toasting it, so the Setup Run
+         * sheet can show it inline and stay open. Unlike `stayOnPage`, the
+         * launch still navigates and may still replay.
+         */
+        throwOnFailure?: boolean;
       },
     ) => {
+      const fail = (message: string) => {
+        if (options?.throwOnFailure) throw new Error(message);
+        toast.error(message);
+      };
       if (rerunningSuiteId) {
-        if (options?.stayOnPage)
+        if (options?.stayOnPage || options?.throwOnFailure)
           throw new Error("Another suite run is already starting.");
         return;
       }
 
       // Environment suites launch through the server's authoritative
       // resolution (P0.1): the browser never knows the environment's closed
-      // server set, so the legacy server-readiness gates below are skipped —
-      // the server returns a readable auth/connection error for the exact
-      // resolved set instead.
+      // server set, so the legacy server-readiness gates below are skipped.
+      // Locally the run route still executes on this inspector's connection
+      // pool, so those servers are connected from the environment resolution
+      // further down; hosted routes connect them and refuse unreachable ones.
       const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Effective servers = flat env.servers ∪ resolved servers across all
@@ -755,12 +830,14 @@ export function useEvalHandlers({
             throw new Error(
               "Live suite servers are unavailable. Connect them before running from eval chat.",
             );
-          await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+          await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
+            throwOnFailure: options?.throwOnFailure,
+          });
           return;
         }
         if (options?.stayOnPage)
           throw new Error("Attach a client to this suite before running it.");
-        toast.error("Attach a client to this suite before running it.");
+        fail("Attach a client to this suite before running it.");
         return;
       }
 
@@ -774,7 +851,9 @@ export function useEvalHandlers({
               throw new Error(
                 "Live suite servers are unavailable. Connect them before running from eval chat.",
               );
-            await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+            await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
+              throwOnFailure: options?.throwOnFailure,
+            });
             return;
           } else {
             if (options?.stayOnPage)
@@ -785,7 +864,7 @@ export function useEvalHandlers({
                   projectServers,
                 ),
               );
-            toast.error(
+            fail(
               formatEnsureServersReadyError(
                 readiness,
                 "run this suite",
@@ -802,7 +881,7 @@ export function useEvalHandlers({
                 kind: "suite",
               }),
             );
-          toast.error(
+          fail(
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
               remoteServers: projectServers,
               kind: "suite",
@@ -812,7 +891,10 @@ export function useEvalHandlers({
         }
       }
 
-      const executionContext = await getSuiteExecutionContext(suite);
+      const executionContext = await getSuiteExecutionContext(
+        suite,
+        options?.stayOnPage ? undefined : fail,
+      );
       if (!executionContext) {
         if (options?.stayOnPage)
           throw new Error(
@@ -846,17 +928,48 @@ export function useEvalHandlers({
       // single-host rows render identically.
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
-      // Show toast immediately when user clicks rerun
-      const runStartedToastId = toast.success(
+      // Shown on click, then turned into the outcome: a success toast fired
+      // before the server answered stood next to its own failure.
+      const runStartedToastId = toast.loading(
         runPlans.length > 1
           ? `Starting ${runPlans.length} runs across ${
               isEnvironmentSuite ? "environments" : "hosts"
             }…`
-          : "Run started successfully! Results will appear shortly.",
+          : "Starting run…",
       );
 
       const suiteRunStartedAt = Date.now();
+      // Thrown as-is by the catch below: it is not a server failure, so the
+      // "connect your servers" rewrite must not replace it.
+      const caseNotInSuite = new Error("That case is not in this suite.");
       try {
+        // The local run route executes on this inspector's connection pool and
+        // connects nothing itself, so connect the environments' servers first,
+        // as an environment quick run does. Hosted routes connect them. Inside
+        // the launch: its guard, its toast and its failure handling cover the
+        // wait.
+        if (
+          isEnvironmentSuite &&
+          projectId &&
+          !isHostedMode() &&
+          ensureServersReady != null
+        ) {
+          const blocked = await ensureLocalEnvironmentServers({
+            convex,
+            projectId,
+            environmentIds: suite.environmentIds ?? [],
+            ensureServersReady,
+          });
+          if (blocked)
+            throw new Error(
+              formatEnsureServersReadyError(
+                blocked,
+                "run this suite",
+                projectServers,
+              ),
+            );
+        }
+
         // Local guests authenticate via this body token (the guest bearer);
         // hosted guests authenticate via authFetch's Authorization header and
         // `mergeHostedServerBatch` strips convexAuthToken, so an empty string
@@ -905,8 +1018,12 @@ export function useEvalHandlers({
             )
           : testsPayload;
         if (wantedCaseIds?.length && narrowedTests.length === 0) {
+          if (options?.stayOnPage || options?.throwOnFailure)
+            throw caseNotInSuite;
           setRerunningSuiteId(null);
-          toast.error("That case is not in this suite.");
+          toast.error(caseNotInSuite.message, {
+            id: runStartedToastId,
+          });
           return;
         }
 
@@ -1035,6 +1152,7 @@ export function useEvalHandlers({
             runPlans.length > 1
               ? `All ${runPlans.length} ${targetNoun} runs started.`
               : "Eval run started!",
+            { id: runStartedToastId },
           );
         } else if (failures.length < runPlans.length) {
           // A cap can reject one target while others launch. This branch never
@@ -1069,6 +1187,7 @@ export function useEvalHandlers({
             conflict
               ? `${failures.length} of ${runPlans.length} ${targetNoun} runs failed (${failedHostNames}): ${conflict}`
               : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`,
+            { id: runStartedToastId },
           );
         } else {
           // All failed — surface one error for actionable detail. Prefer an
@@ -1110,23 +1229,35 @@ export function useEvalHandlers({
         return launch;
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        if (openEvalIterationWall(error)) {
-          // The optimistic "Run started" toast above fired before the server
-          // rejected the launch; leaving it up next to the wall would claim
-          // the run is on its way.
+        if (error === caseNotInSuite) {
           toast.dismiss(runStartedToastId);
+          throw error;
+        }
+        if (openEvalIterationWall(error)) {
+          // The "Starting run…" toast above would sit next to the wall,
+          // claiming the run is on its way.
+          toast.dismiss(runStartedToastId);
+          if (options?.stayOnPage || options?.throwOnFailure) throw error;
         } else {
-          if (options?.stayOnPage)
-            throw new Error(
-              formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
-                remoteServers: projectServers,
-                kind: "suite",
-              }),
-            );
-          toast.error(
-            getEnvironmentConflictMessage(error) ??
-              getBillingErrorMessage(error, "Failed to start eval run"),
-          );
+          // An environment suite has no browser-side server list to prompt
+          // about — the backend resolved the set — so a "connect your servers"
+          // message would name servers this run never asked for. Its 409 says
+          // what is actually wrong (no group picked, a group that is gone), so
+          // that sentence is what reaches the user.
+          const message = isEnvironmentSuite
+            ? convexErrMessage(error, "Failed to start eval run")
+            : options?.stayOnPage
+              ? formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+                  remoteServers: projectServers,
+                  kind: "suite",
+                })
+              : getEnvironmentConflictMessage(error) ??
+                getBillingErrorMessage(error, "Failed to start eval run");
+          if (options?.stayOnPage || options?.throwOnFailure) {
+            toast.dismiss(runStartedToastId);
+            throw new Error(message);
+          }
+          toast.error(message, { id: runStartedToastId });
         }
         if (options?.stayOnPage) throw error;
       } finally {
@@ -1139,6 +1270,7 @@ export function useEvalHandlers({
       latestRunBySuiteId,
       connectedServerNames,
       ensureServersReady,
+      convex,
       getAccessToken,
       projectId,
       projectServers,
@@ -1147,7 +1279,29 @@ export function useEvalHandlers({
       handleReplayRun,
       evalsNavigationContext,
       openEvalIterationWall,
+      convex,
     ],
+  );
+
+  // `rerunningSuiteId` is state set only after the server readiness awaits,
+  // so a second click while servers connect would pass its check and launch
+  // twice. This lock is taken synchronously and released on every exit.
+  const rerunInFlightRef = useRef(false);
+  const handleRerun = useCallback(
+    async (...args: Parameters<typeof runSuiteRerun>) => {
+      if (rerunInFlightRef.current) {
+        if (args[1]?.stayOnPage || args[1]?.throwOnFailure)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
+      rerunInFlightRef.current = true;
+      try {
+        return await runSuiteRerun(...args);
+      } finally {
+        rerunInFlightRef.current = false;
+      }
+    },
+    [runSuiteRerun],
   );
 
   const handleRunTestCase = useCallback(
@@ -1172,18 +1326,6 @@ export function useEvalHandlers({
         return null;
       }
 
-      // Environment suites resolve their closed server set server-side (P0.1)
-      // at Run-all fan-out; the single-case quick-run path below still derives
-      // servers from host/flat plans and can't send `environmentId`, so it
-      // would mis-launch (or trip the "attach a client" gate). Route env suites
-      // to Run all instead of silently running against the wrong servers.
-      if ((suite.environmentIds?.length ?? 0) > 0) {
-        toast.info(
-          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet.",
-        );
-        return null;
-      }
-
       // Widget probes have no single-case quick-run path yet: the
       // run-test-case endpoints only execute model-driven cases, and probes
       // intentionally carry no models. Without this branch the model guard
@@ -1193,12 +1335,45 @@ export function useEvalHandlers({
         return null;
       }
 
-      const modelValuesToRun = options?.selectedModel
-        ? [options.selectedModel]
-        : getConfiguredTestCaseModelValues(testCase);
+      // An ENVIRONMENT suite runs its environments. The case's authored models
+      // and the suite's legacy server fields play no part: the server resolves
+      // each environment's model, client and servers itself. Every target is
+      // resolved to an environment before any of them runs.
+      const environmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+      let environmentRun: Awaited<
+        ReturnType<typeof planEnvironmentSuiteCaseRun>
+      > | null = null;
+      if (environmentSuite) {
+        if (isDirectGuest || !projectId) {
+          toast.error("Sign in to run this suite's environments.");
+          return null;
+        }
+        try {
+          environmentRun = await planEnvironmentSuiteCaseRun(convex, {
+            projectId,
+            suite,
+            selectedModel: options?.selectedModel ?? null,
+            namedHostId: options?.namedHostId,
+          });
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't prepare this suite's environments.",
+          );
+          return null;
+        }
+      }
+
+      const modelValuesToRun = environmentRun
+        ? environmentRun.targets.map((target) => target.key)
+        : options?.selectedModel
+          ? [options.selectedModel]
+          : getConfiguredTestCaseModelValues(testCase);
       if (
-        modelValuesToRun.length === 0 ||
-        !getDefaultTestCaseModelValue(testCase)
+        !environmentRun &&
+        (modelValuesToRun.length === 0 ||
+          !getDefaultTestCaseModelValue(testCase))
       ) {
         toast.error("Add a model first");
         return null;
@@ -1206,65 +1381,123 @@ export function useEvalHandlers({
 
       const isMultiModelRun =
         !options?.selectedModel && modelValuesToRun.length > 1;
-      const runPlan = getSelectedSuiteHostRunPlan(suite, options?.namedHostId);
-      const suiteServers = normalizeSuiteServerRefs(runPlan.serverIds);
-      const disconnectedSuiteServers = suiteServers.filter(
-        (serverName) => !connectedServerNames?.has(serverName),
-      );
+      // Legacy suites only: an environment suite's servers come from its
+      // environments, resolved server-side, never from these fields.
+      const runPlan = environmentRun
+        ? null
+        : getSelectedSuiteHostRunPlan(suite, options?.namedHostId);
+      const suiteServers = runPlan
+        ? normalizeSuiteServerRefs(runPlan.serverIds)
+        : [];
+      if (runPlan) {
+        const disconnectedSuiteServers = suiteServers.filter(
+          (serverName) => !connectedServerNames?.has(serverName),
+        );
 
-      if (suiteServers.length === 0) {
-        toast.error("Attach a client to this suite before running it.");
-        return null;
-      }
+        if (suiteServers.length === 0) {
+          toast.error("Attach a client to this suite before running it.");
+          return null;
+        }
 
-      if (disconnectedSuiteServers.length > 0) {
-        if (ensureServersReady != null) {
-          const readiness = await ensureServersReady(suiteServers);
-          if (hasUnavailableServers(readiness)) {
+        if (disconnectedSuiteServers.length > 0) {
+          if (ensureServersReady != null) {
+            const readiness = await ensureServersReady(suiteServers);
+            if (hasUnavailableServers(readiness)) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  readiness,
+                  "run this test case",
+                  projectServers,
+                ),
+              );
+              return null;
+            }
+          } else {
             toast.error(
-              formatEnsureServersReadyError(
-                readiness,
-                "run this test case",
-                projectServers,
-              ),
+              formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+                remoteServers: projectServers,
+                kind: "test-case",
+              }),
             );
             return null;
           }
-        } else {
-          toast.error(
-            formatMcpConnectServerPrompt(disconnectedSuiteServers, {
-              remoteServers: projectServers,
-              kind: "test-case",
-            }),
-          );
-          return null;
         }
       }
 
       setRunningTestCaseId(testCase._id);
 
       try {
-        const preparedResults = await Promise.allSettled(
-          modelValuesToRun.map((selectedModel) =>
-            prepareSingleTestCaseRun({
-              projectId: isDirectGuest ? null : projectId,
-              suite: {
-                environment: {
-                  ...suite.environment,
-                  servers: suiteServers,
+        const testCaseOverrides =
+          options?.iterationOverride !== undefined
+            ? { runs: options.iterationOverride }
+            : undefined;
+        let preparedResults: Array<
+          PromiseSettledResult<
+            | Awaited<ReturnType<typeof prepareSingleTestCaseRun>>
+            | Awaited<ReturnType<typeof prepareEnvironmentTestCaseRun>>
+          >
+        >;
+        if (environmentRun) {
+          // One backend call derives every new environment before anything
+          // runs; a refused target stops the whole Run.
+          const environmentIds = await resolveQuickRunEnvironments(convex, {
+            projectId: projectId!,
+            plans: environmentRun.plans,
+          });
+          // The local run route executes on this inspector's connection pool
+          // and connects nothing itself, so connect the environments' servers
+          // first, as a legacy quick run does. Hosted routes connect them.
+          if (!isHostedMode() && ensureServersReady != null) {
+            const blocked = await ensureLocalEnvironmentServers({
+              convex,
+              projectId: projectId!,
+              environmentIds: environmentIds.values(),
+              ensureServersReady,
+            });
+            if (blocked) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  blocked,
+                  "run this test case",
+                  projectServers,
+                ),
+              );
+              return null;
+            }
+          }
+          preparedResults = await Promise.allSettled(
+            environmentRun.targets.map((target) =>
+              prepareEnvironmentTestCaseRun({
+                projectId: projectId!,
+                testCase,
+                environmentId: environmentIds.get(target.key)!,
+                modelValue: target.key,
+                getAccessToken,
+                testCaseOverrides,
+                idempotencyKey: `quick-run:${crypto.randomUUID()}`,
+              }),
+            ),
+          );
+        } else {
+          preparedResults = await Promise.allSettled(
+            modelValuesToRun.map((selectedModel) =>
+              prepareSingleTestCaseRun({
+                projectId: isDirectGuest ? null : projectId,
+                suite: {
+                  environment: {
+                    ...suite.environment,
+                    servers: suiteServers,
+                  },
                 },
-              },
-              testCase,
-              getAccessToken,
-              selectedModel,
-              namedHostId: runPlan.namedHostId,
-              testCaseOverrides:
-                options?.iterationOverride !== undefined
-                  ? { runs: options.iterationOverride }
-                  : undefined,
-            }),
-          ),
-        );
+                testCase,
+                getAccessToken,
+                selectedModel,
+                namedHostId: runPlan!.namedHostId,
+                testCaseOverrides,
+              }),
+            ),
+          );
+        }
         const preparedRuns = preparedResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : [],
         );
@@ -1451,6 +1684,7 @@ export function useEvalHandlers({
       projectServers,
       isDirectGuest,
       openEvalIterationWall,
+      convex,
     ],
   );
 
@@ -1541,23 +1775,82 @@ export function useEvalHandlers({
   );
 
   // Cancel handler
+  //
+  // Takes one run id or several. A single launch fans out into one run per
+  // client-model pairing, and the Convex mutation is per-run, so the surfaces
+  // that show a whole launch (the run page, the suite page, a runs-table row)
+  // hand us every in-progress id at once. `Promise.allSettled` rather than
+  // `Promise.all`: a sibling that settled between render and click throws
+  // `Cannot cancel run with status: …`, and that must not hide the cancels
+  // that did land.
+  /**
+   * Stop ONE run, preferring the platform route over the raw Convex mutation.
+   *
+   * The route checks the run belongs to this project and is idempotent on a run
+   * already cancelled, neither of which the mutation can do. Two cases still
+   * belong to the mutation: a direct guest, who the v1 guest allowlist refuses
+   * at the boundary — calling the route would turn a "sign in to use this"
+   * message into a bare 401 — and a surface with no project id. A deployment
+   * that predates the route falls back the same way, so an older build keeps
+   * cancelling instead of reporting a failure the user cannot act on.
+   */
+  const cancelOneRun = useCallback(
+    async (id: string) => {
+      const viaMutation = () => mutations.cancelRunMutation({ runId: id });
+      if (isDirectGuest || !projectId) return await viaMutation();
+      try {
+        return await cancelEvalRun({ projectId, runId: id });
+      } catch (error) {
+        if (isCancelEvalRunError(error) && error.kind === "routeUnavailable") {
+          return await viaMutation();
+        }
+        throw error;
+      }
+    },
+    [isDirectGuest, projectId, mutations.cancelRunMutation],
+  );
+
   const handleCancelRun = useCallback(
-    async (runId: string) => {
+    async (runId: string | readonly string[]) => {
       if (cancellingRunId) return;
 
-      setCancellingRunId(runId);
+      const runIds = typeof runId === "string" ? [runId] : [...runId];
+      if (runIds.length === 0) return;
+
+      setCancellingRunId(runIds[0]);
 
       try {
-        await mutations.cancelRunMutation({ runId });
-        toast.success("Run cancelled successfully");
-      } catch (error) {
-        console.error("Failed to cancel run:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to cancel run"));
+        const outcomes = await Promise.allSettled(
+          runIds.map((id) => cancelOneRun(id)),
+        );
+        // A pairing that settled between render and click is NOT a failure —
+        // nothing was left running, which is the state the click asked for.
+        // Every other rejection is a run still burning spend, and saying
+        // "cancelled successfully" over it is the one report the user cannot
+        // recover from: they walk away believing it stopped.
+        const stillRunning = outcomes.flatMap((outcome) =>
+          outcome.status === "rejected" && !isAlreadySettled(outcome.reason)
+            ? [outcome.reason]
+            : [],
+        );
+        if (stillRunning.length === 0) {
+          toast.success("Run cancelled successfully");
+        } else if (stillRunning.length < runIds.length) {
+          console.error("Failed to cancel some runs:", stillRunning);
+          toast.warning(
+            `Stopped ${runIds.length - stillRunning.length} of ${runIds.length} runs. ${stillRunning.length} could not be stopped.`,
+          );
+        } else {
+          console.error("Failed to cancel run:", stillRunning[0]);
+          toast.error(
+            getBillingErrorMessage(stillRunning[0], "Failed to cancel run"),
+          );
+        }
       } finally {
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, mutations.cancelRunMutation],
+    [cancellingRunId, cancelOneRun],
   );
 
   // Delete run handler - opens confirmation modal (for single run from detail view)
@@ -1776,8 +2069,9 @@ export function useEvalHandlers({
         return;
       }
 
+      const environmentId = postOptions?.environmentId;
       const suiteServers = normalizeSuiteServerRefs(serverIds);
-      if (suiteServers.length === 0) {
+      if (!environmentId && suiteServers.length === 0) {
         if (postOptions?.stageCase)
           throw new Error(
             "Attach servers to this suite before generating cases.",
@@ -1791,9 +2085,9 @@ export function useEvalHandlers({
       setIsGeneratingTests(true);
 
       try {
-        const disconnected = suiteServers.filter(
-          (name) => !connectedServerNames?.has(name),
-        );
+        const disconnected = environmentId
+          ? []
+          : suiteServers.filter((name) => !connectedServerNames?.has(name));
         if (disconnected.length > 0) {
           if (ensureServersReady != null) {
             const readiness = await ensureServersReady(suiteServers, { allowInteractiveOAuthFlow: true });
@@ -1830,6 +2124,36 @@ export function useEvalHandlers({
           }
         }
 
+        // An environment's servers are resolved server-side, but the LOCAL
+        // generate route reads them from this inspector's connection pool and
+        // connects nothing itself — connect them first, as for a quick run.
+        // Hosted routes connect them.
+        if (
+          environmentId &&
+          projectId &&
+          !isHostedMode() &&
+          ensureServersReady != null
+        ) {
+          const blocked = await ensureLocalEnvironmentServers({
+            convex,
+            projectId,
+            environmentIds: [environmentId],
+            // Same connect options as the legacy branch above.
+            ensureServersReady: (names) =>
+              ensureServersReady(names, { allowInteractiveOAuthFlow: true }),
+          });
+          if (blocked) {
+            const message = formatEnsureServersReadyError(
+              blocked,
+              "generate test cases",
+              projectServers,
+            );
+            if (postOptions?.stageCase) throw new Error(message);
+            toast.error(message);
+            return;
+          }
+        }
+
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
@@ -1852,6 +2176,7 @@ export function useEvalHandlers({
           ...(postOptions?.generationOptions
             ? { generationOptions: postOptions.generationOptions }
             : {}),
+          ...(environmentId ? { environmentId } : {}),
         });
 
         if (postOptions?.stageCase) {

@@ -10,6 +10,7 @@ import {
   DEFAULT_SWARM_ITERATIONS,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
+  reusedIterationsSeed,
   SWARM_INTENSITY_PRESETS,
   estimateLaunchSessions,
   estimateSwarmJourneys,
@@ -151,5 +152,35 @@ describe("estimateLaunchSessions", () => {
         environmentCount: 2,
       })
     ).toBe(22);
+  });
+});
+
+describe("reusedIterationsSeed", () => {
+  /**
+   * A reused persona's goals each carry their owner's saved sessions, so the
+   * control that now sets one number for the whole persona has to start
+   * somewhere. Agreeing goals seed their own value; disagreeing ones have no
+   * single truth to show, so the default is the honest starting point.
+   */
+  it("seeds from the saved value when every goal agrees", () => {
+    expect(reusedIterationsSeed([3, 3, 3])).toBe(3);
+  });
+
+  it("falls back to the default when goals disagree", () => {
+    expect(reusedIterationsSeed([5, 1])).toBe(DEFAULT_SWARM_ITERATIONS);
+  });
+
+  it("treats an unsaved goal as the default rather than guessing", () => {
+    expect(reusedIterationsSeed([null, null])).toBe(DEFAULT_SWARM_ITERATIONS);
+    expect(reusedIterationsSeed([3, null])).toBe(DEFAULT_SWARM_ITERATIONS);
+  });
+
+  it("stays inside the bounds the backend enforces", () => {
+    expect(reusedIterationsSeed([99])).toBe(MAX_SWARM_ITERATIONS);
+    expect(reusedIterationsSeed([0])).toBe(MIN_SWARM_ITERATIONS);
+  });
+
+  it("defaults an empty goal list", () => {
+    expect(reusedIterationsSeed([])).toBe(DEFAULT_SWARM_ITERATIONS);
   });
 });

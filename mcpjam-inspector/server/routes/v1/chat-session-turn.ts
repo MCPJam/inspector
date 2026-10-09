@@ -1,5 +1,6 @@
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
+  browserFeatureUnavailable,
   getConversationBrowser,
   openConversationBrowser,
   provisionConversationBrowser,
@@ -83,6 +84,10 @@ import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk";
 import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
@@ -94,6 +99,7 @@ import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
+import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -122,9 +128,21 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+  type PlaygroundBoxReason,
+} from "../../utils/harness/playground-box.js";
+import type { HarnessBox } from "../../utils/harness/harness-box.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
   engineLabel,
+  hostRoutingSelectionForModel,
+  hostSelectionForModel,
   resolveChatSessionEngine,
   type ChatSessionEngine,
   type ChatSessionHostTarget,
@@ -138,6 +156,8 @@ import {
   type SessionRow,
 } from "./chat-sessions.js";
 import { joinToolCalls } from "./chat-session-payloads.js";
+import { publicArtifactLink } from "./artifact-links.js";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 
 // ── Caps ────────────────────────────────────────────────────────────────────
 
@@ -207,6 +227,10 @@ const CONFIG_FIELDS = [
   // boundary's `resumeConfig` projection, so a continuation reloads the
   // session's own value instead of silently reverting to the model default.
   "temperature",
+  // Pinned like `temperature`: the first turn's effort is recorded in the
+  // session's `resumeConfig` (which the ingest boundary carries), so a
+  // continuation reloads it and a restated one is refused.
+  "reasoningEffort",
   "toolMode",
 ] as const;
 
@@ -280,6 +304,15 @@ const turnSchema = z
     serverIds: z.array(z.string().min(1)).min(1).max(20).optional(),
     systemPrompt: z.string().max(8_000).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    /**
+     * Reasoning effort for the session, pinned on the FIRST turn like
+     * `temperature` (a continuation reloads it; restating one is refused). It
+     * wins over the effort a `hostId`'s saved selection carries, and is
+     * applied or refused by the rail the model runs on, never dropped.
+     * Sending one also drops the temperature the model would otherwise run
+     * at, so an explicit `temperature` beside it is refused.
+     */
+    reasoningEffort: z.enum(MODEL_REASONING_EFFORTS).optional(),
     maxSteps: z.number().int().min(1).max(MAX_STEPS_CEILING).optional(),
     toolMode: z.enum(["read_only", "auto"]).optional(),
     allowedServerIds: z.array(z.string().min(1)).max(20).optional(),
@@ -289,7 +322,15 @@ const turnSchema = z
   .refine((value) => !(value.environmentId && value.serverIds), {
     message:
       "Pass at most one of environmentId or serverIds — an environment already resolves its own servers.",
-  });
+  })
+  .refine(
+    (value) =>
+      !(value.reasoningEffort !== undefined && value.temperature !== undefined),
+    {
+      message:
+        "Pass at most one of reasoningEffort or temperature — a reasoning effort replaces the sampling temperature.",
+    },
+  );
 
 type TurnBody = z.infer<typeof turnSchema>;
 
@@ -1034,6 +1075,11 @@ async function handleTurn(c: Context): Promise<Response> {
     environmentId?: string;
     serverIds?: string[];
   };
+  // The session's pinned effort: the first turn's top-level field, reloaded
+  // from `resumeConfig` on a continuation. Kept out of `pins`, which is sent
+  // to the lease/ingest calls whose agent-pin projection does not carry it;
+  // the full `resumeConfig` persisted at the end does.
+  let pinnedReasoningEffort: ModelReasoningEffort | undefined;
 
   if (body.sessionId) {
     existing = await resolveScopedSession(
@@ -1100,6 +1146,9 @@ async function handleTurn(c: Context): Promise<Response> {
     }
     runtimeChatSessionId = runtimeId;
     expectedVersion = existing.version;
+    pinnedReasoningEffort = configuring
+      ? body.reasoningEffort
+      : (existing.resumeConfig?.reasoningEffort ?? undefined);
     pins = {
       modelId: resume.modelId,
       toolMode: resume.toolMode ?? "read_only",
@@ -1160,6 +1209,7 @@ async function handleTurn(c: Context): Promise<Response> {
     assertUnambiguousModelId(body.modelId);
     projectId = body.projectId;
     runtimeChatSessionId = randomUUID();
+    pinnedReasoningEffort = body.reasoningEffort;
     pins = {
       modelId: body.modelId,
       toolMode: body.toolMode ?? "read_only",
@@ -1222,6 +1272,11 @@ async function handleTurn(c: Context): Promise<Response> {
    * keep the lease and let the TTL expire it.
    */
   let modelCallStarted = false;
+  /**
+   * The conversation's throwaway box, held for a harness turn. Released in the
+   * `finally` (idempotent), which leaves the box for the next turn.
+   */
+  let conversationBox: HarnessBox | undefined;
   const abortController = new AbortController();
   const requestSignal = c.req.raw.signal;
   const onRequestAbort = () => abortController.abort();
@@ -1378,11 +1433,61 @@ async function handleTurn(c: Context): Promise<Response> {
     // off every named one and send the whole turn back to raw ids.
     const serverLabels = serverLabelsFor(selected);
 
-    const modelDefinition = await resolveHostModelDefinition({
+    const resolvedModelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
       projectId,
       auth: { authHeader },
     });
+
+    // The host's saved selection, only for the model this turn runs: a saved
+    // selection (and its effort) belongs to one model and must never be carried
+    // onto a different one the body named. Read once so the prepare step, the
+    // runtime resolution and the resume record cannot disagree about the effort.
+    const hostSelection = hostSelectionForModel(
+      target.host?.runtimeConfig,
+      String(resolvedModelDefinition.id),
+    );
+    // What decides the rail: the same saved selection, or a stored legacy one.
+    const routingSelection = hostRoutingSelectionForModel(
+      target.host?.runtimeConfig,
+      resolvedModelDefinition,
+    );
+    // Every check below (the harness gate, skill gating, dispatch) reads the
+    // definition the rail agrees with: a non-hosted selection is `hosted:
+    // false`, as on the web and MCP chat routes.
+    const modelDefinition = withSelectionRouting(
+      resolvedModelDefinition,
+      routingSelection,
+    );
+    // The session's pinned effort (first turn's request, reloaded from
+    // `resumeConfig` on a continuation) wins over the host's saved one, the
+    // same order `/stream` applies a top-level effort over a selection. A
+    // session keeps the effort it ran at: what the first turn recorded is what
+    // continuations reload, including one that came from the host.
+    const turnReasoningEffort =
+      pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
+    // What the session records for this turn: the selection it ran, effort
+    // included (last turn wins, like its modelId).
+    const sessionModelSelection = ranTurnSelection({
+      selection: routingSelection,
+      model: modelDefinition,
+      reasoningEffort: turnReasoningEffort,
+    });
+    // An effort replaces the sampling temperature (`prepareChatV2` drops it).
+    // One with a host-sourced effort must be dropped from what is recorded too,
+    // or the resume config would claim a temperature the turn never ran at. An
+    // effort sent in the body is already refused beside a temperature.
+    const turnTemperature =
+      turnReasoningEffort !== undefined ? undefined : pins.temperature;
+    const { temperature: _unusedTemperature, ...pinsWithoutTemperature } = pins;
+    // The effort the turn runs at is recorded with it (begin_model and failure
+    // persistence included), so a failed turn still leaves its pin.
+    const turnPins = {
+      ...(turnTemperature === undefined ? pinsWithoutTemperature : pins),
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
+    };
 
     // --- Engine pre-flight ------------------------------------------------
     //
@@ -1398,12 +1503,22 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(modelDefinition.provider
           ? { provider: modelDefinition.provider }
           : {}),
+        ...(modelDefinition.hosted === false ? { hosted: false } : {}),
+        ...(modelDefinition.supportedReasoningEfforts
+          ? {
+              supportedReasoningEfforts:
+                modelDefinition.supportedReasoningEfforts,
+            }
+          : {}),
       },
       hasSelectedMcpServers: selectedServerIds.length > 0,
       // What a LATER turn will be able to resolve on its own. A session that
       // pins `serverIds` can be continued with no pointer at all, so a host
       // reached by pointer cannot survive on it — see the unpinnable-host rule.
       sessionPinsOwnServerIds: pins.serverIds !== undefined,
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
       toolPolicy: {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
@@ -1428,6 +1543,13 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const engine: ChatSessionEngine = engineDecision.engine;
+    if (engineDecision.warning) {
+      logger.warn("[v1 chat-session] harness model not verified", {
+        harness: engine.kind === "harness" ? engine.harness : undefined,
+        modelId: String(modelDefinition.id),
+        reason: engineDecision.warning,
+      });
+    }
 
     if (body.browser) {
       const stored = await getConversationBrowser({
@@ -1674,8 +1796,12 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
+        : {}),
+      // Under an effort the resolved temperature is omitted (see prepareChatV2).
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
         : {}),
       ...(excluded.length > 0 ? { excludeMcpToolNames: excluded } : {}),
       // No progressive discovery: the caller chose this target deliberately
@@ -1706,12 +1832,23 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
+      messages: [...priorMessages, { role: "user", content: body.message }],
       projectId,
       authHeader,
       sourceType: "direct",
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
       tools,
+      // The host's saved selection DECIDES THE RAIL (hosted / org / own key;
+      // a stored legacy one never reaches MCPJam credits), and its effort is
+      // applied on that rail (provider options on the direct engine, the
+      // forwarded selection / top-level field on the hosted rails) or refused,
+      // instead of dropped. Only a backend-resolvable selection is sent
+      // (never `local` or legacy). An unlabelled host takes today's path.
+      ...(routingSelection ? { modelSelection: routingSelection } : {}),
+      ...(turnReasoningEffort !== undefined
+        ? { settings: { reasoningEffort: turnReasoningEffort } }
+        : {}),
       // The harness selector rides the RUNTIME, which is where
       // `runUnifiedAssistantTurn` reads it from. Absent ⇒ the emulated engine,
       // byte-identical to every turn this surface ran before host targeting.
@@ -1733,13 +1870,123 @@ async function handleTurn(c: Context): Promise<Response> {
     let lastEngineError:
       { message: string; code?: string; httpStatus?: number } | undefined;
 
+    // A cloud harness turn runs on this conversation's THROWAWAY box, the same
+    // box the Playground gives it (keyed by the runtime chat session id), and
+    // never on a persistent computer: no `resolveHarnessSandbox`, no
+    // `projectComputers` row. Acquired before the model call so a refused box
+    // spends nothing.
+    if (engine.kind === "harness") {
+      // A harness that signs in with the customer's own account (Cursor) is
+      // on the box for its credential, as in the Playground.
+      const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
+        engine.harness,
+      )
+        ? "credential"
+        : "conversation";
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        engine.harness,
+        boxReason,
+      );
+      if (unavailable) {
+        return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
+          reason: "NOT_A_DATA_PLANE",
+        });
+      }
+      // The environment whose grant the box carries: the session's own when it
+      // pins one; otherwise, for a `credential` harness on a host, the same
+      // HIDDEN ad-hoc environment selecting the member's key that the
+      // Playground mints. Refused here, before any box, when there is no key.
+      let boxEnvironmentId = pins.environmentId;
+      if (boxReason === "credential") {
+        if (!boxEnvironmentId && target.host) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: authHeader,
+            projectId,
+            hostId: target.host.hostId,
+            harnessId: engine.harness,
+          });
+          if (!hidden.ok) {
+            return v1Error(
+              c,
+              hidden.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
+              hidden.message,
+              { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+            );
+          }
+          boxEnvironmentId = hidden.environmentId;
+        }
+        // The credential check `runHarnessTurn` would fail, run BEFORE the box
+        // is booted: a refused turn must not pay for a box, nor fail past
+        // `modelCallStarted` and hold the lease to its TTL. Same function and
+        // inputs as the turn's own check — this surface hands the harness no
+        // materialized secrets, so only a brokered key can satisfy it.
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: engine.harness,
+          secretEnv: undefined,
+          bearer: authHeader,
+          projectId,
+          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+        });
+        if (credentialRefusal) {
+          return v1Error(c, "CONFLICT", credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: authHeader.replace(/^Bearer\s+/i, ""),
+        projectId,
+        chatSessionId: runtimeChatSessionId,
+        ...(boxEnvironmentId ? { projectEnvironmentId: boxEnvironmentId } : {}),
+        harness: engine.harness,
+        signal: abortController.signal,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          engine.harness,
+          boxReason,
+          acquired.refusal,
+        );
+        const rateLimited =
+          described.status === 429 || described.status === 503;
+        // The control plane's own wait, so a caller backs off for as long as
+        // it asked instead of guessing.
+        const retryAfterMs = rateLimited
+          ? acquired.refusal.retryAfterMs
+          : undefined;
+        return v1Error(
+          c,
+          rateLimited
+            ? "RATE_LIMITED"
+            : described.status === 403
+              ? "FORBIDDEN"
+              : described.status === 409
+                ? "CONFLICT"
+                : "INTERNAL_ERROR",
+          described.message,
+          {
+            reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+            ...(described.code ? { code: described.code } : {}),
+          },
+          retryAfterMs !== undefined
+            ? {
+                "Retry-After": String(
+                  Math.max(1, Math.ceil(retryAfterMs / 1000)),
+                ),
+              }
+            : undefined,
+        );
+      }
+      conversationBox = acquired.box;
+    }
+
     // Past this line the turn may have spent. See `modelCallStarted`.
     if (executionOwnerToken)
       await new BrowserSessionService().agentRequest("begin_model", {
         bearer: authHeader,
         projectId,
         signal: abortController.signal,
-        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: pins },
+        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
     const result = await runUnifiedAssistantTurn({
@@ -1768,6 +2015,9 @@ async function handleTurn(c: Context): Promise<Response> {
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
         ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        : {}),
+      ...(engine.kind === "harness" && conversationBox
+        ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
       // The ENVIRONMENT's resolved skills, for the harness that will write them
       // into its sandbox. Without this `selectHarnessSkillSource` falls to its
@@ -1806,6 +2056,18 @@ async function handleTurn(c: Context): Promise<Response> {
     } as never);
 
     await runtime.finalizeUsage(result);
+    // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
+    // waiting on background agents ends that wait at the deadline and keeps
+    // the answer it already has (`claude-code-background-drain.ts`). Only the
+    // harness's own report counts; a trace alone also exists for a turn that
+    // paused for approval or a scope step-up.
+    const timedOut =
+      abortController.signal.aborted &&
+      !(
+        engine.kind === "harness" &&
+        result.backgroundDrainEnded &&
+        !lastEngineError
+      );
     if (browserAttached) {
       result.messages = redactBrowserEvidenceTree(
         result.messages,
@@ -1824,7 +2086,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     if (
       browserAttached &&
-      (abortController.signal.aborted || !result.turnTrace || lastEngineError)
+      (timedOut || !result.turnTrace || lastEngineError)
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
@@ -1832,6 +2094,7 @@ async function handleTurn(c: Context): Promise<Response> {
         {
           chatSessionId: runtimeChatSessionId,
           modelId: String(modelDefinition.id),
+          modelSelection: sessionModelSelection,
           modelSource: runtime.modelSource,
           authHeader,
           projectId,
@@ -1840,7 +2103,7 @@ async function handleTurn(c: Context): Promise<Response> {
           sessionMessages: result.messages,
           startedAt: existing?.startedAt ?? startedAt,
           lastActivityAt: Date.now(),
-          resumeConfig: pins,
+          resumeConfig: turnPins,
           turnLeaseOwnerToken: executionOwnerToken,
           turnTrace: {
             ...(result.turnTrace ?? {
@@ -1853,7 +2116,7 @@ async function handleTurn(c: Context): Promise<Response> {
               modelId: String(modelDefinition.id),
             }),
             turnId: leaseTurnId,
-            finishReason: abortController.signal.aborted ? "timeout" : "error",
+            finishReason: timedOut ? "timeout" : "error",
             ...(browser
               ? {
                   browserAtTurn: {
@@ -1871,7 +2134,7 @@ async function handleTurn(c: Context): Promise<Response> {
         failed.outcome === "saved" || failed.outcome === "duplicate";
     }
 
-    if (abortController.signal.aborted) {
+    if (timedOut) {
       captureTurnEvent(c, {
         startedAt,
         outcome: "timeout",
@@ -1921,8 +2184,13 @@ async function handleTurn(c: Context): Promise<Response> {
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
+        : {}),
+      // What the conversation ran at (from the host's saved selection), so a
+      // reopened chat shows it. Absent when the turn had none.
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
         : {}),
       selectedServers: selectedServerIds,
       // The four agent pins. First-write-wins is enforced at the ingest
@@ -1939,6 +2207,7 @@ async function handleTurn(c: Context): Promise<Response> {
       {
         chatSessionId: runtimeChatSessionId,
         modelId: String(modelDefinition.id),
+        modelSelection: sessionModelSelection,
         modelSource: runtime.modelSource,
         authHeader,
         projectId,
@@ -2009,8 +2278,10 @@ async function handleTurn(c: Context): Promise<Response> {
               step.toolCallId === item.toolCallId &&
               step.stepIndex === item.stepIndex,
           );
-          if (step?.screenshotUrl) {
-            item.url = step.screenshotUrl;
+          // Screenshot links only as signed `/web/artifact` links (MJ-005).
+          const url = publicArtifactLink(step?.screenshotUrl);
+          if (url) {
+            item.url = url;
             item.status = "ready";
           }
         }
@@ -2168,9 +2439,20 @@ async function handleTurn(c: Context): Promise<Response> {
         },
         error.status,
       );
+    const unavailable = browserFeatureUnavailable(error);
+    if (unavailable)
+      return v1Error(c, "FORBIDDEN", unavailable.message, unavailable.details);
     throw error;
   } finally {
     clearTimeout(wallClock);
+    // Not awaited: the release stops the heartbeat at once, and its `ended`
+    // touch (up to 10s) must not hold the response. Every exit path reaches
+    // this line.
+    void conversationBox?.release().catch((error: unknown) => {
+      logger.warn("[v1/chat-sessions] conversation box release failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (browserOutbox)
       await flushBrowserEvidence(browserOutbox);
 

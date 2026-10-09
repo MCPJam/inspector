@@ -41,6 +41,31 @@ export type NormalizedError = ErrorCatalogEntry & {
    * Captured `.cause` chain head — only `name` + `message`, redacted.
    */
   cause?: { name: string; message: string };
+  /**
+   * The thrown value’s own constructor name ("WebApiError", "TypeError"),
+   * when a consumer attached one. The catalog `title` says what went wrong
+   * for a reader; this says what the runtime actually threw, which is what a
+   * bug report needs. Populated client-side alongside {@link stack}.
+   */
+  errorType?: string;
+  /**
+   * Redacted stack, when a consumer attached one.
+   *
+   * NOT populated by `describeError`, deliberately. The server describes its
+   * own errors and puts the result straight into the JSON error body, so
+   * capturing a stack here would ship server stacks to every browser — the
+   * leak `WebRouteError` avoids by attaching its `cause` non-enumerably. The
+   * client fills this in from errors it already holds.
+   */
+  stack?: string;
+  /**
+   * The `x-request-id` of the failing request — the join key to its Axiom
+   * row.
+   *
+   * This is the field that makes a stackless 5xx reportable, so it is the one
+   * a details view shows when {@link stack} is absent.
+   */
+  requestId?: string;
 };
 
 /**
@@ -154,7 +179,30 @@ function maybePromoteRawMessage(
   entry: ErrorCatalogEntry,
   slug: string,
   rawMessage: string,
+  rawCode?: number | string,
+  fallbackCode?: number,
 ): ErrorCatalogEntry {
+  // The status is the one fact the catalog copy cannot know. Only the number
+  // is used: the raw message can quote the server's response body. When the
+  // SSE fallback failed with a different status, both are named, so the
+  // fallback's 405 cannot hide the real request's 500.
+  if (slug === "server/http_error" && typeof rawCode === "number") {
+    return {
+      ...entry,
+      oneLine:
+        fallbackCode !== undefined &&
+        fallbackCode >= 400 &&
+        fallbackCode !== rawCode
+          ? `The MCP server answered the request with HTTP ${rawCode}, then with HTTP ${fallbackCode} to the SSE fallback.`
+          : `The MCP server answered the request with HTTP ${rawCode}.`,
+    };
+  }
+  // The backend's sentence carries the two numbers that make this refusal
+  // make sense; the catalog copy cannot know them.
+  if (slug === "provider/mcpjam_limit_insufficient") {
+    const sentence = mcpjamShortfallSentence(rawMessage);
+    return sentence ? { ...entry, oneLine: sentence } : entry;
+  }
   if (slug !== "internal/unknown") return entry;
   if (!rawMessage) return entry;
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
@@ -232,6 +280,25 @@ function resolveDashThirtyTwoThousandOne(message: string): string {
   return "jsonrpc/request_timeout";
 }
 
+/**
+ * `-32603` is overloaded: JSON-RPC Internal Error, plus the MCP SDK's
+ * "Invalid response format" when a handler return value fails the result
+ * schema. Disambiguate by message, same as the `-32001` overload above.
+ */
+const INVALID_RESPONSE_FORMAT =
+  /^(?:MCP error -32603:\s*)?invalid response format$/i;
+
+function isInvalidResponseFormat(message: string): boolean {
+  return INVALID_RESPONSE_FORMAT.test(message.trim());
+}
+
+function resolveInternalError(message: string): string {
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
+  return "jsonrpc/internal_error";
+}
+
 function nodeErrnoToSlug(errno: string): string | undefined {
   const upper = errno.toUpperCase();
   switch (upper) {
@@ -297,6 +364,9 @@ function messageSlug(message: string): string | undefined {
   if (/Invalid tool name/i.test(message)) {
     return "provider/invalid_tool_name";
   }
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
   return undefined;
 }
 
@@ -360,8 +430,10 @@ function oauthResponseErrorCode(error: unknown): string | undefined {
 }
 
 function pickOauthBody(
-  error: unknown,
-): { error?: unknown; error_code?: unknown; error_description?: unknown } | undefined {
+  error: unknown
+):
+  | { error?: unknown; error_code?: unknown; error_description?: unknown }
+  | undefined {
   if (!error || typeof error !== "object") return undefined;
   // Some sources stash the body under `.body` or `.data`.
   const body =
@@ -431,8 +503,13 @@ function classifyHttpStatus(status: number): string | undefined {
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
-  if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
-  if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 401 / 403 counts, on the same terms as the 429 below: the transport
+  // phrasings that reach the UI as prose — "401 Unauthorized", "Non-200 status
+  // code (401)" — carry the status with no `http`/`status` word in front of it,
+  // and without this they fell through to `internal/unknown`, so the error
+  // toast's "Learn more" pointed at the unknown-error docs section.
+  if (/(?:^|[^\w.:])401\b/.test(message)) return "auth/http_401";
+  if (/(?:^|[^\w.:])403\b/.test(message)) return "auth/http_403";
   // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
   // the status field and leaves only this wording. Narrower than "rate limit"
   // on purpose: that also matches MCPJam's own account limit, a different slug.
@@ -452,6 +529,13 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
+  const record =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; data?: { code?: unknown } })
+      : null;
+  const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
+  if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
@@ -474,6 +558,9 @@ function resolveSlug(error: unknown): {
   if (numericCode !== undefined) {
     if (numericCode === -32001) {
       return { slug: resolveDashThirtyTwoThousandOne(message), rawCode: numericCode };
+    }
+    if (numericCode === MCP_ERROR_CODES.InternalError) {
+      return { slug: resolveInternalError(message), rawCode: numericCode };
     }
     const slug = JSONRPC_SLUG_BY_CODE[numericCode];
     if (slug) return { slug, rawCode: numericCode };
@@ -511,6 +598,13 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Composed copy can put "Out of MCPJam credits" beside the backend's
+  // shortfall sentence; the balance is not empty, so the shortfall wins.
+  if (mcpjamShortfallSentence(message)) {
+    return { slug: "provider/mcpjam_limit_insufficient" };
+  }
+  if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
+
   // Same shape of problem as the bearer gate above, and the same surface: the
   // swarm create flow renders `err.message`, so the 429 and its `code` are
   // gone by the time this runs. Without the pre-check a spent MCPJam
@@ -524,26 +618,38 @@ function resolveSlug(error: unknown): {
   // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
   // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
   // and this message comes off the wire. Real copy puts one space here.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
-    message,
-  );
-  if (limitPeriod) {
-    return {
-      slug:
-        limitPeriod[1]!.toLowerCase() === "monthly"
-          ? "provider/mcpjam_limit_monthly"
-          : "provider/mcpjam_limit_daily",
-    };
-  }
-  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
-    return { slug: "provider/mcpjam_limit" };
-  }
+  const limitSlug = mcpjamLimitSlugForMessage(message);
+  if (limitSlug) return { slug: limitSlug };
 
-  // (e) HTTP status field (`statusCode` / `status`).
-  const httpStatus = getHttpStatus(error);
+  // (e) HTTP status field (`statusCode` / `status`), read through the cause
+  // chain: an auto-activation probe against an OAuth-gated server surfaces as
+  // `SdkError(EraNegotiationFailed)` wrapping the real `UnauthorizedError`, and
+  // a plain connect failure keeps the 401 on `.cause`. Reading only the outer
+  // error classified both as `internal/unknown`.
+  const httpStatus = httpStatusOf(error);
   if (httpStatus !== undefined) {
     const slug = classifyHttpStatus(httpStatus);
     if (slug) return { slug, rawCode: httpStatus };
+  }
+
+  // (e.5) Any other HTTP error status the MCP server answered with: a 404 for
+  // a wrong endpoint path, a 405, the server's own 500. Read only off an MCP
+  // transport error, never off a bare `status`: MCPJam's own route errors and
+  // LLM provider errors carry one too, and filing those under the user's
+  // server would stop our own failures from paging. Ahead of the message
+  // fallbacks, which read a combined connect failure as `fetch failed`. The
+  // Streamable attempt's status first: it is the real request.
+  const streamableStatus = combinedTransportStatuses(error)?.streamable;
+  const upstreamStatus =
+    streamableStatus !== undefined && streamableStatus >= 400
+      ? streamableStatus
+      : mcpTransportHttpStatusOf(error);
+  if (
+    upstreamStatus !== undefined &&
+    upstreamStatus >= 400 &&
+    classifyHttpStatus(upstreamStatus) === undefined
+  ) {
+    return { slug: "server/http_error", rawCode: upstreamStatus };
   }
 
   // (f) OAuth body shape.
@@ -557,6 +663,17 @@ function resolveSlug(error: unknown): {
   // Refresh-failed phrasing.
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
+  }
+
+  // MCPJam's own consent-prompt wording. The orchestrator now attaches a
+  // normalized block directly, so a live consent state never reaches here —
+  // this catches the strings already persisted in client state from earlier
+  // sessions, and any future caller that still hands over bare prose.
+  if (
+    /consent\s+is\s+required/i.test(message) ||
+    /^\s*reauthenticate\b[\s\S]*\bto\s+continue\b/i.test(message)
+  ) {
+    return { slug: "auth/consent_required" };
   }
   // Note: "missing bearer" wording is checked earlier (step d.5) so it
   // wins over the generic HTTP status check; no duplicate here.
@@ -645,6 +762,84 @@ function httpStatusOf(error: unknown): number | undefined {
     const code = getNumericCode(current);
     if (code !== undefined && code >= 100 && code <= 599) return code;
     if ((current as { name?: string }).name === "UnauthorizedError") return 401;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current =
+      unwrapped !== current
+        ? unwrapped
+        : (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The MCP transport errors that raise on an HTTP answer. `SseError` and
+ * `StreamableHTTPError` set no `name`, so they are known by class; the SDK's
+ * `SdkHttpError` names itself.
+ */
+const MCP_TRANSPORT_HTTP_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "StreamableHTTPError",
+  "SseError",
+]);
+
+function isMcpTransportHttpError(node: object): boolean {
+  if ((node as { name?: unknown }).name === "SdkHttpError") return true;
+  const constructor = (node as { constructor?: unknown }).constructor;
+  return (
+    typeof constructor === "function" &&
+    MCP_TRANSPORT_HTTP_ERROR_CLASSES.has(constructor.name)
+  );
+}
+
+/**
+ * The HTTP status an MCP transport error in the chain carries. Walks `cause`,
+ * the era-negotiation wrapper, and the Streamable HTTP attempt a combined
+ * connect failure keeps beside its SSE cause (`streamableCause`).
+ */
+function mcpTransportHttpStatusOf(error: unknown): number | undefined {
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (queue.length > 0 && seen.size < 8) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (isMcpTransportHttpError(current)) {
+      const status = getHttpStatus(current) ?? getNumericCode(current);
+      if (status !== undefined && status >= 100 && status <= 599) {
+        return status;
+      }
+    }
+    const unwrapped = unwrapEraNegotiationCause(current);
+    queue.push(
+      unwrapped !== current ? unwrapped : (current as { cause?: unknown }).cause,
+      (current as { streamableCause?: unknown }).streamableCause,
+    );
+  }
+  return undefined;
+}
+
+/**
+ * The two HTTP statuses of a combined connect failure: the Streamable HTTP
+ * attempt (`streamableCause`) and the SSE fallback (`cause`) beside it. The
+ * Streamable attempt is the real request; a modern-only server answers the
+ * fallback GET with 405 whatever went wrong first.
+ */
+function combinedTransportStatuses(
+  error: unknown,
+): { streamable?: number; fallback?: number } | undefined {
+  let current = error;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const streamable = (current as { streamableCause?: unknown })
+      .streamableCause;
+    if (streamable !== undefined) {
+      return {
+        streamable: mcpTransportHttpStatusOf(streamable),
+        fallback: mcpTransportHttpStatusOf(
+          (current as { cause?: unknown }).cause,
+        ),
+      };
+    }
     const unwrapped = unwrapEraNegotiationCause(current);
     current =
       unwrapped !== current
@@ -809,7 +1004,15 @@ export function describeError(
       resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(
       annotateWithChallenge(
-        maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+        maybePromoteRawMessage(
+          lookupCatalog(slug),
+          slug,
+          rawMessage,
+          rawCode,
+          slug === "server/http_error"
+            ? combinedTransportStatuses(error)?.fallback
+            : undefined,
+        ),
         slug,
         context
       ),
@@ -887,4 +1090,54 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
     ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
     rawMessage,
   };
+}
+
+/**
+ * The backend's refusal when the bucket is not empty but is below the
+ * request's worst-case estimate. Checked before the period phrase: the balance
+ * is not used up, so "daily credits are used up" would be false.
+ */
+const MCPJAM_INSUFFICIENT_CREDITS_PATTERN =
+  /\bThis request needs about (\d+) MCPJam credits; your organization has (\d+) left[^.]{0,40}\./i;
+
+/**
+ * The shortfall sentence, but only when its numbers describe one: an empty
+ * balance is exhaustion, and a request that fits was not refused for size.
+ * Same check the client applies to the structured fields.
+ */
+function mcpjamShortfallSentence(message: string): string | undefined {
+  const match = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(message);
+  if (!match) return undefined;
+  const required = Number(match[1]);
+  const remaining = Number(match[2]);
+  return Number.isSafeInteger(required) &&
+    Number.isSafeInteger(remaining) &&
+    remaining > 0 &&
+    required > remaining
+    ? match[0]
+    : undefined;
+}
+
+export function mcpjamLimitSlugForMessage(
+  message: string
+):
+  | "provider/mcpjam_limit"
+  | "provider/mcpjam_limit_daily"
+  | "provider/mcpjam_limit_monthly"
+  | "provider/mcpjam_limit_insufficient"
+  | undefined {
+  if (mcpjamShortfallSentence(message)) {
+    return "provider/mcpjam_limit_insufficient";
+  }
+  const limitPeriod =
+    /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
+  if (limitPeriod) {
+    return limitPeriod[1]!.toLowerCase() === "monthly"
+      ? "provider/mcpjam_limit_monthly"
+      : "provider/mcpjam_limit_daily";
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return "provider/mcpjam_limit";
+  }
+  return undefined;
 }

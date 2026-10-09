@@ -16,6 +16,10 @@ import { SessionReadinessBadge } from "@/components/scenarios/session-readiness"
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { formatCompactRelativeTime } from "@/components/connection/share-usage/session-list-format";
+import {
+  NeverRanTag,
+  threadNeverRan,
+} from "@/components/swarms/swarm-session-not-run";
 import { cn } from "@/lib/utils";
 
 interface ShareUsageThreadListProps {
@@ -137,13 +141,13 @@ export function SessionListChrome({
 }) {
   return (
     <div className="shrink-0">
-      <div className="px-3 pt-2 pb-1.5">
+      <div className="px-4 pt-3 pb-2">
         <div className="text-sm font-semibold leading-5 text-card-foreground">
           {countLabel}
         </div>
       </div>
       {children ? (
-        <div className="flex min-h-9 items-center gap-1.5 border-b border-border px-3">
+        <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-2">
           {children}
         </div>
       ) : null}
@@ -202,6 +206,9 @@ export function ThreadCard({
               Preview
             </span>
           ) : null}
+          {/* A refused session has no preview to show, so without this its
+              row reads like any other (#5188). */}
+          {threadNeverRan(thread) ? <NeverRanTag className="shrink-0" /> : null}
         </p>
         {preview ? (
           <p className="truncate text-xs text-muted-foreground">{preview}</p>

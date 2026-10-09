@@ -42,7 +42,8 @@ import {
 } from "@/shared/eval-matching";
 import type { Predicate } from "@/shared/eval-matching";
 import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
-import { extractToolCallsFromEnvelopeMessages } from "./checks/run-predicates-on-chat-session.js";
+import { extractToolCallsFromEnvelopeMessages } from "./checks/chat-session-envelope.js";
+import { getServiceCredential } from "./service-credential.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -74,7 +75,7 @@ type ClaimOutcome =
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }

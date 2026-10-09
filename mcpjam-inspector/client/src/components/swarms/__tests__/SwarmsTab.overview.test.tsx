@@ -318,6 +318,7 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
   return {
     ...actual,
     launchJourneyRun: (...args: unknown[]) => launchJourneyRunMock(...args),
+    streamJourneyRun: vi.fn(async () => undefined),
   };
 });
 
@@ -354,11 +355,7 @@ function withGroup(
 
 function renderTab(swarmId?: string) {
   return render(
-    <SwarmsTab
-      projectId="proj-1"
-      isAuthenticated
-      swarmId={swarmId ?? null}
-    />
+    <SwarmsTab projectId="proj-1" isAuthenticated swarmId={swarmId ?? null} />,
   );
 }
 
@@ -474,6 +471,22 @@ describe("waveRunState", () => {
       );
     }
   );
+
+  it("retains an uncanceled failure beside a canceled goal", () => {
+    const [first, second] = overview.runs;
+    expect(
+      waveRunState([
+        { ...first!, status: "failed" },
+        { ...second!, status: "failed", cancelRequested: true },
+      ]),
+    ).toBe("issues");
+    expect(
+      waveRunState([
+        { ...first!, status: "completed" },
+        { ...second!, status: "failed", cancelRequested: true },
+      ]),
+    ).toBe("stopped");
+  });
 
   it("reports complete when every goal settled cleanly", () => {
     const [newest] = overview.runs;
@@ -799,9 +812,11 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Findings" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeTruthy();
+    expect(screen.queryByTestId("swarm-run-detail-view-run")).toBeNull();
     expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
@@ -880,7 +895,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
 
     fireEvent.click(screen.getByTestId("swarm-run-detail-share"));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "https://app.test/swarms/run-2b"
+      "https://app.test/swarms/run-2b?tab=findings"
     );
   });
 
@@ -933,9 +948,29 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     ).toBe("25");
 
     fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
-    // Same tab, minus the focused session: back to the whole run.
+    // The live watch surface, not the Sessions list minus a thread.
     expect(window.location.pathname).toBe("/swarms/run-2b");
-    expect(window.location.search).toBe("?tab=sessions");
+    expect(window.location.search).toBe("?tab=run");
+  });
+
+  it("opens the live matrix and stream on a running wave with no tab", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        { ...newest!, status: "running" },
+        { ...second!, status: "running" },
+        ...rest,
+      ],
+    };
+    renderTab("run-2b");
+
+    expect(await screen.findByTestId("new-swarm-running-step")).toBeTruthy();
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-findings-tab")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Run" }).getAttribute("aria-current")
+    ).toBe("page");
   });
 
   /**
@@ -1000,6 +1035,17 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
+  });
+
+  it("opens the matrix from the Run tab on a finished wave", async () => {
+    renderTab("run-2b");
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).toBe("complete");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(window.location.search).toBe("?tab=run");
+    expect(await screen.findByTestId("new-swarm-running-step")).toBeTruthy();
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeTruthy();
   });
 
   it("does not show rubric findings on the Insights tab", async () => {
@@ -1116,17 +1162,88 @@ describe("Swarm run state and navigation", () => {
     };
   }
 
+  it("restores a pending Stop request after refresh", async () => {
+    const current = runningOverview();
+    overviewData = {
+      ...current,
+      runs: current.runs.map((run) => ({
+        ...run,
+        cancelRequested: true,
+        cleanupPending: true,
+      })),
+    };
+    renderTab("run-2b");
+    expect(
+      (await screen.findByTestId("swarm-run-detail-state-label")).textContent,
+    ).toBe("Stop requested");
+    expect(
+      screen.getByTestId("swarm-run-detail-stop").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("shows an uncanceled failure after another goal stops", async () => {
+    const current = runningOverview();
+    overviewData = {
+      ...current,
+      runs: current.runs.map((run, index) => ({
+        ...run,
+        status: "failed",
+        cancelRequested: index === 0,
+        cleanupPending: false,
+      })),
+    };
+    renderTab("run-2b");
+    expect(
+      (await screen.findByTestId("swarm-run-detail-state-label")).textContent,
+    ).toBe("Completed with issues");
+  });
+
+  it("restores Stopped after settlement without a local Stop click", async () => {
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) => ({
+        ...run,
+        status: "failed",
+        cancelRequested: true,
+        cleanupPending: false,
+      })),
+    };
+    renderTab("run-2b");
+    expect(
+      (await screen.findByTestId("swarm-run-detail-state-label")).textContent,
+    ).toBe("Stopped");
+  });
+
+  it("reports Stop acceptance while background cleanup is pending", async () => {
+    overviewData = runningOverview();
+    mutationResult = (name) =>
+      name === "journeyRuns:cancelJourneyRun"
+        ? {
+            canceled: true,
+            cleanupPending: true,
+            status: "running",
+            finalized: 0,
+          }
+        : {};
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Stop requested"),
+    );
+  });
+
   it("states the outcome when the viewer returns to a finished run", async () => {
     renderTab("run-2b");
 
     const state = await screen.findByTestId("swarm-run-detail-state");
-    // The page used to render NOTHING once the run settled, so a returning
-    // viewer had no way to tell a finished run from a live one.
+    // Settled outcome sits in the header, not on a second status strip.
     expect(state.getAttribute("data-run-state")).toBe("complete");
     expect(
       screen.getByTestId("swarm-run-detail-state-label").textContent
     ).toBe("Complete");
-    expect(state.textContent).toMatch(/sessions succeeded/);
+    expect(state.textContent).toMatch(/\d+ of \d+/);
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 

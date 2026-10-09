@@ -53,6 +53,7 @@ import {
   type SessionFeedItem,
   type SessionFeedSourceType,
 } from "@/lib/sessions-feed-api";
+import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
 
 const SOURCE_TYPE_PILLS: SessionFeedSourceType[] = [
   "direct",
@@ -329,7 +330,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                     rows.length === 0 &&
                     !isLoadingFirstPage ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Chat in the Playground, share a scenario, or run an eval
+                        Chat in the Playground, share a study, or run an eval
                         or swarm to generate sessions.
                       </p>
                     ) : null}
@@ -421,7 +422,12 @@ function SessionFeedRow({
           })}
         </span>
         <span className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground/80">
-          {row.modelId ? <span>{row.modelId}</span> : null}
+          {row.modelId ? (
+            <span>
+              {row.modelId}
+              {sessionEffortSuffix(row.modelSelection)}
+            </span>
+          ) : null}
           <span className="flex items-center gap-1">
             <MessageSquare className="h-3 w-3" />
             {row.messageCount}

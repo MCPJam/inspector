@@ -5,13 +5,22 @@ import {
   formatRunId,
   computeIterationSummary,
   getTemplateKey,
+  isSubsetRerunRun,
 } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import {
+  iterationTargetKey,
+  modelEffortTargetKey,
+  targetKeyLabel,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
+import type { RunMetricsByRun } from "./run-metrics";
 import {
   EvalCase,
   EvalIteration,
   EvalSuite,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
 
@@ -28,8 +37,11 @@ import {
  * `passCriteria.minimumPassRate`, which is 0-100); this returns 0-100 to
  * match `passRate` in the same trend rows.
  */
-export function computeRunJudgeScore(run: EvalSuiteRun): number | null {
-  const cases = run.goalCompletion?.cases;
+export function computeRunJudgeScore(
+  run: EvalSuiteRun | EvalSuiteRunListItem,
+): number | null {
+  if ("judgeScore" in run) return run.judgeScore ?? null;
+  const cases = "goalCompletion" in run ? run.goalCompletion?.cases : undefined;
   if (!cases || cases.length === 0) return null;
   const scores = cases
     .map((c) => c.score)
@@ -59,7 +71,7 @@ export function useSuiteData(
   cases: EvalCase[],
   rawIterations: EvalIteration[],
   rawAllIterations: EvalIteration[],
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   aggregate: SuiteAggregate | null,
 ) {
   const iterations = useMemo(
@@ -111,12 +123,16 @@ export function useSuiteData(
         // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
         // Do not fall back to their legacy-looking summary counts in charts.
         if (run.result === "inconclusive") return null;
+        // A subset rerun re-ran only what failed; its pass rate is biased by
+        // that selection and is not a point on the suite's trend.
+        if (isSubsetRerunRun(run)) return null;
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
-        // Only count completed iterations - exclude pending/cancelled
+        // Only count completed iterations - exclude pending/cancelled, and
+        // infra rows, which measured nothing about the server.
         const iterationResults = runIterations.map((i) =>
-          computeIterationResult(i),
+          computeMeasuredIterationResult(i),
         );
         const realTimePassed = iterationResults.filter(
           (r) => r === "passed",
@@ -135,13 +151,9 @@ export function useSuiteData(
         }
 
         const passed =
-          realTimeTotal > 0
-            ? realTimePassed
-            : (run.summary?.passed ?? 0);
+          realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0);
         const total =
-          realTimeTotal > 0
-            ? realTimeTotal
-            : (run.summary?.total ?? 0);
+          realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
 
         return {
           runId: run._id,
@@ -154,7 +166,10 @@ export function useSuiteData(
           judgeScore: computeRunJudgeScore(run),
           // Ran under a per-run judge override — divergence from the suite's
           // judge calibration must be visible on the trend, not silent.
-          judgeOffConfig: run.judgeConfigOverride !== undefined,
+          judgeOffConfig:
+            run.judgeOffConfig === true ||
+            ("judgeConfigOverride" in run &&
+              run.judgeConfigOverride !== undefined),
         };
       })
       .filter(
@@ -176,9 +191,14 @@ export function useSuiteData(
   }, [runs, allIterations]);
 
   const modelStats = useMemo(() => {
+    // Subset reruns stay out: their trials would count the cases that already
+    // failed a second time.
+    const statRunIds = new Set(
+      runs.filter((run) => !isSubsetRerunRun(run)).map((run) => run._id),
+    );
     const activeIterations = allIterations.filter(
       (iteration) =>
-        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
+        !iteration.suiteRunId || statRunIds.has(iteration.suiteRunId),
     );
 
     const modelMap = new Map<
@@ -187,11 +207,14 @@ export function useSuiteData(
     >();
 
     activeIterations.forEach((iteration) => {
-      const model = iteration.testCaseSnapshot?.model || "Unknown";
+      // Keyed by TARGET (`targetKey`; the bare model id when default), so two
+      // efforts of one model are two entries.
+      const model = iterationTargetKey(iteration) || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
-      // Only count terminal pass/fail iterations - exclude pending/cancelled.
-      const result = computeIterationResult(iteration);
+      // Only count terminal pass/fail iterations - exclude pending/cancelled
+      // and infra rows.
+      const result = computeMeasuredIterationResult(iteration);
       if (
         result !== "passed" &&
         result !== "failed" &&
@@ -214,8 +237,15 @@ export function useSuiteData(
       }
     });
 
-    const data = Array.from(modelMap.entries()).map(([_model, stats]) => ({
-      model: stats.modelName,
+    const targetKeys = [...modelMap.keys()];
+    const data = Array.from(modelMap.entries()).map(([key, stats]) => ({
+      key,
+      // Only what differs: "model · Low" / "model · High" beside each other,
+      // the bare model name otherwise (exactly as before).
+      model:
+        key === "Unknown"
+          ? stats.modelName
+          : `${stats.modelName}${targetKeySuffix(key, targetKeys)}`,
       passRate:
         stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
       passed: stats.passed,
@@ -225,7 +255,7 @@ export function useSuiteData(
 
     // Sort alphabetically by model name for consistent, fixed ordering
     return data.sort((a, b) => a.model.localeCompare(b.model));
-  }, [allIterations, activeRunIds]);
+  }, [allIterations, runs]);
 
   // Case groups
   const caseGroups = useMemo(() => {
@@ -440,6 +470,118 @@ export function useSuiteData(
     caseGroups,
     templateGroups,
   };
+}
+
+/**
+ * `useSuiteData`'s trend and per-model rows for the Evaluate suite page, read
+ * from per-run metrics (`run-metrics.ts`) instead of the whole suite's
+ * iterations. Same row shapes and the same counting rules; quick runs (no
+ * `suiteRunId`) and iterations with no model are not in any run's metrics, so
+ * they no longer appear in the model breakdown.
+ */
+export function useSuiteDataFromMetrics(
+  runs: EvalSuiteRunListItem[],
+  metricsByRun: RunMetricsByRun,
+) {
+  const runTrendData = useMemo(() => {
+    const data = [...runs]
+      .slice()
+      .reverse()
+      .map((run) => {
+        // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
+        if (run.result === "inconclusive") return null;
+        // Subset reruns are not trend points (see `isSubsetRerunRun`).
+        if (isSubsetRerunRun(run)) return null;
+        const metrics = metricsByRun.get(run._id);
+        // Only decided iterations count - exclude pending/cancelled/timeouts.
+        const realTimePassed = metrics?.results.passed ?? 0;
+        const realTimeTotal = realTimePassed + (metrics?.results.failed ?? 0);
+
+        let passRate: number;
+        if (realTimeTotal > 0) {
+          passRate = Math.round((realTimePassed / realTimeTotal) * 100);
+        } else if (run.summary) {
+          passRate = Math.round(run.summary.passRate * 100);
+        } else {
+          return null;
+        }
+
+        return {
+          runId: run._id,
+          runIdDisplay: formatRunId(run._id),
+          passRate,
+          passed:
+            realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0),
+          total: realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0),
+          label: formatTime(run.completedAt ?? run.createdAt),
+          runNumber: run.runNumber,
+          judgeScore: computeRunJudgeScore(run),
+          judgeOffConfig:
+            run.judgeOffConfig === true ||
+            ("judgeConfigOverride" in run &&
+              run.judgeConfigOverride !== undefined),
+        };
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          runId: string;
+          runIdDisplay: string;
+          passRate: number;
+          passed: number;
+          total: number;
+          label: string;
+          runNumber: number;
+          judgeScore: number | null;
+          judgeOffConfig: boolean;
+        } => item !== null,
+      );
+    return data;
+  }, [runs, metricsByRun]);
+
+  const modelStats = useMemo(() => {
+    const modelMap = new Map<
+      string,
+      { passed: number; failed: number; total: number }
+    >();
+    for (const run of runs) {
+      // A subset rerun would count the cases that already failed twice.
+      if (isSubsetRerunRun(run)) continue;
+      for (const row of metricsByRun.get(run._id)?.models ?? []) {
+        // Terminal pass/fail only; a timeout counts as a failure.
+        const failed = row.failed + row.timedOut;
+        const total = row.passed + failed;
+        if (total === 0) continue;
+        // Rollup rows are per model × effective effort; an effort-less row
+        // keys as the bare model id, exactly as before.
+        const key = modelEffortTargetKey(row.model, row.reasoningEffort);
+        const stats = modelMap.get(key) ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+        };
+        stats.passed += row.passed;
+        stats.failed += failed;
+        stats.total += total;
+        modelMap.set(key, stats);
+      }
+    }
+    const targetKeys = [...modelMap.keys()];
+    return Array.from(modelMap.entries())
+      .map(([key, stats]) => ({
+        key,
+        model: targetKeyLabel(key, targetKeys, (modelId) => modelId),
+        passRate:
+          stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
+        passed: stats.passed,
+        failed: stats.failed,
+        total: stats.total,
+      }))
+      .sort((a, b) => a.model.localeCompare(b.model));
+  }, [runs, metricsByRun]);
+
+  return { runTrendData, modelStats };
 }
 
 export function useRunDetailData(

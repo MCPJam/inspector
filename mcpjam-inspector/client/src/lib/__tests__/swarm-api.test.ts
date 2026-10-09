@@ -9,6 +9,8 @@ import {
   groupSwarmSessionsByGoal,
   groupSwarmSessionsByRun,
   journeySessionRowToThread,
+  fetchSwarmFundingPreview,
+  fundingChangeOf,
   launchJourneyRun,
   LaunchJourneyRunError,
   generateSwarmPersonaBatch,
@@ -19,6 +21,7 @@ import type {
   JourneyRollup,
   JourneySessionRow,
 } from "@/lib/swarm-api";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -56,6 +59,41 @@ describe("launchJourneyRun", () => {
       projectId: "proj-1",
       launchKey: "lk-abc",
     });
+  });
+
+  it("puts the per-run iterations override on the wire", async () => {
+    // The whole chain — confirm step, launchJourney, this function, the REST
+    // route, the backend validator — is spread across two repos and four
+    // hops, and a field dropped at any of them fails silently: the run just
+    // uses the journey's own fan-out. Assert the body, not the call.
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-3" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toEqual({
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+  });
+
+  it("omits the override when the caller did not choose one", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-4" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-plain",
+    });
+
+    expect(
+      JSON.parse(authFetchMock.mock.calls[0]![1].body)
+    ).not.toHaveProperty("sessionsPerTarget");
   });
 
   it("url-encodes the journeyId path segment", async () => {
@@ -224,6 +262,41 @@ describe("swarm rollup DTO contracts", () => {
     });
   });
 
+  it("journeySessionRowToThread resolves whether the session never ran (#5188)", () => {
+    const row = (
+      lifecycle: string | null,
+      messageCount: number,
+    ): JourneySessionRow => ({
+      id: "thread-1",
+      chatSessionId: "synth_1",
+      projectId: "proj-1",
+      hostId: "host-1",
+      startedAt: 10,
+      messageCount,
+      ...(lifecycle
+        ? { verdict: { lifecycle } as unknown as JourneySessionRow["verdict"] }
+        : {}),
+    });
+    // Refused before it said anything.
+    expect(journeySessionRowToThread(row("broke", 0)).neverRan).toBe(true);
+    expect(journeySessionRowToThread(row("limited", 0)).neverRan).toBe(true);
+    // Ran, then failed: a finding about the server, not a refusal.
+    expect(journeySessionRowToThread(row("broke", 5)).neverRan).toBe(false);
+    expect(journeySessionRowToThread(row("ran", 5)).neverRan).toBe(false);
+    // No verdict, no claim either way.
+    expect(journeySessionRowToThread(row(null, 0))).not.toHaveProperty(
+      "neverRan",
+    );
+    // No message count either: an absent count is unknown, not zero, so a
+    // broke verdict alone does not make the session one that never ran.
+    expect(
+      journeySessionRowToThread({
+        ...row("broke", 0),
+        messageCount: undefined,
+      }),
+    ).not.toHaveProperty("neverRan");
+  });
+
   it("groupSwarmSessionsByRun clusters rows by journeyRunId, newest run first", () => {
     const row = (
       id: string,
@@ -383,5 +456,370 @@ describe("generateSwarmPersonaBatch — MCPJam limit", () => {
     // Nothing took this one over, so the create flow still cards it.
     expect((err as SwarmGenerateError).limitDialogRaised).toBe(false);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+
+/**
+ * Launching a goal run spends model budget exactly like generation does, so it
+ * gets the same wall. Before this it threw a bare message that each caller
+ * printed raw.
+ */
+describe("launchJourneyRun — MCPJam limit", () => {
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState({
+      isOpen: false,
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+      surface: null,
+      // Without a known auth status `notifyLimitHit` stops on the pending
+      // branch and the dialog never opens — the assertions below would pass
+      // vacuously.
+      authStatus: "signedIn",
+    });
+  });
+
+  it("raises the top-up dialog on the daily cap, and still throws", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LaunchJourneyRunError);
+    // Every launch caller reads this to stay out of the dialog's way.
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(true);
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    // No swarm screen mounts the model picker the BYOK link drives.
+    expect(state.surface).toBe("swarm");
+  });
+
+  it("opens the dialog again when the same wave is launched again", async () => {
+    // The create flow and Run again keep a failed launch's wave id and retry
+    // under it. A launch failure is the user's own action, so it is never
+    // deduped by wave: the dialog is the only answer the button gives.
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      }),
+    );
+    const launch = async () => {
+      try {
+        await launchJourneyRun({
+          projectId: "proj-1",
+          journeyId: "goal-1",
+          swarmRunGroupId: "wave-relaunch",
+        });
+      } catch (e) {
+        return e as LaunchJourneyRunError;
+      }
+      throw new Error("expected the launch to be refused");
+    };
+
+    const first = await launch();
+    expect(first.limitDialogRaised).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    useMCPJamLimitDialogStore.getState().close();
+
+    const second = await launch();
+    expect(second.limitDialogRaised).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("classifies a body that names the limit only under `error`", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        error: "user_rate_limit",
+      })
+    );
+
+    await expect(
+      launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" })
+    ).rejects.toBeInstanceOf(LaunchJourneyRunError);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("leaves an ordinary launch rejection to the caller", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, { ok: false, message: "This goal is already running." })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(false);
+    expect((err as LaunchJourneyRunError).message).toBe(
+      "This goal is already running."
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+
+/**
+ * A guest generating personas.
+ *
+ * The backend refuses at the door with 403 `sign_in_required`, before it reads
+ * the body and before it reserves the platform lane. The proxy forwards that
+ * whole refusal envelope as `details`, so its `code` is the backend's own —
+ * the response's top-level `code` is the
+ * proxy's HTTP-shaped one, `FORBIDDEN` for every 403 whatever caused it, and
+ * "not a member of this project" is also a 403 that signing in does not fix.
+ */
+describe("generateSwarmPersonaBatch — sign-in refusal", () => {
+  const generate = () =>
+    generateSwarmPersonaBatch({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      personaCount: 3,
+      journeyCount: 5,
+    });
+
+  async function refusalFrom(body: unknown): Promise<SwarmGenerateError> {
+    authFetchMock.mockResolvedValue(jsonResponse(403, body));
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    return err as SwarmGenerateError;
+  }
+
+  it("flags the refusal so the surface can offer sign-in", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "Sign in to generate personas and journeys.",
+      details: { ok: false, code: "sign_in_required", feature: "swarm generation" },
+    });
+    // Asserted through the consumer's question rather than a field on the
+    // class: `signInRemedyMessage` is the one owner of "is this a sign-in
+    // refusal", so a class that stopped carrying the envelope would fail here
+    // even while every field it does carry still looked right.
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
+    expect(err.status).toBe(403);
+  });
+
+  it("survives the `normalized` block the real proxy always attaches", async () => {
+    // The fixture above omits `normalized`, and that omission hid a bug.
+    // `handleRoute` runs every route error through `mapRuntimeError`, which
+    // backfills `normalized`, and `webErrorFromRoute` serializes it — so on the
+    // response a guest actually receives, `normalized` is ALWAYS there. With
+    // the sign-in check below that branch, this threw `WebApiError` instead.
+    //
+    // Every field below is load-bearing: `isNormalizedError` is a full
+    // structural check (slug, oneLine, docsAnchor, severity, rawMessage and
+    // both arrays), and a fixture missing any one of them leaves `normalized`
+    // undefined — which is a test that passes whichever order the branches are
+    // in, and so pins nothing. The assertion that sees the ordering is the
+    // CLASS one inside `refusalFrom`: both classes now carry the envelope, so
+    // `signInRemedyMessage` answers the same either way.
+    const err = await refusalFrom({
+      code: "UNAUTHORIZED",
+      message: "Sign in to generate personas and journeys.",
+      details: { ok: false, code: "SIGN_IN_REQUIRED" },
+      normalized: {
+        slug: "unauthorized",
+        title: "Sign in to generate personas and journeys.",
+        oneLine: "Sign in to generate personas and journeys.",
+        docsAnchor: "#unauthorized",
+        severity: "error",
+        rawMessage: "Sign in to generate personas and journeys.",
+        likelyCauses: [],
+        nextSteps: [],
+      },
+    });
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
+  });
+
+  it("does NOT flag a 403 that signing in cannot fix", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "You are not a member of this project.",
+    });
+    expect(signInRemedyMessage(err)).toBeNull();
+  });
+});
+
+describe("launchJourneyRun — sponsored conversations", () => {
+  it("sends expectedSponsored when supplied, including zero, and omits it otherwise", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-1" }));
+
+    await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+      expectedSponsored: 0,
+    });
+    await launchJourneyRun({ journeyId: "j", projectId: "p", launchKey: "lk" });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toMatchObject({
+      expectedSponsored: 0,
+    });
+    expect(JSON.parse(authFetchMock.mock.calls[1]![1].body)).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("returns the funding the backend reports, and ignores a malformed one", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse(202, {
+        runId: "run-1",
+        funding: { sponsored: 2, credits: 1, total: 3 },
+      }),
+    );
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse(202, { runId: "run-2", funding: { sponsored: "2" } }),
+    );
+
+    const first = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+    });
+    const second = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+    });
+
+    expect(first.funding).toEqual({ sponsored: 2, credits: 1, total: 3 });
+    expect(second).toEqual({ runId: "run-2" });
+  });
+
+  it("surfaces a 409 swarm_funding_changed as a typed error that never opens the limit dialog", async () => {
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        code: "CONFLICT",
+        message: "Sponsored conversations changed",
+        details: {
+          code: "swarm_funding_changed",
+          expectedSponsored: 5,
+          actualSponsored: 3,
+          totalConversations: 15,
+        },
+      }),
+    );
+
+    const error = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(LaunchJourneyRunError);
+    expect(error.status).toBe(409);
+    expect(error.limitDialogRaised).toBe(false);
+    expect(fundingChangeOf(error)).toEqual({
+      expectedSponsored: 5,
+      actualSponsored: 3,
+      totalConversations: 15,
+    });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("fundingChangeOf is undefined for every other error", () => {
+    expect(fundingChangeOf(new Error("x"))).toBeUndefined();
+    expect(
+      fundingChangeOf(new LaunchJourneyRunError(409, "conflict", false, "other")),
+    ).toBeUndefined();
+    expect(
+      fundingChangeOf(
+        new LaunchJourneyRunError(402, "credits", false, "swarm_funding_changed"),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("fetchSwarmFundingPreview", () => {
+  it("POSTs the plan and normalizes the answer", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        supported: true,
+        remaining: 12.9,
+        granted: 500,
+        runs: [
+          {
+            sponsored: 5,
+            credits: 10,
+            total: 15,
+            targets: [
+              { targetId: "t1", eligible: false, reason: "harness" },
+              { eligible: true },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const preview = await fetchSwarmFundingPreview("proj-1", [
+      { journeyRefId: "j1", sessionsPerTarget: 3 },
+    ]);
+
+    const [url, init] = authFetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/web/swarm/funding-preview");
+    expect(JSON.parse(init.body)).toEqual({
+      projectId: "proj-1",
+      runs: [{ journeyRefId: "j1", sessionsPerTarget: 3 }],
+    });
+    expect(preview).toEqual({
+      supported: true,
+      remaining: 12,
+      granted: 500,
+      runs: [
+        {
+          sponsored: 5,
+          credits: 10,
+          total: 15,
+          targets: [{ targetId: "t1", eligible: false, reason: "harness" }],
+        },
+      ],
+    });
+  });
+
+  it("reads anything short of an explicit supported:true as unsupported", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(200, {}));
+    expect(await fetchSwarmFundingPreview("p", [])).toEqual({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+  });
+
+  it("throws on a failed request so callers can launch as before", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(500, {}));
+    await expect(fetchSwarmFundingPreview("p", [])).rejects.toThrow(/500/);
   });
 });

@@ -1,3 +1,6 @@
+import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
+import { composeAbortSignals } from "@/lib/compose-abort-signals";
+import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
 import type {
   HttpServerConfig,
   MCPServerConfig,
@@ -18,9 +21,12 @@ import {
   getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import {
+  readCredentialRefusal,
+  withCredentialRefusal,
+} from "@/lib/credential-refusal";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
-const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
@@ -62,6 +68,7 @@ function buildHostedValidationContext(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
@@ -70,6 +77,7 @@ function buildHostedValidationContext(
   return {
     projectId: options.projectId,
     serverId,
+    ...(options.queueSignal ? { queueSignal: options.queueSignal } : {}),
     ...(options.serverName ? { serverName: options.serverName } : {}),
     ...(scenarioId ? { accessScope: "chat_v2" } : {}),
     ...(scenarioId ? { scenarioId } : {}),
@@ -137,16 +145,15 @@ async function safeValidateHostedServer(
   try {
     const oauthToken =
       extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
-    return await withTimeout(
-      validateHostedServer(
+    return await validateHostedServer(
         serverId,
         oauthToken,
         serverConfig.capabilities as Record<string, unknown> | undefined,
         hostedContext,
-      ),
-      HOSTED_VALIDATE_TIMEOUT_MS,
-    );
+      );
   } catch (error) {
+    if (hostedContext?.queueSignal?.aborted) throw hostedContext.queueSignal.reason;
+    if (hostedContext?.queueSignal && isServerCheckQueueError(error)) throw error;
     // Preserve the server-attached `normalized` block when the wrapped
     // error is a WebApiError. The string form (kept for back-compat) is
     // populated from the existing normalizer; the rich block flows to
@@ -159,11 +166,18 @@ async function safeValidateHostedServer(
     const oauthRequired =
       error instanceof WebApiError &&
       error.details?.oauthRequired === true;
+    // Same threading for a saved credential the backend refused to release
+    // (a moved server, or the org's export policy).
+    const credentialRefusal =
+      error instanceof WebApiError
+        ? readCredentialRefusal(error.details)
+        : null;
     return {
       success: false,
       error: normalizeHostedValidationError(error),
       ...(normalized ? { normalized } : {}),
       ...(oauthRequired ? { oauthRequired: true } : {}),
+      ...(credentialRefusal ? { credentialRefusal } : {}),
     };
   }
 }
@@ -175,54 +189,28 @@ async function authFetchWithTimeout(
   timeoutMs: number = 10000,
 ) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await authFetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(
-        `Connection attempt timed out after ${
-          timeoutMs / 1000
-        } seconds. The server may not exist or is not responding.`,
-      );
-    }
-    throw error;
-  }
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      reject(
-        new Error(
-          `Connection attempt timed out after ${
-            timeoutMs / 1000
-          } seconds. The server may not exist or is not responding.`,
+  const timeoutId = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(
+          `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+          "TimeoutError",
         ),
-      );
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        window.clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error) => {
-        window.clearTimeout(timeoutId);
-        reject(error);
-      },
-    );
-  });
+      ),
+    timeoutMs,
+  );
+  const { signal, dispose } = composeAbortSignals(
+    options.signal ? [options.signal, controller.signal] : [controller.signal],
+  );
+  try {
+    return await authFetch(url, { ...options, signal });
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    throw error;
+  } finally {
+    dispose();
+    clearTimeout(timeoutId);
+  }
 }
 
 function buildResolverBody(
@@ -231,6 +219,7 @@ function buildResolverBody(
     projectId: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ): Record<string, unknown> {
   return {
@@ -243,6 +232,86 @@ function buildResolverBody(
   };
 }
 
+// Only the network attempt owns a browser slot; OAuth interaction happens in
+// the caller before entering this function or after it has settled.
+async function localConnectionRequest(
+  url: string,
+  body: Record<string, unknown>,
+  queueSignal: AbortSignal | undefined,
+  setStatus: (status: number) => void,
+) {
+  const execute = async (signal: AbortSignal) => {
+    const metadata = serverCheckQueue.attemptMetadata(signal) ?? {
+      requestId: crypto.randomUUID(),
+      intent: "manual" as const,
+    };
+    const done = new AbortController();
+    const { signal: promotionSignal, dispose } = composeAbortSignals([
+      signal,
+      done.signal,
+    ]);
+    const detach = serverCheckQueue.bindPromotion(signal, async () => {
+      try {
+        while (!promotionSignal.aborted) {
+          const response = await authFetch("/api/mcp/servers/checks/promote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requestId: metadata.requestId }),
+            signal: promotionSignal,
+          });
+          if (!response.ok)
+            throw new Error("Could not prioritize this connection");
+          const result = await response.json();
+          if (result.state !== "expired") return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } catch (error) {
+        if (!done.signal.aborted) throw error;
+      }
+    });
+    try {
+      const response = await authFetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, _serverCheck: metadata }),
+          signal,
+        },
+        50_000,
+      );
+      setStatus(response.status);
+      const result = await response.json();
+      if (!response.ok) {
+        const error = new WebApiError(
+          response.status,
+          result.code ?? null,
+          result.error ?? "Connection failed",
+          result.normalized,
+          result.details,
+        );
+        error.retryAfterMs =
+          Number(response.headers?.get("Retry-After") ?? 2) * 1000;
+        if (isServerCheckQueueError(error)) throw error;
+      }
+      return result;
+    } finally {
+      done.abort();
+      detach();
+      dispose();
+    }
+  };
+  if (queueSignal) return execute(queueSignal);
+  return serverCheckQueue.run(
+    {
+      projectId: String(body.projectId),
+      serverName: String(body.serverName ?? body.serverId),
+      identity: JSON.stringify(body.connectionDefaults ?? {}),
+    },
+    execute,
+  );
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
@@ -250,38 +319,38 @@ export async function testConnection(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ) {
-  if (HOSTED_MODE) {
-    return safeValidateHostedServer(
-      serverId,
-      serverConfig,
-      buildHostedValidationContext(serverId, options),
-    );
-  }
+  return observeDesktopOperation("connect", async (setStatus) => {
+    if (HOSTED_MODE) {
+      return withCredentialRefusal(
+        await safeValidateHostedServer(
+          serverId,
+          serverConfig,
+          buildHostedValidationContext(serverId, options),
+        ),
+        options?.serverName,
+      );
+    }
 
-  if (!options?.projectId) {
-    throw new Error(
-      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
-    );
-  }
+    if (!options?.projectId) {
+      throw new Error(
+        "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+      );
+    }
 
-  const body = buildResolverBody(serverId, {
-    projectId: options.projectId,
-    serverName: options.serverName,
-    connectionDefaults: options.connectionDefaults,
+    const body = buildResolverBody(serverId, {
+      projectId: options.projectId,
+      serverName: options.serverName,
+      connectionDefaults: options.connectionDefaults,
+    });
+
+    return withCredentialRefusal(
+      await localConnectionRequest("/api/mcp/connect", body, options.queueSignal, setStatus),
+      options.serverName,
+    );
   });
-
-  const res = await authFetchWithTimeout(
-    "/api/mcp/connect",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    20000, // 20 second timeout
-  );
-  return res.json();
 }
 
 export async function deleteServer(serverId: string) {
@@ -360,38 +429,38 @@ export async function reconnectServer(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ) {
-  if (HOSTED_MODE) {
-    return safeValidateHostedServer(
-      serverId,
-      serverConfig,
-      buildHostedValidationContext(serverId, options),
-    );
-  }
+  return observeDesktopOperation("reconnect", async (setStatus) => {
+    if (HOSTED_MODE) {
+      return withCredentialRefusal(
+        await safeValidateHostedServer(
+          serverId,
+          serverConfig,
+          buildHostedValidationContext(serverId, options),
+        ),
+        options?.serverName,
+      );
+    }
 
-  if (!options?.projectId) {
-    throw new Error(
-      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
-    );
-  }
+    if (!options?.projectId) {
+      throw new Error(
+        "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+      );
+    }
 
-  const body = buildResolverBody(serverId, {
-    projectId: options.projectId,
-    serverName: options.serverName,
-    connectionDefaults: options.connectionDefaults,
+    const body = buildResolverBody(serverId, {
+      projectId: options.projectId,
+      serverName: options.serverName,
+      connectionDefaults: options.connectionDefaults,
+    });
+
+    return withCredentialRefusal(
+      await localConnectionRequest("/api/mcp/servers/reconnect", body, options.queueSignal, setStatus),
+      options.serverName,
+    );
   });
-
-  const res = await authFetchWithTimeout(
-    "/api/mcp/servers/reconnect",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    20000, // 20 second timeout
-  );
-  return res.json();
 }
 
 export async function getInitializationInfo(serverId: string) {
@@ -419,7 +488,7 @@ export async function setServerLoggingLevel(
     void level;
     return {
       success: false,
-      error: "Server logging level is not supported in hosted mode",
+      error: "Changing the server logging level isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     };
   }
 

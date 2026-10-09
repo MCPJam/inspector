@@ -402,9 +402,77 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: never. `mcpjam.ts` gates only APPROVAL_REQUIRED_IDS, and
-    // `docs/inspector/playground.mdx` promises read-only listing tools never
-    // ask.
+    // Floor: ALWAYS. The agent-op catalog gates it behind a human click, so
+    // the switch cannot take the pill away (MJ-008). This one never asked
+    // before, even with the switch on.
+    family: "workspace tool — catalog-gated spend",
+    name: "run_eval_suite",
+    tools: (flag) => ({
+      run_eval_suite: buildMcpjamTool("run_eval_suite", {
+        client: {} as never,
+        projectId: "proj_1",
+        requireToolApproval: flag,
+      })!,
+    }),
+    expected: {
+      mcpjam: { on: "gate", off: "gate" },
+      byok: { on: "gate", off: "gate" },
+    },
+  },
+  {
+    // Floor: ALWAYS. Catalog-gated, and it opens a connection to a server.
+    family: "workspace tool — catalog-gated call",
+    name: "call_server_tool",
+    input: { server: "Linear", toolName: "create_issue" },
+    tools: (flag) => ({
+      call_server_tool: buildMcpjamTool("call_server_tool", {
+        client: {} as never,
+        projectId: "proj_1",
+        requireToolApproval: flag,
+      })!,
+    }),
+    expected: {
+      mcpjam: { on: "gate", off: "gate" },
+      byok: { on: "gate", off: "gate" },
+    },
+  },
+  {
+    // Floor: ALWAYS. A write the catalog will not even let the agent propose.
+    family: "workspace tool — agent-excluded write",
+    name: "create_project_server",
+    tools: (flag) => ({
+      create_project_server: buildMcpjamTool("create_project_server", {
+        client: {} as never,
+        projectId: "proj_1",
+        requireToolApproval: flag,
+      })!,
+    }),
+    expected: {
+      mcpjam: { on: "gate", off: "gate" },
+      byok: { on: "gate", off: "gate" },
+    },
+  },
+  {
+    // Floor: ALWAYS. A write the agent catalog runs directly still changes
+    // state, so it asks whatever the setting says (MJ-008).
+    family: "workspace tool — direct-tier write",
+    name: "create_persona",
+    tools: (flag) => ({
+      create_persona: buildMcpjamTool("create_persona", {
+        client: {} as never,
+        projectId: "proj_1",
+        requireToolApproval: flag,
+      })!,
+    }),
+    expected: {
+      mcpjam: { on: "gate", off: "gate" },
+      byok: { on: "gate", off: "gate" },
+    },
+  },
+  {
+    // Floor: never. `mcpjam.ts` asks only for writes and connection-opening
+    // reads, and `docs/inspector/playground.mdx` promises read-only listing
+    // tools never ask.
     family: "workspace tool — platform read",
     name: "list_project_servers",
     tools: (flag) => ({

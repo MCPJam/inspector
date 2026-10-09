@@ -4,6 +4,7 @@ import { initialAppState } from "@/state/app-types";
 import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 
 const {
+  oauthMembershipState,
   loadAppStateMock,
   saveAppStateMock,
   useProjectStateMock,
@@ -13,6 +14,9 @@ const {
   projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
+  oauthMembershipState: {
+    allProjects: undefined as { _id: string }[] | undefined,
+  },
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
   useProjectStateMock: vi.fn(),
@@ -77,6 +81,11 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
 }));
 
+vi.mock("../useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../useProjects")>()),
+  useProjectQueries: () => oauthMembershipState,
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
@@ -133,11 +142,7 @@ function createServer(
 function createLoadedAppState(selectedServerState?: {
   name: string;
   connectionStatus:
-    | "connected"
-    | "connecting"
-    | "oauth-flow"
-    | "disconnected"
-    | "failed";
+    "connected" | "connecting" | "oauth-flow" | "disconnected" | "failed";
 }) {
   const baseProject = {
     ...initialAppState.projects.default,
@@ -170,6 +175,7 @@ describe("useAppState active organization recovery", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    oauthMembershipState.allProjects = undefined;
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
@@ -184,10 +190,78 @@ describe("useAppState active organization recovery", () => {
       useLocalFallback: false,
       remoteProjects: [],
       isLoadingRemoteProjects: false,
+      isLoadingProjects: false,
       effectiveActiveProjectId: "none",
     });
     useProjectStateMock.mockReturnValue(projectStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
+  });
+
+  it("reports actual WorkOS identity, not guest Convex authentication", () => {
+    const record = vi.fn();
+    window.electronAPI = { diagnostics: { record } } as any;
+    const props = {
+      currentUserId: null as string | null,
+      isWorkOsLoading: true,
+      currentActorKey: "guest",
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
+    };
+    const hook = renderHook((p) => useAppState(p), { initialProps: props });
+    try {
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "loading" }),
+      );
+      hook.rerender({ ...props, isWorkOsLoading: false });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "guest" }),
+      );
+      hook.rerender({
+        ...props,
+        isWorkOsLoading: false,
+        currentUserId: "private-user",
+      });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "signed_in" }),
+      );
+      expect(JSON.stringify(record.mock.calls)).not.toContain("private-user");
+    } finally {
+      hook.unmount();
+      delete window.electronAPI;
+    }
+  });
+
+  it("keeps OAuth membership IDs stable until the membership query changes", () => {
+    oauthMembershipState.allProjects = [{ _id: "project-1" }];
+    const props = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
+      isWorkOsLoading: false,
+    };
+    const { rerender } = renderHook((options) => useAppState(options), {
+      initialProps: props,
+    });
+    const first = useServerStateMock.mock.lastCall?.[0].oauthProjectIds;
+    expect(first).toEqual(new Set(["project-1"]));
+    rerender({ ...props, isWorkOsLoading: true });
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBe(first);
+    oauthMembershipState.allProjects = [{ _id: "project-2" }];
+    rerender(props);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toEqual(
+      new Set(["project-2"]),
+    );
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).not.toBe(
+      first,
+    );
+    oauthMembershipState.allProjects = undefined;
+    rerender(props);
+    expect(
+      useServerStateMock.mock.lastCall?.[0].oauthProjectIds,
+    ).toBeUndefined();
   });
 
   it("recovers a stale stored org to the first owned organization", async () => {
@@ -371,6 +445,119 @@ describe("useAppState active organization recovery", () => {
     expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
   });
 
+  it("does not disconnect runtime servers while the initial guest scope resolves", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    projectStateValue.isLoadingProjects = true;
+
+    const hookProps: {
+      currentUserId: string | null;
+      currentActorKey: string | null;
+      routeOrganizationId: string | undefined;
+      hasOrganizations: boolean;
+      isLoadingOrganizations: boolean;
+      validOrganizations: Array<{ _id: string; myRole?: string }>;
+    } = {
+      currentUserId: null,
+      currentActorKey: null,
+      routeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: true,
+      validOrganizations: [],
+    };
+
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "excalidraw",
+        config: { type: "http", url: "https://mcp.excalidraw.com/mcp" },
+      });
+    });
+
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      isLoadingProjects: false,
+      useLocalFallback: false,
+    });
+    rerender({
+      ...hookProps,
+      currentActorKey: "guest-1",
+      isLoadingOrganizations: false,
+    });
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ currentActorKey: "guest-1" }),
+      );
+    });
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+    expect(disconnectAllRuntimeServersMock).not.toHaveBeenCalled();
+  });
+
+  it("clears runtime servers when the last project disappears after hydration", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      isLoadingProjects: false,
+      useLocalFallback: false,
+    });
+    const hookProps = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizations: [{ _id: "org-1", myRole: "owner" }],
+    };
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "demo-server",
+        config: { type: "http", url: "https://example.com/mcp" },
+      });
+    });
+
+    projectStateValue.effectiveActiveProjectId = "none";
+    rerender(hookProps);
+
+    await waitFor(() => {
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "demo-server",
+      );
+    });
+    expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
+  });
+
   // Removed in Slice 5: the legacy `loadAppState` → `patchStateForPendingOAuth`
   // path is gone (Convex hydrates state, the patch helper is deleted), so
   // tests asserting the runtime-server seed via `loadAppStateMock` no longer
@@ -392,7 +579,10 @@ describe("useAppState active organization recovery", () => {
       servers: {},
     });
     localStorage.setItem("mcp-oauth-pending", "demo-server");
-    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp",
+    );
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
     const { result } = renderHook(() =>
@@ -470,4 +660,266 @@ describe("useAppState active organization recovery", () => {
     }
   });
 
+  it("does not count provider approval time against the callback's UI timeout", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+    try {
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface: "project",
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          // The user left for the provider ten minutes before the callback.
+          startedAt: new Date("2026-01-01T00:00:00.000Z").getTime(),
+        }),
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(29_999);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      // A callback stuck behind an unresolved gate is still bounded.
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a slow approval's marker once the callback route is restored", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+    try {
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface: "project",
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          startedAt: new Date("2026-01-01T00:00:00.000Z").getTime(),
+        }),
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result, rerender } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
+
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a stale OAuth failure one commit to be replaced by callback success", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let capturedDispatch: ((action: any) => void) | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    try {
+      localStorage.setItem("mcp-oauth-pending", "oauth-server");
+      localStorage.setItem(
+        "mcp-serverUrl-oauth-server",
+        "https://oauth.example/mcp",
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result, rerender } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      act(() => {
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "oauth-server",
+          config: { type: "http", url: "https://oauth.example/mcp" },
+          select: true,
+        });
+        capturedDispatch?.({
+          type: "CONNECT_FAILURE",
+          name: "oauth-server",
+          error: "401 Unauthorized",
+        });
+      });
+
+      // The failed row can land before the callback route is restored. No
+      // settle timer should start while the callback still owns the page.
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
+
+      act(() => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases OAuth UI state when the callback owner clears its persistent marker", async () => {
+    localStorage.setItem("mcp-oauth-pending", "oauth-server");
+    localStorage.setItem(
+      "mcp-serverUrl-oauth-server",
+      "https://oauth.example/mcp",
+    );
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const { result, rerender } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        currentActorKey: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+      "oauth-server",
+    );
+
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-hosted-oauth-pending");
+    window.history.replaceState({}, "", "/home");
+    rerender();
+
+    await waitFor(() => {
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    });
+  });
+
+  it("settles a stable OAuth failure while other servers keep updating", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let capturedDispatch: ((action: any) => void) | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    try {
+      localStorage.setItem("mcp-oauth-pending", "oauth-server");
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result, rerender } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      act(() => {
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "oauth-server",
+          config: { type: "http", url: "https://oauth.example/mcp" },
+          select: true,
+        });
+        capturedDispatch?.({
+          type: "CONNECT_FAILURE",
+          name: "oauth-server",
+          error: "401 Unauthorized",
+        });
+      });
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
+
+      // Each update replaces `appState.servers`; neither may restart the
+      // pending server's settle timer.
+      const otherConfig = { type: "http", url: "https://other.example/mcp" };
+      act(() => {
+        vi.advanceTimersByTime(250);
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "other-server",
+          config: otherConfig,
+          select: false,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(200);
+        capturedDispatch?.({
+          type: "CONNECT_SUCCESS",
+          name: "other-server",
+          config: otherConfig,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

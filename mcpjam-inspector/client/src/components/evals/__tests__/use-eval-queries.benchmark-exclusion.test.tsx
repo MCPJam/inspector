@@ -5,7 +5,15 @@ import type { EvalSuiteOverviewEntry, EvalSuiteRun } from "../types";
 const { mockUseQuery } = vi.hoisted(() => ({ mockUseQuery: vi.fn() }));
 
 vi.mock("convex/react", () => ({
+  usePaginatedQuery: (name: string) => ({
+    results: mockUseQuery(name) ?? [],
+    status: mockUseQuery(name) === undefined ? "LoadingFirstPage" : "Exhausted",
+    loadMore: () => {},
+  }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
+  // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
+  useQueries: () => ({}),
+  useConvex: () => ({ query: async () => null }),
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
@@ -37,6 +45,9 @@ function run(id: string, source?: string): EvalSuiteRun {
   return {
     _id: id,
     suiteId: "suite_ui",
+    // Every summary row carries a status; per-run metrics compare it with
+    // the status an iteration read was taken at.
+    status: "completed",
     ...(source ? { source } : {}),
   } as EvalSuiteRun;
 }
@@ -51,7 +62,7 @@ function answerQueries(answers: {
 }) {
   mockUseQuery.mockImplementation((name: string) => {
     if (name === "testSuites:getTestSuitesOverview") return answers.overview;
-    if (name === "testSuites:listTestSuiteRuns") return answers.runs;
+    if (name === "testSuites:listTestSuiteRunSummaries") return answers.runs;
     return undefined;
   });
 }

@@ -1,3 +1,8 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
+import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
+import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * drive-hosted-eval-turn.ts — the shared per-turn body of the two hosted eval
@@ -52,6 +57,7 @@ import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
   MCPJamEngineErrorEvent,
@@ -67,6 +73,8 @@ import {
 } from "./eval-trace-capture";
 import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
+import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
 
 type ToolCall = {
   toolName: string;
@@ -106,6 +114,12 @@ export type HostedEvalTurnOutcome =
       errorCode?: string;
       /** HTTP status, when the failure came from a non-OK response. */
       errorHttpStatus?: number;
+      /**
+       * The producer's STRUCTURED evidence that one of OUR layers failed,
+       * copied from the engine's event or a typed throw — never derived from
+       * the message. Read only by the eval infra-error classifier.
+       */
+      errorInfra?: InfraFailureEvidence;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -151,6 +165,7 @@ export interface HostedEvalTurnSinkContext {
 }
 
 export interface DriveHostedEvalTurnParams {
+  harnessExecutionTarget?: RunAssistantTurnOptions["harnessExecutionTarget"];
   promptIndex: number;
   prompt: string;
   /** This turn's scripted widget interaction checks. Armed on the harness
@@ -168,9 +183,9 @@ export interface DriveHostedEvalTurnParams {
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
-   *  (no interactive approval yet). The emulated eval path is unchanged (it
-   *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
+   *  an interactive approval flow; a gated call can fail during streaming.
+   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -357,6 +372,7 @@ export interface DriveHostedEvalTurnParams {
      */
     traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /**
      * Wire results, keyed by the `toolCallId` the GRADED call array uses:
      * a matched call under its narrated id, a wire-only call under
@@ -441,7 +457,6 @@ const truncateError = (message: string): string =>
  *  forever. Consumed by the executor (R3); this module only exports the value. */
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
-
 /**
  * Which layer failed, from what the engine REPORTED rather than from where
  * this was called.
@@ -478,7 +493,7 @@ export function failedLayerForEngineError(
 }
 
 export async function driveHostedEvalTurn(
-  params: DriveHostedEvalTurnParams
+  params: DriveHostedEvalTurnParams,
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -515,7 +530,7 @@ export async function driveHostedEvalTurn(
       ? params.toolPolicyGate.wrap(mergedTools)
       : mergedTools,
     traceCtx,
-    promptIndex
+    promptIndex,
   );
 
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
@@ -526,12 +541,19 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
+  const appContext = browser.getModelContext?.();
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
     inputTokens: acc.accumulatedUsage.inputTokens ?? 0,
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
+  };
+  // The reasoning / cached-input breakdown at turn start. Kept apart from
+  // `baselineUsage` (the live step sinks only roll the three totals).
+  const baselineBreakdown: UsageTotals = {
+    reasoningTokens: acc.accumulatedUsage.reasoningTokens,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens,
   };
 
   // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
@@ -543,8 +565,9 @@ export async function driveHostedEvalTurn(
   // parent's already-committed calls end so the post-turn reconcile below
   // replaces only THIS turn's live entries (the stream runner's `onToolCall`
   // populates the array live) without wiping the parent's.
-  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
-    []);
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[
+    promptIndex
+  ] ??= []);
   const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
@@ -590,11 +613,13 @@ export async function driveHostedEvalTurn(
         elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
       },
       iterationError: truncateError(
-        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnDeadline?.elapsedMs() ?? turnTimeoutMs}ms)`
+        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${
+          turnDeadline?.elapsedMs() ?? turnTimeoutMs
+        }ms)`,
       ),
     };
     logger.error(
-      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`
+      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`,
     );
     sinks.onTurnFailure?.(failure);
     // `failed`, never `cancelled`. A turn that ran out of clock produced a
@@ -622,7 +647,7 @@ export async function driveHostedEvalTurn(
   // failure branches below (CodeRabbit, PR 2610).
   const mapThrownTurnError = (
     error: unknown,
-    failedStage: string
+    failedStage: string,
   ): HostedEvalTurnOutcome => {
     // Ahead of the cancellation arm, and that order is the whole point: a
     // turn-budget abort reaches here as an AbortError on the same composed
@@ -634,7 +659,7 @@ export async function driveHostedEvalTurn(
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`,
       );
       return { kind: "cancelled" };
     }
@@ -660,6 +685,10 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
+    // Structured evidence ONLY from a typed thrower (a harness setup step, a
+    // bridge's typed provider error) — an arbitrary object with a status
+    // could be the customer's server talking.
+    const errorInfra = harnessFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
@@ -669,6 +698,7 @@ export async function driveHostedEvalTurn(
         failedStage === "pre-turn setup"
           ? ("setup" as const)
           : ("model" as const),
+      ...(errorInfra ? { errorInfra } : {}),
     };
   };
 
@@ -720,10 +750,11 @@ export async function driveHostedEvalTurn(
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
   // through `extraBodyFields` since the engine options don't expose them as
-  // first-class fields. `maxOutputTokens: 16384` matches the legacy per-step
-  // Convex body (Cursor round-2 "Dropped eval maxOutputTokens limit").
+  // first-class fields. The ceiling matches the legacy per-step Convex body
+  // (Cursor round-2 "Dropped eval maxOutputTokens limit"), and is shared with
+  // the swarm host steps.
   const mergedExtraBodyFields: Record<string, unknown> = {
-    maxOutputTokens: 16384,
+    maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
     ...(params.extraBodyFields ?? {}),
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
@@ -738,7 +769,7 @@ export async function driveHostedEvalTurn(
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
     turnResult = await runAssistantTurn({
-      messages: inputMessages,
+      messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
       // in as `modelId`. The engine reads `modelDefinition.id` for the wire
@@ -751,7 +782,7 @@ export async function driveHostedEvalTurn(
       systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
-            browser.browserInteractionSteps
+            browser.browserInteractionSteps,
           )
         : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
@@ -769,13 +800,14 @@ export async function driveHostedEvalTurn(
       persistMode: "caller",
       approvalMode: "auto-deny",
       // Harness eval (host harness === "claude-code"): forward the selector and
-      // the host's real approval intent so runHarnessTurn fail-closes on a
-      // requireToolApproval host (it can't do interactive approval yet) while
+      // the host's real approval intent. A gated native call can fail during
+      // streaming because evals cannot interactively approve it, while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
       ...(params.harness
         ? {
             harness: params.harness,
+            ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
               : {}),
@@ -839,8 +871,7 @@ export async function driveHostedEvalTurn(
             // opt-out and a truthy check would erase it.
             ...(params.modelVisibleMcpToolResults !== undefined
               ? {
-                  modelVisibleMcpToolResults:
-                    params.modelVisibleMcpToolResults,
+                  modelVisibleMcpToolResults: params.modelVisibleMcpToolResults,
                 }
               : {}),
             ...(params.respectToolVisibility !== undefined
@@ -896,7 +927,6 @@ export async function driveHostedEvalTurn(
     turnDeadline?.dispose();
   }
 
-
   // The engine's SILENT path: it catches AbortError, omits the `turnTrace` and
   // returns normally, so a blown turn budget arrives here looking exactly like
   // a cancel. Same discrimination as in `mapThrownTurnError`, and the same
@@ -910,7 +940,7 @@ export async function driveHostedEvalTurn(
   // aborted run as a verdict failure.
   if (cancelledMidTurn()) {
     logger.debug(
-      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
+      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`,
     );
     return { kind: "cancelled" };
   }
@@ -940,9 +970,8 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
   const evidence = await reconcileTurnEvidence({
-    ...(params.evalIterationId
-      ? { iterationId: params.evalIterationId }
-      : {}),
+    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
+    ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,
     spans: turnSpans,
@@ -955,6 +984,11 @@ export async function driveHostedEvalTurn(
       : {}),
   });
   acc.capturedSpans.push(...evidence.spans);
+  (acc.requestPayloads ??= []).push(
+    ...expandPersistedRequestPayloads(
+      turnResult.turnTrace?.requestPayloads ?? [],
+    ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
+  );
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink
@@ -968,6 +1002,12 @@ export async function driveHostedEvalTurn(
       baselineUsage.outputTokens + (turnResult.usage.outputTokens ?? 0);
     acc.accumulatedUsage.totalTokens =
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
+    for (const key of ["reasoningTokens", "cachedInputTokens"] as const) {
+      const turnValue = turnResult.usage[key];
+      if (typeof turnValue === "number") {
+        acc.accumulatedUsage[key] = (baselineBreakdown[key] ?? 0) + turnValue;
+      }
+    }
   }
 
   // Per-turn tool calls — rebuilt from the new messages only, then run
@@ -1018,7 +1058,7 @@ export async function driveHostedEvalTurn(
   // generic fallbacks.
   const failTurn = (
     fallbackError: string,
-    logLine: string
+    logLine: string,
   ): HostedEvalTurnOutcome => {
     const failure = lastEngineError
       ? {
@@ -1054,47 +1094,22 @@ export async function driveHostedEvalTurn(
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
+      // The producer's own typed evidence, passed through untouched: the
+      // classifier, not this call site, decides what it means.
+      ...(lastEngineError?.infra ? { errorInfra: lastEngineError.infra } : {}),
     };
   };
 
-  if (!turnResult.turnTrace) {
+  const turnFailure = getHostedTurnFailure({
+    turnTrace: turnResult.turnTrace,
+    newMessageCount: newMessages.length,
+  });
+  if (turnFailure) {
     return failTurn(
-      "Backend stream failed during iteration (engine caught an error mid-turn)",
-      `[evals] runAssistantTurn${logSuffix} returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
-        newMessages.length > 0
-      }, engineError=${
+      turnFailure,
+      `[evals] runAssistantTurn${logSuffix} failed: ${turnFailure} (engineError=${
         lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
-    );
-  }
-  if (newMessages.length === 0) {
-    return failTurn(
-      "Backend step returned no content (stream error or empty response)",
-      `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
-    );
-  }
-  // Cursor / Codex review fix: filter to backend step / LLM failure spans
-  // only — exclude `category: "tool"` AND any span carrying a `toolCallId`
-  // (the child error span `wrapToolSetForEvalTrace` emits alongside a failed
-  // tool span). Tool-category error spans flow through the configured
-  // `failOnToolError` gate; treating them as cycle failures here would
-  // defeat that policy.
-  const stepErrorSpan = turnResult.turnTrace.spans.find(
-    (span) =>
-      span.status === "error" &&
-      span.category !== "tool" &&
-      !(span as { toolCallId?: string }).toolCallId
-  );
-  if (stepErrorSpan) {
-    return failTurn(
-      `Backend step failed mid-turn: ${stepErrorSpan.name}`,
-      `[evals] runAssistantTurn${logSuffix} turnTrace has non-tool error-status span; treating as cycle failure (span=${
-        stepErrorSpan.name
-      } category=${stepErrorSpan.category} engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
+      })`,
     );
   }
 

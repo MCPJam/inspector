@@ -1,3 +1,4 @@
+import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   streamText,
@@ -6,7 +7,7 @@ import {
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
@@ -21,6 +22,8 @@ import {
   wrapToolSetForEvalTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   generateLiveTraceTurnId,
   getPromptIndex,
   getPromptMessageStartIndex,
@@ -30,6 +33,7 @@ import {
 } from "./live-chat-trace-stream";
 import { normalizeSystemPromptForProvider } from "./model-request-payload";
 import {
+  liveChatTraceUsageFromAiSdk,
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -45,6 +49,8 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
   mergePageToolBindingMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
@@ -55,6 +61,20 @@ import {
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+
+/**
+ * Stream parts that mean the model has produced something — the subset AI
+ * SDK 6 delivered to `onChunk`, which the TTFC measurement was built on.
+ */
+const TTFC_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "source",
+  "tool-call",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-result",
+]);
 
 /**
  * The chat-v2 user-API-key path (`streamDirectChatWithLiveTrace`) used to
@@ -236,11 +256,7 @@ export interface DirectChatTurnStepFinishEvent {
    * tracks per-turn aggregates, not per-step deltas). Undefined when
    * the step had no usage signal.
    */
-  turnUsage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
+  turnUsage?: LiveChatTraceUsage;
   settledWithError: boolean;
   /**
    * Defensive copy of `traceTurn.turnSpans` as of step settlement.
@@ -311,6 +327,12 @@ export interface RunDirectChatTurnOptions {
    * every attempt shares the same composed `abortSignal`.
    */
   maxRetries?: number;
+  /**
+   * Provider options for the model call, e.g. the reasoning effort a saved
+   * selection asks for (`reasoningEffortProviderOptions`). Absent ⇒ none, so
+   * callers that do not set it are byte-identical to before.
+   */
+  providerOptions?: ProviderOptions;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -387,6 +409,12 @@ export interface RunDirectChatTurnOptions {
   /** Identifies the temporary tool-error result to omit from trace/history. */
   suspendedToolCallId?: () => string | undefined;
   /**
+   * What each step SENDS, derived from the messages the step would send — the
+   * history-provenance presentation on browser-facing chat (MJ-009). The
+   * conversation `streamText` accumulates, and the transcript, are unchanged.
+   */
+  transformStepMessages?: (messages: ModelMessage[]) => ModelMessage[];
+  /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
    * observability; chat currently omits.
@@ -444,7 +472,10 @@ export function stampMcpToolOriginProviderOptions(
         // thing the tool's `execute` compares itself to on resume.
         const providerOptions = mergePageToolBindingMetadata(
           withPageToolAttributionMetadata(
-            mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+            mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+              toolConnectionAttribution(tools[toolName], record.input, record.toolCallId),
+            ),
             tools[toolName],
           ),
           record.type === "tool-call"
@@ -479,31 +510,15 @@ export function withMcpToolOriginChunkMetadata<
   const serverId = readToolServerId(tools, chunk.toolName);
   const providerMetadata = mergePageToolBindingMetadata(
     withPageToolAttributionMetadata(
-      mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+      mergeMcpToolConnectionMetadata(
+        mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+        toolConnectionAttribution(tools[chunk.toolName], (chunk as { input?: unknown }).input, (chunk as { toolCallId?: unknown }).toolCallId),
+      ),
       tools[chunk.toolName],
     ),
     pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
-}
-
-function toLiveChatTraceUsage(
-  usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      }
-    | null
-    | undefined,
-): LiveChatTraceUsage | undefined {
-  if (!usage) return undefined;
-  const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number")
-    next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
-  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /**
@@ -561,6 +576,7 @@ export function runDirectChatTurn(
     prepareAdvertisedTools,
     abortSignal,
     maxRetries,
+    providerOptions,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -573,6 +589,7 @@ export function runDirectChatTurn(
     maxSteps,
     shouldPauseAfterStep,
     suspendedToolCallId,
+    transformStepMessages,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -660,42 +677,6 @@ export function runDirectChatTurn(
     return out;
   };
 
-  // Mirror the step-0 advertised set into the request-payload trace so it can't
-  // claim tools the model won't see on the first step (parity with the hosted
-  // processOneStep request_payload). Only narrows when the hook is set; chat
-  // (no hook) passes the full map unchanged. This trace is turn-level, so it
-  // reflects step 0; later steps' per-step narrowing isn't re-traced here.
-  let requestPayloadTools: ToolSet = tools;
-  if (prepareAdvertisedTools) {
-    const defaultToolNames =
-      progressivePlan?.enabled && discoveryState
-        ? withInjectedTools(
-            resolveActiveToolNames(progressivePlan, discoveryState),
-          )
-        : Object.keys(tools);
-    const advertised = new Set(
-      applyPrepareAdvertisedTools({
-        defaultToolNames,
-        stepIndex: 0,
-        prepareAdvertisedTools,
-        onWarn: (message, meta) =>
-          logger.warn(`[direct-chat-turn] ${message}`, meta),
-      }),
-    );
-    requestPayloadTools = Object.fromEntries(
-      Object.entries(tools).filter(([name]) => advertised.has(name)),
-    ) as ToolSet;
-  }
-
-  traceEvents?.onRequestPayload?.({
-    turnId: traceTurn.turnId,
-    promptIndex: traceTurn.promptIndex,
-    stepIndex: 0,
-    systemPrompt,
-    messages: messageHistory,
-    tools: requestPayloadTools,
-  });
-
   // Progressive mode: gate execution to the active subset. `activeTools`
   // (set in `prepareStep` below) narrows what the model sees, but a
   // hallucinated/remembered call to a non-active tool would still execute
@@ -752,6 +733,11 @@ export function runDirectChatTurn(
     result = streamText({
     model: llmModel,
     messages: messageHistory,
+    // AI SDK 7 rejects system messages in `messages` by default. The history
+    // carries them on purpose: MCP server instructions reach the model as
+    // system messages (ChatTabV2's `server-instruction` parts). Same opt-in
+    // the backend's /stream routes use.
+    allowSystemInMessages: true,
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
@@ -761,11 +747,12 @@ export function runDirectChatTurn(
     ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber }) => {
+    prepareStep: ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -797,10 +784,38 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
+      // What the model is shown this step, when the caller shapes it.
+      const presentedMessages =
+        transformStepMessages && stepMessages
+          ? transformStepMessages(stepMessages)
+          : undefined;
+      const request = {
+        turnId: traceTurn.turnId,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex: stepNumber,
+        systemPrompt,
+        messages: presentedMessages ?? stepMessages ?? traceHistory,
+        tools: activeToolNames
+          ? Object.fromEntries(
+              activeToolNames.map((name) => [name, tools[name]]),
+            ) as ToolSet
+          : tools,
+      };
+      traceContext.recordedRequestPayloads.push({
+        turnId: request.turnId,
+        promptIndex: request.promptIndex,
+        stepIndex: stepNumber,
+        payload: cloneTraceValue(buildResolvedModelRequestPayload(request)),
+      });
+      traceEvents?.onRequestPayload?.(request);
       const stepOptions: {
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
+        messages?: ModelMessage[];
       } = {};
+      if (presentedMessages) {
+        stepOptions.messages = presentedMessages;
+      }
       if (activeToolNames !== undefined) {
         stepOptions.activeTools = activeToolNames;
       }
@@ -821,8 +836,14 @@ export function runDirectChatTurn(
       return stepOptions;
     },
     onChunk: async ({ chunk }) => {
-      // First streamed chunk of this step → TTFC anchor (any chunk type).
-      if (!stepFirstChunkAt.has(currentStepIndex)) {
+      // First streamed CONTENT chunk of this step → TTFC anchor. AI SDK 7
+      // also calls `onChunk` with lifecycle parts (`start-step`,
+      // `text-start`, …) that arrive before the model has produced anything;
+      // anchoring on those would report a near-zero TTFC for every step.
+      if (
+        TTFC_CONTENT_CHUNK_TYPES.has(chunk.type) &&
+        !stepFirstChunkAt.has(currentStepIndex)
+      ) {
         stepFirstChunkAt.set(currentStepIndex, Date.now());
       }
       if (chunk.type === "text-delta") {
@@ -886,7 +907,9 @@ export function runDirectChatTurn(
         afterLength > beforeLength ? beforeLength : undefined;
       const messageEndIndex =
         afterLength > beforeLength ? afterLength - 1 : undefined;
-      const stepUsage = toLiveChatTraceUsage(step.usage);
+      // Includes the reasoning / cached-input breakdown, so the local-usage
+      // writeback and the eval runner see the reasoning tokens a turn spent.
+      const stepUsage = liveChatTraceUsageFromAiSdk(step.usage);
 
       traceTurn.turnUsage = mergeLiveChatTraceUsage(
         traceTurn.turnUsage,
@@ -956,6 +979,12 @@ export function runDirectChatTurn(
                   : {}),
                 ...(traceTurn.turnUsage.totalTokens !== undefined
                   ? { totalTokens: traceTurn.turnUsage.totalTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.reasoningTokens !== undefined
+                  ? { reasoningTokens: traceTurn.turnUsage.reasoningTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: traceTurn.turnUsage.cachedInputTokens }
                   : {}),
               }
             : undefined,
@@ -1036,7 +1065,7 @@ export function runDirectChatTurn(
       );
       traceTurn.turnSpans = [...traceContext.recordedSpans];
       traceTurn.turnUsage =
-        toLiveChatTraceUsage(event.totalUsage) ?? traceTurn.turnUsage;
+        liveChatTraceUsageFromAiSdk(event.totalUsage) ?? traceTurn.turnUsage;
 
       if (!turnFinished) {
         traceEvents?.onTurnFinish?.({
@@ -1085,6 +1114,9 @@ export function runDirectChatTurn(
             startedAt: traceTurn.turnStartedAt,
             endedAt: Date.now(),
             spans: [...traceTurn.turnSpans],
+            requestPayloads: capRequestPayloadsForPersist(
+              traceContext.recordedRequestPayloads,
+            ),
             usage: traceTurn.turnUsage,
             finishReason: event.finishReason,
             modelId,
@@ -1140,12 +1172,15 @@ export async function consumeDirectChatTurnHeadless(
 ): Promise<DirectChatTurnHeadlessResult> {
   try {
     await handle.result.consumeStream();
-    const response = await handle.result.response;
+    // `responseMessages`, not `response.messages`: in AI SDK 7 `response` is
+    // the FINAL step's, so its messages would drop every earlier step's tool
+    // calls and results from the transcript.
+    const responseMessages = await handle.result.responseMessages;
     const steps = await handle.result.steps;
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
-    const messages = Array.isArray(response?.messages)
-      ? (response.messages as ModelMessage[])
+    const messages = Array.isArray(responseMessages)
+      ? (responseMessages as ModelMessage[])
       : [];
     // Build the real turnTrace from the engine's own accumulator — mirrors the
     // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
@@ -1156,6 +1191,9 @@ export async function consumeDirectChatTurnHeadless(
       startedAt: handle.traceTurn.turnStartedAt,
       endedAt: Date.now(),
       spans: [...handle.traceContext.recordedSpans],
+      requestPayloads: capRequestPayloadsForPersist(
+        handle.traceContext.recordedRequestPayloads,
+      ),
       usage: handle.traceTurn.turnUsage,
       finishReason: finishReason ?? undefined,
       modelId: handle.modelId,

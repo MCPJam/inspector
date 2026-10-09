@@ -83,6 +83,19 @@ export type CodexSandboxMode =
   | "workspace-write"
   | "danger-full-access";
 
+/** `SandboxPolicy` from the 0.149.1 schema: a per-turn override of the
+ *  thread's sandbox that also applies to subsequent turns. */
+export type CodexSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "readOnly"; networkAccess?: boolean }
+  | {
+      type: "workspaceWrite";
+      writableRoots?: string[];
+      networkAccess?: boolean;
+      excludeSlashTmp?: boolean;
+      excludeTmpdirEnvVar?: boolean;
+    };
+
 export type TurnStartParams = {
   threadId: string;
   input: Array<{ type: "text"; text: string }>;
@@ -92,6 +105,7 @@ export type TurnStartParams = {
   cwd?: string;
   approvalPolicy?: CodexApprovalPolicy;
   approvalsReviewer?: CodexApprovalsReviewer;
+  sandboxPolicy?: CodexSandboxPolicy;
   outputSchema?: unknown;
 };
 

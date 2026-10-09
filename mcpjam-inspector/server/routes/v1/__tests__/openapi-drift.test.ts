@@ -42,7 +42,7 @@ const BODYLESS_WRITES = new Set([
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
   // Same shape on the swarm side, for the same reason.
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  "post /projects/{projectId}/goal-runs/{runId}/cancel",
   // And the same on readiness. There is nothing to say about a cancellation
   // beyond which run — the executing node learns about it on its next
   // heartbeat, and a body could only be a place to pass options a cancellation
@@ -50,16 +50,16 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/readiness-runs/{runId}/cancel",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
-  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
-  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
-  // Rotating a share link takes no options: the path scenarioId names what to
+  "post /projects/{projectId}/goal-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/goal-findings/{findingId}/undismiss",
+  // Rotating a share link takes no options: the path studyId names what to
   // rotate, and the new secret is minted server-side by definition. A body
   // here could only be a place to pass the next secret in, which is exactly
   // what a rotation must not accept.
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
-  // Scenario-side dismissal, same shape as the swarm-side pair above.
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "post /projects/{projectId}/studies/{studyId}/rotate-link",
+  // Study-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss",
   // Test, pause and resume are addressed entirely by the path destinationId.
   // A body here could only carry options none of the three has: a test span is
   // synthetic and fixed, and a pause has nothing to configure.
@@ -140,6 +140,66 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
   "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
+  // The DEPRECATED `/scenarios` and `/user-testing/scenarios` aliases of the
+  // `/studies` surface. Same handlers as their documented twins, with the
+  // pre-rename response spelling (`scenarioId`, and the metadata-only detail
+  // read), and every response carries `Deprecation: true`. Not documented on
+  // purpose, for the reason the `/hosts` aliases above are not: the spec is what
+  // a NEW integration reads, and publishing both spellings would present a
+  // choice where there is none. The tag's description says so in prose, which is
+  // where a compatibility note belongs.
+  "get /projects/{projectId}/scenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}",
+  "put /projects/{projectId}/environments/{environmentId}/scenario",
+  "delete /projects/{projectId}/environments/{environmentId}/scenario",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
+  // The DEPRECATED `/journeys`, `/journey-runs` and `/journey-findings`
+  // aliases of the `/goals` surface. Same handlers as their documented twins,
+  // with the pre-rename response spelling (`journeyId`, `sessionsPerTarget`,
+  // `waveId`) and the pre-rename request spelling to match, and every response
+  // carries `Deprecation: true`. Undocumented for the reason the `/scenarios`
+  // and `/hosts` aliases above are: the spec is what a NEW integration reads,
+  // and publishing both spellings would present a choice where there is none.
+  "get /projects/{projectId}/journeys",
+  "post /projects/{projectId}/journeys",
+  "post /projects/{projectId}/journeys/generate",
+  "get /projects/{projectId}/journeys/{journeyId}",
+  "patch /projects/{projectId}/journeys/{journeyId}",
+  "delete /projects/{projectId}/journeys/{journeyId}",
+  "get /projects/{projectId}/journeys/{journeyId}/runs",
+  "post /projects/{projectId}/journeys/{journeyId}/runs",
+  "get /projects/{projectId}/journeys-overview",
+  "get /projects/{projectId}/journey-runs/{runId}",
+  "get /projects/{projectId}/journey-runs/{runId}/sessions",
+  "get /projects/{projectId}/journey-runs/{runId}/scorecard",
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  "get /projects/{projectId}/journey-findings",
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // The DEPRECATED `/waves` aliases of the `/swarm-runs` insights surface.
+  // Same handlers, the pre-rename `waveId` response spelling, and
+  // `Deprecation: true` on every response. Undocumented for the same reason
+  // as the aliases above.
+  "get /projects/{projectId}/waves/{waveId}/insights",
+  "post /projects/{projectId}/waves/{waveId}/insights",
+  "delete /projects/{projectId}/waves/{waveId}/insights",
   // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
   // the same handler as its documented `/clients` twin with the pre-rename DTO
   // and the pre-rename (tokenless) write contract, and every response carries
@@ -167,6 +227,13 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/eval-runs/{runId}/route-facts",
   // Server-facts GET landed with the contract; same follow-up.
   "get /projects/{projectId}/eval-runs/{runId}/server-facts",
+  // Durable agent turns. The pair is inert unless DURABLE_AGENT_TURNS_ENABLED
+  // is set — both answer FEATURE_NOT_SUPPORTED otherwise — so this is a
+  // feature enforced per deployment, which `docs/README.md` says must stay out
+  // of openapi.json until the flag comes off. Same posture as the harness
+  // capability probe above. Document them when durable turns ship on.
+  "get /projects/{projectId}/agent/jobs/{jobId}",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
 ]);
 
 /**
@@ -385,7 +452,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     // asks the caller for an id the route will never read.
     const shared = spec.components?.parameters ?? {};
     const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
-      p.$ref ? (shared[p.$ref.split("/").pop() ?? ""] ?? {}) : p;
+      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
 
     const problems: string[] = [];
     for (const [path, item] of Object.entries(spec.paths)) {

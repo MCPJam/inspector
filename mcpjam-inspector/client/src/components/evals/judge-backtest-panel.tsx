@@ -24,28 +24,7 @@ import { useAction } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalJudgeRubric } from "./types";
 
-type BacktestBand = "pass" | "partial" | "fail";
-
-type BacktestCase = {
-  gradingKey: string;
-  iterationId: string | null;
-  stored: { score: number; band: BacktestBand } | null;
-  draft: { score: number; band: BacktestBand };
-  flipped: boolean;
-};
-
-type BacktestResult =
-  | { ok: false; reason: string }
-  | {
-      ok: true;
-      comparable: boolean;
-      reason?: string;
-      judgeTemplateVersion?: number;
-      draftSuiteRubricHash: string | null;
-      storedSuiteRubricHash: string | null;
-      cases: BacktestCase[];
-      summary: { graded: number; flips: number; storedMissing: number };
-    };
+type BacktestResult = import("@mcpjam/sdk/platform").JudgeBacktestReport;
 
 /** Why a backtest could not compare, in the reader's words. */
 export const INCOMPARABLE_COPY: Record<string, string> = {
@@ -79,8 +58,18 @@ export function JudgeBacktestPanel({
   ) as unknown as (args: {
     suiteId: string;
     runId: string;
-    judgeRubricDraft: EvalJudgeRubric["criteria"] | null;
+    judgeRubricDraft: EvalJudgeRubric | null;
+    cursor?: number;
+    sourceHash?: string;
+    reservationId?: string;
   }) => Promise<BacktestResult>;
+
+  const [resultDraft, setResultDraft] = useState<string | null>(null);
+  const currentDraft = JSON.stringify(draftRubric ?? null);
+  const canContinue =
+    result?.ok === true &&
+    result.isDone === false &&
+    resultDraft === currentDraft;
 
   const run = async () => {
     setIsRunning(true);
@@ -89,11 +78,34 @@ export function JudgeBacktestPanel({
       const next = await requestJudgeBacktest({
         suiteId,
         runId,
+        ...(canContinue
+          ? {
+              cursor: result.cursor,
+              sourceHash: result.sourceHash,
+              reservationId: result.reservationId,
+            }
+          : {}),
         // `null`, not an empty array: the backend reads an empty list as a
         // rubric that asks nothing, and null as no rubric at all.
-        judgeRubricDraft: draftRubric?.criteria ?? null,
+        // The whole rubric: grading instructions are part of what the judge
+        // was asked, so a preview that sent only the criteria would measure a
+        // different question than the one the author is about to save.
+        judgeRubricDraft: draftRubric ?? null,
       });
-      setResult(next);
+      if (canContinue && next.ok && result?.ok) {
+        setResult({
+          ...next,
+          cases: [...result.cases, ...next.cases],
+          summary: {
+            graded: result.summary.graded + next.summary.graded,
+            flips: result.summary.flips + next.summary.flips,
+            storedMissing:
+              result.summary.storedMissing + next.summary.storedMissing,
+          },
+        });
+      } else if (!canContinue || next.ok) setResult(next);
+      else setError(next.reason);
+      if (next.ok) setResultDraft(currentDraft);
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : String(caught ?? "");
@@ -127,6 +139,8 @@ export function JudgeBacktestPanel({
         >
           {isRunning
             ? "Backtesting…"
+            : canContinue
+            ? "Grade next iteration (uses credits)"
             : `Backtest against run #${runNumber ?? "?"} (uses credits)`}
         </Button>
       </div>
@@ -173,9 +187,14 @@ export function JudgeBacktestPanel({
                   </span>
                   <span className="shrink-0">
                     {row.stored ? `${row.stored.band} → ` : ""}
-                    {row.draft.band}
-                    {row.stored
-                      ? ` · Δ ${(row.draft.score - row.stored.score).toFixed(2)}`
+                    {row.draft?.band ??
+                      `Couldn’t grade: ${
+                        row.reason ?? row.errorCode ?? "unavailable"
+                      }`}
+                    {row.stored && row.draft
+                      ? ` · Δ ${(row.draft.score - row.stored.score).toFixed(
+                          2,
+                        )}`
                       : ""}
                   </span>
                 </li>

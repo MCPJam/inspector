@@ -212,6 +212,26 @@ describe("eval suite settings manifest — API parity", () => {
     expect(refused.success).toBe(false);
   });
 
+  it("has no writable rubricChecks path", () => {
+    // Excluded for day one: the app authors the slot, and the criteria it
+    // grades stay reachable as settings.judge.rubric.
+    const row = EVAL_SUITE_SETTINGS_MANIFEST.find(
+      (entry) => entry.key === "judgeRubricChecks",
+    );
+    expect(row?.excluded).toBeTruthy();
+    for (const entry of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (entry.api) expect(entry.api).not.toMatch(/rubricChecks/i);
+    }
+    expect(SAMPLE_BY_PATH["settings.judge.rubricChecks"]).toBeUndefined();
+    expect(JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {})).not.toMatch(
+      /rubricChecks/,
+    );
+    const refused = updateSuiteSchema.safeParse({
+      settings: { judge: { rubricChecks: { enabled: false } } },
+    });
+    expect(refused.success).toBe(false);
+  });
+
   it("keeps the not-on-the-settings-page list closed", () => {
     // `settingsPage: "hidden"` was once an open hatch, and twelve rows used it
     // to leave the page while the render ratchet skipped every one of them.

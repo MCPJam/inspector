@@ -1,3 +1,8 @@
+import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
+import { useServerSettingsAvailability } from "../host-workspace/use-server-settings";
+import type { ThreadAppScope } from "../host-workspace/thread-app-api";
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useCallback,
   useEffect,
@@ -65,19 +70,25 @@ import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionC
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { Badge } from "@mcpjam/design-system/badge";
+import { PluginSettingsSection } from "@/components/plugins/PluginSettingsSection";
 
 export type ServerDetailTab =
+  | "settings"
   | "overview"
   | "configuration"
+  | "authorization"
   | "tools-metadata"
   | "compatibility"
   | "history";
 
 interface ServerDetailModalProps {
+  /** A project server; see {@link PluginServerDetailModalProps} for a plugin's. */
+  plugin?: undefined;
+  extensionSettingsScope?: ThreadAppScope | null;
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
-  needsReconnect?: boolean;
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
@@ -88,6 +99,7 @@ interface ServerDetailModalProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -111,11 +123,137 @@ interface ServerDetailModalProps {
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
-export function ServerDetailModal({
+/** A server an installed plugin adds, opened from its card or a permalink. */
+export interface PluginServerDetail {
+  pluginId: string;
+  /** What the plugin's card is labelled with. */
+  pluginLabel: string;
+  /** The materialized server, or null for a plugin with no server to name. */
+  serverId: string | null;
+  serverName: string;
+}
+
+/**
+ * A plugin's server is not a browser connection and its configuration belongs
+ * to the plugin's version, so its details are its Settings tab alone: the
+ * plugin's versions, setup and lifecycle, plus the server's own extension
+ * settings when it declares any.
+ */
+interface PluginServerDetailModalProps {
+  plugin: PluginServerDetail;
+  isOpen: boolean;
+  onClose: () => void;
+  /** The Convex project id. */
+  projectId?: string | null;
+  extensionSettingsScope?: ThreadAppScope | null;
+}
+
+export function ServerDetailModal(
+  props: ServerDetailModalProps | PluginServerDetailModalProps
+) {
+  return props.plugin ? (
+    <PluginServerDetailModal {...props} />
+  ) : (
+    <ProjectServerDetailModal {...props} />
+  );
+}
+
+function PluginServerDetailModal({
+  plugin,
   isOpen,
   onClose,
+  projectId = null,
+  extensionSettingsScope = null,
+}: PluginServerDetailModalProps) {
+  const settings = useServerSettingsAvailability(
+    isOpen ? extensionSettingsScope : null,
+    plugin.serverId
+  );
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        translate="no"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
+        data-testid="plugin-server-detail-modal"
+      >
+        <DialogHeader>
+          {/* No connect switch: plugin servers connect on every message. The
+              Plugin section below says whether chats run the plugin now. */}
+          <DialogTitle className="flex items-center gap-2 min-w-0 pr-6">
+            <span className="truncate">{plugin.serverName}</span>
+            {/* Without a server, the title is the plugin itself. */}
+            {plugin.serverId ? (
+              <Badge
+                variant="secondary"
+                className="flex-shrink-0 text-[10px] font-normal"
+              >
+                from {plugin.pluginLabel}
+              </Badge>
+            ) : null}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            The plugin that adds this server: its versions, setup and lifecycle.
+          </DialogDescription>
+        </DialogHeader>
+        <Tabs value="settings" className="flex min-h-0 flex-col">
+          <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+            <TabsTrigger
+              value="settings"
+              className="min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm"
+            >
+              Settings
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent
+            value="settings"
+            className="mt-4 max-h-[60vh] overflow-y-auto pl-1 pr-2"
+          >
+            <PluginSettingsSection
+              projectId={projectId}
+              pluginId={plugin.pluginId}
+              focusServerId={plugin.serverId}
+              onUninstalled={onClose}
+            />
+            {isOpen &&
+            extensionSettingsScope &&
+            plugin.serverId &&
+            (settings.available || settings.failed) ? (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                {settings.failed ? (
+                  <div role="alert" className="space-y-2">
+                    <p>Settings could not be loaded.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={settings.retry}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <ServerSettingsPanel
+                    scope={extensionSettingsScope}
+                    serverId={plugin.serverId}
+                    serverName={plugin.serverName}
+                  />
+                )}
+              </div>
+            ) : null}
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProjectServerDetailModal({
+  isOpen,
+  extensionSettingsScope = null,
+  onClose,
   server,
-  needsReconnect = false,
   defaultTab = "overview",
   onSubmit,
   onDisconnect,
@@ -129,7 +267,20 @@ export function ServerDetailModal({
   hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
+  const settings = useServerSettingsAvailability(
+    isOpen ? extensionSettingsScope : null,
+    hostedServerId
+  );
+  const [settingsVisited, setSettingsVisited] = useState(
+    defaultTab === "settings"
+  );
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
+  // Any HTTP server, matching the token section's own guard rather than
+  // `useOAuth`: a server that has since had OAuth turned off can still hold
+  // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
+  // to stay reachable. The sections inside hide themselves when there is
+  // nothing to show.
+  const showAuthorization = "url" in server.config;
   // Reconnects overlap: two quick wire-mode changes start a second one while
   // the first is still running. A boolean would be cleared by whichever
   // finished first and let a configuration save through mid-reconnect, so the
@@ -491,6 +642,7 @@ export function ServerDetailModal({
 
   const handleConnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setReconnectsInFlight((count) => count + 1);
@@ -545,13 +697,11 @@ export function ServerDetailModal({
   /**
    * The single condition that decides whether this configuration may be saved.
    *
-   * Extracted because the Save button's `disabled` and the form's submit
-   * handler were two different lists, and Enter in any configuration input
-   * submits the form — so every condition the button enforced was bypassable
-   * from the keyboard. That matters most for MJ-003's credential-clear
-   * acknowledgement, which is there precisely so a destructive save cannot
-   * happen without one, but it was equally true of the duplicate-name check,
-   * the auth-configuration block, and the in-flight reconnect guard.
+   * One list read by both the Save button's `disabled` and the form's submit
+   * handler, because Enter in any configuration input submits the form. It
+   * covers MJ-003's credential-clear acknowledgement, which is there so a
+   * destructive save cannot happen without one, as well as the duplicate-name
+   * check, the auth-configuration block, and the in-flight reconnect guard.
    */
   const saveBlocked =
     isDuplicateServerName ||
@@ -687,7 +837,10 @@ export function ServerDetailModal({
         >
           <Tabs
             value={activeTab}
-            onValueChange={(v) => setActiveTab(v as ServerDetailTab)}
+            onValueChange={(v) => {
+              setActiveTab(v as ServerDetailTab);
+              if (v === "settings") setSettingsVisited(true);
+            }}
             className="flex min-h-0 flex-col"
           >
             <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
@@ -708,6 +861,16 @@ export function ServerDetailModal({
               >
                 Tools
               </TabsTrigger>
+              {(settings.available || settings.failed) && (
+                <TabsTrigger value="settings" className={tabTriggerClass}>
+                  Settings
+                </TabsTrigger>
+              )}
+              {showAuthorization && (
+                <TabsTrigger value="authorization" className={tabTriggerClass}>
+                  Auth
+                </TabsTrigger>
+              )}
               <TabsTrigger
                 value="compatibility"
                 aria-label="Client compatibility"
@@ -787,10 +950,34 @@ export function ServerDetailModal({
                   ) : isConnected && !formState.hasChanges ? (
                     "Reconnect"
                   ) : (
-                    "Save Changes"
+                    "Save & Connect"
                   )}
                 </Button>
               </DialogFooter>
+
+              {isOpen && extensionSettingsScope && hostedServerId &&
+                settingsVisited && (settings.available || settings.failed) && (
+                  <TabsContent
+                    value="settings"
+                    forceMount
+                    className="mt-0 absolute inset-0 overflow-y-auto bg-background data-[state=inactive]:hidden"
+                  >
+                    {settings.failed ? (
+                      <div role="alert" className="space-y-2 p-4">
+                        <p>Settings could not be loaded.</p>
+                        <Button type="button" variant="outline" onClick={settings.retry}>
+                          Retry
+                        </Button>
+                      </div>
+                    ) : (
+                      <ServerSettingsPanel
+                        scope={extensionSettingsScope}
+                        serverId={hostedServerId}
+                        serverName={server.name}
+                      />
+                    )}
+                  </TabsContent>
+                )}
 
               {/* Overview: overlays the configuration panel + footer to use full space */}
               <TabsContent
@@ -806,14 +993,51 @@ export function ServerDetailModal({
                     </div>
                   ) : (
                     <ServerInfoContent
+                      sections="info"
                       server={server}
-                      needsReconnect={needsReconnect}
                       projectId={projectId}
                       hostedServerId={hostedServerId}
                     />
                   )}
                 </div>
               </TabsContent>
+
+              {showAuthorization && (
+                <TabsContent
+                  value="authorization"
+                  // Overlays the force-mounted configuration panel, like every
+                  // other tab. Configuration's own classes are NOT reusable
+                  // here: it keeps `invisible` while inactive, which still
+                  // occupies layout, so a sibling in normal flow stacks below
+                  // its full height and spills out of the dialog.
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+                >
+                  <div className="space-y-4 pl-1 pr-6">
+                  <ConnectionAccountsSection
+                    projectId={projectId}
+                    serverId={hostedServerId}
+                    enabled={isUserReady && server.useOAuth === true}
+                    onAuthenticate={(connectionIntent) =>
+                      onReconnect(server.name, {
+                        forceOAuthFlow: true,
+                        connectionIntent,
+                      })
+                    }
+                    onSwitch={() =>
+                      onReconnect(server.name, {
+                        allowInteractiveOAuthFlow: false,
+                      })
+                    }
+                  />
+                    <ServerInfoContent
+                      sections="auth"
+                      server={server}
+                      projectId={projectId}
+                      hostedServerId={hostedServerId}
+                    />
+                  </div>
+                </TabsContent>
+              )}
 
               {/* Tools Metadata: overlays the configuration panel + footer to use full space */}
               <TabsContent

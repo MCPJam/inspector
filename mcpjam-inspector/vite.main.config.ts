@@ -1,7 +1,7 @@
 import { defineConfig, Plugin } from "vite";
 import { resolve } from "path";
-import { copyFileSync, mkdirSync } from "fs";
-import { builtinModules } from "module";
+import { copyFileSync, mkdirSync, readFileSync } from "fs";
+import { builtinModules, createRequire } from "module";
 import { hotRestart } from "./vite.dev-plugins";
 
 /**
@@ -98,6 +98,20 @@ function externalizeBareImports(): Plugin {
       // does not exist. Bundle them instead.
       if (source.startsWith("#")) return null;
 
+      // These packages expose ESM import conditions only. Leaving it
+      // external makes Electron's CommonJS main bundle call `require()` on a
+      // package path that intentionally has no `require` export, so the
+      // embedded API fails before the desktop window can initialize. Bundle
+      // them in development just as the production build does.
+      if (
+        source === "@mcpjam/evaluators" ||
+        source.startsWith("@mcpjam/evaluators/") ||
+        source === "@openai/mcp-extensions" ||
+        source.startsWith("@openai/mcp-extensions/")
+      ) {
+        return null;
+      }
+
       // Everything else is a bare specifier. Externalize ALL of them rather
       // than a curated list: a partial list is a dual-package hazard, where one
       // copy of a package is bundled and another required at runtime. The
@@ -183,6 +197,7 @@ export default defineConfig((env) => {
       // is running it; `hotRestart` supplies the missing half.
       ...(isDevRun ? [hotRestart("main")] : []),
     ],
+    define: { __MCPJAM_CLAUDE_ADAPTER_VERSION__: JSON.stringify(JSON.parse(readFileSync(createRequire(import.meta.url).resolve("@ai-sdk/harness-claude-code/package.json"), "utf8")).version) },
     resolve: {
       alias: { ...ALIASES },
       mainFields: ["module", "jsnext:main", "jsnext"],

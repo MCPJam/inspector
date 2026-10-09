@@ -1,12 +1,16 @@
-import { useMemo } from "react";
-import { useQuery } from "convex/react";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { useEffect, useMemo, useRef } from "react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
+  EvalCase,
+  EvalIteration,
   EvalSuiteOverviewEntry,
   SuiteDetailsQueryResponse,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "./types";
 import { getIterationRecencyTimestamp } from "./helpers";
+import { useSuiteRunMetrics } from "./use-suite-run-metrics";
 
 /**
  * Rows the Connector Bench owns, dropped before anything renders them.
@@ -36,6 +40,8 @@ function isBenchmarkOwned(row: { source?: string | undefined }): boolean {
   return row.source === BENCHMARK_SOURCE;
 }
 
+const NO_ITERATIONS: EvalIteration[] = [];
+
 /**
  * Hook for fetching eval data (overview, suite details, and runs)
  */
@@ -46,6 +52,7 @@ export function useEvalQueries({
   projectId,
   organizationId,
   isDirectGuest = false,
+  perRunMetrics = false,
 }: {
   isAuthenticated: boolean;
   selectedSuiteId: string | null;
@@ -53,6 +60,14 @@ export function useEvalQueries({
   projectId: string | null;
   organizationId: string | null;
   isDirectGuest?: boolean;
+  /**
+   * Evaluate's suite page: never read the whole suite's iterations. Cases come
+   * from `listTestCases`, run history from per-run metrics (`metricsByRun`),
+   * and `sortedIterations` / `activeIterations` stay empty — a run or case view
+   * loads its own rows. Off (the legacy Evals surfaces) keeps the single
+   * whole-suite read.
+   */
+  perRunMetrics?: boolean;
 }) {
   const isUserReady = useDbUserReady();
   // Convex's `isAuthenticated` already covers hosted guests — they hold a
@@ -74,7 +89,8 @@ export function useEvalQueries({
   // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
   // deep-linked suite as deleted and bounce it, and flashes the "no suites"
   // hero over a project that has suites.
-  const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
+  const isActorBootstrapping =
+    !isDirectGuest && isAuthenticated && !isUserReady;
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {
@@ -89,41 +105,93 @@ export function useEvalQueries({
   const enableOverviewQuery = hasActorAccess;
   const suiteOverviewRaw = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
+    enableOverviewQuery ? (suiteOverviewArgs as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   // `undefined` survives the filter rather than collapsing to `[]`: every
   // loading flag below reads it as "an answer is still coming", and an empty
   // array here would flash the "no suites" hero over a project that has some.
   const suiteOverview = useMemo(
     () => suiteOverviewRaw?.filter((entry) => !isBenchmarkOwned(entry.suite)),
-    [suiteOverviewRaw]
+    [suiteOverviewRaw],
   );
 
   const hasSelectedSuiteInPlay =
     !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
   const enableSuiteDetailsQuery = hasActorAccess && hasSelectedSuiteInPlay;
-  const suiteDetails = useQuery(
+  const wholeSuiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
-    enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
+    enableSuiteDetailsQuery && !perRunMetrics
+      ? ({ suiteId: selectedSuiteId } as any)
+      : "skip",
   ) as SuiteDetailsQueryResponse | undefined;
+  const suiteCases = useQuery(
+    "testSuites:listTestCases" as any,
+    enableSuiteDetailsQuery && perRunMetrics
+      ? ({ suiteId: selectedSuiteId } as any)
+      : "skip",
+  ) as EvalCase[] | undefined;
+  const suiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(() => {
+    if (!perRunMetrics) return wholeSuiteDetails;
+    // No suite-wide iterations in this mode, by design — see `perRunMetrics`.
+    return suiteCases
+      ? { testCases: suiteCases, iterations: NO_ITERATIONS }
+      : undefined;
+  }, [perRunMetrics, wholeSuiteDetails, suiteCases]);
 
-  // Raised from 20 → 100 so a multi-host run group (up to ~5 hosts in
-  // practice) is never truncated mid-group. The list consumer caps by
-  // *groups* after grouping rather than capping raw rows, so groups
-  // remain fully expandable even near the limit.
-  const suiteRunsRaw = useQuery(
-    "testSuites:listTestSuiteRuns" as any,
-    enableSuiteDetailsQuery
-      ? ({ suiteId: selectedSuiteId, limit: 100 } as any)
-      : "skip"
-  ) as EvalSuiteRun[] | undefined;
+  const runHistory = usePaginatedQuery(
+    "testSuites:listTestSuiteRunSummaries" as any,
+    enableSuiteDetailsQuery ? { suiteId: selectedSuiteId } : "skip",
+    { initialNumItems: 20 },
+  );
+  const suiteRunsRaw =
+    runHistory.status === "LoadingFirstPage"
+      ? undefined
+      : (runHistory.results as EvalSuiteRunListItem[]);
   const suiteRuns = useMemo(
     () => suiteRunsRaw?.filter((run) => !isBenchmarkOwned(run)),
-    [suiteRunsRaw]
+    [suiteRunsRaw],
   );
 
+  const {
+    metricsByRun,
+    loading: isRunMetricsLoading,
+    iterations: metricIterations,
+  } = useSuiteRunMetrics(
+    projectId,
+    suiteRuns,
+    enableSuiteDetailsQuery && perRunMetrics,
+  );
+
+  const liveRunIds = useRef(new Set<string>());
+  for (const run of suiteRuns ?? []) {
+    if (run.status === "running" || run.status === "pending") {
+      liveRunIds.current.add(run._id);
+    }
+  }
+  // Per-run mode has no suite-wide rows to scan, so it watches the runs seen
+  // in flight this session: a limit error can land as the run finishes.
+  const limitErrorIterations = perRunMetrics
+    ? metricIterations
+    : suiteDetails?.iterations;
+  useEffect(() => {
+    for (const iteration of limitErrorIterations ?? []) {
+      if (
+        !iteration.suiteRunId ||
+        !liveRunIds.current.has(iteration.suiteRunId)
+      )
+        continue;
+      notifyMCPJamLimitError({
+        runId: iteration.suiteRunId,
+        message: iteration.error,
+        details: iteration.errorDetails,
+        organizationId: organizationId ?? undefined,
+      });
+    }
+  }, [suiteRuns, limitErrorIterations, organizationId]);
+
   const isOverviewLoading =
-    isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);
+    isActorBootstrapping ||
+    (enableOverviewQuery && suiteOverview === undefined);
   const isSuiteDetailsLoading =
     (isActorBootstrapping && hasSelectedSuiteInPlay) ||
     (enableSuiteDetailsQuery && suiteDetails === undefined);
@@ -150,7 +218,7 @@ export function useEvalQueries({
 
   const runsForSelectedSuite = useMemo(
     () => (suiteRuns ? [...suiteRuns] : []),
-    [suiteRuns]
+    [suiteRuns],
   );
 
   const activeIterations = useMemo(() => {
@@ -159,7 +227,7 @@ export function useEvalQueries({
     const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId)
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 
@@ -186,11 +254,15 @@ export function useEvalQueries({
     suiteOverview,
     suiteDetails,
     suiteRuns,
+    runHistoryStatus: runHistory.status,
+    loadMoreRuns: () => runHistory.loadMore(20),
     selectedSuiteEntry,
     selectedSuite,
     sortedIterations,
     runsForSelectedSuite,
     activeIterations,
+    metricsByRun,
+    isRunMetricsLoading,
     sortedSuites,
     isOverviewLoading,
     isSuiteDetailsLoading,

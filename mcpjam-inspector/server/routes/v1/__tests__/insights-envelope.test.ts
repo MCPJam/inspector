@@ -37,9 +37,10 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import evals from "../evals.js";
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
+import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 
 // Id-SHAPED, like `RUN` below, and for the same reason the run/suite fixtures
 // were reshaped: `proj_a` is a value production cannot produce, and fixtures
@@ -278,13 +279,21 @@ describe("journey-run detail — insights embed", () => {
         ...ENVELOPE,
         scope: { kind: "swarm_wave", id: "wave_1", runId: RUN },
         runHealth: { targets: [] },
+        journeyFindings: swarmFindingsWire,
+        journeyFindingsJob: { status: "completed", updatedAt: 0 },
       },
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
+    expect((body.insights as Record<string, unknown>).journeyFindings).toEqual(
+      swarmFindingsWire,
+    );
+    expect(
+      (body.insights as Record<string, unknown>).journeyFindingsJob,
+    ).toEqual({ status: "completed", updatedAt: 0 });
     expect((body.insights as Record<string, unknown>).runHealth).toEqual({
       targets: [],
     });
@@ -308,7 +317,7 @@ describe("journey-run detail — envelope failure degrades", () => {
       }
       return Promise.reject(new Error("Server Error"));
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
@@ -364,6 +373,7 @@ describe("eval-run detail — judges envelope", () => {
           // The join key. Without it a caller can only pair a judge case with
           // its iteration by array POSITION.
           iterationId: "it_1",
+          status: "scored",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -423,7 +433,7 @@ describe("eval-run detail — judges envelope", () => {
     expect(body.judges.groundedness.status).toBeNull();
   });
 
-  it("carries no cases for a pending or failed judge, and names the error code", async () => {
+  it("retains completed measurements when a goal-completion job fails", async () => {
     vi.clearAllMocks();
     answerQueries({
       getTestSuiteRun: {
@@ -439,7 +449,98 @@ describe("eval-run detail — judges envelope", () => {
     const body = (await res.json()) as any;
     expect(body.judges.goalCompletion.status).toBe("failed");
     expect(body.judges.goalCompletion.errorCode).toBe("spend_cap_exceeded");
-    expect(body.judges.goalCompletion.cases).toEqual([]);
+    expect(body.judges.goalCompletion.cases).toEqual([
+      { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
+    ]);
+  });
+
+  it("exposes pending progress without replaying previous result cases", async () => {
+    const progress = { total: 3, completed: 1, errors: 0, skipped: 0 };
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletionStatus: "pending",
+        goalCompletionProgress: progress,
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion).toMatchObject({
+      status: "pending",
+      progress,
+      cases: [],
+    });
+  });
+
+  it("preserves terminal error and skipped rows with template and evidence provenance", async () => {
+    const evidenceManifest = {
+      version: 1,
+      traceComplete: true,
+      traceFields: ["messages"],
+      messageCount: 2,
+      spanCount: 1,
+      artifactSources: [],
+      uncaptured: [],
+      inputBytes: 128,
+    };
+    const provenance = {
+      gradingKey: "grading-key",
+      judgeTemplateVersion: 4,
+      judgeTemplateHash: "template-hash",
+      evidenceHash: "evidence-hash",
+      evidenceManifest,
+    };
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletionStatus: "failed",
+        goalCompletionErrorCode: "judge_evidence_unavailable",
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          judgeTemplateVersion: 4,
+          judgeTemplateHash: "template-hash",
+          cases: [
+            ...GRADED_RUN.goalCompletion.cases,
+            {
+              caseKey: "ui_error", iterationId: "it_2", status: "error",
+              errorCode: "judge_evidence_unavailable", score: 0.9,
+              passed: false, reason: "Evidence unavailable", rubricHits: [],
+              ...provenance,
+            },
+            {
+              caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+              passed: false, reason: "Case judge disabled", rubricHits: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion).toMatchObject({
+      status: "failed", judgeTemplateVersion: 4, judgeTemplateHash: "template-hash",
+    });
+    expect(body.judges.goalCompletion.cases).toEqual([
+      { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
+      {
+        caseKey: "ui_error", iterationId: "it_2", status: "error",
+        errorCode: "judge_evidence_unavailable", score: null,
+        passed: false, reason: "Evidence unavailable", rubricHits: [],
+        ...provenance,
+      },
+      {
+        caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+        score: null, passed: false, reason: "Case judge disabled", rubricHits: [],
+      },
+    ]);
   });
 
   it("projects groundedness with its own per-case evidence field", async () => {
@@ -583,6 +684,84 @@ describe("eval-run judge request", () => {
         },
       },
     );
+  });
+
+  // CONVEX-33X: a per-run judge in the documented `mcpjam/` spelling is sent as
+  // the catalog id, and a blank one is refused rather than forwarded.
+  it.each([
+    ["mcpjam/openai/gpt-5.4-mini", "openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-mini ", "openai/gpt-5.4-mini"],
+  ])("forwards a per-run judge model %j as %j", async (sent, forwarded) => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: sent }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeModel: forwarded } },
+    );
+  });
+
+  it("refuses a blank per-run judge model", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "   " }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the judge's selection (effort included) and refuses a mismatched pair", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const selection = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      settings: { reasoningEffort: "low" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeSelection: selection } },
+    );
+
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const mismatch = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "openai/gpt-5-mini", modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(mismatch.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 
   it("sends NO override when the caller stated none", async () => {

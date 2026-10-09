@@ -1,0 +1,443 @@
+{
+  "stream": [
+    {
+      "data": {
+        "machine": "disposable",
+        "workdir": "/home/user/<session-dir>"
+      },
+      "transient": true,
+      "type": "data-harness-session"
+    },
+    {
+      "data": {
+        "engine": "harness",
+        "harness": "codex",
+        "promptIndex": 0,
+        "startedAtMs": "<time>",
+        "turnId": "<id-1>",
+        "type": "turn_start"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "input": {
+        "message": "conformance"
+      },
+      "providerExecuted": true,
+      "providerMetadata": {
+        "mcpjam": {
+          "serverId": "probe"
+        }
+      },
+      "toolCallId": "<id-2>",
+      "toolName": "echo",
+      "type": "tool-input-available"
+    },
+    {
+      "output": {
+        "output": {
+          "content": [
+            {
+              "text": "PROBE_ECHO conformance",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "providerExecuted": true,
+      "toolCallId": "<id-2>",
+      "type": "tool-output-available"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {
+                "message": "conformance"
+              },
+              "serverId": "probe",
+              "toolCallId": "<id-2>",
+              "toolName": "echo"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "MCPPROBE",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "input": {
+                    "message": "conformance"
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "probe"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "echo",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": {
+                      "output": {
+                        "content": [
+                          {
+                            "text": "PROBE_ECHO conformance",
+                            "type": "text"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "probe"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "echo",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-3>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "echo",
+              "promptIndex": 0,
+              "serverId": "probe",
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-2>",
+              "toolName": "echo"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-4>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            }
+          ],
+          "traceVersion": 1
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "id": "<id-6>",
+      "type": "text-start"
+    },
+    {
+      "delta": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+      "id": "<id-6>",
+      "type": "text-delta"
+    },
+    {
+      "id": "<id-6>",
+      "type": "text-end"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {
+                "message": "conformance"
+              },
+              "serverId": "probe",
+              "toolCallId": "<id-2>",
+              "toolName": "echo"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "MCPPROBE",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "input": {
+                    "message": "conformance"
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "probe"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "echo",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": {
+                      "output": {
+                        "content": [
+                          {
+                            "text": "PROBE_ECHO conformance",
+                            "type": "text"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "probe"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "echo",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            },
+            {
+              "content": [
+                {
+                  "text": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-3>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "echo",
+              "promptIndex": 0,
+              "serverId": "probe",
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-2>",
+              "toolName": "echo"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-4>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-7>",
+              "inputTokens": 2400,
+              "messageEndIndex": 3,
+              "messageStartIndex": 3,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "outputTokens": 192,
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 1,
+              "totalTokens": 2592
+            }
+          ],
+          "traceVersion": 1,
+          "usage": {
+            "inputTokens": 2400,
+            "outputTokens": 192,
+            "totalTokens": 2592
+          }
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "finishReason": "stop",
+      "messageMetadata": {
+        "inputTokens": 2400,
+        "outputTokens": 192,
+        "totalTokens": 2592
+      },
+      "type": "finish"
+    },
+    {
+      "data": {
+        "finishReason": "stop",
+        "promptIndex": 0,
+        "turnId": "<id-1>",
+        "type": "turn_finish",
+        "usage": {
+          "inputTokens": 2400,
+          "outputTokens": 192,
+          "totalTokens": 2592
+        }
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    }
+  ],
+  "evidence": {
+    "history": [
+      {
+        "content": [
+          {
+            "text": "MCPPROBE",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "input": {
+              "message": "conformance"
+            },
+            "providerOptions": {
+              "mcpjam": {
+                "serverId": "probe"
+              }
+            },
+            "toolCallId": "<id-2>",
+            "toolName": "echo",
+            "type": "tool-call"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "output": {
+              "type": "json",
+              "value": {
+                "output": {
+                  "content": [
+                    {
+                      "text": "PROBE_ECHO conformance",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "providerOptions": {
+              "mcpjam": {
+                "serverId": "probe"
+              }
+            },
+            "toolCallId": "<id-2>",
+            "toolName": "echo",
+            "type": "tool-result"
+          }
+        ],
+        "role": "tool"
+      },
+      {
+        "content": [
+          {
+            "text": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+            "type": "text"
+          }
+        ],
+        "role": "assistant"
+      }
+    ],
+    "toolCalls": [
+      {
+        "input": {
+          "message": "conformance"
+        },
+        "promptIndex": 0,
+        "serverId": "probe",
+        "stepIndex": 0,
+        "toolCallId": "<id-2>",
+        "toolName": "echo"
+      }
+    ],
+    "toolResults": [
+      {
+        "isError": false,
+        "output": {
+          "output": {
+            "content": [
+              {
+                "text": "PROBE_ECHO conformance",
+                "type": "text"
+              }
+            ]
+          }
+        },
+        "promptIndex": 0,
+        "serverId": "probe",
+        "stepIndex": 0,
+        "toolCallId": "<id-2>",
+        "toolName": "echo"
+      }
+    ]
+  }
+}

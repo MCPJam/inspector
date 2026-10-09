@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { comparisonKey } from "@mcpjam/sdk/browser";
 import {
   buildRunCompareLanes,
   resolveSuitePassThreshold,
   runCompareLaneKey,
 } from "../run-compare-lanes-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 
 function makeRun(
   overrides: Partial<EvalSuiteRun> & { _id: string },
@@ -77,7 +79,7 @@ function build(
   return buildRunCompareLanes({
     currentRun: options.currentRun ?? runs[0],
     runs,
-    iterations,
+    metricsByRun: metricsByRunFromIterations(iterations),
     hostNamesById: new Map<string, string | null>(),
     passThreshold: options.passThreshold ?? null,
   });
@@ -493,7 +495,7 @@ describe("buildRunCompareLanes", () => {
 
     const [row3, row2] = result.lanes[0].rows;
     expect(row2.pass.delta).toEqual({
-      label: "+10 pts",
+      label: "+10%",
       direction: "up",
       tone: "progress",
     });
@@ -533,5 +535,56 @@ describe("resolveSuitePassThreshold", () => {
       }),
     ).toBe(0.8);
     expect(resolveSuitePassThreshold({})).toBeNull();
+  });
+});
+
+describe("lanes by targetKey", () => {
+  const SONNET = "anthropic/claude-sonnet-5.5";
+  const key = (reasoningEffort: "low" | "high") =>
+    comparisonKey({
+      modelId: SONNET,
+      source: "hosted",
+      settings: { reasoningEffort },
+      fallback: { provider: "none", model: "none" },
+    });
+
+  it("two efforts of one model on one host are two lanes labelled by effort", () => {
+    const low = makeRun({
+      _id: "L",
+      runNumber: 1,
+      namedHostId: "H",
+      effectiveModelId: SONNET,
+      targetKey: key("low"),
+    });
+    const high = makeRun({
+      _id: "Hi",
+      runNumber: 1,
+      namedHostId: "H",
+      effectiveModelId: SONNET,
+      targetKey: key("high"),
+    });
+    const result = build([low, high], [...trials("L", 1), ...trials("Hi", 1)]);
+    expect(result.lanes).toHaveLength(2);
+    expect(result.lanes.map((lane) => lane.modelSuffix).sort()).toEqual([
+      " · High",
+      " · Low",
+    ]);
+    expect(result.lanes.map((lane) => lane.rows[0].modelTail).sort()).toEqual([
+      "claude-sonnet-5.5 · High",
+      "claude-sonnet-5.5 · Low",
+    ]);
+  });
+
+  it("a default run keeps its lane key and an empty suffix", () => {
+    const run = makeRun({
+      _id: "D",
+      namedHostId: "H",
+      effectiveModelId: SONNET,
+      targetKey: SONNET,
+    });
+    expect(runCompareLaneKey(run)).toBe(`host:H::${SONNET}`);
+    const result = build([run], trials("D", 1));
+    expect(result.lanes[0].modelSuffix).toBe("");
+    expect(result.lanes[0].rows[0].modelTail).toBe("claude-sonnet-5.5");
   });
 });

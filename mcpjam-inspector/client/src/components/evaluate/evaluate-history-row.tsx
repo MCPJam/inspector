@@ -1,9 +1,12 @@
+import type { EvalSuiteRunListItem } from "../evals/types";
 import {
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@mcpjam/design-system/table";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
 import {
@@ -29,8 +32,11 @@ import {
 
 export function EvaluateHistoryHeader({
   showSuite = false,
+  showActions = false,
 }: {
   showSuite?: boolean;
+  /** Adds the untitled last column that holds each row's delete button. */
+  showActions?: boolean;
 }) {
   return (
     <TableHeader>
@@ -53,6 +59,11 @@ export function EvaluateHistoryHeader({
             {label}
           </TableHead>
         ))}
+        {showActions && (
+          <TableHead className="w-px">
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        )}
       </TableRow>
     </TableHeader>
   );
@@ -95,6 +106,51 @@ function historyTimestamp(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/**
+ * One row, entirely unread.
+ *
+ * A launch is keyed by its runs' `runGroupId`, which is only known once the
+ * run's detail has been read — so before that, a fanned-out launch is split
+ * across one row per run and merges into one as the detail arrives. Rows
+ * therefore appear, merge and renumber under the reader. Drawing a real row
+ * out of half-read data reports run numbers and clients that are about to
+ * change; this reports that the row is not known yet, which is the truth.
+ */
+export function EvaluateHistoryRowSkeleton({
+  showSuite = false,
+  showActions = false,
+}: {
+  showSuite?: boolean;
+  showActions?: boolean;
+}) {
+  // Paired with the header above: one entry per column, sized to what the
+  // loaded cell holds so the columns do not jump when the real row lands.
+  const widths = [
+    "w-6",
+    ...(showSuite ? ["w-24"] : []),
+    "w-16",
+    "w-24",
+    "w-14",
+    "w-11",
+    "w-10",
+    "w-14",
+    "w-28",
+    "w-9",
+    "w-9",
+    "w-5",
+    ...(showActions ? ["w-4"] : []),
+  ];
+  return (
+    <TableRow aria-hidden data-testid="run-history-row-skeleton">
+      {widths.map((width, index) => (
+        <TableCell key={index}>
+          <Skeleton className={cn("h-3", width)} />
+        </TableCell>
+      ))}
+    </TableRow>
+  );
+}
+
 /** One row per launch, preserving fan-out client/model pairs and loaded-data gaps. */
 export function EvaluateHistoryRow({
   rows,
@@ -102,16 +158,23 @@ export function EvaluateHistoryRow({
   historyRows,
   hostNamesById,
   showSuite = false,
+  showActions = false,
+  onDelete,
   onOpen,
   testId,
   highlighted = false,
 }: {
   rows: ProjectRunRow[];
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   historyRows: Map<string, SuiteRunHistoryRow>;
   /** Current names for named hosts, so a renamed host is not shown stale. */
   hostNamesById?: ReadonlyMap<string, string | null>;
   showSuite?: boolean;
+  /** Pairs with the header's `showActions`: the row keeps the column even
+   *  when this caller may not delete it, so the columns stay aligned. */
+  showActions?: boolean;
+  /** Absent hides the button (no permission, or nothing to delete). */
+  onDelete?: () => void;
   onOpen?: () => void;
   testId?: string;
   highlighted?: boolean;
@@ -144,14 +207,25 @@ export function EvaluateHistoryRow({
   // alone. Keying it by commit as well printed "GitHub Actions" once per
   // distinct commit in a launch that fanned out over several.
   const platforms = [
-    ...new Map(rows.map((row) => [resolveRunOrigin(row) ?? "ui", row])).values(),
+    ...new Map(
+      rows.map((row) => [resolveRunOrigin(row) ?? "ui", row]),
+    ).values(),
   ];
   const createdAt = historyTimestamp(representative.createdAt);
-  const clientRows = rows.map((row) => historyRows.get(row._id) ?? {
-    client: runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name,
-    hostStyle: row.client?.hostStyle,
-    models: row.client?.modelId ? [row.client.modelId] : [],
-  });
+  const clientRows = rows.map(
+    (row) =>
+      historyRows.get(row._id) ?? {
+        client: runClientIdentity(
+          { client: row.client, namedHostId: row.namedHostId ?? undefined },
+          hostNamesById,
+        ).name,
+        hostStyle: row.client?.hostStyle,
+        clientId: row.client?.namedHostId,
+        clientVersionId: row.client?.versionId,
+        clientVersionNumber: row.client?.versionNumber,
+        models: row.client?.modelId ? [row.client.modelId] : [],
+      },
+  );
   return (
     <TableRow
       data-testid={testId}
@@ -188,18 +262,20 @@ export function EvaluateHistoryRow({
         <RunClientsCell rows={clientRows} column="model" />
       </TableCell>
       <TableCell>
-        <span
-          className={cn(
-            "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
-            result === "Passed"
-              ? "bg-success/15 text-foreground"
-              : result === "Failed"
-                ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-muted-foreground",
-          )}
-        >
-          {result}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
+              result === "Passed"
+                ? "bg-success/15 text-foreground"
+                : result === "Failed"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-muted text-muted-foreground",
+            )}
+          >
+            {result}
+          </span>
+        </div>
       </TableCell>
       <TableCell
         className="whitespace-nowrap tabular-nums"
@@ -209,7 +285,9 @@ export function EvaluateHistoryRow({
             : undefined
         }
       >
-        <span>{rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}</span>
+        <span>
+          {rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}
+        </span>
         {/* Rendered, not just a tooltip: the counts behind the percentage are
             unreachable on touch and to a screen reader when they live in a
             `title` alone. */}
@@ -267,6 +345,25 @@ export function EvaluateHistoryRow({
       <TableCell className="tabular-nums text-muted-foreground">
         {metricCell(rollup?.toolCalls, "number")}
       </TableCell>
+      {showActions && (
+        <TableCell className="w-px pr-3">
+          {onDelete ? (
+            <button
+              type="button"
+              // The row itself opens the run; the button must not.
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              title="Delete run"
+              aria-label={`Delete run #${representative.runNumber}`}
+              className="flex size-6 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : null}
+        </TableCell>
+      )}
     </TableRow>
   );
 }

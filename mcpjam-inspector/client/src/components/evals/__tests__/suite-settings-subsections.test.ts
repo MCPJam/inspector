@@ -23,7 +23,7 @@ describe("getSubsectionsForGroup", () => {
       "Pass criteria",
       "Iterations",
       "Quality gate",
-      "Checks by stage",
+      "Evaluators",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -40,12 +40,17 @@ describe("getSubsectionsForGroup", () => {
       "Pass criteria",
       "Iterations",
       "Quality gate",
-      "Checks by stage",
+      "Evaluators",
     ]);
   });
 
   it("routes old judge anchors to the stage checks", () => {
-    for (const key of ["judge", "judgeRubric", "judgeGroundedness"] as const) {
+    for (const key of [
+      "judge",
+      "judgeRubric",
+      "judgeGroundedness",
+      "judgeRubricChecks",
+    ] as const) {
       expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
         "checks",
       );
@@ -59,12 +64,12 @@ describe("getSubsectionsForGroup", () => {
     // the manifest and this test asserted the manifest — the two agreed with
     // each other while both disagreed with the page.
     //
-    // #5088 fixed it at the source by renaming BOTH to "Checks by stage", so
+    // Both labels now read "Evaluators", so
     // the manifest is trustworthy here again and the literal below is the
     // section's real heading rather than a second opinion about it.
     const subs = getSubsectionsForGroup("grading", base);
     const checks = subs.find((sub) => sub.target.type === "passOrFailChecks");
-    expect(checks?.label).toBe("Checks by stage");
+    expect(checks?.label).toBe("Evaluators");
   });
 
   it("routes every grading key to the ONE row that owns it", () => {

@@ -161,6 +161,29 @@ describe("groupGradersByStage", () => {
     expect(groundedness?.label).toBe("Groundedness judge");
   });
 
+  it("lists rubric checks only where the deployment grades them", () => {
+    // An older backend strips a slot it does not know, so a row there would
+    // be a switch wired to nothing.
+    const without = groupGradersByStage({ predicates: [] });
+    expect(
+      without.byStage.userValue.some((row) => row.judgeSlot === "rubricChecks"),
+    ).toBe(false);
+    const withSlot = groupGradersByStage({
+      predicates: [],
+      rubricChecks: true,
+      judgeConfig: { goalCompletion: { role: "gating" } },
+    });
+    const row = withSlot.byStage.userValue.find(
+      (candidate) => candidate.judgeSlot === "rubricChecks",
+    );
+    expect(row).toMatchObject({
+      kind: "judge",
+      label: "Rubric checks",
+      // Advisory whatever the goal judge's role: it has no other.
+      role: "advisory",
+    });
+  });
+
   it("reads a predicate's role from checkRole", () => {
     const model = groupGradersByStage({
       predicates: [
@@ -234,17 +257,19 @@ describe("STAGE_EMPTY_COPY", () => {
     }
   });
 
-  it("distinguishes a runner-measured stage from an ungraded one", () => {
-    const runnerMeasured: UserValueStage[] = [
+  it("distinguishes a stage with a runner check from an ungraded one", () => {
+    const withRunnerCheck: UserValueStage[] = [
       "connection",
       "discovery",
       "call",
+      "response",
     ];
-    for (const stage of runnerMeasured) {
+    for (const stage of withRunnerCheck) {
       expect(stageEmptyIsGap(stage), stage).toBe(false);
-      expect(STAGE_EMPTY_COPY[stage]).toContain("Observed by the runner");
+      expect(STAGE_EMPTY_COPY[stage]).toContain("Built-in runner check");
+      expect(STAGE_EMPTY_COPY[stage]).not.toMatch(/observed by the runner/i);
     }
-    for (const stage of ["selection", "response", "userValue"] as const) {
+    for (const stage of ["selection", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
       expect(STAGE_EMPTY_COPY[stage]).toBe("No evaluator");
     }
@@ -264,7 +289,7 @@ describe("stageConfigStates", () => {
     return states.find((row) => row.stage === stage);
   }
 
-  it("reads the default suite as runner / gated / gap / judge on request", () => {
+  it("shows unavailable grading state until the backend resolves inheritance", () => {
     const states = statesFor({ predicates: [] });
     expect(stateOf(states, "connection")).toMatchObject({
       state: "runner",
@@ -286,16 +311,17 @@ describe("stageConfigStates", () => {
       required: 1,
       advisory: 0,
     });
+    // Its runner check measures it, so an empty Response is not a gap.
     expect(stateOf(states, "response")).toMatchObject({
-      state: "gap",
+      state: "runner",
       required: 0,
       advisory: 0,
     });
     expect(stateOf(states, "userValue")).toMatchObject({
-      state: "judgeOnRequest",
+      state: "judgeUnknown",
       required: 0,
       advisory: 0,
-      judge: "manual",
+      judge: "unknown",
     });
   });
 
@@ -366,6 +392,7 @@ describe("stageConfigStates", () => {
 
   it("a userValue predicate beside a manual judge is gated with judge: manual", () => {
     const states = statesFor({
+      judgeConfig: { goalCompletion: { autoRun: false } },
       predicates: [samplePredicate("responseContains")],
     });
     expect(stateOf(states, "userValue")).toMatchObject({

@@ -1,18 +1,11 @@
 /**
- * BB-196: User Testing analyzes itself.
+ * BB-196, as it stands after per-session analysis (B3) and the provisional
+ * door (B5): User Testing analyzes itself on the BACKEND. Each session is
+ * analyzed a few minutes after its last message and again once it has been
+ * quiet for thirty, with no client involved.
  *
- * The workbench is shared by three scopes, and only one of them makes this
- * promise — so what these pin is mostly the BOUNDARY:
- *
- *   - SCENARIO scope starts the first analysis on open, and tells the diagram
- *     that a missing run means work in progress rather than a button to find.
- *   - SWARM scope does not. It already auto-queues when a run settles
- *     (journeyRuns.ts, on first settle), so a swarm with no run is a
- *     different story from an unanalyzed scenario.
- *   - BENCHMARK scope does not. Its flow analysis is the one PAID call here,
- *     an action rather than a mutation, designed to wait to be asked.
- *   - The automatic start is SILENT. Nobody asked for it, so a toast would
- *     report an outcome for an action the user did not take.
+ * So opening a study must not start paid work. The one voluntary action is
+ * Analyze now, which the Session flow offers only where its reason can help.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +35,10 @@ vi.mock("convex/react", async (importOriginal) => {
   };
 });
 
+vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
+  ShareUsageThreadDetail: () => null,
+}));
+
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -56,18 +53,10 @@ vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
   TopicMapPanel: () => <div data-testid="topic-map-panel" />,
 }));
 
-// Stubbed to the one prop under test: this file exercises what the workbench
-// TELLS the diagram, not what the diagram does with it (that has its own).
+// Stubbed: this file exercises what the workbench does on open, not what the
+// diagram draws (that has its own suite).
 vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
-  SessionFlowSankey: ({
-    analysisIsAutomatic,
-  }: {
-    analysisIsAutomatic?: boolean;
-  }) => (
-    <span data-testid="analysis-is-automatic">
-      {String(analysisIsAutomatic)}
-    </span>
-  ),
+  SessionFlowSankey: () => <span data-testid="session-flow" />,
 }));
 
 let rebuild: ReturnType<typeof vi.fn>;
@@ -113,61 +102,20 @@ beforeEach(() => {
     .mockReturnValue({ drilldown: undefined, isLoading: false });
 });
 
-describe("InsightsWorkbench automatic analysis", () => {
-  it("starts the first analysis of a User Testing scenario on open", async () => {
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "true",
-    );
-  });
-
-  it("says nothing about it — the user did not ask", async () => {
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
-    expect(toastMock.success).not.toHaveBeenCalled();
-    expect(toastMock.info).not.toHaveBeenCalled();
-  });
-
-  it("leaves a scenario that has already been analyzed alone", () => {
-    renderWorkbench(
-      { kind: "scenario", scenarioId: "sc-1" },
-      breakdown({
-        latestRun: { status: "done" } as UsageBreakdown["latestRun"],
-      }),
+describe("automatic session analysis", () => {
+  it("does not schedule paid work when a study opens", async () => {
+    const rebuild = vi.fn().mockResolvedValue({ alreadyRunning: false });
+    mockUseUsageInsights.mockReturnValue({
+      breakdown: { totalSessions: 10, latestRun: null },
+      rebuild,
+    });
+    render(
+      <InsightsWorkbench
+        scope={{ kind: "scenario", scenarioId: "study" }}
+        cohortKey="study"
+        testIdPrefix="study"
+      />,
     );
     expect(rebuild).not.toHaveBeenCalled();
-  });
-
-  it("does not analyze a swarm on open — a settling run already does", () => {
-    renderWorkbench({ kind: "swarm", projectId: "proj-1" });
-    expect(rebuild).not.toHaveBeenCalled();
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "false",
-    );
-  });
-
-  it("withdraws the promise when the start is refused", async () => {
-    // The refusal a signed-out guest gets: `rebuildScenarioInsights`
-    // authenticates. There will never be a run, so continuing to promise that
-    // this surface analyzes itself would leave the guest watching a spinner
-    // with the rebuild button hidden behind it.
-    rebuild.mockRejectedValue(new Error("Not authenticated"));
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-        "false",
-      ),
-    );
-    expect(rebuild).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not buy a benchmark flow analysis on open", () => {
-    renderWorkbench({ kind: "benchmark", benchmarkRunId: "run-9" });
-    expect(rebuild).not.toHaveBeenCalled();
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "false",
-    );
   });
 });

@@ -22,7 +22,9 @@ import { z } from "zod";
  *
  * **The array order is normative and must never be reordered or sorted.** A run
  * walks these stages in sequence, and "not reached" is derived from POSITION:
- * every stage after the first failed one was never reached. Sorting this array
+ * later stages without their own measurement were never reached. User value
+ * may still be measured after any earlier failure: it grades the final outcome.
+ * Sorting this array
  * alphabetically — or inserting a stage in the wrong slot — silently changes
  * which stages a failure is reported to have blocked.
  *

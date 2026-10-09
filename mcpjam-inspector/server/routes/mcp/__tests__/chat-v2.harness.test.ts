@@ -1,5 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code"),
+  localHarnessIdOf: (harness: unknown) => (harness === "claude-code" || harness === "codex" ? harness : undefined),
+}));
 
 const {
   prepareChatV2Mock,
@@ -35,6 +39,18 @@ const {
   UiToolValidationErrorMock: class UiToolValidationError extends Error {},
   PageToolValidationErrorMock: class PageToolValidationError extends Error {},
   WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {},
+}));
+
+// Runtime preparation is covered separately; this route must use its fresh
+// server-bound target, not the stale launch credential sent by the renderer.
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  LOCAL_HARNESS_DISPLAY_NAMES: { "claude-code": "Claude Code", codex: "Codex" },
+  ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
+    kind: "local-native", workspaceGrantId: "ws_fresh", runtimeId: "rt_fresh",
+    machineId: "machine-fresh", permissionProfile: "workspace-edits",
+    policyVersion: "policy-fresh", actingUserId: "authkit:user_01ABC",
+    grantToken: "fresh-grant-capability",
+  } })),
 }));
 
 vi.mock("ai", async () => {
@@ -128,7 +144,48 @@ vi.mock("../../../services/authkit-jwt.js", async () => {
   return { ...actual, verifyAuthKitToken: verifyAuthKitTokenMock };
 });
 
+// The Playground's disposable-computer fallback: the decision and refusals are
+// the module's own (and tested there); these tests need a box that provisions
+// and a release they can observe.
+const { releaseMock } = vi.hoisted(() => ({ releaseMock: vi.fn(async () => {}) }));
+vi.mock("../../../utils/harness/playground-box.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/playground-box.js")
+  >("../../../utils/harness/playground-box.js");
+  return {
+    ...actual,
+    playgroundHarnessBoxUnavailableReason: vi.fn((): string | null => null),
+    playgroundCredentialRefusal: vi.fn(
+      async (): Promise<string | null> => null,
+    ),
+    resolvePlaygroundCredentialEnvironment: vi.fn(
+      async (): Promise<
+        | { ok: true; environmentId: string }
+        | { ok: false; status: 409 | 502; message: string }
+      > => ({ ok: true, environmentId: "env_hidden" }),
+    ),
+    acquirePlaygroundHarnessBox: vi.fn(async () => ({
+      ok: true as const,
+      box: {
+        surface: "playground" as const,
+        binding: {
+          sandboxRowId: "row_pg",
+          sandboxId: "sbx_pg",
+          runtimeKind: "terminal" as const,
+        },
+        release: releaseMock,
+      },
+    })),
+  };
+});
+
 import chatV2 from "../chat-v2.js";
+import {
+  acquirePlaygroundHarnessBox,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+} from "../../../utils/harness/playground-box.js";
 import {
   AuthKitConfigError,
   AuthKitVerificationError,
@@ -423,13 +480,15 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(response.status).toBe(200);
       expect(verifyAuthKitTokenMock).toHaveBeenCalledWith(
         "authkit-session-token",
+        undefined,
+        { allowMcpResourceAudience: true },
       );
       const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(engineArgs.harnessExecutionTarget).toMatchObject({
         kind: "local-native",
-        workspaceGrantId: "ws_abc123",
-        runtimeId: "rt_deadbeef",
-        grantToken: "grant-capability-value",
+        workspaceGrantId: "ws_fresh",
+        runtimeId: "rt_fresh",
+        grantToken: "fresh-grant-capability",
       });
     });
 
@@ -507,10 +566,9 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
-    it("does not verify a bearer for an ordinary hosted turn", async () => {
-      // The verification is scoped to an explicit local ask. Every other turn
-      // on this route — anonymous desktop, guest, BYOK — must authenticate
-      // exactly as it did before.
+    it("prepares local execution even when the client sends no target", async () => {
+      // Readiness owns session verification for automatically selected local
+      // execution; no second renderer-controlled grant is needed.
       await postLocalTurn({ harnessTarget: undefined });
 
       expect(verifyAuthKitTokenMock).not.toHaveBeenCalled();
@@ -518,7 +576,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(
         handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
           .harnessExecutionTarget,
-      ).toBeUndefined();
+      ).toMatchObject({ kind: "local-native", grantToken: "fresh-grant-capability" });
     });
 
     it("exempts a local turn from the computers-data-plane requirement", async () => {
@@ -532,7 +590,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
   });
 
-  it("503s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
+  it("422s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
     // The routing half of the same story: an org-BYOK model that is not in the
     // hosted catalog cannot run the real runtime, local or otherwise, and the
     // preflight says so rather than the turn failing later.
@@ -565,8 +623,321 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       }),
     });
 
-    expect(response.status).toBe(503);
-    expect((await response.json()).error).toMatch(/MCPJam-provided models/);
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toMatch(/MCPJam-provided models/);
+    expect(body).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      reason: "HARNESS_UNAVAILABLE",
+    });
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  describe("reasoning effort", () => {
+    const HOST_SELECTION = {
+      modelId: "anthropic/claude-haiku-4.5",
+      source: "hosted",
+      settings: { reasoningEffort: "medium" },
+      fallback: { provider: "openrouter", model: "none" },
+    };
+
+    const post = (extra: Record<string, unknown> = {}, model = "anthropic/claude-haiku-4.5") =>
+      createApp().request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer signed-in-test-token",
+        },
+        body: JSON.stringify({
+          projectId: "project-1",
+          hostId: "host-claude",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-id-1"],
+          messages: [{ role: "user", content: "hello" }],
+          model: { id: model, provider: "anthropic", name: "m" },
+          ...extra,
+        }),
+      });
+
+    const withHostSelection = () =>
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          hostId: "host-claude",
+          modelId: "anthropic/claude-haiku-4.5",
+          systemPrompt: "host system",
+          temperature: 0.2,
+          requireToolApproval: false,
+          respectToolVisibility: true,
+          selectedServerIds: ["server-id-1"],
+          harness: "claude-code",
+          modelSelection: HOST_SELECTION,
+        },
+      });
+
+    it("the body's effort reaches the preflight, prepare and the engine", async () => {
+      const response = await post({ reasoningEffort: "high" });
+      expect(response.status).toBe(200);
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+    });
+
+    it("the host's saved effort is the default for the same model", async () => {
+      withHostSelection();
+      await post();
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "medium" }),
+      );
+      // …and the body's still wins.
+      handleMCPJamFreeChatModelMock.mockClear();
+      await post({ reasoningEffort: "low" });
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "low" }),
+      );
+    });
+
+    it("the host's saved effort does not follow a different model", async () => {
+      withHostSelection();
+      await post({}, "anthropic/claude-sonnet-4.5");
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+    });
+
+    it("a turn with no effort passes none anywhere", async () => {
+      await post();
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+      expect(checkHarnessRuntimeAvailableMock.mock.calls.at(-1)![0]).not.toHaveProperty(
+        "reasoningEffort",
+      );
+    });
+
+    it("a level that is not an effort is a 400 before any work", async () => {
+      const response = await post({ reasoningEffort: "ultra" });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toMatch(/reasoningEffort must be one of/);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("an unverified harness effort is refused with the preflight's reason", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "setting-unsupported",
+        reason: "the Claude Code harness can't apply a reasoning effort yet",
+      });
+      const response = await post({ reasoningEffort: "high" });
+      expect(response.status).toBe(422);
+      expect((await response.json()).error).toMatch(/can't apply a reasoning effort/);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Playground disposable-computer fallback", () => {
+    const post = (host: Record<string, unknown>, body: Record<string, unknown> = {}) => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          hostId: "host-x",
+          selectedServerIds: ["server-id-1"],
+          requireToolApproval: false,
+          ...host,
+        },
+      });
+      return createApp().request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer signed-in-test-token",
+        },
+        body: JSON.stringify({
+          projectId: "project-1",
+          hostId: "host-x",
+          chatSessionId: "chat-pg-1",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-id-1"],
+          messages: [{ role: "user", content: "go" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+          ...body,
+        }),
+      });
+    };
+    const cursor = { modelId: "cursor/auto", harness: "cursor" };
+
+    it("a signed-in Cursor turn runs on the conversation's box and releases it when the stream ends", async () => {
+      const response = await post(cursor);
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bearer: "signed-in-test-token",
+          projectId: "project-1",
+          chatSessionId: "chat-pg-1",
+        }),
+      );
+      const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(engineArgs.harnessSandboxBinding).toEqual({
+        sandboxRowId: "row_pg",
+        sandboxId: "sbx_pg",
+        runtimeKind: "terminal",
+      });
+      // Held for exactly as long as the stream is being read.
+      expect(releaseMock).not.toHaveBeenCalled();
+      expect(await response.text()).toBe("ok");
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a compare column gets a box of its own on a cloud harness", async () => {
+      const response = await post(
+        { modelId: "openai/gpt-5-mini", harness: "codex" },
+        { comparePane: true },
+      );
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(
+        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0].harnessSandboxBinding
+          ?.sandboxId,
+      ).toBe("sbx_pg");
+    });
+
+    it("the same cloud harness without comparePane gets the conversation's box", async () => {
+      const response = await post({
+        modelId: "openai/gpt-5-mini",
+        harness: "codex",
+      });
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ harness: "codex" }),
+      );
+      expect(
+        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0].harnessSandboxBinding
+          ?.sandboxId,
+      ).toBe("sbx_pg");
+    });
+
+    it("refuses with the control plane's status when no box can be had, booting no engine", async () => {
+      vi.mocked(acquirePlaygroundHarnessBox).mockResolvedValueOnce({
+        ok: false,
+        refusal: { status: 429, error: "limit reached", code: "user_terminal_cap" },
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(429);
+      expect((await response.json()).code).toBe("user_terminal_cap");
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("answers 503 on a server that is not a data plane", async () => {
+      vi.mocked(playgroundHarnessBoxUnavailableReason).mockReturnValueOnce(
+        "not a data plane",
+      );
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("releases the box when the engine throws before it streams", async () => {
+      handleMCPJamFreeChatModelMock.mockRejectedValueOnce(new Error("boom"));
+      const response = await post(cursor);
+      expect(response.status).toBe(500);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
+      vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
+        "The Cursor harness requires a CURSOR_API_KEY project secret.",
+      );
+      const response = await post(cursor);
+      expect(response.status).toBe(409);
+      expect((await response.json()).code).toBe(
+        "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+      );
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("a Cursor turn runs under the hidden environment carrying the member's key", async () => {
+      const response = await post(cursor);
+      expect(response.status).toBe(200);
+      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "host-x", harnessId: "cursor" }),
+      );
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ projectEnvironmentId: "env_hidden" }),
+      );
+    });
+
+    it("no usable key: refused before any box, with where to add it", async () => {
+      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        message: "Add your key under Project Settings → Secrets.",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/Project Settings/);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("a turn the availability check refuses boots no box", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "tool-approval",
+        reason: "it is off",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "FEATURE_NOT_SUPPORTED",
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "cursor",
+        kind: "tool-approval",
+      });
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("an operator state (no computers data plane) stays 503", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "computers-unconfigured",
+        reason: "this server is not a computers data plane",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        reason: "HARNESS_UNAVAILABLE",
+        kind: "computers-unconfigured",
+      });
+      expect(body.code).toBeUndefined();
+    });
+
+    it("releases the box on an early refusal after it was acquired (invalid tool names)", async () => {
+      prepareChatV2Mock.mockRejectedValueOnce(
+        new Error("Invalid tool name(s) for Anthropic: bad tool"),
+      );
+      const response = await post(cursor);
+      expect(response.status).toBe(400);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("releases the box on an early refusal after it was acquired (server misconfigured)", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+      const response = await post(cursor);
+      expect(response.status).toBe(500);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

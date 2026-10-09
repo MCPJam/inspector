@@ -735,3 +735,164 @@ describe("one Analyze findings action", () => {
     expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("automatic analysis failures", () => {
+  it.each([
+    ["failed", "enrich", "evidence_changed", false, null, true],
+    ["failed", "enrich", "cancelled", false, null, true],
+    ["pending", "enrich", "evidence_changed", false, null, false],
+    ["failed", "build", "evidence_changed", false, null, false],
+    ["failed", "enrich", "evidence_changed", true, null, false],
+    ["failed", "enrich", "evidence_changed", false, 200, false],
+  ] as const)(
+    "handles %s %s %s pending=%s enrichment=%s",
+    (status, kind, errorCode, pending, generatedAt, visible) => {
+      const envelope = structuredClone(ENVELOPE);
+      envelope.unifiedFindings!.job = {
+        jobId: "auto",
+        kind,
+        status,
+        errorCode,
+        startedAt: 100,
+        updatedAt: 100,
+      };
+      envelope.unifiedFindings!.snapshot!.enrichment =
+        generatedAt === null
+          ? null
+          : { ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!, generatedAt };
+      const { result } = renderHook(() =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: generation({ pending }),
+        }),
+      );
+      expect(result.current.analysisFailure !== null).toBe(visible);
+      if (visible) {
+        expect(result.current.analyze.error).toBeNull();
+        expect(result.current.analysisFailure?.errorCode).toBe(
+          errorCode === "cancelled" ? undefined : errorCode,
+        );
+      }
+    },
+  );
+
+  it("says nothing about a green run whose analysis found nothing", () => {
+    // An all-pass run is now analyzed like any other: every iteration gets a
+    // report, and the reasoning half legitimately proposes no mechanism. That
+    // is a COMPLETED job with an empty findings list — never "AI analysis did
+    // not complete", which would read as a failure of a job that succeeded.
+    const envelope = structuredClone(ENVELOPE);
+    envelope.currentFindings = [];
+    envelope.unifiedFindings!.snapshot!.deterministicFindings = [];
+    envelope.unifiedFindings!.snapshot!.provenance = [];
+    envelope.unifiedFindings!.snapshot!.enrichment = {
+      ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!,
+      discovery: {
+        reviewedIterations: 8,
+        totalIterations: 8,
+        reviewedFailedIterations: 0,
+        totalFailedIterations: 0,
+        missingTraces: 0,
+        truncatedTraces: 0,
+        omittedEvidence: 0,
+      },
+    };
+    envelope.unifiedFindings!.job = {
+      jobId: "auto",
+      kind: "enrich",
+      status: "completed",
+      startedAt: 100,
+      updatedAt: 100,
+    };
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.analysisFailure).toBeNull();
+    expect(result.current.analyze.error).toBeNull();
+    expect(result.current.findings).toEqual([]);
+  });
+});
+
+it("restores a persisted report failure and retries the free build once", async () => {
+  const failed = structuredClone(ENVELOPE);
+  failed.unifiedFindings!.job = {
+    kind: "build",
+    status: "failed",
+    startedAt: 100,
+    updatedAt: 200,
+    errorCode: "build_retries_exhausted",
+    errorMessage: "Couldn’t generate the report",
+  };
+  const borrowed = generation();
+  let finish: ((value: { jobId: string }) => void) | undefined;
+  mutation.fn.mockImplementation(
+    () =>
+      new Promise<{ jobId: string }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { result, rerender } = renderHook(
+    ({ envelope }) =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: borrowed,
+      }),
+    { initialProps: { envelope: failed } },
+  );
+  expect(result.current.build.pending).toBe(false);
+  expect(result.current.build.error).toBe("Couldn’t generate the report");
+  expect(result.current.build.errorCode).toBe("build_retries_exhausted");
+  expect(result.current.findings).toHaveLength(1);
+  act(() => {
+    result.current.build.onRun();
+    result.current.build.onRun();
+  });
+  expect(mutation.fn).toHaveBeenCalledTimes(1);
+  expect(mutation.fn).toHaveBeenCalledWith({
+    suiteRunId: "run_1",
+    force: true,
+  });
+  expect(borrowed.requestInsight).not.toHaveBeenCalled();
+  expect(result.current.build.pending).toBe(true);
+  expect(result.current.build.error).toBeNull();
+  expect(result.current.build.errorCode).toBeUndefined();
+  const pending = structuredClone(failed);
+  pending.unifiedFindings!.job!.status = "pending";
+  rerender({ envelope: pending });
+  await act(async () => {
+    finish?.({ jobId: "retry" });
+  });
+  expect(result.current.build.pending).toBe(true);
+  expect(result.current.findings).toHaveLength(1);
+});
+
+it("does not attach a persisted job code to a local build request error", async () => {
+  const failed = structuredClone(ENVELOPE);
+  failed.unifiedFindings!.job = {
+    kind: "build",
+    status: "failed",
+    startedAt: 100,
+    updatedAt: 200,
+    errorCode: "snapshot_too_large",
+    errorMessage: "The previous snapshot was too large.",
+  };
+  mutation.fn.mockRejectedValueOnce(new Error("The retry request failed."));
+  const { result } = renderHook(() =>
+    useUnifiedFindings({
+      suiteRunId: "run_1",
+      envelope: failed,
+      generation: generation(),
+    }),
+  );
+  expect(result.current.build.errorCode).toBe("snapshot_too_large");
+  await act(async () => result.current.build.onRun());
+  expect(result.current.build.pending).toBe(false);
+  expect(result.current.build.error).toBe("The retry request failed.");
+  expect(result.current.build.errorCode).toBeUndefined();
+});

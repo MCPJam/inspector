@@ -1,3 +1,4 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 // Inspector boundary shim over @mcpjam/chat-ui/trace.
 //
 // The Tier-A-compatible trace/replay adaptation LOGIC is single-sourced in the
@@ -44,6 +45,12 @@ type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
  * stays free of eval-domain types.
  */
 export interface TraceEnvelope {
+  requestPayloads?: PersistedRequestPayloadEntry[];
+  requestPayloadsJson?: string;
+  /** Saved requests exist for this session but did not load. */
+  requestPayloadsError?: string;
+  /** Saved requests are still loading. */
+  requestPayloadsPending?: true;
   traceVersion?: 1;
   messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];

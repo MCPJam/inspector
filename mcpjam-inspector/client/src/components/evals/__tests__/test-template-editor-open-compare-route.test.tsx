@@ -40,6 +40,7 @@ function createDeferred() {
 
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
+const useQueriesMock = vi.hoisted(() => vi.fn((_requests: unknown) => ({})));
 const reviewBlobAction = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ messages: [] }),
 );
@@ -64,6 +65,35 @@ const projectServersMock = vi.hoisted(() => ({
   isLoading: false,
 }));
 
+// The harness × model picker locks read each host's config; these tests have
+// no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/components/evaluate/suite-run-review", () => ({
+  SuiteRunReview: (props: any) => {
+    const [error, setError] = useState<string>();
+    return (
+      <div role="dialog" aria-label="Setup Run">
+        <span>{props.caseTitle}</span>
+        <output data-testid="suite-run-cases">{JSON.stringify(props.cases.map((item: any) => item._id))}</output>
+        <output data-testid="case-run-client-names">{JSON.stringify(Array.from(props.hostNamesById.entries()))}</output>
+        <output data-testid="case-run-block">{props.disabledReason}</output>
+        <button onClick={async () => {
+          try {
+            await props.onStart({ ...props.suite, environmentIds: ["one-run", "second-client"] }, {
+              iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+            });
+            props.onClose();
+          } catch (failure) { setError((failure as Error).message); }
+        }}>Run test case</button>
+        {error && <p role="alert">{error}</p>}
+      </div>
+    );
+  },
+}));
+
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));
@@ -192,6 +222,8 @@ vi.mock("@/lib/apis/evals-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useQueries: useQueriesMock,
+
   useMutation: (name: unknown) => useMutationMock(name),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => reviewBlobAction,
@@ -668,6 +700,56 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("stops a streaming run without crashing the finished-model count", async () => {
+    const user = userEvent.setup();
+    const messageToast = vi.spyOn(toast, "message");
+    streamEvalTestCaseMock.mockImplementation(
+      (
+        _request: unknown,
+        onEvent: (event: { type: "text_delta"; content: string }) => void,
+        signal: AbortSignal,
+      ) =>
+        new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            // A chunk lands right as the stream aborts (outside the click's
+            // act), so React still has a queued update when the cancelled
+            // record is built and defers that updater.
+            queueMicrotask(() => {
+              onEvent({ type: "text_delta", content: "late chunk" });
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          });
+        }),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => {
+      expect(messageToast).toHaveBeenCalledWith("Compare run stopped.");
+    });
+  });
+
   it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
     // Iterations are now a prop, not a query — the remaining loading gates
     // are `testCases === undefined`, the init ref mismatch, and the route
@@ -973,6 +1055,206 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("uses the parent launch data while its suite query is loading, including client names", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase, launchReview: {
+      suite: { _id: "suite-1", environment: { servers: ["srv"] }, environmentIds: ["env-1"] },
+      environments: [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" }],
+      hostNamesById: new Map([["client-a1b2c3", "Claude"]]),
+    } });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("case-run-client-names")).toHaveTextContent("Claude");
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", expect.objectContaining({
+      suiteOverride: expect.objectContaining({ _id: "suite-1" }), throwOnFailure: true,
+    }));
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for suite launch data instead of opening quick run", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    renderGoldenCase({ onRunCase: vi.fn() });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run test case" })).toBeNull();
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["Eval iteration limit reached.", "Cloud sandboxes are unavailable."])(
+    "passes the shared block to case setup and refuses its launch: %s", async (evalRunsDisabledReason) => {
+      const user = userEvent.setup();
+      activeCaseDoc = goldenCaseDoc;
+      const onRunCase = vi.fn();
+      renderGoldenCase({ onRunCase, evalRunsDisabledReason });
+      await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+      expect(screen.getByTestId("case-run-block")).toHaveTextContent(evalRunsDisabledReason);
+      // The mock intentionally calls onStart even while blocked to exercise the callback guard.
+      await user.click(screen.getByRole("button", { name: "Run test case" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(evalRunsDisabledReason);
+      expect(onRunCase).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    },
+  );
+
+  it.each([false, true])("launches case setup through the suite's ephemeral launcher with observeFirst=%s", async (observeFirst) => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase, observeFirst });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", {
+      iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      skipJudge: false,
+      suiteOverride: expect.objectContaining({ _id: "suite-1", environmentIds: ["one-run", "second-client"] }),
+    });
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
+  });
+
+  it("saves case edits before an ephemeral suite launch and keeps launch errors visible", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn().mockRejectedValue(new Error("Client is disconnected"));
+    renderGoldenCase({ onRunCase, observeFirst: true });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    await user.clear(prompt);
+    await user.type(prompt, "Find my current account");
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await screen.findByText("Client is disconnected");
+    expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(onRunCase.mock.invocationCallOrder[0]);
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+  });
+
+  it.each([
+    { source: "recent blob", trace: { blob: "trace-blob" } },
+    { source: "recent chat", trace: { chatSessionId: "trace-chat" } },
+    { source: "route anchor", trace: { blob: "trace-blob" } },
+    { source: "last saved", trace: { blob: "trace-blob" } },
+    { source: "traceless anchor", trace: {} },
+    { source: "no trace", trace: {} },
+  ])("hydrates the displayed run for $source", async ({ source, trace }) => {
+    const newest = { ...baseIteration, suiteRunId: "newest-run" };
+    const traced = {
+      ...baseIteration,
+      _id: "traced-iteration",
+      suiteRunId: "traced-run",
+      ...trace,
+    } as EvalIteration;
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      lastMessageRun: source === "last saved" ? traced._id : undefined,
+    } as any;
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: any) =>
+      name === "testSuites:getTestIteration" && args?.iterationId === traced._id
+        ? traced
+        : query(name, args),
+    );
+    const olderTraced = {
+      ...baseIteration,
+      _id: "older-traced",
+      suiteRunId: "older-run",
+      blob: "older-blob",
+    };
+    renderGoldenCase({
+      suiteIterations: source.startsWith("recent")
+        ? [newest, traced, olderTraced]
+        : source.endsWith("anchor")
+          ? [newest, olderTraced]
+          : [newest],
+      ...(source.endsWith("anchor")
+        ? { openCompareIterationId: traced._id }
+        : {}),
+    });
+    await screen.findByTestId("simple-case-form");
+    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedRun: {
+        args: {
+          runId:
+            source === "no trace"
+              ? "newest-run"
+              : source === "traceless anchor"
+                ? "older-run"
+                : "traced-run",
+        },
+      },
+    });
+  });
+
+  it("hydrates a replayed run before a newer trace-bearing run", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const newest = {
+      ...baseIteration,
+      suiteRunId: "newest-run",
+      blob: "newest-blob",
+    };
+    const replayed = {
+      ...baseIteration,
+      _id: "replayed",
+      suiteRunId: "replayed-run",
+      blob: "replayed-blob",
+    };
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: any) =>
+      name === "testSuites:getTestIteration" &&
+      args?.iterationId === replayed._id
+        ? replayed
+        : query(name, args),
+    );
+    renderGoldenCase({
+      observeFirst: true,
+      suiteIterations: [newest, replayed],
+    });
+    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedRun: { args: { runId: "newest-run" } },
+    });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[1]);
+    await waitFor(() =>
+      expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+        selectedRun: { args: { runId: "replayed-run" } },
+      }),
+    );
+  });
+
+  it("keeps every summary run's client label in the case editor Runs tab", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const user = userEvent.setup();
+    const summaryRuns = ["ChatGPT", "Claude"].map((name, index) => ({
+      _id: `summary-run-${index}`, suiteId: "suite-1", createdBy: "u1", runNumber: index + 1,
+      configRevision: "rev", configSnapshot: {}, status: "completed", createdAt: Date.now(),
+      client: { name, hostStyle: name.toLowerCase(), source: "attached" },
+    }));
+    renderGoldenCase({ simpleCaseEditor: false, suiteRuns: summaryRuns, suiteIterations: summaryRuns.map((run, index) => ({ ...baseIteration, _id: `summary-it-${index}`, suiteRunId: run._id, trigger: "suite" })) });
+    await user.click(await screen.findByRole("tab", { name: /Runs/ }));
+    expect(await screen.findByText("ChatGPT")).toBeVisible();
+    expect(screen.getByText("Claude")).toBeVisible();
+  });
+
+  it("shows code-owned cases in the workspace without authoring controls", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    renderGoldenCase({readOnly: true});
+    expect(await screen.findByText("Who am I signed in as?")).toBeVisible();
+    expect(screen.queryByRole("button", {name: /Setup Run/i})).toBeNull();
+    expect(screen.queryByRole("button", {name: /Configure test case evaluators/i})).toBeNull();
+    for (const input of screen.getAllByRole("textbox")) {
+      expect(input).toHaveAttribute("readonly");
+    }
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
+  });
+
   it("keeps unsaved case edits while iteration evidence opens in the drawer", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     const trial = {
@@ -1000,35 +1282,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(
       await screen.findByDisplayValue("Unsaved current prompt"),
     ).not.toHaveAttribute("readonly");
-  });
-
-  it("offers failure evidence after the first trial and opens Steps", async () => {
-    activeCaseDoc = goldenCaseDoc;
-    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
-    const trial = {
-      ...baseIteration,
-      _id: "failed-first",
-      blob: "failed-blob",
-      suiteRunId: undefined,
-      result: "failed" as const,
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: goldenCaseDoc.steps,
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    const button = await screen.findByRole("button", {
-      name: "Open the failed step",
-    });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(screen.queryByTestId("trial-scorecard")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
-      "data-view-mode",
-      "steps",
-    );
   });
 
   it("automatically saves judge overrides from the dedicated UVC page", async () => {
@@ -1231,7 +1484,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
     const defaultChecks = screen.getByRole("button", {
-      name: "Show default evaluators",
+      name: "Configure test case evaluators",
     });
     expect(screen.getByTestId("case-spine")).not.toContainElement(
       defaultChecks,
@@ -1239,6 +1492,31 @@ describe("TestTemplateEditor run view from route", () => {
     expect(defaultChecks.parentElement).toContainElement(
       screen.getByRole("button", { name: "Setup Run" }),
     );
+  });
+
+  it("deletes the open case from the header, after confirming", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onDeleteCase = vi.fn().mockResolvedValue(undefined);
+    renderGoldenCase({ observeFirst: true, onDeleteCase });
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Delete test case" }),
+    );
+    await user.click(screen.getByTestId("case-header-delete-confirm"));
+
+    await waitFor(() => {
+      expect(onDeleteCase).toHaveBeenCalledWith("case-1");
+    });
+  });
+
+  it("offers no header delete when the surface passes no handler", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("case-spine")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("case-header-delete")).not.toBeInTheDocument();
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {
@@ -1272,7 +1550,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
     await user.click(
       screen.getByRole("button", {
-        name: 'Edit Response contains "marcelo@mcpjam.com"',
+        name: "Edit Check what the answer says",
       }),
     );
     await user.type(screen.getByLabelText("Needle"), "!");
@@ -1591,7 +1869,9 @@ describe("TestTemplateEditor run view from route", () => {
 
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(
+        screen.getAllByTestId("scorecard-group-state").length,
+      ).toBeGreaterThan(0);
     });
     // The chain is a strip inside the Scorecard now, not a slot above it.
     expect(screen.queryByTestId("iteration-trial-chain")).toBeNull();
@@ -1674,7 +1954,9 @@ describe("TestTemplateEditor run view from route", () => {
     // The finished run lands in the timeline; its evidence opens in the drawer.
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(
+        screen.getAllByTestId("scorecard-group-state").length,
+      ).toBeGreaterThan(0);
     });
   });
 
@@ -1752,8 +2034,10 @@ describe("TestTemplateEditor run view from route", () => {
 
     const card = await screen.findByTestId("trial-scorecard");
     expect(card).toBeInTheDocument();
-    // The chain describes the trial, so it opens with the Scorecard.
-    expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    // The chain describes the iteration, so its state words open with the Scorecard.
+    expect(
+      screen.getAllByTestId("scorecard-group-state").length,
+    ).toBeGreaterThan(0);
   });
 
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {

@@ -27,6 +27,24 @@ describe("hosted OAuth return paths", () => {
     ).toBe("/asana");
   });
 
+  it("preserves inline-surface toast suppression across a redirect", () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      serverName: "Asana",
+      serverUrl: "https://example.com/mcp",
+      returnPath: "/home",
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+
+    expect(readHostedOAuthPendingMarker()).toEqual(
+      expect.objectContaining({
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+      }),
+    );
+  });
+
   it("accepts legacy scenario hash return targets", () => {
     expect(
       resolveHostedOAuthReturnPath({

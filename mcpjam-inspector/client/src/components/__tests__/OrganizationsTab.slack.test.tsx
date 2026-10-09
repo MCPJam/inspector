@@ -84,8 +84,6 @@ vi.mock("@/hooks/useOrganizations", async () => {
       changeMemberRole: vi.fn(),
       transferOrganizationOwnership: vi.fn(),
       removeMember: vi.fn(),
-      generateLogoUploadUrl: vi.fn(),
-      updateOrganizationLogo: vi.fn(),
     }),
   };
 });

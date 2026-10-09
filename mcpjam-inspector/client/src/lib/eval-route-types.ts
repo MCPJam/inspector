@@ -1,5 +1,8 @@
 export type SuiteOverviewView =
-  "runs" | "test-cases" | "executions" | "cross-host";
+  | "runs"
+  | "test-cases"
+  | "executions"
+  | "cross-host";
 
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
@@ -18,6 +21,14 @@ export type EvalRoute =
       view?: SuiteOverviewView;
       /** CI: commit sidebar when drilling from Group by commit */
       fromCommit?: string;
+      /**
+       * Open the import review on one authoring job's drafts.
+       *
+       * How an API import hands its unfinished cases back to a person: the
+       * reply's `reviewUrl` carries this, and the drafts are read from the
+       * job rather than from whatever this browser happens to remember.
+       */
+      importJob?: string;
     }
   | {
       type: "run-detail";
