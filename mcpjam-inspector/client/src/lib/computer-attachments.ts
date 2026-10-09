@@ -49,11 +49,18 @@ export function isComputerAttachmentUploadActive(args: {
   isAuthenticated: boolean;
   hostHasComputer: boolean;
   engine: "local" | "cloud";
+  /**
+   * The previewed host runs a harness (Claude Code / Codex / Cursor). It runs on
+   * a throwaway per-conversation box, never on the personal computer this
+   * upload targets, so attachments stay inline-only.
+   */
+  hostHasHarness?: boolean;
 }): boolean {
   return (
     args.computersEnabled &&
     args.isAuthenticated &&
     args.hostHasComputer &&
+    args.hostHasHarness !== true &&
     args.engine === "cloud"
   );
 }

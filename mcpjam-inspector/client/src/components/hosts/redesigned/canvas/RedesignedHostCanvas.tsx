@@ -302,9 +302,11 @@ AddServerPillRenderer.displayName = "AddServerPillRenderer";
 
 /* ============================================================
    Project Computers islands. Built-in tools sit to the left of
-   the matrix; the Computer island to the right. Both are gated
-   in the builder behind `computersEnabled`, so they only ever
-   mount when the feature flag is on. A click anywhere on either
+   the matrix; the Computer island to the right. The builder emits
+   them behind the machine flag (`computersEnabled`); the Computer
+   island also shows for an existing attachment so it stays
+   detachable, and never for a harness client (Claude Code / Codex
+   / Cursor), which runs on a throwaway box. A click anywhere on either
    island routes to the Agent (Behavior) tab via onNodeClick →
    onSelectNode → focusTabForNodeId.
    ============================================================ */

@@ -189,6 +189,12 @@ describe("isComputerAttachmentUploadActive", () => {
     ).toBe(false);
   });
 
+  it("is INACTIVE for a harness host: it runs on a throwaway box, not the personal computer", () => {
+    expect(
+      isComputerAttachmentUploadActive({ ...base, hostHasHarness: true }),
+    ).toBe(false);
+  });
+
   it("keeps the pre-existing COMP-14 gates", () => {
     expect(
       isComputerAttachmentUploadActive({ ...base, computersEnabled: false }),

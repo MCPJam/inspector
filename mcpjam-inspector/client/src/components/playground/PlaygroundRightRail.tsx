@@ -155,7 +155,10 @@ function RightRailTabbed({
   railRef.current = rail;
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
+  // No Shell for a harness client: it runs on a throwaway per-conversation box,
+  // not the personal computer this tab would open.
+  const shellAvailable =
+    computersEnabled === true && !!hostConfig?.computer && !hostConfig?.harness;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
