@@ -11,6 +11,17 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-09
 
+#### Fixed
+
+- **Chat no longer re-sends silently after a turn hits its step limit or is cut off** — when a reply ended because the turn used all of its allowed steps, or because the output-token limit cut the response short, the chat would automatically re-post the same history every few seconds for as long as the tab stayed open. Each re-post connected MCP servers and persisted an empty turn. The chat now stops on its own and shows one muted line explaining why:
+
+  - *"This reply reached its step limit. Send a message to continue."* — the turn used all of its allowed steps.
+  - *"The reply was cut off. Send a message to continue."* — the output-token limit truncated the response.
+
+  Sending a new message always starts fresh. Answered approval pills still resume the turn automatically, since each one is a user's click.
+
+- **Ask MCPJam shows a readable sentence for step-limit refusals** — when the server refused a continuation because the step budget was spent, the panel previously showed the raw JSON error envelope. It now shows the sentence from the refusal — for example, *"This reply reached its step limit, so it was stopped. Send a message to continue."*
+
 #### Changed
 
 - **Step-by-step case editor: "Expect a tool call" under every prompt** — in the Evaluate step-by-step editor (behind `evaluate-observe-first`), each prompt now offers an **Expect a tool call** button even when that prompt has no tool yet. Clicking it opens that prompt's tool picker and writes the chosen tool into that prompt's own steps, so the assertion grades that prompt's turn. Previously, adding a tool expectation to a later prompt required going through the generic assertion drawer. The button is not shown on a case that says no tool is called, on a pinned-first case, in a read-only view, or before the draft has a prompt step.
