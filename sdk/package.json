@@ -163,7 +163,7 @@
     "@modelcontextprotocol/server": "2.2.0",
     "@modelcontextprotocol/server-everything": "^2026.8.31",
     "@sentry/cli": "^3.8.0",
-    "@sentry/node": "10.75.0",
+    "@sentry/node": "11.4.0",
     "@types/jest": "^30.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^26.6.3",
