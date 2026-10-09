@@ -21,7 +21,6 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
@@ -3482,6 +3481,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     reconnectServerForClientSwitch,
@@ -4048,17 +4048,12 @@ export default function App() {
       // exists. Start a fresh first-run attempt so the settings selected in the
       // inline authentication editor are applied before retrying. Reconnecting
       // the saved row directly would silently discard those edits.
-      autoOAuthEscalation.markFailed({
-        projectId: convexProjectId,
-        serverId: hostedServerIdsByName[serverName],
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       openFirstRunServerConnection(draft);
     },
     [
-      convexProjectId,
+      clearAutoOAuthEscalation,
       firstRunConnectionState,
-      hostedServerIdsByName,
       openFirstRunServerConnection,
     ],
   );
@@ -4129,7 +4124,11 @@ export default function App() {
       suppressSuccessToast: true,
     })
       .then((result) => {
-        if (result.status === "connected") return;
+        // "superseded": a newer connect owns the outcome and will publish the
+        // terminal runtime row, so this is not a failure.
+        if (result.status === "connected" || result.status === "superseded") {
+          return;
+        }
         if (firstRunConnectionAttemptRef.current !== attemptId) return;
         firstRunOAuthReconnectServerRef.current = null;
         setFirstRunConnectionState({
@@ -4251,11 +4250,7 @@ export default function App() {
 
     if (server.connectionStatus === "failed") {
       if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
-        autoOAuthEscalation.markFailed({
-          projectId: convexProjectId,
-          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
-          serverName: firstRunConnectionState.serverName,
-        });
+        clearAutoOAuthEscalation(firstRunConnectionState.serverName);
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4305,10 +4300,9 @@ export default function App() {
     }
   }, [
     appState.servers,
+    clearAutoOAuthEscalation,
     clearPendingDashboardOAuth,
-    convexProjectId,
     firstRunConnectionState,
-    hostedServerIdsByName,
     pendingDashboardOAuth,
   ]);
 

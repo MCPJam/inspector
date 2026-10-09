@@ -1885,6 +1885,18 @@ describe("useServerState OAuth callback failures", () => {
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
   });
 
+  it("clears the Auto escalation marker under the identity the hook writes", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["default::srv_demo", "default::name:demo-server"]),
+    );
+    const { result } = renderUseServerState(vi.fn());
+
+    act(() => result.current.clearAutoOAuthEscalation("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+  });
+
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
     // Regression: switching an existing OAuth server from 2026 back to 2025
     // must not recover the stale 2026 pin from the stored server.config /
@@ -4036,6 +4048,42 @@ describe("useServerState auth mode regressions", () => {
     expect(initiateOAuthMock).toHaveBeenCalledOnce();
     expect(toastError).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not let a marker from an abandoned redirect block the next authorization", async () => {
+    // Keyed the way a redirect-surviving identity would key it. The user left
+    // at the provider (Back), so no callback ever cleared it.
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["project_default::name:auto-server"]),
+    );
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        { suppressErrorToast: true, requestOAuthAuthorization },
+      );
+    });
+
+    // Re-prompts instead of failing with "still returns 401 after OAuth".
+    expect(requestOAuthAuthorization).toHaveBeenCalledWith("auto-server");
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
   });
 
   it("persists authorization edits before starting Auto's OAuth redirect", async () => {

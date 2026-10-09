@@ -5,10 +5,8 @@ import { toast } from "@/lib/toast";
  * limit step-up retries).
  *
  * An Auto server that 401s asks the user before redirecting into OAuth.
- * Confirming marks the attempt PENDING; the marker's one job is to survive
- * the full-page `window.location.assign` round-trip so the post-callback
- * reconnect doesn't re-prompt — if the server STILL 401s after a completed
- * flow, that's a config problem to surface, not a loop to run. Every
+ * Confirming marks the attempt PENDING; if the server STILL 401s while it is
+ * pending, that's a config problem to surface, not a loop to run. Every
  * terminal outcome clears the marker explicitly:
  *
  * - `markSucceeded` — the server connected; nothing pending.
@@ -17,10 +15,17 @@ import { toast } from "@/lib/toast";
  *   the still-401 config error). Clearing here means a later MANUAL attempt
  *   re-prompts instead of being permanently muted for the session.
  *
- * Storage is sessionStorage (in-memory state dies at the redirect), keyed by
- * project + server id so identically named servers across projects don't
- * collide; the server NAME is only the last-resort key component when no id
- * exists yet.
+ * Storage is sessionStorage, keyed by project + server id so identically
+ * named servers across projects don't collide; the server NAME is only the
+ * last-resort key component when no id exists yet.
+ *
+ * The project component is the local project id, which is regenerated on
+ * every page load, so a marker does not outlive the full-page OAuth redirect.
+ * Keep it that way unless the guard can tell a completed flow from an
+ * abandoned one: after a redirect the OAuth callback reports its own outcome,
+ * and a surviving marker turned Back-from-the-provider into a false "still
+ * returns 401 after OAuth" (PLB-284). Every escalation is user-confirmed, so
+ * no retry loop is possible without it.
  */
 const STORAGE_KEY = "mcp-auto-oauth-escalated";
 

@@ -5154,15 +5154,10 @@ export function useServerState({
   // Used by host-switch auto-disconnect, where we want to drop the runtime
   // connection but keep the server entry intact so the user can re-connect
   // (or another host can require it) without re-adding the server.
-  const handleRuntimeDisconnect = useCallback(
+  // Markers are written under this hook's identity, so App-side cleanup must
+  // go through here instead of rebuilding the key from its own ids.
+  const clearAutoOAuthEscalation = useCallback(
     (serverName: string) => {
-      // Invalidate any connect/reconnect that is still awaiting I/O. Without
-      // this, a late completion can overwrite this disconnect with success or
-      // failure and reopen a canceled onboarding attempt.
-      const queuedScope = tryResolveProjectServer(serverName);
-      if (queuedScope)
-        serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
-      nextOpToken(serverName);
       const resolved = tryResolveProjectServer(serverName);
       autoOAuthEscalation.markFailed({
         // Auto escalation is created in the active project scope. Use that
@@ -5180,13 +5175,27 @@ export function useServerState({
         serverId: null,
         serverName,
       });
+    },
+    [appState.activeProjectId],
+  );
+
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      // Invalidate any connect/reconnect that is still awaiting I/O. Without
+      // this, a late completion can overwrite this disconnect with success or
+      // failure and reopen a canceled onboarding attempt.
+      const queuedScope = tryResolveProjectServer(serverName);
+      if (queuedScope)
+        serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      nextOpToken(serverName);
+      clearAutoOAuthEscalation(serverName);
       clearPendingOAuthAttempt(serverName);
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();
       }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [appState.activeProjectId, dispatch],
+    [clearAutoOAuthEscalation, dispatch],
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -6716,6 +6725,7 @@ export function useServerState({
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     connectServerWithResult,
