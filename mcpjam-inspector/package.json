@@ -214,7 +214,7 @@
     "react-resizable-panels": "^3.0.3",
     "react-router": "^8.4.0",
     "react-textarea-autosize": "^8.5.9",
-    "recharts": "^2.15.4",
+    "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.8",
     "streamdown": "^2.7.0",
