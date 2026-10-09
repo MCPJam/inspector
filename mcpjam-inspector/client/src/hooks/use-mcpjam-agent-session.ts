@@ -175,6 +175,11 @@ export interface UseMcpjamAgentSessionResult {
   status: ReturnType<typeof useChat>["status"];
   error: ReturnType<typeof useChat>["error"];
   /**
+   * One line when the turn stopped short of resuming on its own — the reply
+   * was cut off, or it spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
+  /**
    * Send the next user message. Async because a pending clarifying question
    * has to be settled — and its tool output actually written — before the
    * next request can carry a valid message history. Callers may ignore the
@@ -252,19 +257,25 @@ export function useMcpjamAgentSession(
   // handoff) and must never re-seed stale history". Computed inside the
   // memo — NOT a mount-scoped ref — so a `chatSessionId` change without a
   // remount re-evaluates it for the new session's instance.
-  const { chat, config, handleToolApprovalResponse, instanceWasPristine } =
-    useMemo(() => {
-      const entry = getOrCreateAgentChat(chatSessionId);
-      return {
-        chat: entry.chat,
-        config: entry.config,
-        handleToolApprovalResponse: entry.handleToolApprovalResponse,
-        instanceWasPristine:
-          !entry.config.seeded &&
-          entry.chat.messages.length === 0 &&
-          entry.chat.status === "ready",
-      };
-    }, [chatSessionId]);
+  const {
+    chat,
+    config,
+    handleToolApprovalResponse,
+    autoResumeNoticeFor,
+    instanceWasPristine,
+  } = useMemo(() => {
+    const entry = getOrCreateAgentChat(chatSessionId);
+    return {
+      chat: entry.chat,
+      config: entry.config,
+      handleToolApprovalResponse: entry.handleToolApprovalResponse,
+      autoResumeNoticeFor: entry.autoResumeNotice,
+      instanceWasPristine:
+        !entry.config.seeded &&
+        entry.chat.messages.length === 0 &&
+        entry.chat.status === "ready",
+    };
+  }, [chatSessionId]);
   useEffect(() => {
     config.projectId = projectId ?? null;
     config.model = resolvedModel;
@@ -573,11 +584,17 @@ export function useMcpjamAgentSession(
     return stop();
   }, [chatSessionId, stop]);
 
+  // Only once the response has settled. The instance records the notice in
+  // its auto-resume decision, which the SDK makes before this render sees
+  // `ready`.
+  const autoResumeNotice = status === "ready" ? autoResumeNoticeFor() : null;
+
   return {
     chatSessionId,
     messages,
     status,
     error,
+    autoResumeNotice,
     submit,
     stop: stopWithPendingQuestions,
     model: resolvedModel,

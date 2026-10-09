@@ -1851,6 +1851,25 @@ describe("Ask MCPJam refusals", () => {
     },
   );
 
+  it("reads the loop guard's own sentence out of its refusal envelope", () => {
+    // The 409 body the AI SDK folds into the error message. The raw JSON
+    // reads as a crash; the sentence says what happened and what to do.
+    const body = JSON.stringify({
+      code: "AGENT_STEP_LIMIT",
+      message:
+        "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+      details: { reason: "repeated_tool_input_error", steps: 2, maxSteps: 16 },
+    });
+    expect(describeAgentRefusalMessage(body)).toBe(
+      "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+    );
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "AGENT_STEP_LIMIT" })),
+    ).toBe(
+      "This reply reached its step limit, so it was stopped. Send a message to continue.",
+    );
+  });
+
   it("finds a refusal nested as plain text under another code", () => {
     // `collectCodes` only records a `code` PROPERTY, so this payload yields
     // {RATE_LIMITED} — non-empty, but without the code that decides the copy.
