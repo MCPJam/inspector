@@ -167,6 +167,11 @@ import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
+import { useSessionRecordingOrgGuard } from "./hooks/useSessionRecordingOrgGuard";
+import {
+  resolveIdentityOptOut,
+  resolveOrganizationRecordingOptOut,
+} from "./lib/PosthogUtils";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -2999,6 +3004,13 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  // The org list once it is authoritative, for the session-recording opt-out.
+  // `undefined` until then: an empty list reads as "nobody opted out", which
+  // must not be concluded from a list that has not arrived.
+  const loadedOrganizations =
+    isAuthenticated && !isLoadingOrganizations
+      ? sortedOrganizations
+      : undefined;
   useEffect(() => {
     if (isLoadingOrganizations) {
       return;
@@ -3246,7 +3258,9 @@ export default function App() {
     previousWorkOsUserIdRef.current = workOsUserId;
   }, [workOsUser?.id]);
 
-  usePostHogIdentify();
+  usePostHogIdentify({
+    identityOptOut: resolveIdentityOptOut(loadedOrganizations),
+  });
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
@@ -4692,6 +4706,16 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
+  // Organizations can opt out of session recording. The same three
+  // organizations billing reads are "in view", but fail-closed: ANY of them
+  // opting out stops both recorders.
+  useSessionRecordingOrgGuard(
+    resolveOrganizationRecordingOptOut(loadedOrganizations, [
+      routeScopedOrganizationId,
+      activeOrganizationId,
+      activeProject?.organizationId,
+    ]),
+  );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness

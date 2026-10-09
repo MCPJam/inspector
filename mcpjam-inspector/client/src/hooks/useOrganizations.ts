@@ -28,6 +28,13 @@ export interface Organization {
    * surfaces (today: the spend budget) hide themselves for it.
    */
   isPersonal?: boolean;
+  /**
+   * The organization opted out of session recording: no replay (PostHog or
+   * Sentry) while it is in view, and its members are identified to analytics
+   * by id alone. Hand-mirrored from the organization row, which
+   * `getMyOrganizations` returns whole. See `resolveOrganizationRecordingOptOut`.
+   */
+  sessionRecordingOptOut?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;

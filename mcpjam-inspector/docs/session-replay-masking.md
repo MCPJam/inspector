@@ -24,7 +24,7 @@ every `electron-forge start` would stream a developer's renderer DOM into the
 production projects. `HOSTED_MODE` needs no equivalent — it comes from
 `VITE_MCPJAM_HOSTED_MODE`, which only the deployed bundle's config sets.
 
-Two further carve-outs:
+Further carve-outs:
 
 - **`/results/<token>`** does not start a recording. The token in that URL
   *is* the credential; a replay would capture it in the DOM snapshot even
@@ -56,6 +56,34 @@ Two further carve-outs:
   The armed flag is never cleared on the way *in*, only on the way out.
   Stopping makes both probes read false, so `/results/a` → `/results/b` would
   otherwise forget that the guard is what stopped the recorder.
+- **Organizations that opt out.** An organization row with
+  `sessionRecordingOptOut: true` (returned by `organizations:getMyOrganizations`)
+  is never recorded by either recorder while it is in view — the route's
+  organization, the active one, or the active project's; any one of them is
+  enough. Console log capture rides PostHog's recorder, so it stops too.
+
+  **At runtime** `useSessionRecordingOrgGuard` feeds the answer into the same
+  two guards the `/results/` carve-out uses. They hold one armed flag per
+  recorder across both reasons, so leaving `/results/` cannot resume a
+  recorder the organization still wants off, and switching to an organization
+  that records cannot resume one on a credential path. Resume follows the
+  same rule: only what the guard stopped.
+
+  **Before the answer arrives.** The organization list lands seconds after
+  both recorders start. A browser whose last organization in view opted out
+  remembers that (`localStorage`, key `mcpjam:session-recording-org-opt-out`,
+  no organization id in it), and a load with the marker set constructs
+  neither recorder — the hard-load treatment above, for the same flush reason.
+  A stale marker costs one load without replay and is rewritten as soon as the
+  list resolves. The first load on a new browser has no marker: it records
+  until the list arrives, then stops.
+
+  **Identity.** Members of any opted-out organization are identified to
+  PostHog by id alone (`usePostHogIdentify`): name, email and occupation are
+  held back until the organization list has loaded, sent only if no
+  organization opted out, and cleared from the person once per load if one
+  did. This follows membership, not the organization in view, because person
+  properties outlive the page.
 - The `VITE_DISABLE_POSTHOG_LOCAL` branch sets `disable_session_recording`
   explicitly. `opt_out_capturing_by_default` suppresses event *sending*, not
   the recorder *loading* — without this, dev builds still fetched

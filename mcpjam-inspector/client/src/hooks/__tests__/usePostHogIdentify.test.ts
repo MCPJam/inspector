@@ -8,8 +8,10 @@ const mockState = vi.hoisted(() => ({
     register: vi.fn(),
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
+    unsetPersonProperties: vi.fn(),
     updateFlags: vi.fn(),
   },
+  identityOptOut: false as boolean | undefined,
   auth: {
     user: null as {
       id: string;
@@ -57,6 +59,10 @@ vi.mock("@/hooks/use-actor-key", () => ({
   useActorKey: () => mockState.actorKey,
 }));
 
+/** Reads the opt-out on every render, so a test can flip it between renders. */
+const identify = () =>
+  usePostHogIdentify({ identityOptOut: mockState.identityOptOut });
+
 describe("usePostHogIdentify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,6 +71,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.convexUser = null;
     mockState.actorKey = null;
+    mockState.identityOptOut = false;
     mockState.detectPlatform.mockReturnValue("mac");
   });
 
@@ -73,7 +80,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.actorKey = "user_123";
 
-    const { rerender } = renderHook(() => usePostHogIdentify());
+    const { rerender } = renderHook(identify);
     rerender();
 
     expect(mockState.refreshServerFeatureFlagsForActor).toHaveBeenCalledTimes(
@@ -95,7 +102,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.actorKey = "user_123";
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
@@ -115,7 +122,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.actorKey = "guest_abc";
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
       // Set for EVERY actor, guests included, so a "self_hosted" flag cohort
@@ -132,7 +139,7 @@ describe("usePostHogIdentify", () => {
     mockState.auth.user = null;
     mockState.actorKey = "guest_abc";
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
   });
@@ -141,7 +148,7 @@ describe("usePostHogIdentify", () => {
     mockState.auth.user = null;
     mockState.actorKey = null;
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.identify).not.toHaveBeenCalled();
     expect(mockState.posthog.register).not.toHaveBeenCalled();
@@ -152,7 +159,7 @@ describe("usePostHogIdentify", () => {
     mockState.auth.user = null;
     mockState.actorKey = "guest_abc";
 
-    const { rerender } = renderHook(() => usePostHogIdentify());
+    const { rerender } = renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
     expect(mockState.posthog.register).toHaveBeenCalledTimes(1);
@@ -175,7 +182,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.actorKey = "user_123";
 
-    const { rerender } = renderHook(() => usePostHogIdentify());
+    const { rerender } = renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
@@ -226,7 +233,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.actorKey = "guest_abc";
 
-    const { rerender } = renderHook(() => usePostHogIdentify());
+    const { rerender } = renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
       // Set for EVERY actor, guests included, so a "self_hosted" flag cohort
@@ -274,7 +281,7 @@ describe("usePostHogIdentify", () => {
     mockState.actorKey = "user_123";
     mockState.convexUser = { occupation: "  Platform Engineer  " };
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
@@ -297,7 +304,7 @@ describe("usePostHogIdentify", () => {
     mockState.actorKey = "user_123";
     mockState.convexUser = { occupation: "   " };
 
-    renderHook(() => usePostHogIdentify());
+    renderHook(identify);
 
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
@@ -305,6 +312,113 @@ describe("usePostHogIdentify", () => {
       name: "Taylor Smith",
       first_name: "Taylor",
       last_name: "Smith",
+    });
+  });
+
+  describe("organizations that opt out of session recording", () => {
+    beforeEach(() => {
+      mockState.auth.user = {
+        id: "user_123",
+        email: "user@example.com",
+        firstName: "Taylor",
+        lastName: "Smith",
+      };
+      mockState.convexAuth.isAuthenticated = true;
+      mockState.actorKey = "user_123";
+      mockState.convexUser = { occupation: "Platform Engineer" };
+    });
+
+    it("identifies by id alone until the organizations have loaded, then sends the rest", () => {
+      mockState.identityOptOut = undefined;
+
+      const { rerender } = renderHook(identify);
+
+      expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+      expect(mockState.posthog.identify).toHaveBeenLastCalledWith("user_123", {
+        deployment: "self_hosted",
+      });
+      // Attribution does not wait on the organization list.
+      expect(mockState.posthog.register).toHaveBeenCalledWith({
+        user_id: "user_123",
+      });
+
+      mockState.identityOptOut = false;
+      rerender();
+
+      expect(mockState.posthog.identify).toHaveBeenLastCalledWith("user_123", {
+        deployment: "self_hosted",
+        email: "user@example.com",
+        name: "Taylor Smith",
+        first_name: "Taylor",
+        last_name: "Smith",
+        occupation: "Platform Engineer",
+      });
+      expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
+    });
+
+    it("never sends name, email or occupation for a member of an opted-out organization", () => {
+      mockState.identityOptOut = undefined;
+
+      const { rerender } = renderHook(identify);
+      mockState.identityOptOut = true;
+      rerender();
+
+      for (const [, properties] of mockState.posthog.identify.mock.calls) {
+        expect(properties).toEqual({ deployment: "self_hosted" });
+      }
+    });
+
+    it("clears identity sent before the organization opted out, once per actor", () => {
+      mockState.identityOptOut = true;
+
+      const { rerender } = renderHook(identify);
+      rerender();
+      rerender();
+
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledWith([
+        "email",
+        "name",
+        "first_name",
+        "last_name",
+        "occupation",
+      ]);
+      // After identify, so a first-time merge has landed on the real person.
+      expect(
+        mockState.posthog.identify.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mockState.posthog.unsetPersonProperties.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("leaves guests alone: they carry no identity to clear", () => {
+      mockState.auth.user = null;
+      mockState.convexAuth.isAuthenticated = false;
+      mockState.actorKey = "guest_abc";
+      mockState.identityOptOut = true;
+
+      renderHook(identify);
+
+      expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
+        deployment: "self_hosted",
+      });
+      expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
+    });
+
+    it("does not throw against a posthog-js without unsetPersonProperties", () => {
+      mockState.identityOptOut = true;
+      const { unsetPersonProperties } = mockState.posthog;
+      // A partial stand-in, or a host pinning an older posthog-js.
+      Reflect.deleteProperty(mockState.posthog, "unsetPersonProperties");
+
+      try {
+        expect(() => renderHook(identify)).not.toThrow();
+        expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+          deployment: "self_hosted",
+        });
+      } finally {
+        mockState.posthog.unsetPersonProperties = unsetPersonProperties;
+      }
     });
   });
 });

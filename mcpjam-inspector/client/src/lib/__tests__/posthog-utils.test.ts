@@ -426,6 +426,197 @@ describe("PosthogUtils", () => {
           ?.get,
       ).toBeTypeOf("function");
     });
+
+    describe("organization opt-out", () => {
+      // The marker survives `vi.resetModules()`, which is the point of it —
+      // and the reason every test here must leave storage clean.
+      afterEach(() => {
+        window.localStorage.removeItem("mcpjam:session-recording-org-opt-out");
+      });
+
+      it("stops recording while an opted-out organization is in view", async () => {
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const { setOrganizationRecordingOptOut, syncSessionRecordingForPath } =
+          await import("../PosthogUtils");
+        const client = recorderStub(true);
+
+        setOrganizationRecordingOptOut(true);
+        syncSessionRecordingForPath(client, "/servers");
+        expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
+
+        // Navigation inside the organization keeps it stopped.
+        syncSessionRecordingForPath(client, "/tools");
+        expect(client.startSessionRecording).not.toHaveBeenCalled();
+      });
+
+      it("resumes on a switch to an organization that records", async () => {
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const { setOrganizationRecordingOptOut, syncSessionRecordingForPath } =
+          await import("../PosthogUtils");
+        const client = recorderStub(true);
+
+        setOrganizationRecordingOptOut(true);
+        syncSessionRecordingForPath(client, "/servers");
+        setOrganizationRecordingOptOut(false);
+        syncSessionRecordingForPath(client, "/servers");
+
+        expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+      });
+
+      it("never resumes a recorder that was not running when the organization opted out", async () => {
+        // A session PostHog's sampling declined: switching organizations must
+        // not be a back door that turns recording on.
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const { setOrganizationRecordingOptOut, syncSessionRecordingForPath } =
+          await import("../PosthogUtils");
+        const client = recorderStub(false);
+
+        setOrganizationRecordingOptOut(true);
+        syncSessionRecordingForPath(client, "/servers");
+        setOrganizationRecordingOptOut(false);
+        syncSessionRecordingForPath(client, "/servers");
+
+        expect(client.startSessionRecording).not.toHaveBeenCalled();
+      });
+
+      it("leaving /results/ does not resume while the organization still opts out", async () => {
+        // One armed flag across both reasons: the path guard's resume must
+        // wait for the organization too.
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const { setOrganizationRecordingOptOut, syncSessionRecordingForPath } =
+          await import("../PosthogUtils");
+        const client = recorderStub(true);
+
+        syncSessionRecordingForPath(client, "/results/secret-token");
+        setOrganizationRecordingOptOut(true);
+        syncSessionRecordingForPath(client, "/servers");
+        expect(client.startSessionRecording).not.toHaveBeenCalled();
+
+        setOrganizationRecordingOptOut(false);
+        syncSessionRecordingForPath(client, "/servers");
+        expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+      });
+
+      it("switching organizations does not resume on a credential path", async () => {
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const { setOrganizationRecordingOptOut, syncSessionRecordingForPath } =
+          await import("../PosthogUtils");
+        const client = recorderStub(true);
+
+        setOrganizationRecordingOptOut(true);
+        syncSessionRecordingForPath(client, "/servers");
+        syncSessionRecordingForPath(client, "/results/secret-token");
+        setOrganizationRecordingOptOut(false);
+        syncSessionRecordingForPath(client, "/results/secret-token");
+        expect(client.startSessionRecording).not.toHaveBeenCalled();
+
+        syncSessionRecordingForPath(client, "/servers");
+        expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+      });
+
+      it("a load after an opted-out organization was in view starts no recorder", async () => {
+        // Both recorders start seconds before the organization list arrives.
+        // The remembered answer keeps that window closed for a returning
+        // member, and is cleared by the next "records" answer.
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const first = await import("../PosthogUtils");
+        first.setOrganizationRecordingOptOut(true);
+
+        vi.resetModules();
+        const second = await import("../PosthogUtils");
+        expect(second.isOrganizationRecordingOptOutRemembered()).toBe(true);
+        expect(second.shouldRecordSession()).toBe(false);
+        expect(second.options.disable_session_recording).toBe(true);
+
+        second.setOrganizationRecordingOptOut(false);
+        vi.resetModules();
+        const third = await import("../PosthogUtils");
+        expect(third.shouldRecordSession()).toBe(true);
+        expect(third.options.disable_session_recording).toBe(false);
+      });
+
+      it("never throws when storage is unavailable", async () => {
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.resetModules();
+        const {
+          isOrganizationRecordingOptOutRemembered,
+          setOrganizationRecordingOptOut,
+          syncSessionRecordingForPath,
+        } = await import("../PosthogUtils");
+        // The test setup's afterEach puts the store-backed setItem back.
+        vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+          throw new Error("blocked");
+        });
+        const client = recorderStub(true);
+
+        expect(() => setOrganizationRecordingOptOut(true)).not.toThrow();
+        // The runtime guard still holds for this page.
+        syncSessionRecordingForPath(client, "/servers");
+        expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
+        expect(isOrganizationRecordingOptOutRemembered()).toBe(false);
+      });
+    });
+  });
+
+  describe("resolveOrganizationRecordingOptOut", () => {
+    const orgs = [
+      { _id: "org_records" },
+      { _id: "org_opted_out", sessionRecordingOptOut: true },
+    ];
+
+    it("is unknown until the list has loaded or something is in view", async () => {
+      const { resolveOrganizationRecordingOptOut } =
+        await import("../PosthogUtils");
+
+      expect(
+        resolveOrganizationRecordingOptOut(undefined, ["org_opted_out"]),
+      ).toBeUndefined();
+      expect(
+        resolveOrganizationRecordingOptOut(orgs, [null, undefined]),
+      ).toBeUndefined();
+    });
+
+    it("opts out when ANY organization in view does", async () => {
+      const { resolveOrganizationRecordingOptOut } =
+        await import("../PosthogUtils");
+
+      expect(
+        resolveOrganizationRecordingOptOut(orgs, [
+          "org_records",
+          null,
+          "org_opted_out",
+        ]),
+      ).toBe(true);
+      expect(resolveOrganizationRecordingOptOut(orgs, ["org_records"])).toBe(
+        false,
+      );
+      // An opted-out organization the user belongs to but is not looking at.
+      expect(
+        resolveOrganizationRecordingOptOut(orgs, ["org_records", "org_gone"]),
+      ).toBe(false);
+    });
+  });
+
+  describe("resolveIdentityOptOut", () => {
+    it("follows membership, and is unknown until the list loads", async () => {
+      const { resolveIdentityOptOut } = await import("../PosthogUtils");
+
+      expect(resolveIdentityOptOut(undefined)).toBeUndefined();
+      expect(resolveIdentityOptOut([])).toBe(false);
+      expect(resolveIdentityOptOut([{ _id: "org_records" }])).toBe(false);
+      expect(
+        resolveIdentityOptOut([
+          { _id: "org_records" },
+          { _id: "org_opted_out", sessionRecordingOptOut: true },
+        ]),
+      ).toBe(true);
+    });
   });
 
   describe("landing-host pageview capture", () => {

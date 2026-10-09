@@ -155,6 +155,25 @@ describe("client sentry init", () => {
     expect(config.replaysSessionSampleRate).toBe(0);
     expect(config.integrations).toHaveLength(1);
   });
+
+  it("never starts a replay for a load after an opted-out organization was in view", async () => {
+    // Same reason as /results/: the organization list arrives after init,
+    // and stopping then would flush what was already buffered.
+    window.localStorage.setItem("mcpjam:session-recording-org-opt-out", "1");
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.resetModules();
+    const { initSentry } = await import("../sentry");
+
+    try {
+      initSentry();
+      const config = init.mock.calls[0][0];
+      expect(replayIntegration).not.toHaveBeenCalled();
+      expect(config.replaysSessionSampleRate).toBe(0);
+      expect(config.integrations).toHaveLength(1);
+    } finally {
+      window.localStorage.removeItem("mcpjam:session-recording-org-opt-out");
+    }
+  });
 });
 
 describe("syncSentryReplayForPath", () => {
@@ -225,6 +244,67 @@ describe("syncSentryReplayForPath", () => {
 
     expect(replay.start).not.toHaveBeenCalled();
     expect(replay.stop).not.toHaveBeenCalled();
+  });
+
+  describe("organization opt-out", () => {
+    afterEach(() => {
+      window.localStorage.removeItem("mcpjam:session-recording-org-opt-out");
+    });
+
+    it("stops an active replay while an opted-out organization is in view and resumes it on a switch", async () => {
+      const { syncSentryReplayForPath } = await import("../sentry");
+      const { setOrganizationRecordingOptOut } =
+        await import("../PosthogUtils");
+      const replay = stubReplay(true);
+      replay.stop.mockImplementation(() =>
+        replay.getReplayId.mockReturnValue(undefined),
+      );
+
+      setOrganizationRecordingOptOut(true);
+      syncSentryReplayForPath("/servers");
+      syncSentryReplayForPath("/tools");
+      expect(replay.stop).toHaveBeenCalledTimes(2);
+      expect(replay.start).not.toHaveBeenCalled();
+
+      setOrganizationRecordingOptOut(false);
+      syncSentryReplayForPath("/tools");
+      expect(replay.start).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not resume a replay that was never running", async () => {
+      // `start()` bypasses `replaysSessionSampleRate`: an organization switch
+      // must not record a session sampling never selected.
+      const { syncSentryReplayForPath } = await import("../sentry");
+      const { setOrganizationRecordingOptOut } =
+        await import("../PosthogUtils");
+      const replay = stubReplay(false);
+
+      setOrganizationRecordingOptOut(true);
+      syncSentryReplayForPath("/servers");
+      setOrganizationRecordingOptOut(false);
+      syncSentryReplayForPath("/servers");
+
+      expect(replay.start).not.toHaveBeenCalled();
+    });
+
+    it("leaving /results/ does not resume while the organization still opts out", async () => {
+      const { syncSentryReplayForPath } = await import("../sentry");
+      const { setOrganizationRecordingOptOut } =
+        await import("../PosthogUtils");
+      const replay = stubReplay(true);
+      replay.stop.mockImplementation(() =>
+        replay.getReplayId.mockReturnValue(undefined),
+      );
+
+      syncSentryReplayForPath("/results/secret-token");
+      setOrganizationRecordingOptOut(true);
+      syncSentryReplayForPath("/servers");
+      expect(replay.start).not.toHaveBeenCalled();
+
+      setOrganizationRecordingOptOut(false);
+      syncSentryReplayForPath("/servers");
+      expect(replay.start).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("is a no-op on a self-hosted build", async () => {

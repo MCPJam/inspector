@@ -6,6 +6,7 @@ import { desktopSentryFallback } from "./sentry-identity";
 import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
+  isOrganizationRecordingOptedOut,
   shouldRecordSession,
 } from "./PosthogUtils";
 
@@ -82,7 +83,8 @@ export function initSentry() {
  *
  * Sentry Replay records DOM and text exactly like rrweb, so gating only
  * PostHog would still leave `/results/<token>` in a Sentry replay. Stop on the
- * way in, resume on the way out.
+ * way in, resume on the way out. The organization opt-out shares this guard
+ * and its armed flag, exactly as on the PostHog side.
  *
  * Never throws: this runs on a render path, and the replay integration is
  * absent entirely on surfaces where replay is not permitted.
@@ -98,7 +100,10 @@ export function syncSentryReplayForPath(pathname: string): void {
       >("Replay");
     if (!replay) return;
 
-    if (isCredentialBearingPath(pathname)) {
+    if (
+      isCredentialBearingPath(pathname) ||
+      isOrganizationRecordingOptedOut()
+    ) {
       // Arm the resume only if a replay was actually running, so leaving the
       // route cannot manufacture one — but never DISARM here. `stop()` clears
       // the replay id, so navigating `/results/a` → `/results/b` would

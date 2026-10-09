@@ -314,8 +314,112 @@ export function isCredentialBearingPath(
   );
 }
 
+/**
+ * Organizations can opt out of session recording.
+ *
+ * The signal is `sessionRecordingOptOut` on the organization row, which
+ * `organizations:getMyOrganizations` already returns. It is a setting of its
+ * own on purpose, not the plan tier and not the model data policy: a
+ * recording commitment must not lapse when a plan changes, and asking for no
+ * recording must not narrow which models an organization can run.
+ *
+ * Recording follows the organizations IN VIEW (the route's, the active one,
+ * the active project's): any of them opting out stops both recorders.
+ * Identity follows MEMBERSHIP instead (`resolveIdentityOptOut`), because
+ * person properties outlive the page and the organization switch.
+ */
+export interface RecordingOptOutOrganization {
+  _id: string;
+  sessionRecordingOptOut?: boolean;
+}
+
+/**
+ * Whether an organization in view opted out. `undefined` means not known yet
+ * (the list has not loaded, or nothing is in view), and callers must decide
+ * nothing from it: no stop, no resume, no rewrite of the remembered answer.
+ */
+export function resolveOrganizationRecordingOptOut(
+  organizations: readonly RecordingOptOutOrganization[] | undefined,
+  organizationIdsInView: ReadonlyArray<string | null | undefined>,
+): boolean | undefined {
+  if (!organizations) return undefined;
+  const inView = organizationIdsInView.filter((id): id is string => !!id);
+  if (inView.length === 0) return undefined;
+  return organizations.some(
+    (org) => org.sessionRecordingOptOut === true && inView.includes(org._id),
+  );
+}
+
+/**
+ * Whether the signed-in person belongs to ANY organization that opted out.
+ * `undefined` until the list has loaded; `usePostHogIdentify` sends the id
+ * alone until this is exactly `false`.
+ */
+export function resolveIdentityOptOut(
+  organizations: readonly RecordingOptOutOrganization[] | undefined,
+): boolean | undefined {
+  if (!organizations) return undefined;
+  return organizations.some((org) => org.sessionRecordingOptOut === true);
+}
+
+/**
+ * The opt-out, remembered across page loads on this browser.
+ *
+ * Both recorders start at init, seconds before the organization list
+ * arrives, so a returning member of an opted-out organization would otherwise
+ * be recorded at the top of every load. With the marker set, neither recorder
+ * is constructed for that load at all — the same treatment as a hard load onto
+ * `/results/<token>`, and for the same reason (`replay.stop()` flushes).
+ *
+ * It holds no organization id, only "the last organizations in view here
+ * opted out". A stale marker costs one page load without replay; it is
+ * rewritten from the server's answer as soon as the list resolves.
+ */
+const ORGANIZATION_RECORDING_OPT_OUT_KEY =
+  "mcpjam:session-recording-org-opt-out";
+
+export function isOrganizationRecordingOptOutRemembered(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem(ORGANIZATION_RECORDING_OPT_OUT_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+let organizationRecordingOptOut = false;
+
+export function isOrganizationRecordingOptedOut(): boolean {
+  return organizationRecordingOptOut;
+}
+
+/**
+ * Record the in-view organizations' answer for the runtime guards
+ * (`syncSessionRecordingForPath`, `syncSentryReplayForPath`) and remember it
+ * for the next load. Call it only with a resolved answer — never with a
+ * guess from a list that is still loading. Never throws.
+ */
+export function setOrganizationRecordingOptOut(optedOut: boolean): void {
+  organizationRecordingOptOut = optedOut;
+  try {
+    if (optedOut) {
+      window.localStorage?.setItem(ORGANIZATION_RECORDING_OPT_OUT_KEY, "1");
+    } else {
+      window.localStorage?.removeItem(ORGANIZATION_RECORDING_OPT_OUT_KEY);
+    }
+  } catch {
+    // Storage blocked: the runtime guard still holds for this page.
+  }
+}
+
 export function shouldRecordSession(): boolean {
-  return isErrorCaptureSurface() && !isCredentialBearingPath();
+  return (
+    isErrorCaptureSurface() &&
+    !isCredentialBearingPath() &&
+    !isOrganizationRecordingOptOutRemembered()
+  );
 }
 
 /**
@@ -326,6 +430,12 @@ export function shouldRecordSession(): boolean {
  * in-app route: a user who lands anywhere else and then follows a results
  * link already has an active recorder, and rrweb snapshots the address bar.
  * Call this on navigation so the token-bearing page is never in a replay.
+ *
+ * The same guard enforces the organization opt-out
+ * (`setOrganizationRecordingOptOut`). Two reasons to hold the recorder stopped,
+ * ONE armed flag between them: leaving `/results/` must not resume a recorder
+ * the organization still wants off, and switching organizations must not
+ * resume one a credential path still needs off.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
@@ -342,7 +452,7 @@ export function syncSessionRecordingForPath(
 ): void {
   try {
     if (!isErrorCaptureSurface()) return;
-    if (isCredentialBearingPath(pathname)) {
+    if (isCredentialBearingPath(pathname) || organizationRecordingOptOut) {
       // Arm the resume only if the recorder was ACTUALLY running. The build
       // flag is not a proxy for that: PostHog's own project-side sampling can
       // decline a session, and resuming one it declined would both break
