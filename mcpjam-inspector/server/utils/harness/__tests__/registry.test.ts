@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
@@ -21,6 +23,16 @@ vi.mock("../claude-code-bootstrap.js", async (original) => {
   return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
 });
 import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
+import {
+  claudeCodeBridgeHasTypedErrors,
+  createHostedClaudeCodeHarness,
+} from "../claude-code-typed-errors.js";
+vi.mock("../codex-appserver/index.js", async (original) => {
+  const actual = await original<typeof import("../codex-appserver/index.js")>();
+  return { ...actual, createCodexAppServer: vi.fn(actual.createCodexAppServer) };
+});
+import { createCodexAppServer } from "../codex-appserver/index.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -31,17 +43,18 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: MCP servers arrive as HOST-EXECUTED tools (the CLI never makes an
-    // MCP tool model-callable in the mode the SDK drives), no native plugin
-    // install, can't pause for tool approval — and skills ARE delivered
-    // (INS-8), under its own root.
+    // Codex: MCP servers arrive as HOST-EXECUTED tools (MCPJam's gate is the
+    // single authority), no native plugin install, pauses for tool approval on
+    // the app-server adapter — and skills ARE delivered (INS-8), under its own
+    // root.
+    expect(a.transport).toBe("app-server");
     expect(a.mcpDelivery).toBe("host-executed");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
-    expect(a.supportsNativeToolApproval).toBe(false);
+    expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
-    expect(a.fileChangeToolName).toBe("fileChange");
+    expect(a.fileChangeToolName).toBeUndefined();
   });
 
   it("every adapter that advertises a capability carries its strategy", () => {
@@ -257,7 +270,6 @@ describe("harness registry", () => {
     // omitted the override the wire id would not be the model asked for.
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "claude-fable-5",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -288,6 +300,111 @@ describe("harness registry", () => {
     // …and still nothing for a non-Anthropic or malformed id.
     expect(overridesFor("gpt-5")).toBeUndefined();
     expect(overridesFor("claude-$(id)")).toBeUndefined();
+  });
+
+  it("the HOSTED bridge carries TYPED terminal errors for provider failures", async () => {
+    // A provider 429/5xx the CLI saw must reach the host as structured fields,
+    // not a sentence. The pinned bridge must take the patch — a version bump
+    // that moves an anchor leaves the bridge untyped at runtime (safe) but
+    // fails HERE, loudly.
+    const harness = createHostedClaudeCodeHarness({
+      auth: {
+        AI_GATEWAY_API_KEY: "test",
+        AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+      },
+    });
+    const bootstrap = await harness.getBootstrap?.();
+    const content =
+      bootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    expect(claudeCodeBridgeHasTypedErrors(content)).toBe(true);
+    // ...AND the background drain: Group D leaves every typed-errors anchor
+    // in place, so the hosted bridge carries both.
+    expect(content).toContain("function mcpjamBackgroundDrainReducer(");
+    // The SHARED bootstrap — a local runtime pack input — is untouched.
+    const sharedBootstrap = await createClaudeCodeHarness().getBootstrap?.();
+    const sharedBridge =
+      sharedBootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    expect(claudeCodeBridgeHasTypedErrors(sharedBridge)).toBe(false);
+    expect(content).toContain(
+      "error: mcpjamTypedTerminalError(normalized, streamEventState)",
+    );
+    // Observation runs for api_retry AND for every other message.
+    expect(
+      content.split("mcpjamObserveModelCall(state, msg);").length - 1,
+    ).toBe(2);
+    // Still a valid ES module after every patch group.
+    const checkDir = mkdtempSync(join(tmpdir(), "cc-bridge-"));
+    const checkFile = join(checkDir, "bridge.mjs");
+    writeFileSync(checkFile, content);
+    expect(() =>
+      execFileSync(process.execPath, ["--check", checkFile], { stdio: "pipe" }),
+    ).not.toThrow();
+
+    const start = content.indexOf("var MCPJAM_CC_TYPED_ERROR_CATEGORIES");
+    const end = content.indexOf(
+      "\n}\n",
+      content.indexOf("function mcpjamTypedTerminalError("),
+    );
+    const helpers = new Function(
+      `${content.slice(start, end + 3)}; return { mcpjamObserveModelCall, mcpjamTypedTerminalError };`,
+    )() as {
+      mcpjamObserveModelCall: (state: object, msg: object) => void;
+      mcpjamTypedTerminalError: (message: string, state: object) => unknown;
+    };
+
+    // A retried 529 that never recovered → typed, with the upstream status.
+    const state: Record<string, unknown> = {};
+    helpers.mcpjamObserveModelCall(state, {
+      type: "system",
+      subtype: "api_retry",
+      error_status: 529,
+      error: "server_error",
+    });
+    expect(
+      helpers.mcpjamTypedTerminalError("API Error: overloaded", state),
+    ).toEqual({
+      name: "HarnessProviderError",
+      message: "API Error: overloaded",
+      source: "model",
+      code: "claude_code_server_error",
+      httpStatus: 529,
+    });
+
+    // A retry that RECOVERED (a later successful assistant message) must not
+    // label a later, unrelated failure.
+    helpers.mcpjamObserveModelCall(state, { type: "assistant", message: {} });
+    expect(helpers.mcpjamTypedTerminalError("max turns", state)).toBe(
+      "max turns",
+    );
+
+    // The SDK's typed assistant category alone is enough.
+    helpers.mcpjamObserveModelCall(state, {
+      type: "assistant",
+      error: "rate_limit",
+    });
+    expect(
+      helpers.mcpjamTypedTerminalError("rate limited", state),
+    ).toMatchObject({ code: "claude_code_rate_limit" });
+
+    // A sub-agent's messages never drive the parent turn's evidence.
+    const fresh: Record<string, unknown> = {};
+    helpers.mcpjamObserveModelCall(fresh, {
+      type: "assistant",
+      error: "rate_limit",
+      parent_tool_use_id: "toolu_1",
+    });
+    expect(helpers.mcpjamTypedTerminalError("x", fresh)).toBe("x");
+
+    // An unknown category without a status stays untyped (no prose guessing).
+    helpers.mcpjamObserveModelCall(fresh, {
+      type: "assistant",
+      error: "invalid_request",
+    });
+    expect(helpers.mcpjamTypedTerminalError("bad request", fresh)).toBe(
+      "bad request",
+    );
   });
 
   it("claude-code maps an unverified Anthropic id to itself, never to the CLI default", () => {
@@ -324,10 +441,7 @@ describe("harness registry", () => {
         "@anthropic-ai/claude-code"
       ],
     ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
-    expect(
-      bridgePkg("@ai-sdk/harness-codex").dependencies["@openai/codex-sdk"],
-    ).toBe(HARNESS_PINNED_VERSIONS.codex);
-    // The app-server transport pins the same CLI.
+    // Codex's app-server bootstrap pins its CLI itself.
     expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
@@ -380,6 +494,16 @@ function createEmitStreamEvent({
     }
   };
 }
+function createPermissionOptions(input) {
+  return {
+    canUseTool: async (toolName, toolInput, options) => {
+      const approvalId = options.toolUseID;
+      input.approvalRequestedToolUseIds.add(approvalId);
+      const decision = await input.turn.requestToolApproval(approvalId);
+      return decision;
+    }
+  };
+}
 async function drive() {
   const permissionOptions = createPermissionOptions({
     start,
@@ -405,7 +529,109 @@ const toUserMessage = (options) => ({
   },
   parent_tool_use_id: null,
   uuid: options.messageId
-});`,
+});
+function emitUserToolResults(msg) {
+    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
+      emitTerminalError(msg.patch.error);
+      return;
+    }
+    if (type === "user" && msg.message?.content) {
+      return;
+    }
+}
+async function runBridge(options) {
+  const handleInbound = async (msg, ws) => {
+    switch (msg.type) {
+      case "resume":
+        activeSocket = ws;
+        replay(ws, msg.lastSeenEventId);
+        return;
+    }
+  };
+  wss.on("connection", (ws, req) => {
+    ws.on("close", () => {
+      if (activeSocket === ws) {
+        activeSocket = void 0;
+      }
+    });
+  });
+}
+async function runTurn(start, turn) {
+  const onHostAbort = () => {
+    if (gracefulAbort) {
+      gracefulAbort();
+    } else {
+      abortCtl.abort();
+    }
+  };
+  const streamEventState = createClaudeStreamEventState();
+  const queryInput = createQueryInput({
+    initialUserMessage: start.prompt,
+    userMessages: turn.experimental_userMessages,
+    abortSignal: abortCtl.signal
+  });
+  const skillsOption = toClaudeSkillsOption(start.skills);
+  const questionPreToolUseHook = createQuestionPreToolUseHook({
+    turn
+  });
+  const emitTerminalError = (message) => {
+    const normalized = message?.trim();
+    if (!normalized || emittedTerminalError || emittedTerminalFinish) return;
+    streamEventState.observedTerminalError = normalized;
+  };
+  try {
+    for await (const msg of q) {
+      emitStreamEvent(msg);
+      if (type === "result") {
+        if (msg.subtype === "success") {
+          if (typeof msg.total_cost_usd === "number") {
+            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;
+          }
+          queryInput.observeResult();
+          if (!queryInput.hasActiveUserMessages()) {
+            queryInput.close();
+            break;
+          }
+        }
+        continue;
+      }
+      if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) {
+        queryInput.close();
+        break;
+      }
+    }
+  } catch (err) {
+    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
+      turn.emitError({ error: err, message: "claude-code turn failed" });
+    }
+    return;
+  } finally {
+    gracefulAbort = void 0;
+  }
+  if (emittedTerminalError) return;
+  emittedTerminalFinish = true;
+}
+function createQueryInput({
+  initialUserMessage,
+  userMessages,
+  abortSignal
+}) {
+  return {
+    next() {
+      return {
+              value: toUserMessage({
+                  text: initialUserMessage,
+                  messageId: randomUUID3()
+                }),
+              done: false
+      };
+    }
+  };
+}
+function addUsage(total, usage) {
+  if (total == null) return usage;
+  return { ...total, ...usage };
+}`,
           },
         ],
         commands: [],
@@ -462,6 +688,53 @@ const toUserMessage = (options) => ({
     // instead of rewriting bridge source. The patched bridge must NOT carry
     // the old `??=` write — reintroducing it would shadow the configured env.
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    // Group D, the background drain: one decision replaces both `break`s,
+    // the prompt carries the uuid stale results are judged against, cost is
+    // the latest cumulative figure, and Group B's dedup resets per result.
+    expect(bridge?.content).toContain("function mcpjamBackgroundDrainReducer(");
+    expect(bridge?.content).toContain(
+      "if (!mcpjamAnswer.keepReading && !queryInput.hasActiveUserMessages()) {",
+    );
+    expect(bridge?.content).toContain("!mcpjamDrainStep.keepReading");
+    expect(bridge?.content).toContain(
+      "if (mcpjamDrainStep.ignoreResult || mcpjamDrainStep.skip) continue;",
+    );
+    // The server suspends a turn by detaching from the bridge, and resumes it
+    // by reattaching: both reach the drain, which pauses on the first.
+    expect(bridge?.content).toContain(
+      "activeSocket = ws;\n        mcpjamHostPresence.onAttach?.();",
+    );
+    expect(bridge?.content).toContain(
+      "activeSocket = void 0;\n        mcpjamHostPresence.onDetach?.();",
+    );
+    expect(bridge?.content).toContain(
+      "messageId: initialMessageId ?? randomUUID3()",
+    );
+    expect(bridge?.content).toContain("totalCostUsd = msg.total_cost_usd;");
+    expect(bridge?.content).not.toContain("(totalCostUsd ?? 0) +");
+    expect(bridge?.content).toContain(
+      'if (type === "user" && Array.isArray(msg.message?.content)) {',
+    );
+    expect(bridge?.content).toContain("streamedAssistantText = false;");
+    // Approvals go through the vendor's own gate: a background agent's
+    // request is denied there, and a main-thread wait is tracked.
+    expect(bridge?.content).not.toContain("permissionOptions.canUseTool = async");
+    expect(bridge?.content).toContain(
+      "const mcpjamDenial = await input.mcpjamDenyBackgroundApproval?.(toolName, options);",
+    );
+    expect(bridge?.content).toContain(
+      "mcpjamRequestToolApproval: (approvalId) => mcpjamDrainController.trackApproval(turn.requestToolApproval(approvalId)),",
+    );
+    // A terminal error is downgraded only once the drain is engaged.
+    expect(bridge?.content).toContain(
+      "if (mcpjamDrainState.drainStartedAt !== void 0) {",
+    );
+    // The abort listener never reads an uninitialized controller.
+    const content = bridge?.content ?? "";
+    expect(content.indexOf("let mcpjamDrainController;")).toBeGreaterThan(-1);
+    expect(content.indexOf("let mcpjamDrainController;")).toBeLessThan(
+      content.indexOf("const onHostAbort = () => {"),
+    );
   });
 
   it("throws loudly if the adapter stops setting parent_tool_use_id itself", async () => {
@@ -478,7 +751,7 @@ const toUserMessage = (options) => ({
             path: "/tmp/harness/claude-code/bridge.mjs",
             // Already-patched markers so the group patches are skipped and
             // only the verification runs — isolating the assertion under test.
-            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor;`,
+            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor; mcpjamBackgroundDrainReducer; mcpjamForwardSubagentStep;`,
           },
         ],
         commands: [],
@@ -493,7 +766,6 @@ const toUserMessage = (options) => ({
   it("patches the installed Claude Code bridge bootstrap", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         // Stable's environment auth arm (the canary `gateway` object is gone).
         auth: {
           AI_GATEWAY_API_KEY: "test",
@@ -524,11 +796,41 @@ const toUserMessage = (options) => ({
     // now, not a bridge-source rewrite (the installed bridge has no reference
     // at all, so a reappearing one means the patch regressed to the old form).
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    // Group D took on the INSTALLED bridge, every anchor exactly once.
+    expect(bridge?.content.match(/function mcpjamBackgroundDrainReducer\(/g)).toHaveLength(1);
+    expect(bridge?.content.match(/mcpjamDrainController\.observe\(msg\)/g)).toHaveLength(1);
+    expect(bridge?.content.match(/mcpjamDrainController\.answer\(\)/g)).toHaveLength(1);
+    // Group E: a subagent's steps are forwarded inside the guard, once.
+    expect(
+      bridge?.content.match(/mcpjamForwardSubagentStep\(state, emit, msg\);/g),
+    ).toHaveLength(1);
+  });
+
+  it("refuses to half-patch a turn loop whose shape moved", async () => {
+    const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }) as any);
+    const vendor = (await createClaudeCode({
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }).getBootstrap!())!;
+    const moved = patchClaudeCodeHarnessBootstrap({
+      ...original,
+      getBootstrap: async () => ({
+        ...vendor,
+        files: vendor.files.map((file) => ({
+          ...file,
+          content: file.content.replace(
+            "      emitStreamEvent(msg);\n      if (type === \"result\") {",
+            "      emitStreamEvent(msg);\n\n      if (type === \"result\") {",
+          ),
+        })),
+      }),
+    });
+    await expect(moved.getBootstrap?.()).rejects.toThrow("turn loop shape changed");
   });
 
   it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
     const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
-      model: "haiku",
       auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
     }) as any);
     const bootstrap = (await original.getBootstrap?.())!;
@@ -547,6 +849,8 @@ const toUserMessage = (options) => ({
       const result = await patched.getBootstrap?.();
       const bridge = result?.files.find((file) => file.path.endsWith("/bridge.mjs"));
       expect(bridge?.content.match(/strictMcpConfig: true/g)).toHaveLength(1);
+      // Group D is idempotent on its marker: a re-patched recipe keeps ONE drain.
+      expect(bridge?.content.match(/function mcpjamBackgroundDrainReducer\(/g)).toHaveLength(1);
     }
     const malformed = patchClaudeCodeHarnessBootstrap({
       ...original,
@@ -564,7 +868,6 @@ const toUserMessage = (options) => ({
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -939,6 +1242,34 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
       getHarnessAdapter("claude-code").runtimeVersionCommand,
     ).toBeUndefined();
     expect(getHarnessAdapter("codex").runtimeVersionCommand).toBeUndefined();
+  });
+});
+
+describe("the Codex adapter and its command sandbox policy (D2)", () => {
+  const auth = buildBrokerDummyAuth("codex", "https://broker.example/openai/v1");
+
+  it("is the app-server transport, and the only adapter that applies a sandbox policy", () => {
+    const local = getHarnessAdapter("codex");
+    expect(local.transport).toBe("app-server");
+    expect(local.acceptsSandboxPolicy).toBe(true);
+    expect(getHarnessAdapter("claude-code").acceptsSandboxPolicy).toBeFalsy();
+  });
+
+  it("hands the policy to the runtime when, and only when, the turn sets one", () => {
+    const local = getHarnessAdapter("codex");
+    vi.mocked(createCodexAppServer).mockClear();
+    local.createHarness({
+      modelId: "openai/gpt-5.5",
+      auth,
+      sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
+    } as never);
+    expect(createCodexAppServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY }),
+    );
+    local.createHarness({ modelId: "openai/gpt-5.5", auth } as never);
+    expect(
+      vi.mocked(createCodexAppServer).mock.lastCall?.[0],
+    ).not.toHaveProperty("sandboxPolicy");
   });
 });
 

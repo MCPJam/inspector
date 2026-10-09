@@ -26,16 +26,24 @@ import {
   type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import {
-  selectionKey,
-  type ModelSelection as SavedModelSelection,
-} from "@mcpjam/sdk/browser";
+  dedupeModelTargets,
+  modelTarget,
+  modelTargetKey,
+  sameModelTarget,
+} from "@/lib/model-target";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import {
+  ExternalCredentialMissingError,
+  externalCredentialSecretSelection,
+  type ExternalCredentialSecret,
+} from "@/shared/external-credential-selection";
 
 /** One composition, in the shape `ensureAdhocEnvironments` accepts. */
 export type AdhocStackInput = {
@@ -43,6 +51,12 @@ export type AdhocStackInput = {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
+  /**
+   * The secrets the environment grants. Set for a client that signs in with the
+   * customer's own account (Cursor): its brokered `CURSOR_API_KEY` reaches a box
+   * only through this, and there is no model lease to rescue a missing one.
+   */
+  secretSelection?: { mode: "explicit"; secretIds: string[] };
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
   /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
@@ -62,6 +76,10 @@ export type ComposerResolveErrorCode =
   | "TOO_MANY_TARGETS"
   | "UNRESOLVED_ENVIRONMENT"
   | "ADHOC_UNAVAILABLE"
+  /** A Cursor client with no usable `CURSOR_API_KEY` to grant. */
+  | "MISSING_CREDENTIAL"
+  /** A client's settings could not be read, so its credential can't be checked. */
+  | "CLIENT_UNREADABLE"
   | "BACKEND_REJECTED";
 
 export class ComposerResolveError extends Error {
@@ -141,6 +159,24 @@ function sharedFields(
 }
 
 /**
+ * Whether a named row's saved selection is the cell's, by `comparisonKey`
+ * (see `sameModelTarget`): a row whose effort or temperature differs from the
+ * cell's is another target and must not be reused, while a plain selection
+ * with no settings still describes the same run as a bare id. When both sides
+ * store a selection, source and connection must agree too, so an org-key pick
+ * never reuses a row that runs the same id on MCPJam credits. Inherit cells
+ * (no model) only match rows with no model, which `sameOptionalModel` checks.
+ */
+function sameSavedSelection(
+  modelId: string | undefined,
+  row: SavedModelSelection | undefined,
+  cell: SavedModelSelection | undefined,
+): boolean {
+  if (modelId === undefined) return true;
+  return sameModelTarget(modelTarget(modelId, row), modelTarget(modelId, cell));
+}
+
+/**
  * A live NAMED environment that already IS this composition.
  *
  * Without this, composing a stack identical to an environment someone curated
@@ -181,9 +217,7 @@ function matchingNamedEnvironment(
     (env.serverSelection === undefined ||
       env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
-    (!modelSelection ||
-      (env.modelSelection !== undefined &&
-        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
+    sameSavedSelection(modelId, env.modelSelection, modelSelection) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -207,6 +241,7 @@ export async function resolveComposerEnvironments(args: {
   liveEnvironments: ProjectEnvironmentView[];
   ensureAdhocEnvironments: EnsureAdhocEnvironmentsFn;
   skillsEnabled: boolean;
+  /** The image-pin ("computers") slot's flag: `sandbox-images-enabled`. */
   computersEnabled: boolean;
   /** Fan-out cap this surface enforces. */
   max: number;
@@ -236,6 +271,19 @@ export async function resolveComposerEnvironments(args: {
    * the cell then mints with its legacy `modelId` alone.
    */
   modelSelectionsEnabled?: boolean;
+  /**
+   * The project's secrets as the composer sees them (shared rows plus their own
+   * personal ones), for a client that runs an external-account harness. A cell
+   * for such a client is minted with the key's grant, or refused here when there
+   * is none. `undefined` ⇒ not loaded: a Cursor cell is then refused rather than
+   * minted without a key it cannot be told it has.
+   */
+  projectSecrets?: readonly ExternalCredentialSecret[];
+  /**
+   * The cells will be run by people other than the composer (User Testing), so
+   * the key must be project-shared: a personal key reaches only its owner.
+   */
+  requireSharedExternalCredential?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -249,6 +297,8 @@ export async function resolveComposerEnvironments(args: {
     requireServerAttachment = false,
     loadHostHarness,
     modelSelectionsEnabled = false,
+    projectSecrets,
+    requireSharedExternalCredential = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -315,7 +365,7 @@ export async function resolveComposerEnvironments(args: {
   }
   if (
     selectionsByHost.some(
-      ({ selection }) => selection.explicitModelIds.length > 0,
+      ({ selection }) => selection.explicitTargets.length > 0,
     ) &&
     modelMatrixEnabled !== true
   ) {
@@ -361,7 +411,7 @@ export async function resolveComposerEnvironments(args: {
     // Only a client with explicit picks can have a pair to skip, so only those
     // pay for the harness read.
     const harness =
-      loadHostHarness && selection.explicitModelIds.length > 0
+      loadHostHarness && selection.explicitTargets.length > 0
         ? await loadHostHarness(hostId)
         : null;
     const expanded = expandModelChoices(selection, {
@@ -378,11 +428,14 @@ export async function resolveComposerEnvironments(args: {
       const modelSelection = modelSelectionsEnabled
         ? choice.modelSelection
         : undefined;
+      const key = cellKey(hostId, choice.modelId, modelSelection);
+      // Without stored selections two efforts of one model are one cell.
+      if (cells.some((cell) => cell.key === key)) continue;
       cells.push({
         hostId,
         modelId: choice.modelId,
         ...(modelSelection ? { modelSelection } : {}),
-        key: cellKey(hostId, choice.modelId),
+        key,
       });
     }
   }
@@ -422,8 +475,49 @@ export async function resolveComposerEnvironments(args: {
     // `computerEnvironmentId` is omitted rather than sent as null — the mutation
     // types it `string?` and Convex rejects an explicit null at the validator.
     // Same for inherit-cell `modelId`.
+    // A client that signs in with the customer's own account needs its key
+    // granted by the environment it runs in. Looked up once per client. With
+    // no loader at all the harness is unknown and the client is treated as
+    // having none, as before this existed; a loader that FAILS is refused,
+    // because a Cursor cell minted on that guess would carry no key and be
+    // refused at its first turn with nothing pointing back here.
+    const credentialGrantByHost = new Map<
+      string,
+      { mode: "explicit"; secretIds: string[] } | undefined
+    >();
+    for (const hostId of new Set(toMint.map((cell) => cell.hostId))) {
+      let harness: HarnessModelTarget | null = null;
+      if (loadHostHarness) {
+        try {
+          harness = await loadHostHarness(hostId);
+        } catch {
+          throw new ComposerResolveError(
+            "CLIENT_UNREADABLE",
+            "Couldn't read one of these clients' settings to check whether it needs a key. Try again.",
+          );
+        }
+      }
+      try {
+        credentialGrantByHost.set(
+          hostId,
+          externalCredentialSecretSelection(
+            { harness: harness?.harnessId },
+            projectSecrets,
+            { requireShared: requireSharedExternalCredential },
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ExternalCredentialMissingError) {
+          throw new ComposerResolveError("MISSING_CREDENTIAL", error.message);
+        }
+        throw error;
+      }
+    }
     const stacks: AdhocStackInput[] = toMint.map((cell) => ({
       hostId: cell.hostId,
+      ...(credentialGrantByHost.get(cell.hostId)
+        ? { secretSelection: credentialGrantByHost.get(cell.hostId)! }
+        : {}),
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),
@@ -576,26 +670,26 @@ export function composerMissingServerGroup(
 }
 
 function normalizeModelSelection(selection: ModelSelection): ModelSelection {
-  const explicitModelIds = [
-    ...new Set(selection.explicitModelIds.filter(Boolean)),
-  ];
-  const explicitModelSelections = Object.fromEntries(
-    explicitModelIds.flatMap((id) => {
-      const saved = selection.explicitModelSelections?.[id];
-      return saved?.modelId === id ? [[id, saved] as const] : [];
-    }),
-  );
   return {
     includeClientDefaults: selection.includeClientDefaults,
-    explicitModelIds,
-    ...(Object.keys(explicitModelSelections).length > 0
-      ? { explicitModelSelections }
-      : {}),
+    explicitTargets: dedupeModelTargets(selection.explicitTargets),
   };
 }
 
-function cellKey(hostId: string, modelId: string | undefined): string {
-  return `${hostId}::${modelId ?? ""}`;
+/**
+ * `${hostId}::${comparisonKey}`: two efforts of one model on one client are
+ * two cells. A cell with no selection keys as its bare id, as before.
+ */
+function cellKey(
+  hostId: string,
+  modelId: string | undefined,
+  modelSelection?: SavedModelSelection,
+): string {
+  return `${hostId}::${
+    modelId === undefined
+      ? ""
+      : modelTargetKey(modelTarget(modelId, modelSelection))
+  }`;
 }
 
 /**

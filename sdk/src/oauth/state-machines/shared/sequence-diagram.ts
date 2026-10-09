@@ -80,18 +80,64 @@ function pathnameOrRawValue(value: unknown): string {
       return `${value} (not an absolute URL)`;
     }
   }
+  return describeNonUrlValue(value);
+}
 
+/**
+ * Serialize a value that was supposed to be a URL string and say that it is
+ * not one. The suffix is what makes the problem visible on screen, whether the
+ * value is an empty string, `null`, or an object the server wrote where the
+ * spec asks for a URL.
+ */
+function describeNonUrlValue(value: unknown): string {
   let displayedValue: string;
   try {
     displayedValue =
-      typeof value === "string" ||
-      (typeof value === "object" && value !== null)
-        ? JSON.stringify(value) ?? String(value)
+      typeof value === "string" || (typeof value === "object" && value !== null)
+        ? (JSON.stringify(value) ?? String(value))
         : String(value);
   } catch {
     displayedValue = "[unserializable value]";
   }
   return `${displayedValue} (not an absolute URL)`;
+}
+
+/**
+ * The "Auth Server" row under the returned protected-resource metadata.
+ *
+ * `authorization_servers` is copied out of the server's RFC 9728 document
+ * unvalidated (`discoverOAuthProtectedResourceMetadata` casts the JSON), so
+ * the `string[]` on the flow state type is a promise the wire does not keep.
+ * A deployed server listed objects, `{ authorization_server, scopes }`, and
+ * the first one reached the diagram chip as an object. React throws on an
+ * object child, so the error boundary took the whole OAuth panel down (Sentry
+ * INSPECTOR-CLIENT-2F6). The wire half already skips non-string entries in
+ * `selectAuthorizationServerFromResourceMetadata`; this is the display half,
+ * which shows such an entry flagged the way a relative URL is.
+ */
+function advertisedAuthorizationServerDetails(
+  flowState: OAuthFlowState
+): DiagramDetail[] | undefined {
+  const advertised: unknown = flowState.resourceMetadata?.authorization_servers;
+  if (advertised === undefined || advertised === null) {
+    return undefined;
+  }
+  // An empty list names no server, so there is no row. A `null` ENTRY is a
+  // different thing: the server did write an entry, and the row says what.
+  const first: unknown = Array.isArray(advertised) ? advertised[0] : advertised;
+  if (first === undefined) {
+    return undefined;
+  }
+  // Same reading as `selectAuthorizationServerFromResourceMetadata`: a blank
+  // string is not an advertised server either, so it is flagged, not shown.
+  const advertisedUrl =
+    typeof first === "string" && first.trim() !== "" ? first : undefined;
+  return [
+    {
+      label: "Auth Server",
+      value: advertisedUrl ?? describeNonUrlValue(first),
+    },
+  ];
 }
 
 function resourceDetailValue(
@@ -154,14 +200,7 @@ function protectedResourceMetadataActions(
       description: "Server returns OAuth protected resource metadata",
       from: "mcpServer",
       to: "client",
-      details: flowState.resourceMetadata?.authorization_servers
-        ? [
-            {
-              label: "Auth Server",
-              value: flowState.resourceMetadata.authorization_servers[0],
-            },
-          ]
-        : undefined,
+      details: advertisedAuthorizationServerDetails(flowState),
     },
   ];
 }

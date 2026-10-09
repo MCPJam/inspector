@@ -128,7 +128,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
@@ -1019,6 +1022,42 @@ describe("useChatSession fork preservation", () => {
       firstAssistant,
       secondUser,
     ]);
+  });
+
+  it("refuses a previous thread's late cursor and sends only the current version", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const previousSessionId = result.current.chatSessionId;
+    const previousSync = result.current.syncResumedVersion;
+    act(() => previousSync(2));
+    act(() => result.current.resetChat());
+    expect(result.current.chatSessionId).not.toBe(previousSessionId);
+    act(() => previousSync(2));
+    expect(result.current.resumedVersion).toBeNull();
+    expect(mockState.lastTransportOptions.body()).not.toHaveProperty(
+      "expectedVersion",
+    );
+    // Even a current callback must refuse an explicitly foreign response.
+    act(() => result.current.syncResumedVersion(2, previousSessionId));
+    expect(result.current.resumedVersion).toBeNull();
+    act(() =>
+      result.current.syncResumedVersion(1, result.current.chatSessionId),
+    );
+    expect(result.current.resumedVersion).toBe(1);
+    expect(mockState.lastTransportOptions.body()).toMatchObject({
+      chatSessionId: result.current.chatSessionId,
+      expectedVersion: 1,
+    });
+    // A delayed pre-save read cannot downgrade a receipt from this same chat.
+    act(() =>
+      result.current.syncResumedVersion(0, result.current.chatSessionId),
+    );
+    expect(result.current.resumedVersion).toBe(1);
+    expect(mockState.lastTransportOptions.body().expectedVersion).toBe(1);
   });
 
   it("clears resumedVersion so the branch's first ingest carries no expectedVersion", async () => {

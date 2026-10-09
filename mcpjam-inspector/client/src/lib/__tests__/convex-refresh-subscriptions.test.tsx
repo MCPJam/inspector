@@ -4,7 +4,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConvexReactClient, useConvexAuth, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
+import { ConvexProviderWithAuth } from "convex/react";
 import {
   DbUserReadyProvider,
   useDbUserReady,
@@ -26,7 +26,8 @@ const guest = vi.hoisted(() => ({
 vi.mock("@/lib/guest-session", () => ({
   getCachedGuestSession: () => guest.cached,
   getOrCreateGuestSessionOrThrow: guest.mint,
-  forceRefreshGuestSessionOrThrow: vi.fn(),
+  forceRefreshGuestSessionOrThrow: async () =>
+    (await guest.mint())?.token ?? null,
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
 }));
@@ -151,6 +152,8 @@ beforeEach(() => {
     kind: null,
     retryNonce: 0,
     queriesPaused: false,
+    // These tests without the connection guard isolate the null-token readiness guard.
+    authConfirmed: true,
     pauseQueries,
   });
 });
@@ -175,9 +178,9 @@ it.each([false, true])(
       logger: false,
     });
     const view = render(
-      <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+      <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
         <Shell />
-      </ConvexProviderWithAuthKit>,
+      </ConvexProviderWithAuth>,
     );
     try {
       await waitFor(() => expect(peer.active.size).toBe(8));
@@ -229,11 +232,11 @@ it("removes even ungated subscriptions before logout revokes the session", async
     return null;
   }
   const view = render(
-    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+    <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
       <SignOutBoundary>
         <UngatedQueries />
       </SignOutBoundary>
-    </ConvexProviderWithAuthKit>,
+    </ConvexProviderWithAuth>,
   );
   try {
     await waitFor(() => expect(peer.active.size).toBe(2));
@@ -261,9 +264,9 @@ it("successful guest token rotation never clears auth with queries active", asyn
   });
   const setAuth = vi.spyOn(client, "setAuth");
   const view = render(
-    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+    <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
       <Shell />
-    </ConvexProviderWithAuthKit>,
+    </ConvexProviderWithAuth>,
   );
   try {
     await waitFor(() => expect(peer.active.size).toBe(8));
@@ -296,9 +299,9 @@ it("updating the same WorkOS user does not reset socket auth", async () => {
     logger: false,
   });
   const tree = () => (
-    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+    <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
       <Shell />
-    </ConvexProviderWithAuthKit>
+    </ConvexProviderWithAuth>
   );
   const view = render(tree());
   try {

@@ -97,6 +97,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
     "listTraceDestinationBackfills",
   "get /me": "getMe",
+  // Platform feedback — a report about MCPJam itself, sent to the team.
+  "post /feedback": "sendFeedback",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
@@ -158,6 +160,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "startClaudeReadinessRun",
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
     "startOpenAIReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/muse":
+    "startMuseReadinessRun",
   "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
   "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
   "get /projects/{projectId}/readiness-runs/{runId}/report":
@@ -279,6 +283,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/rerun-preview":
+    "getEvalRunRerunPreview",
+  "post /projects/{projectId}/eval-runs/{runId}/rerun": "rerunEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
     "createGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",

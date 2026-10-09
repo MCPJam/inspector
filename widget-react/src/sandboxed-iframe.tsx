@@ -259,6 +259,7 @@ interface SandboxedIframeProps {
   cspDirectives?: Record<string, string[]>;
   /** Probe-derived host policy for individual CSP-backed browser APIs. */
   cspSubtypePolicy?: CspSubtypePolicy;
+  clientContext?: import("./widget-host").CspClientContext;
   /**
    * Probe-derived host policy for browser storage inside the widget.
    * Absent or `true` means available; `false` makes the proxy install a guard
@@ -317,6 +318,13 @@ interface SandboxedIframeProps {
    */
   viewOriginLabel?: string;
   viewSubdomainsEnabled?: boolean;
+  /**
+   * Changing this reloads the guest document (the resource is sent to the
+   * proxy again) even when the payload is unchanged. The renderer bumps it
+   * for every new AppBridge: a guest initializes once per document, so a
+   * bridge that replaced another one never hears `ui/initialize` otherwise.
+   */
+  reloadKey?: number | string;
 }
 
 /**
@@ -340,6 +348,7 @@ export const SandboxedIframe = forwardRef<
     allowFeatures,
     cspDirectives,
     cspSubtypePolicy,
+    clientContext,
     browserStorage,
     permissive,
     recordMode,
@@ -354,6 +363,7 @@ export const SandboxedIframe = forwardRef<
     mountMode,
     viewOriginLabel,
     viewSubdomainsEnabled,
+    reloadKey,
   },
   ref
 ) {
@@ -530,6 +540,7 @@ export const SandboxedIframe = forwardRef<
         csp: csp ?? null,
         cspDirectives: cspDirectives ?? null,
         cspSubtypePolicy: cspSubtypePolicy ?? null,
+        clientContext: clientContext ?? null,
         browserStorage: browserStorage ?? null,
         html: html ?? null,
         permissive: permissive ?? null,
@@ -542,11 +553,13 @@ export const SandboxedIframe = forwardRef<
         // Part of the render recipe: it decides how the proxy mounts the HTML,
         // so a change must re-send rather than leave the previous mount up.
         mountMode: mountMode ?? null,
+        reloadKey: reloadKey ?? null,
       }),
     [
       csp,
       cspDirectives,
       cspSubtypePolicy,
+      clientContext,
       browserStorage,
       html,
       permissive,
@@ -555,6 +568,7 @@ export const SandboxedIframe = forwardRef<
       sandboxAttrs,
       recordMode,
       mountMode,
+      reloadKey,
     ]
   );
 
@@ -588,6 +602,7 @@ export const SandboxedIframe = forwardRef<
           // field.
           cspDirectives,
           cspSubtypePolicy,
+          clientContext,
           browserStorage,
           permissive,
           colorScheme,

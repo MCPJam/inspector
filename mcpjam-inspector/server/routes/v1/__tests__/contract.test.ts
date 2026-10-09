@@ -84,6 +84,9 @@ describe("internal-code -> public-code mapping", () => {
     // than in the shared table: UNAUTHORIZED + `details.reason`. Pinned in
     // envelope.test.ts.
     "SESSION_REVOKED",
+    // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
+    // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
+    "UPSTREAM_HTTP_ERROR",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

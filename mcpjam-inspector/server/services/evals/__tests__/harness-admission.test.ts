@@ -132,9 +132,8 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).not.toContain("hosted case");
   });
 
-  // Codex, not Claude Code: Claude Code can pause on every surface now, so an
-  // approval host is admissible there. Codex cannot pause at all, which is the
-  // host-level refusal this test is about.
+  // An approval host is a HOST-level refusal (no eval can answer one), so it is
+  // reported once rather than repeated for every case.
   it("reports a HOST-level refusal once, not per case", () => {
     const verdict = checkEvalHarnessAdmission({
       hostConfig: { harness: "codex", requireToolApproval: true },
@@ -170,6 +169,81 @@ describe("checkEvalHarnessAdmission", () => {
         cases: [{ title: "a", ...HOSTED_MODEL }],
       })
     ).toEqual({ ok: true, harness: "claude-code" });
+  });
+
+  it("refuses a saved effort the harness has not verified (host selection)", () => {
+    const hostConfig = harnessHost({
+      modelSelection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "hosted",
+        settings: { reasoningEffort: "high" },
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+    const staticVerdict = checkEvalHarnessStaticAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+    });
+    expect(staticVerdict.ok).toBe(false);
+    if (staticVerdict.ok) throw new Error("unreachable");
+    expect(staticVerdict.reason).toContain("reasoning effort");
+    const full = checkEvalHarnessAdmission({
+      hostConfig,
+      serverIds: ["s1"],
+      cases: [{ title: "a", ...HOSTED_MODEL }],
+    });
+    expect(full.ok).toBe(false);
+  });
+
+  it("refuses a case whose own model entry saved an effort", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        { title: "plain", ...HOSTED_MODEL },
+        { title: "effortful", ...HOSTED_MODEL, reasoningEffort: "low" },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("reads the effort off a case's persisted selection (what the recorder emits)", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          selection: { settings: { reasoningEffort: "medium" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("reasoning effort");
+  });
+
+  it("an explicit case effort wins over its persisted selection's", () => {
+    // Both are unsupported here, so the point is only that admission reads the
+    // explicit one first: it is the one the reason names.
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost(),
+      serverIds: ["s1"],
+      cases: [
+        {
+          title: "effortful",
+          ...HOSTED_MODEL,
+          reasoningEffort: "high",
+          selection: { settings: { reasoningEffort: "low" } },
+        },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain('"high"');
   });
 
   it("refuses when broker delivery is switched off, with the gate's own reason", () => {
@@ -275,29 +349,42 @@ describe("checkEvalHarnessStaticAdmission", () => {
     expect(hasSelectedMcpServersForAdmission({})).toBe(false);
   });
 
-  // The end-to-end half that IS still observable: a plugin-only host reaches
-  // the gate and is admitted on a harness that can approve MCP tools. If
-  // plugin servers were dropped on the way in, this would pass for the wrong
-  // reason — so it is a companion to the direct assertion above, not a
-  // replacement for it.
-  it("admits a plugin-only approval host on a harness that can approve MCP tools", () => {
-    expect(
-      checkEvalHarnessStaticAdmission({
-        hostConfig: harnessHost({ requireToolApproval: true }),
-        serverIds: [],
-        pluginServerIds: ["plugin-server-1"],
-      })
-    ).toEqual({ ok: true, harness: "claude-code" });
+  // Nobody can answer an approval in an eval, so an approval host is refused
+  // up front on EVERY harness, including Claude Code, which can pause. Admitted,
+  // its first gated call threw mid-run, because an eval turn has no session to
+  // park in. Plugin-only and server-less hosts are refused the same way.
+  it.each([
+    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["server-less", { serverIds: [] }],
+    ["with servers", { serverIds: ["s1"] }],
+  ])("refuses a Claude Code approval host in an eval (%s)", (_label, servers) => {
+    const verdict = checkEvalHarnessStaticAdmission({
+      hostConfig: harnessHost({ requireToolApproval: true }),
+      ...servers,
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("unattended run");
   });
 
-  it("an approval host with NO servers at all is not caught by that gate", () => {
-    // The control for the case above: without the plugin servers the same host
-    // passes, so the refusal really did come from counting them.
+  it("refuses the same approval host at the full, per-case check", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost({ requireToolApproval: true }),
+      serverIds: ["s1"],
+      cases: [{ title: "a", ...HOSTED_MODEL }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).not.toContain("Ineligible cases");
+  });
+
+  it("still admits the same host with approval off", () => {
     expect(
       checkEvalHarnessStaticAdmission({
-        hostConfig: { harness: "claude-code", requireToolApproval: true },
-        serverIds: [],
-      })
+        hostConfig: harnessHost({ requireToolApproval: false }),
+        serverIds: ["s1"],
+      }),
     ).toEqual({ ok: true, harness: "claude-code" });
   });
 });
@@ -506,9 +593,9 @@ describe("checkEvalExecutionAdmission", () => {
   });
 
   // ── The single-case surface ──────────────────────────────────────────────
-  // Quick and streamed one-offs pass `runId: null`, and BOTH sandbox-
-  // provisioning sites require `runId !== null` — so no box is ever booted for
-  // them and a pinned image changes nothing. The rule is the surface itself.
+  // Quick and streamed one-offs pass `runId: null` and boot a box only for a
+  // HARNESS (keyed to the iteration). Anything else boots nothing, and a
+  // pinned image changes nothing. The rule is the surface itself.
 
   it("refuses a computer-backed built-in on a single-case run, image or not", () => {
     for (const pinnedComputerImageId of [null, "env-1"]) {
@@ -535,26 +622,24 @@ describe("checkEvalExecutionAdmission", () => {
     ).toBe(true);
   });
 
-  it("REFUSES a harness on the single-case surface, whatever tools it grants", () => {
-    // The gap this closes: a single-case run boots no box, so `runHarnessTurn`
-    // would fall through to `resolveHarnessSandbox` — the acting member's
-    // PERSONAL computer. That is the one fallback eval execution must never
-    // take, and it was reachable here because this surface never ran the
-    // harness gate at all.
-    for (const hostConfig of [
-      { harness: "claude-code" },
-      { harness: "claude-code", builtInToolIds: [] },
-      { harness: "claude-code", builtInToolIds: ["bash"] },
-    ]) {
-      const verdict = checkEvalExecutionAdmission({
-        hostConfig,
-        pinnedComputerImageId: "env-1",
-        surface: "single-case",
-      });
-      expect(verdict.ok).toBe(false);
-      if (verdict.ok) throw new Error("unreachable");
-      expect(verdict.reason).toContain("as part of a suite");
-      expect(verdict.reason).toContain("personal computer");
+  it("ADMITS a harness on the single-case surface: it boots its own box there too", () => {
+    // A single-case harness run gets a disposable box keyed to the iteration,
+    // so it never reaches the acting member's personal computer — and a shell
+    // it grants has a machine to run on.
+    for (const pinnedComputerImageId of [null, "env-1"]) {
+      for (const hostConfig of [
+        { harness: "claude-code" },
+        { harness: "claude-code", builtInToolIds: [] },
+        { harness: "claude-code", builtInToolIds: ["bash"] },
+      ]) {
+        expect(
+          checkEvalExecutionAdmission({
+            hostConfig,
+            pinnedComputerImageId,
+            surface: "single-case",
+          }).ok
+        ).toBe(true);
+      }
     }
   });
 
@@ -801,10 +886,14 @@ describe("local harness admission", () => {
     })).toEqual({ ok: true, harness: "claude-code" });
   });
 
-  it("does not admit cloud single-case execution just because a local pack exists", () => {
-    nativeVenue.enabled = true;
-    expect(checkEvalExecutionAdmission({
-      hostConfig: harnessHost(), localExecution: false, surface: "single-case",
-    }).ok).toBe(false);
+  it("admits cloud single-case execution on its own disposable box, local pack or not", () => {
+    // A cloud single-case harness run boots a box keyed to its iteration, so
+    // a local pack is not what admits it, and its absence would not refuse it.
+    for (const enabled of [true, false]) {
+      nativeVenue.enabled = enabled;
+      expect(checkEvalExecutionAdmission({
+        hostConfig: harnessHost(), localExecution: false, surface: "single-case",
+      }).ok).toBe(true);
+    }
   });
 });

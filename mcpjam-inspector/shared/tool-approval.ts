@@ -5,6 +5,11 @@
  * module is where the value comes from. There is exactly one input besides the
  * tool's own nature: the host's `requireToolApproval` switch.
  *
+ * Local harness Off is pre-approval after explicit consent: MCPJam answers
+ * native runtime approval requests while the runtime keeps its ask mode.
+ * Host-executed tools retain their own floors, including `always`. A toggle
+ * change never decides an approval that was already waiting.
+ *
  * THE SWITCH DECIDES, for every tool the model calls to ACT. One setting, one
  * answer, and a user who turns it off sees no approval pill — on an MCP
  * server's tool, on a page's `webmcp_*` tool, on a browser verb, on a shell.

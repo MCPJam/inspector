@@ -92,6 +92,23 @@ export {
   selectionKey,
   defaultFallbackForPurpose,
 } from "./model-selection.js";
+export {
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
+  supportedReasoningEfforts,
+  harnessReasoningEfforts,
+} from "./reasoning-effort.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
+} from "./reasoning-effort.js";
 export type {
   ModelSelection,
   ModelSelectionSource,

@@ -168,6 +168,37 @@ describe("minting a case identity", () => {
       executionVariantOf({ testCaseSnapshot: {} } as EvalIteration),
     ).toBeUndefined();
   });
+
+  it("carries the selectionKey of a non-default target, and none for a default one", () => {
+    const high = {
+      modelId: "gpt-5",
+      source: "hosted" as const,
+      settings: { reasoningEffort: "high" as const },
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    const selectionKey = JSON.stringify({
+      modelId: "gpt-5",
+      source: "hosted",
+      settings: { reasoningEffort: "high" },
+    });
+    expect(
+      executionVariantOf({
+        targetKey: `gpt-5\u0000${selectionKey}`,
+        testCaseSnapshot: { model: "gpt-5", provider: "openai" },
+      } as EvalIteration),
+    ).toEqual({ model: "gpt-5", provider: "openai", selectionKey });
+    expect(
+      executionVariantOf({
+        testCaseSnapshot: { model: "gpt-5", selection: high },
+      } as EvalIteration),
+    ).toEqual({ model: "gpt-5", selectionKey });
+    expect(
+      executionVariantOf({
+        targetKey: "gpt-5",
+        testCaseSnapshot: { model: "gpt-5" },
+      } as EvalIteration),
+    ).toEqual({ model: "gpt-5" });
+  });
 });
 
 describe("joining a verdict onto a row", () => {

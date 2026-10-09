@@ -66,12 +66,13 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  *
  *  - `claude-code`: `@anthropic-ai/claude-code` in the bridge package the
  *    installed `@ai-sdk/harness-claude-code` bootstraps.
- *  - `codex`: `@openai/codex-sdk` in the `@ai-sdk/harness-codex` bridge (the
- *    exec transport) and `@openai/codex` in the app-server bootstrap
- *    (`PINNED_CODEX_VERSION`); both transports pin the same CLI.
- *  - `cursor`: `null` — Cursor's bootstrap installs whatever build
- *    `cursor.com/install` serves, so the version is only knowable by asking the
- *    box (`runtimeVersionCommand`). Its rows are all version-independent.
+ *  - `codex`: `@openai/codex` in the app-server bootstrap
+ *    (`PINNED_CODEX_VERSION`).
+ *  - `cursor`: the CLI build `cursor-bootstrap.ts` installs. Cursor's own
+ *    installer serves whatever is current, so the hosted bootstrap replaces it
+ *    with a checksummed download of exactly this build. Its evidence rows are
+ *    all version-independent; the pin exists so the baked template, the box and
+ *    the recorded session version can be compared.
  *
  * Asserted against the installed packages in the registry tests; bump here in
  * the same change that bumps an adapter.
@@ -79,7 +80,11 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
 export const HARNESS_PINNED_VERSIONS = {
   "claude-code": "2.1.245",
   codex: "0.149.1",
-  cursor: null,
+  // The Cursor CLI build the hosted bootstrap installs (and the computer
+  // template bakes), by the version string Cursor's own installer stamps in.
+  // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
+  // this build with a checksum per platform; bump both together.
+  cursor: "2026.10.01-e373342",
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness

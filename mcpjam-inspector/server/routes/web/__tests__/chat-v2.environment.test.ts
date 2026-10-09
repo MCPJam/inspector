@@ -35,7 +35,12 @@ vi.mock("../../../utils/host-execution-context.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../../utils/harness/local/readiness.js", () => ({
+// These turns exercise the CLOUD harness path. With a published local pack
+// the route asks whether this member runs the harness locally; the answer here
+// is no, so the published packs do not reroute these tests.
+vi.mock("../../../utils/harness/local/readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>()),
+  localHarnessAccountEnabled: vi.fn(async () => false),
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
     kind: "local-native", actingUserId: "authkit:owner", workspaceGrantId: "ws",
     runtimeId: "runtime", machineId: "machine", grantToken: "grant",
@@ -49,10 +54,12 @@ vi.mock("ai", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+    };
+  }),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -62,11 +69,13 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-      listTools: vi.fn().mockResolvedValue({ tools: [] }),
-      readResource: vi.fn().mockResolvedValue({ contents: [] }),
-    })),
+    MCPClientManager: vi.fn().mockImplementation(function () {
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        readResource: vi.fn().mockResolvedValue({ contents: [] }),
+      };
+    }),
   };
 });
 
@@ -126,6 +135,28 @@ vi.mock("../../../utils/harness/harness-availability.js", async () => {
   };
 });
 
+// Every cloud harness turn now runs on the conversation's throwaway box. The
+// box holder and its refusals are the module's own (tested there); these tests
+// are about which skill set reaches which engine, so a box that provisions.
+vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/playground-box.js")
+  >()),
+  playgroundHarnessBoxUnavailableReason: () => null,
+  acquirePlaygroundHarnessBox: async () => ({
+    ok: true as const,
+    box: {
+      surface: "playground" as const,
+      binding: {
+        sandboxRowId: "row_pg",
+        sandboxId: "sbx_pg",
+        runtimeKind: "terminal" as const,
+      },
+      release: async () => {},
+    },
+  }),
+}));
+
 vi.mock("../apps.js", () => ({ default: new Hono() }));
 
 // Spied, not replaced: what the route hands the tool registry is how the
@@ -139,6 +170,7 @@ vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
 
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import { logger } from "../../../utils/logger.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
 const ENV_SPEC = {
@@ -319,6 +351,66 @@ describe("web chat-v2 — environment execution target", () => {
     expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
+  describe("reasoning effort", () => {
+    const HOST_SELECTION = {
+      modelId: BASE_BODY.model.id,
+      source: "hosted",
+      settings: { reasoningEffort: "medium" },
+      fallback: { provider: "openrouter", model: "none" },
+    };
+    const run = async (extra: Record<string, unknown>, hostConfig: Record<string, unknown> = {}) => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: hostConfig });
+      const { app, token } = createWebTestApp();
+      return postJson(
+        app,
+        "/api/web/chat-v2",
+        { ...BASE_BODY, hostId: "host_legacy", ...extra },
+        token
+      );
+    };
+
+    it("the body's effort reaches prepare and the hosted engine", async () => {
+      const response = await run({ reasoningEffort: "high" });
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" })
+      );
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" })
+      );
+    });
+
+    it("a host's saved effort applies to the same model and is pinned on the chat", async () => {
+      const response = await run({}, { modelSelection: HOST_SELECTION });
+      expect(response.status).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "medium" })
+      );
+      expect(
+        persistChatSessionToConvexMock.mock.calls[0][0].resumeConfig
+      ).toMatchObject({ reasoningEffort: "medium" });
+    });
+
+    it("a host's saved effort does not follow a different model", async () => {
+      const response = await run(
+        {},
+        { modelSelection: { ...HOST_SELECTION, modelId: "some/other-model" } }
+      );
+      expect(response.status).toBe(200);
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+    });
+
+    it("a level that is not an effort is a 400 before any model call", async () => {
+      const response = await run({ reasoningEffort: "ultra" });
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(await response.json())).toMatch(
+        /reasoningEffort must be one of/
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("still honors a legacy hostId body (unchanged host-target path)", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(
@@ -492,10 +584,10 @@ describe("web chat-v2 — environment execution target", () => {
 
     // Direct-chat persistence + resume config.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
-    expect(persistArgs.hostConfig.selectedServerIds).toEqual([
-      "env-server-1",
-      "env-server-2",
-    ]);
+    // The trace's host config carries only the environment's own servers:
+    // ingestion refuses a plugin server id there and would drop the whole
+    // host config (`validateServerScope` → `out_of_scope_servers`).
+    expect(persistArgs.hostConfig.selectedServerIds).toEqual(["env-server-1"]);
     // INS-4: "asana" is the PLUGIN-contributed server. It ran this turn, but
     // `resumeConfig` is a durable reconnect instruction replayed with no
     // plugin lifecycle check — a plugin server belongs to its environment at
@@ -810,6 +902,214 @@ describe("web chat-v2 — environment execution target", () => {
     );
     expect(response.status).toBe(409);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  describe("the Playground's hidden environment (includeProjectSkills)", () => {
+    const PROJECT_SKILLS = [
+      {
+        skillId: "sk_project",
+        name: "onboarding",
+        description: "Project onboarding",
+        aggregateHash: "agg_project",
+      },
+      {
+        // The same row the environment already delivers: not added twice.
+        skillId: "sk_env",
+        name: "release-notes",
+        description: "Write release notes",
+        aggregateHash: "agg_env",
+      },
+    ];
+
+    // The resolver says which kind of row it read; only an ad-hoc one may
+    // take the project's pool.
+    const ADHOC_SPEC = { ...ENV_SPEC, environmentOrigin: "adhoc" };
+
+    function resolveTo(spec: unknown) {
+      convexQueryMock.mockImplementation(async (ref: string) =>
+        ref === "projectSkills:listSkills" ? PROJECT_SKILLS : spec
+      );
+    }
+
+    beforeEach(() => {
+      resolveTo(ADHOC_SPEC);
+    });
+
+    function deliveredRefs(args: {
+      skillsSource: { capabilities: { standaloneSkills: { ref: string }[] } };
+    }) {
+      return args.skillsSource.capabilities.standaloneSkills.map(
+        (skill) => skill.ref
+      );
+    }
+
+    function projectPoolWasRead() {
+      return convexQueryMock.mock.calls.some(
+        ([ref]) => ref === "projectSkills:listSkills"
+      );
+    }
+
+    async function sendEnvironmentTurn(extra: Record<string, unknown>) {
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          executionTarget: { kind: "environment", environmentId: "env_1" },
+          ...extra,
+        },
+        token
+      );
+      expect(response.status).toBe(200);
+      return prepareChatV2Mock.mock.calls.at(-1)![0];
+    }
+
+    it("delivers the project's skills beside the environment's own, as a client turn does", async () => {
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(args.skillsSource.kind).toBe("resolved");
+      expect(
+        args.skillsSource.capabilities.standaloneSkills.map(
+          (skill: { ref: string }) => skill.ref
+        )
+      ).toEqual(["release-notes", "onboarding"]);
+      // Live, like the client turn it stands in for: its servers are
+      // connected now, so their skills compose too.
+      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      // Read with the caller's own bearer, as a client turn reads it.
+      expect(
+        convexQueryMock.mock.calls.some(
+          ([ref]) => ref === "projectSkills:listSkills"
+        )
+      ).toBe(true);
+    });
+
+    it("a NAMED environment ignores it: its own skills only, the pool never read", async () => {
+      resolveTo({ ...ENV_SPEC, environmentOrigin: "named" });
+      const warn = vi.spyOn(logger, "warn");
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      expect(projectPoolWasRead()).toBe(false);
+      const ignored = warn.mock.calls.filter(([message]) =>
+        String(message).includes("includeProjectSkills ignored")
+      );
+      // Once, with ids only.
+      expect(ignored).toHaveLength(1);
+      expect(ignored[0][1]).toEqual({
+        environmentId: "env_1",
+        projectId: "project-1",
+        environmentOrigin: "named",
+      });
+      warn.mockRestore();
+    });
+
+    it("a backend that does not say the origin is treated as named", async () => {
+      resolveTo(ENV_SPEC);
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      expect(projectPoolWasRead()).toBe(false);
+    });
+
+    it("an unknown origin value is treated as named", async () => {
+      resolveTo({ ...ENV_SPEC, environmentOrigin: "hidden" });
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(projectPoolWasRead()).toBe(false);
+    });
+
+    it("an environment turn without it never reads the project's pool", async () => {
+      const args = await sendEnvironmentTurn({});
+      expect(
+        args.skillsSource.capabilities.standaloneSkills.map(
+          (skill: { ref: string }) => skill.ref
+        )
+      ).toEqual(["release-notes"]);
+      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      expect(
+        convexQueryMock.mock.calls.some(
+          ([ref]) => ref === "projectSkills:listSkills"
+        )
+      ).toBe(false);
+    });
+
+    function runOnHarness(spec: Record<string, unknown> = ADHOC_SPEC) {
+      convexQueryMock.mockImplementation(async (ref: string) =>
+        ref === "projectSkills:listSkills"
+          ? PROJECT_SKILLS
+          : {
+              ...spec,
+              host: {
+                ...ENV_SPEC.host,
+                runtimeConfig: {
+                  ...ENV_SPEC.host.runtimeConfig,
+                  harness: "claude-code",
+                },
+              },
+            }
+      );
+    }
+
+    it("a harness turn asks the harness for the project's pool beside the environment's skills", async () => {
+      runOnHarness();
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(args.skillsSource).toBeUndefined();
+      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      // The environment's own skills travel unchanged; the harness adds the
+      // pool itself (it writes skills to the box, so it reads the pool with
+      // its own tri-state fetch).
+      expect(
+        handlerArgs.runtimeSkillsOverride.map(
+          (skill: { name: string }) => skill.name
+        )
+      ).toEqual(["release-notes"]);
+      expect(handlerArgs.includeProjectSkills).toBe(true);
+      expect(handlerArgs.effectiveCapabilities).toBeDefined();
+      // The route itself does not read the pool for a harness turn.
+      expect(
+        convexQueryMock.mock.calls.some(
+          ([ref]) => ref === "projectSkills:listSkills"
+        )
+      ).toBe(false);
+    });
+
+    it.each([
+      ["a named environment", { ...ENV_SPEC, environmentOrigin: "named" }],
+      ["a backend that does not say the origin", ENV_SPEC],
+    ])(
+      "%s's harness turn is not asked for the pool, even when the body asks",
+      async (_label, spec) => {
+        runOnHarness(spec);
+        await sendEnvironmentTurn({ includeProjectSkills: true });
+        const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+        // Only the route's verified value reaches the harness.
+        expect(handlerArgs.includeProjectSkills).toBeUndefined();
+        expect(
+          handlerArgs.runtimeSkillsOverride.map(
+            (skill: { name: string }) => skill.name
+          )
+        ).toEqual(["release-notes"]);
+      }
+    );
+
+    it("an environment harness turn without the flag keeps exactly its own set", async () => {
+      runOnHarness();
+      await sendEnvironmentTurn({});
+      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(handlerArgs.includeProjectSkills).toBeUndefined();
+      expect(
+        handlerArgs.runtimeSkillsOverride.map(
+          (skill: { name: string }) => skill.name
+        )
+      ).toEqual(["release-notes"]);
+    });
+
+    it("an emulated turn's handler is not asked for the pool (its union rides the merged set)", async () => {
+      await sendEnvironmentTurn({ includeProjectSkills: true });
+      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(handlerArgs.includeProjectSkills).toBeUndefined();
+    });
   });
 });
 

@@ -6,6 +6,7 @@
  * - X-Frame-Options: Prevents clickjacking
  * - X-XSS-Protection: Enables XSS filter
  * - Referrer-Policy: Controls referrer information
+ * - Strict-Transport-Security: hosted HTTPS requests only, see below
  *
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
@@ -18,7 +19,11 @@
  *   reports are what a later enforcing policy gets tuned against. The app
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
- *   It is sent on a sampled share of documents (CSP_REPORT_SAMPLE_RATE), and
+ *   The header goes on every hosted response, documents and assets alike
+ *   (MJ-016), but only a sampled share of responses
+ *   carries the report-uri directive (CSP_REPORT_SAMPLE_RATE), which is what
+ *   bounds how many violation reports page views produce — a report-only
+ *   policy without a report endpoint only logs to the console. On documents,
  *   its script-src allows the inline scripts the server writes into the
  *   document through a per-response nonce (documentScriptNonce).
  *
@@ -64,8 +69,9 @@ export const DOCUMENT_PERMISSIONS_POLICY = [
 ].join(", ");
 
 /**
- * Share of hosted HTML documents that carry the report-only policy, which
- * bounds how many violation reports page views produce.
+ * Share of hosted responses whose report-only policy carries report-uri,
+ * which bounds how many violation reports page views produce. The policy
+ * itself is on every hosted response.
  */
 export const CSP_REPORT_SAMPLE_RATE = 0.05;
 
@@ -171,6 +177,9 @@ function reportOnlyDirectives(
   }
 
   return [
+    // The fallback for fetch directives not listed below (media-src, …);
+    // report-only, so an unlisted source only produces a report.
+    ["default-src", ["'self'"]],
     // 'unsafe-eval': JSON Schema validators (ajv) compile schemas at runtime
     // with `new Function`.
     ["script-src", ["'self'", "'unsafe-eval'", ...STRIPE_SCRIPT_SOURCES]],
@@ -188,8 +197,13 @@ function reportOnlyDirectives(
   ];
 }
 
-function renderPolicy(directives: Directive[], scriptNonce?: string): string {
+function renderPolicy(
+  directives: Directive[],
+  scriptNonce?: string,
+  includeReportUri = true,
+): string {
   return directives
+    .filter(([name]) => includeReportUri || name !== "report-uri")
     .map(([name, iterable]) => {
       const sources = Array.from(iterable);
       if (name === "script-src" && scriptNonce) {
@@ -210,22 +224,27 @@ export function buildReportOnlyContentSecurityPolicy(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
   sentryDsn: string = SENTRY_DSN.client,
   scriptNonce?: string,
+  includeReportUri = true,
 ): string {
   return renderPolicy(
     reportOnlyDirectives(runtimeConfig, sandboxHosts, sentryDsn),
     scriptNonce,
+    includeReportUri,
   );
 }
 
 let reportOnlyBase: Directive[] | null = null;
 
-function reportOnlyContentSecurityPolicy(scriptNonce?: string): string {
+function reportOnlyContentSecurityPolicy(
+  scriptNonce: string | undefined,
+  includeReportUri: boolean,
+): string {
   reportOnlyBase ??= reportOnlyDirectives(
     getInspectorClientRuntimeConfig(),
     SANDBOX_HOSTS,
     SENTRY_DSN.client,
   );
-  return renderPolicy(reportOnlyBase, scriptNonce);
+  return renderPolicy(reportOnlyBase, scriptNonce, includeReportUri);
 }
 
 /** Test-only: drop the memoized report-only policy. */
@@ -239,23 +258,44 @@ function isHtmlDocument(res: Response): boolean {
     .startsWith("text/html");
 }
 
-function setDocumentPolicies(
+function setResponsePolicies(
   headers: Headers,
+  isDocument: boolean,
   reportOnlyPolicy: string | null,
 ): void {
-  headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
-  if (!headers.has("Permissions-Policy")) {
-    headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+  if (isDocument) {
+    headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
+    if (!headers.has("Permissions-Policy")) {
+      headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+    }
   }
   if (reportOnlyPolicy) {
     headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy);
   }
 }
 
+const ONE_YEAR_SECONDS = 31_536_000;
+
+/**
+ * Whether the client reached the hosted deployment over HTTPS. TLS terminates
+ * at the proxy, so `c.req.url` is `http://` internally and `x-forwarded-proto`
+ * carries the scheme; across more than one hop it is a comma-separated list
+ * whose first entry is the client-facing scheme. Hosted mode only: a local run
+ * has no proxy, so there the header is whatever the client chose to send.
+ */
+function isHttpsRequest(c: Context): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
+  }
+  return new URL(c.req.url).protocol === "https:";
+}
+
 /**
  * Security headers middleware.
- * Adds standard security headers to all responses, and the document policies
- * above to HTML responses.
+ * Adds standard security headers to all responses, the document policies
+ * above to HTML responses, and (hosted) the report-only policy to every
+ * response that does not carry its own Content-Security-Policy.
  */
 export async function securityHeadersMiddleware(
   c: Context,
@@ -267,23 +307,42 @@ export async function securityHeadersMiddleware(
   c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 
+  // Hosted mode only. Browsers ignore STS received over plain HTTP (RFC 6797
+  // §8.1), so http://localhost is unaffected either way. https://localhost is
+  // not: a local run behind a TLS proxy would pin every service on localhost,
+  // on any port, to HTTPS for the whole max-age.
+  //
+  // `includeSubDomains` is left off on purpose: it would cover every
+  // *.mcpjam.com host, including the tunnel and sandbox subdomains, and one of
+  // those not serving HTTPS becomes unreachable for the whole max-age. Widening
+  // this, and preload, belong with the edge configuration rather than here.
+  if (HOSTED_MODE && isHttpsRequest(c)) {
+    c.header("Strict-Transport-Security", `max-age=${ONE_YEAR_SECONDS}`);
+  }
+
   await next();
 
   const res = c.res;
-  if (!isHtmlDocument(res) || res.headers.has("Content-Security-Policy")) {
+  if (res.headers.has("Content-Security-Policy")) {
     return;
   }
-  const reportOnlyPolicy =
-    HOSTED_MODE && Math.random() < CSP_REPORT_SAMPLE_RATE
-      ? reportOnlyContentSecurityPolicy(scriptNonces.get(c))
-      : null;
+  const isDocument = isHtmlDocument(res);
+  const reportOnlyPolicy = HOSTED_MODE
+    ? reportOnlyContentSecurityPolicy(
+        isDocument ? scriptNonces.get(c) : undefined,
+        Math.random() < CSP_REPORT_SAMPLE_RATE,
+      )
+    : null;
+  if (!isDocument && !reportOnlyPolicy) {
+    return;
+  }
   try {
-    setDocumentPolicies(res.headers, reportOnlyPolicy);
+    setResponsePolicies(res.headers, isDocument, reportOnlyPolicy);
   } catch {
     // A response built from another Response (a proxied fetch) can carry
     // immutable headers; copy it into one whose headers can be set.
     const copy = new Response(res.body, res);
-    setDocumentPolicies(copy.headers, reportOnlyPolicy);
+    setResponsePolicies(copy.headers, isDocument, reportOnlyPolicy);
     c.res = copy;
   }
 }

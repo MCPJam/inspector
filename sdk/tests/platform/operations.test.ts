@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
+  sendFeedbackOperation,
   closeTunnelOperation,
   createEvalSuiteOperation,
   createHostOperation,
@@ -330,6 +331,8 @@ const SESSION_SUMMARIES = [
 type FixtureOverrides = {
   servers?: unknown[];
   suites?: unknown[];
+  /** The run's iteration page. Default: {@link ITERATIONS}. */
+  iterations?: unknown[];
   /**
    * Replaces the sessions envelope wholesale, so a test can model an OLD
    * backend: one that ignored the unknown `scope` param, ran a title search,
@@ -523,7 +526,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/.test(path)
     ) {
-      return Response.json({ items: ITERATIONS, nextCursor: "cursor-2" });
+      return Response.json({
+        items: overrides.iterations ?? ITERATIONS,
+        nextCursor: "cursor-2",
+      });
     }
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/.test(
@@ -1610,14 +1616,15 @@ describe("eval run polling operations", () => {
       expect(description).toContain(`\`${state}\``);
     }
     // THE claim this whole vocabulary exists to protect.
-    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain("where the chain stopped, not its cause");
     expect(description).toContain(
-      "authorizes proposing a change to the server under test"
+      "describe a change to the server under test"
     );
-    // The full 29-reason vocabulary does not belong in a tool description; it
-    // belongs where an agent already fetches reference material. Named here so
-    // the pointer cannot be dropped while the skill stays served.
-    expect(description).toContain("user-value-chain-glossary");
+    // Facts, not orders, and no pointer to another source to read
+    // instructions from: Claude's directory review rejects both. The glossary
+    // skill is still served for a client that loads it on its own.
+    expect(description).not.toContain("user-value-chain-glossary");
+    expect(description).not.toContain("START THERE");
     // And the phrase that would make a client render a spend warning on a
     // read-only operation (mcp/tests/platformTools.test.ts ties it to
     // `risk: "spend"`, which a read must never declare).
@@ -1663,6 +1670,31 @@ describe("eval run polling operations", () => {
         iterationId: "iter-1",
       }).success
     ).toBe(false);
+  });
+
+  it("passes an infra-failed iteration's infraError through untouched", async () => {
+    // What `mcpjam eval iterations --json` prints: the page as the API sent
+    // it, so a trial MCPJam's own infrastructure failed says so.
+    const infraFailed = {
+      ...ITERATIONS[0],
+      id: "iter-2",
+      status: "failed",
+      result: "failed",
+      error: "The AI provider is temporarily unavailable.",
+      infraError: {
+        class: "provider_unavailable",
+        layer: "model",
+        retryable: true,
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    };
+    const { client } = makeClient({ iterations: [infraFailed] });
+    const result = await listEvalRunIterationsOperation.execute(
+      { project: "new", runId: "run-1" },
+      { client }
+    );
+    expect(result.items[0]?.infraError).toEqual(infraFailed.infraError);
   });
 
   it("forwards iteration pagination params and surfaces nextCursor", async () => {
@@ -2369,6 +2401,7 @@ describe("operation catalog consistency", () => {
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    start_muse_readiness_run: { server: "s" },
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
@@ -2649,6 +2682,7 @@ describe("operation catalog consistency", () => {
     install_registry_directory_server: { catalogServerId: "cs" },
     install_registry_server: { registryServerId: "rs" },
     uninstall_registry_server: { registryServerId: "rs" },
+    send_feedback: { kind: "bug", summary: "the run page crashes" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2716,6 +2750,7 @@ describe("operation catalog consistency", () => {
       // the opt-in — spends the organization's credits.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_muse_readiness_run",
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
@@ -2862,6 +2897,9 @@ describe("operation catalog consistency", () => {
       // is not a visible waiver.
       "waive_eval_gate",
       "revoke_eval_gate_waiver",
+      // Stores a report and sends its text to the MCPJam team — a write, and
+      // `risk: "exposure"` because the text leaves the caller's organization.
+      "send_feedback",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -3234,5 +3272,153 @@ describe("registry operations", () => {
         source: "claude",
       }).success
     ).toBe(true);
+  });
+});
+
+describe("sendFeedbackOperation", () => {
+  const RECEIPT = { id: "fb_1", receivedAt: 1_750_000_000_000, duplicate: false };
+
+  function feedbackClient(
+    options: Partial<ConstructorParameters<typeof PlatformApiClient>[0]> = {}
+  ) {
+    const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-new",
+              name: "New",
+              organizationId: "org-a",
+              updatedAt: 2,
+            },
+            {
+              id: "project-old",
+              name: "Old",
+              organizationId: "org-a",
+              updatedAt: 1,
+            },
+          ],
+        });
+      }
+      if (path === "/api/v1/feedback" && init?.method === "POST") {
+        return Response.json(RECEIPT, { status: 201 });
+      }
+      return Response.json(
+        { code: "NOT_FOUND", message: `No route for ${path}` },
+        { status: 404 }
+      );
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+      ...options,
+    });
+    const feedbackCall = () => {
+      const call = fetchMock.mock.calls.find(
+        ([target]) =>
+          new URL(String(target)).pathname === "/api/v1/feedback"
+      );
+      const init = call?.[1] as RequestInit;
+      return {
+        body: JSON.parse(String(init.body)) as Record<string, unknown>,
+        headers: new Headers(init.headers as HeadersInit),
+      };
+    };
+    return { client, fetchMock, feedbackCall };
+  }
+
+  it("is a write with exposure risk and no permalink", () => {
+    expect(sendFeedbackOperation.readOnly).toBe(false);
+    expect(sendFeedbackOperation.risk).toBe("exposure");
+    expect(sendFeedbackOperation.description).toContain(
+      "SENDS YOUR TEXT TO THE MCPJAM TEAM"
+    );
+  });
+
+  it("guides details toward the goal, the expectation and the blocker", () => {
+    const shape = (
+      sendFeedbackOperation.inputSchema as unknown as {
+        shape: Record<string, { description?: string }>;
+      }
+    ).shape;
+    expect(shape.details?.description).toBe(
+      "What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried."
+    );
+  });
+
+  it("assumes no project when none is named", async () => {
+    const { client, fetchMock, feedbackCall } = feedbackClient();
+    const result = await sendFeedbackOperation.execute(
+      sendFeedbackOperation.inputSchema.parse({
+        kind: "missing_capability",
+        summary: "  cannot export a suite  ",
+        details: "Wanted YAML.",
+        requestId: "req_0123456789abcdef",
+      }),
+      { client }
+    );
+    expect(result).toEqual(RECEIPT);
+    expect(callsTo(fetchMock, "/projects")).toEqual([]);
+    expect(feedbackCall().body).toEqual({
+      kind: "missing_capability",
+      summary: "cannot export a suite",
+      details: "Wanted YAML.",
+      requestId: "req_0123456789abcdef",
+    });
+  });
+
+  it("resolves a named project to its id", async () => {
+    const onScopeResolved = vi.fn();
+    const { client, feedbackCall } = feedbackClient();
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash", project: "Old" },
+      { client, onScopeResolved }
+    );
+    expect(feedbackCall().body).toMatchObject({ projectId: "project-old" });
+    expect(onScopeResolved).toHaveBeenCalledWith({
+      projectId: "project-old",
+      organizationId: "org-a",
+    });
+  });
+
+  it("sends the idempotency key as a header, never in the body", async () => {
+    const { client, feedbackCall } = feedbackClient();
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash", idempotencyKey: "key-a" },
+      { client }
+    );
+    const { body, headers } = feedbackCall();
+    expect(headers.get("idempotency-key")).toBe("key-a");
+    expect(body).not.toHaveProperty("idempotencyKey");
+  });
+
+  it("declares the client's launcher on the report", async () => {
+    const { client, feedbackCall } = feedbackClient({
+      launcher: { kind: "mcp", client: "claude-code" },
+    });
+    await sendFeedbackOperation.execute(
+      { kind: "bug", summary: "crash" },
+      { client }
+    );
+    expect(
+      JSON.parse(feedbackCall().headers.get("x-mcpjam-launcher") ?? "null")
+    ).toMatchObject({ kind: "mcp", client: "claude-code" });
+  });
+
+  it("refuses an over-long summary before any request", () => {
+    expect(
+      sendFeedbackOperation.inputSchema.safeParse({
+        kind: "bug",
+        summary: "x".repeat(201),
+      }).success
+    ).toBe(false);
+    expect(
+      sendFeedbackOperation.inputSchema.safeParse({
+        kind: "praise",
+        summary: "nice",
+      }).success
+    ).toBe(false);
   });
 });

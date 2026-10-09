@@ -1,3 +1,11 @@
+import {
+  PLUGIN_MESSAGE_TEXT_PART,
+  pluginMessageTextSchema,
+} from "@/shared/plugin-message";
+import {
+  PLUGIN_MENTION_PART,
+  pluginMentionModelText,
+} from "@/shared/plugin-mentions";
 import { convertToModelMessages } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
@@ -5,15 +13,13 @@ import {
   type McpModelVisibleToolResultPolicy,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  readModelOutputImage,
 } from "@mcpjam/sdk";
 import {
   readMcpToolOriginServerId,
   stripMcpToolOriginMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
-import {
-  UI_CONTEXT_PART_TYPE,
-  renderUiContextText,
-} from "@/shared/ui-context";
+import { UI_CONTEXT_PART_TYPE, renderUiContextText } from "@/shared/ui-context";
 import { provenanceMarksOf } from "./history-provenance.js";
 
 export type McpToolResultModelOutputOptions =
@@ -31,7 +37,7 @@ export type McpToolResultModelOutputOptions =
   };
 
 function canReplaySourcelessImageMedia(
-  options: McpModelVisibleToolResultPolicy
+  options: McpModelVisibleToolResultPolicy,
 ): boolean {
   const policy = options.modelVisibleMcpToolResults;
   const directImages = policy?.directContent?.image ?? true;
@@ -48,7 +54,7 @@ function canReplaySourcelessImageMedia(
 function linkedResourceReaderForPart(
   part: unknown,
   fallbackServerId: string | undefined,
-  options: McpToolResultModelOutputOptions
+  options: McpToolResultModelOutputOptions,
 ): McpLinkedResourceReader | undefined {
   const serverId = readServerIdFromToolResultPart(part) ?? fallbackServerId;
   if (typeof serverId !== "string" || !options.readLinkedResource) {
@@ -137,7 +143,7 @@ function hasImageResourceLinkCandidate(result: unknown): boolean {
         !Array.isArray(block) &&
         (block as { type?: unknown }).type === "resource_link" &&
         typeof (block as { mimeType?: unknown }).mimeType === "string" &&
-        (block as { mimeType: string }).mimeType.startsWith("image/")
+        (block as { mimeType: string }).mimeType.startsWith("image/"),
     )
   );
 }
@@ -154,7 +160,7 @@ function isImageOmissionMarkerText(text: string): boolean {
 
 function readReplayableImageModelOutput(
   output: unknown,
-  options: { allowMedia: boolean }
+  options: { allowMedia: boolean },
 ): unknown | undefined {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return undefined;
@@ -183,14 +189,10 @@ function readReplayableImageModelOutput(
       continue;
     }
 
-    if (partRecord.type === "media" || partRecord.type === "image-data") {
-      if (
-        typeof partRecord.data !== "string" ||
-        typeof partRecord.mediaType !== "string" ||
-        !partRecord.mediaType.startsWith("image/")
-      ) {
-        return undefined;
-      }
+    // Any stored image shape (`file`, `image-data`, legacy `media`); the
+    // re-validation below re-emits it as AI SDK 7's `file` part.
+    const image = readModelOutputImage(partRecord);
+    if (image) {
       sawImageCandidate = true;
       if (!options.allowMedia) {
         value.push({
@@ -203,8 +205,8 @@ function readReplayableImageModelOutput(
         content: [
           {
             type: "image",
-            data: partRecord.data,
-            mimeType: partRecord.mediaType,
+            data: image.data,
+            mimeType: image.mediaType,
           },
         ],
       } as never);
@@ -276,7 +278,7 @@ function stripInternalProviderOptions(part: unknown): unknown {
 
 export async function mapMcpImageToolOutputs(
   messages: ModelMessage[],
-  options: McpToolResultModelOutputOptions = {}
+  options: McpToolResultModelOutputOptions = {},
 ): Promise<ModelMessage[]> {
   const mappedMessages: ModelMessage[] = [];
   const serverIdByToolCallId = new Map<string, string>();
@@ -328,7 +330,7 @@ export async function mapMcpImageToolOutputs(
 
       const replayedModelOutput = readReplayableImageModelOutput(
         rawOutputValue,
-        { allowMedia: canReplaySourcelessImageMedia(options) }
+        { allowMedia: canReplaySourcelessImageMedia(options) },
       );
       if (replayedModelOutput) {
         didChange = true;
@@ -354,7 +356,7 @@ export async function mapMcpImageToolOutputs(
       const readResource = linkedResourceReaderForPart(
         part,
         resolvedServerId,
-        options
+        options,
       );
       const modelOutput = readResource
         ? await mcpCallToolResultToModelOutputWithLinkedResources(
@@ -363,7 +365,7 @@ export async function mapMcpImageToolOutputs(
               modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
               readResource,
               abortSignal: options.abortSignal,
-            }
+            },
           )
         : mcpCallToolResultToModelOutput(rawOutputValue as any, {
             modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
@@ -382,7 +384,7 @@ export async function mapMcpImageToolOutputs(
     }
 
     mappedMessages.push(
-      didChange ? ({ ...message, content } as ModelMessage) : message
+      didChange ? ({ ...message, content } as ModelMessage) : message,
     );
   }
 
@@ -405,19 +407,59 @@ function convertMcpjamDataPart(part: {
   type: string;
   data?: unknown;
 }): { type: "text"; text: string } | undefined {
+  if (part.type === PLUGIN_MESSAGE_TEXT_PART)
+    return {
+      type: "text",
+      text: pluginMessageTextSchema.parse(part.data).text,
+    };
+  if (part.type === PLUGIN_MENTION_PART)
+    return { type: "text", text: pluginMentionModelText(part.data) };
   if (part.type !== UI_CONTEXT_PART_TYPE) return undefined;
   const text = renderUiContextText(part.data);
   return text ? { type: "text", text } : undefined;
 }
 
+/**
+ * AI SDK 7 turns every UI file part (an attached image, an App message's
+ * screenshot) into `data: { type: "url", url: new URL(...) }`. A `URL` object
+ * survives neither `structuredClone` (the live trace copies each request,
+ * which failed the whole turn) nor JSON (it reaches the backend as a string
+ * inside a shape its schema doesn't accept as a URL). The bare URL string is
+ * the AI SDK 6 shape both sides read: AI SDK 7 parses a string `data` as a URL
+ * first, so a `data:` URL still becomes inline bytes with its media type.
+ */
+function wireSafeFileData(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = (message.content as unknown[]).map((part) => {
+      if (!part || typeof part !== "object") return part;
+      const record = part as Record<string, unknown>;
+      const data = record.data as { type?: unknown; url?: unknown } | undefined;
+      if (
+        (record.type !== "file" && record.type !== "reasoning-file") ||
+        !data ||
+        data.type !== "url" ||
+        !(data.url instanceof URL)
+      )
+        return part;
+      changed = true;
+      return { ...record, data: data.url.href };
+    });
+    return changed ? ({ ...message, content } as ModelMessage) : message;
+  });
+}
+
 export async function convertToMcpjamModelMessages(
   messages: Parameters<typeof convertToModelMessages>[0],
-  options: McpToolResultModelOutputOptions = {}
+  options: McpToolResultModelOutputOptions = {},
 ): Promise<ModelMessage[]> {
   return mapMcpImageToolOutputs(
-    (await convertToModelMessages(messages, {
-      convertDataPart: convertMcpjamDataPart as never,
-    })) as ModelMessage[],
-    options
+    wireSafeFileData(
+      (await convertToModelMessages(messages, {
+        convertDataPart: convertMcpjamDataPart as never,
+      })) as ModelMessage[],
+    ),
+    options,
   );
 }

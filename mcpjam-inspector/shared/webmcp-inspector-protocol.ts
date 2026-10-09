@@ -33,7 +33,7 @@ import {
  * checks it — so the rule is about WHO is speaking, not about how reliably we
  * hear them.
  *
- * WHAT IS ACTUALLY REPORTED, per field, measured against Chromium 151.0.7922.34
+ * WHAT IS ACTUALLY REPORTED, per field, measured against Chromium 153.0.8010.12
  * and asserted field by field in `webmcp-cdp.spike.test.ts`:
  *
  *   - `readOnly` and `untrustedContent` are carried through with the page's

@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./types";
 import { useMemo, type ReactNode } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
@@ -146,7 +147,7 @@ export function RunAccuracyHeroBand({
    * future re-surfacing (matrix wiring is separate); no UI consumes it
    * here today.
    */
-  compareBaseRun?: EvalSuiteRun | null;
+  compareBaseRun?: EvalSuiteRunListItem | null;
   runTrendData: RunTrendPoint[];
   metricLabel: string;
   /** Pass/fail badge copy (e.g. "Accuracy" vs "Pass Rate"). */
@@ -180,8 +181,8 @@ export function RunAccuracyHeroBand({
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-      ? normalizeRunPassRatePercent(run.summary.passRate)
-      : null;
+        ? normalizeRunPassRatePercent(run.summary.passRate)
+        : null;
 
   const trendChips = useMemo(() => {
     if (runTrendData.length < 2) return { points: [], hiddenCount: 0 };
@@ -251,7 +252,11 @@ export function RunAccuracyHeroBand({
       {runClient || runServers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {runClient ? (
-            <HostChip name={runClient.displayName} hostId={runClient.hostId} logoSrc={runClient.logoSrc} />
+            <HostChip
+              name={runClient.displayName}
+              hostId={runClient.hostId}
+              logoSrc={runClient.logoSrc}
+            />
           ) : null}
           {visibleServers.map((name) => (
             <Badge
@@ -378,8 +383,8 @@ export function shouldShowRunAccuracyHero({
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-      ? normalizeRunPassRatePercent(run.summary.passRate)
-      : null;
+        ? normalizeRunPassRatePercent(run.summary.passRate)
+        : null;
   return passRatePercent !== null;
 }
 
@@ -443,10 +448,10 @@ export function runHasInsightContent({
 }): boolean {
   return Boolean(
     serverQualityTriage ||
-      goalCompletionPanel ||
-      groundednessPanel ||
-      actionableFindingsPanel ||
-      hasStageFunnel,
+    goalCompletionPanel ||
+    groundednessPanel ||
+    actionableFindingsPanel ||
+    hasStageFunnel,
   );
 }
 

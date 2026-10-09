@@ -25,6 +25,10 @@ const cloudState = vi.hoisted(() => ({
     computerEnvironmentId?: string;
   }>,
 }));
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHostList: () => ({ hosts: [{ hostId: "client-a1b2c3", name: "Claude", config: {} }], isLoading: false }),
+}));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
 }));
@@ -33,15 +37,27 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 vi.mock("../test-template-editor", () => ({
-  TestTemplateEditor: ({ readOnly, openCompareIterationId }: {readOnly?: boolean; openCompareIterationId?: string}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} />,
+  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase, launchReview }: any) => (
+    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} data-run-block={launchReview?.disabledReason} data-run-clients={JSON.stringify(Array.from(launchReview?.hostNamesById ?? []))} data-run-environments={JSON.stringify(launchReview?.environments)}>
+      <button onClick={() => onRunCase("case-1", {
+        suiteOverride: { _id: "suite-1", environmentIds: ["one-run"] },
+        iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      })}>Launch case overrides</button>
+    </div>
+  ),
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
   // Per-run row loads (Evaluate only); legacy suite views request none.
-  useQueries: (queries: any) => (mocks.useQueries as any)(queries),
+  useQueries: (queries: any) => queries.selectedRun ? { selectedRun: {
+    _id: queries.selectedRun.args.runId, suiteId: "suite-1", createdBy: "u", runNumber: 1,
+    configRevision: "r", configSnapshot: { tests: [], environment: { servers: [] } },
+    status: "completed", result: "failed", createdAt: 2, completedAt: 3, source: "ui",
+  } } : (mocks.useQueries as any)(queries),
 }));
 
 // S3 — the settings sheet reads per-suite capabilities. `unavailable` is the
@@ -889,6 +905,48 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     expect(screen.queryByTestId("suite-header")).toBeNull();
   });
 
+  it("passes resolved client names and ad-hoc environments into case launch review", () => {
+    cloudState.environments = [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" } as any];
+    renderOverview({
+      evaluateCaseEditor: true,
+      suite: { ...baseSuite, environmentIds: ["env-1"], hostAttachments: [] },
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-run-clients", '[["client-a1b2c3","Claude"]]');
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-environments")).toContain("env-1");
+    cloudState.environments = [];
+  });
+
+  it.each(["quota", "sandbox", "pending"])("passes the %s block to the case editor", (block) => {
+    const reason = block === "quota" ? "Eval iteration limit reached." :
+      block === "sandbox" ? "Cloud sandboxes are unavailable." : "A run is already starting.";
+    if (block === "sandbox") cloudState.ephemeralAvailable = false;
+    renderOverview({
+      evaluateCaseEditor: true,
+      ...(block === "quota" ? { evalRunsDisabledReason: reason } : {}),
+      ...(block === "sandbox" ? { suite: { ...baseSuite, environment: { servers: [], computerEnvironmentId: "img-1" } } } : {}),
+      ...(block === "pending" ? { rerunningSuiteId: "suite-1" } : {}),
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-block")).toMatch(
+      block === "sandbox" ? /can't run MCPJam cloud sandboxes/ : reason,
+    );
+  });
+
+  it("forwards ephemeral case setup to the suite runner with only that case", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    renderOverview({
+      suiteDetailOverview: true, evaluateCaseEditor: true, onRerun,
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    await user.click(screen.getByRole("button", { name: "Launch case overrides" }));
+    expect(onRerun).toHaveBeenCalledWith({ _id: "suite-1", environmentIds: ["one-run"] }, {
+      caseIds: ["case-1"], iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+    });
+    expect(baseSuite.environmentIds).not.toEqual(["one-run"]);
+  });
+
   it("opens test edit from the opted-in suite-detail case list", async () => {
     const user = userEvent.setup();
     const navigation = { ...noopNav, toTestEdit: vi.fn() };
@@ -1013,7 +1071,7 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       route: { type: "run-detail", suiteId: "suite-1", runId: "run-1" },
     });
 
-    const requested = Object.keys(mocks.useQueries.mock.calls.at(-1)?.[0] ?? {});
+    const requested = mocks.useQueries.mock.calls.flatMap(([queries]) => Object.keys(queries));
     expect(requested).toContain("run-1");
     expect(mocks.useQuery).not.toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",

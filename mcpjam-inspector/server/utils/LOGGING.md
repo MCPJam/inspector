@@ -42,6 +42,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 |---|---|---|
 | `http.request.completed` | middleware | `statusCode` |
 | `http.request.failed` | middleware | `statusCode`, `errorCode` |
+| `eval.import.environment_selection.failed` | `routes/shared/eval-authoring.ts` | `projectId`, `suiteId`, `reason`; hosted imports missing an environment also report to Sentry |
 | `mcp.oauth.proxy.failed` | `routes/mcp/oauth.ts`, `routes/web/oauth.ts` | `targetUrlHost`, `oauthPhase`, `errorCode`, `statusCode?` |
 | `mcp.tool.execution.failed` | `routes/web/tools.ts` | `toolName`, `serverId?`, `errorCode` |
 | `tunnel.created` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain`, `existed`, `credentialIdPresent?` |
@@ -54,6 +55,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `agent.loop_guard.tripped` | `utils/agent-loop-guard.ts` (from `routes/web/mcpjam-agent.ts`, `routes/web/chat-v2.ts`) | `surface`, `reason`, `steps`, `maxSteps`, `toolName?` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
+| `plugin.instance.request.timing` | `routes/web/plugin-instances.ts` | `action`, `statusCode`, `totalMs`, `spans` (per-step `count`/`totalMs`/`maxMs`) |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
 | `browser_profile.download.failed` | `routes/web/browser-profile-download.ts` | `stage`, `statusCode?`, `errorMessage?` |
 | `apikey.expiry.workos_refused` | `routes/web/api-keys.ts` | `statusCode` |

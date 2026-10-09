@@ -42,17 +42,17 @@ jobs:
     if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Checkout pinned backend contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: MCPJam/mcpjam-backend
-          ref: 86369ce132b76b4dd06b856608eb7f519f32811e
+          ref: c7e79944049dfd2cc2b81c6a08a4a540d20fa9bb
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
     # the `playwright install --with-deps` step entirely — that apt-driven step
     # was costing up to ~7 min of variable, sometimes-stalling wall-clock time.
     # When bumping @playwright/test, bump this tag in lockstep.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
 
     steps:
       # Git in the Playwright container can fail to discover its CA bundle.
@@ -84,14 +84,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -131,13 +131,13 @@ jobs:
       # save.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
 
     steps:
       # Git in the Playwright container can fail to discover its CA bundle.
@@ -181,14 +181,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -196,13 +196,13 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -230,7 +230,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
     strategy:
       # Report every shard's result. Cancelling siblings on the first failure
       # would hide unrelated breakage in the other five sixths of the suite.
@@ -256,14 +256,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -271,13 +271,13 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -300,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
     # This job builds the PR's code and runs it against prod Convex. Keep its
     # errors out of prod Sentry, which pages us: the build flag turns off the
     # browser SDK, DO_NOT_TRACK turns off the server's.
@@ -318,14 +318,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -333,13 +333,13 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -352,12 +352,17 @@ jobs:
       - name: Run Playwright smoke
         run: npm run test:e2e -w @mcpjam/inspector
 
+      - name: Run local access e2e
+        # Its own config: the smoke config seeds every page with the access key,
+        # and this spec proves what a browser without one sees.
+        run: npm run test:e2e:local-access -w @mcpjam/inspector
+
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |

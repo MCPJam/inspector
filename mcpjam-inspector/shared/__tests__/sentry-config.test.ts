@@ -226,12 +226,27 @@ describe("surface builders", () => {
     expect(BROWSER_IGNORE_ERRORS).toContain(
       "ResizeObserver loop completed with undelivered notifications",
     );
-    expect(BROWSER_IGNORE_ERRORS).toContain("Failed to fetch");
     expect(BROWSER_IGNORE_ERRORS).toContain("Load failed");
-    const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
-    expect(
-      (abort as RegExp).test("AbortError: The user aborted a request"),
-    ).toBe(true);
+    const regexes = BROWSER_IGNORE_ERRORS.filter(
+      (e): e is RegExp => e instanceof RegExp,
+    );
+    const matches = (message: string) => regexes.some((r) => r.test(message));
+    expect(matches("AbortError: The user aborted a request")).toBe(true);
+    expect(matches("Failed to fetch")).toBe(true);
+    expect(matches("TypeError: Failed to fetch")).toBe(true);
+  });
+
+  it("keeps reporting stale code-split chunk loads", () => {
+    // Sentry matches string entries by substring, so a bare "Failed to fetch"
+    // would also swallow this — the client's only signal that a deploy
+    // orphaned a chunk an open tab still references.
+    const message =
+      "TypeError: Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-CtNEAoFZ.js";
+    for (const entry of BROWSER_IGNORE_ERRORS) {
+      const hit =
+        entry instanceof RegExp ? entry.test(message) : message.includes(entry);
+      expect(hit, String(entry)).toBe(false);
+    }
   });
 
   // Behaviour, not identity: `beforeSend` is a composition now, so asserting

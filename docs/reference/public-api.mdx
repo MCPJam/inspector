@@ -68,6 +68,9 @@ What you can do with it today:
   assistant reply, the platform operations it invoked, references to any
   resources it created (eval suites), and token usage; the model is pinned
   server-side and billed to the project
+- **Send feedback** — report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
 
 All endpoints operate on servers you have already added to a project in the
 hosted inspector. Managing API keys remains UI-only — see
@@ -384,7 +387,7 @@ drafts are stable across retries when they are not.
 | Endpoint | What it does |
 | --- | --- |
 | `GET .../goals/{goalId}/runs` | That goal's runs, newest first |
-| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
+| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key`. Optional `expectedSponsored` is how many conversations you expect MCPJam to sponsor; a different actual split is a `409` (`details.code: swarm_funding_changed`) and nothing is created. The response can report `funding` (`sponsored`, `credits`, `total`) |
 | `GET .../goal-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
 | `GET .../goal-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
 | `POST .../goal-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
@@ -535,6 +538,20 @@ violation. Read what you recognize; ignore the rest.
   than re-requesting; `force: true` deliberately takes a second slice, which is
   why it is never inferred from anything else.
 </Warning>
+
+**Feedback** — report a problem with MCPJam itself to the MCPJam team:
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /feedback` | Send a bug report, missing-capability note, or other feedback to the MCPJam team. Body: `{ kind, summary, details?, operation?, requestId?, errorCode?, projectId? }`. Responds `201 { id, receivedAt, duplicate }` once stored. Signed-in accounts only (guests get `401`). Rate-limited per user (`429` with `Retry-After`). Accepts `Idempotency-Key` (validated strictly — an empty or over-long key is `400`, not silently ignored; the same key with different content is `409`). **The text goes to the MCPJam team, outside your organization, and is kept for 180 days.** |
+
+<Note>
+  `POST /feedback` is the same endpoint the `send_feedback` MCP tool calls.
+  Include the failing call's `x-request-id` as `requestId` when you have one —
+  it lets the team find that request in the server logs. An identical report
+  from you in the last 24 hours returns `duplicate: true` with the original
+  receipt instead of filing a second report.
+</Note>
 
 **Planning** — one read that answers "may I?" before you try:
 
@@ -693,6 +710,63 @@ If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
 client-credentials flows) and push the result to
 `POST .../oauth/import-tokens` once. Subsequent calls inject the stored token
 and refresh it server-side.
+
+## Reasoning effort
+
+A reasoning effort is a **saved setting on a model selection**, not a free-standing
+field. A `ModelSelection` (`modelId`, `source`, an optional `connectionRef`, and a
+`fallback`) carries it as `settings.reasoningEffort`, and the same shape is
+accepted everywhere a model choice is saved:
+
+| Where | Field |
+| --- | --- |
+| Client (`PATCH /projects/{projectId}/clients/{client}`) | `set.modelSelection` (or `config.modelSelection` on a whole-config replacement) |
+| Project environment (`POST`, `PATCH`, `POST .../ensure-adhoc`) | `modelSelection`, read back on the environment |
+| Eval case (`POST`, `PATCH .../cases`) | `models[].selection`, read back on the case |
+| Eval suite (`PATCH /projects/{projectId}/eval-suites/{suiteId}`) | `executionConfig.modelSelection`, read back on the suite |
+
+```json
+{
+  "modelId": "openai/gpt-5",
+  "source": "hosted",
+  "settings": { "reasoningEffort": "high" },
+  "fallback": { "provider": "none", "model": "none" }
+}
+```
+
+- **Levels.** `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Which of
+  them a model accepts is `supportedReasoningEfforts` on each row of the public
+  `GET /v1/models` catalog. An empty or absent list means no effort is offered for
+  that model — do not guess one.
+- **Applied or refused, never dropped.** A saved effort is applied by the route
+  the run takes and recorded on the execution record, or refused with
+  `capability_missing` before any spend. An effort replaces the sampling
+  temperature.
+- **A selection belongs to one model.** It must be for the `model` / `modelId` it
+  sits beside (`400` otherwise); sent alone it pins its own model. A bare model
+  change on a suite or environment drops a selection saved for the old model
+  instead of failing.
+- **Cases keep their selections.** A `models` PATCH replaces the array, but an
+  entry that omits `selection` keeps the case's existing selection for that
+  model. Send `selection: null` to drop it.
+- **Clearing.** `null` clears a saved selection on a client `set`, an environment
+  or a suite, keeping the bare model id.
+- **Never a secret.** A selection has no credential field; an unknown key
+  (`apiKey`, …) is a `400`.
+- **Environments need the capability.** `GET .../environments/capabilities`
+  reports `modelSelections`; an older deployment rejects the field.
+- **`advancedConfig.reasoningEffort` is retired.** It was never applied, so
+  writing it is a `400` pointing at `models[].selection.settings`, and a stored
+  value is refused by the runner.
+
+`POST /chat-sessions/messages` takes a top-level `reasoningEffort` for a
+per-request effort. Like `temperature`, it is pinned on the session's **first
+turn** (a continuation that restates it is refused), it wins over the effort a
+`hostId`'s saved selection carries, and it cannot be combined with `temperature`.
+
+The SDK, CLI, MCP tools and in-app agent all go through the same operations:
+`--effort` / `reasoningEffort` is a shorthand that edits the selection the target
+already has, and is refused (`send modelSelection`) when there is none.
 
 ## Not in the API yet
 

@@ -69,8 +69,13 @@ function createMockSentryModule(): {
   };
 
   const module: MockSentryModule = {
-    Scope: jest.fn().mockImplementation(() => scope),
-    NodeClient: jest.fn().mockImplementation(() => client),
+    // Constructed with `new`, which Vitest 4 rejects for arrow implementations.
+    Scope: jest.fn().mockImplementation(function () {
+      return scope;
+    }),
+    NodeClient: jest.fn().mockImplementation(function () {
+      return client;
+    }),
     defaultStackParser: jest.fn(),
     init: jest.fn(),
     makeNodeTransport: jest.fn(),

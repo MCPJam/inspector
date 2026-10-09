@@ -42,6 +42,7 @@ import {
 } from "@/lib/webmcp/ask-user-store";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { readTourSystemPrompt } from "./tour-session-prompt";
+import { createAgentFailureTracker } from "./agent-failure-reporting";
 import type { ModelDefinition } from "@/shared/types";
 
 const AGENT_API_PATH = "/api/web/mcpjam-agent";
@@ -326,6 +327,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
   let lastFinishReason: string | undefined;
   /** What the latest auto-resume decision held back, for the notice. */
   let heldBackNotice: string | null = null;
+  // One capture decision per request; see `agent-failure-reporting.ts`.
+  const failures = createAgentFailureTracker();
 
   const chat: Chat<UIMessage> = new Chat<UIMessage>({
     id: chatSessionId,
@@ -336,11 +339,16 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
       // the time `onError` runs the Response is gone. Same hook as
       // `useChatSession`'s `chatFetch`, so the side panel raises the limit
       // dialog instead of printing the body.
-      fetch: async (input, init) => {
-        const response = await authFetch(input, init);
-        if (!response.ok) await notifyMCPJamLimitErrorFromResponse(response);
-        return response;
-      },
+      //
+      // Wrapped by the failure tracker, which reads the response's capture
+      // header and watches the stream for `finish`, `error`, and the
+      // server's `captured` flag on its way to the SDK.
+      fetch: (input, init) =>
+        failures.fetch(input, init, async (request, requestInit) => {
+          const response = await authFetch(request, requestInit);
+          if (!response.ok) await notifyMCPJamLimitErrorFromResponse(response);
+          return response;
+        }),
       prepareSendMessagesRequest: ({
         id,
         messages,
@@ -392,9 +400,13 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // branch above; the SDK surfaces it here with the JSON in the message.
     onError: (error) => {
       notifyMCPJamLimitError({ message: error.message });
+      failures.noteError(error);
     },
-    onFinish: ({ finishReason }) => {
-      lastFinishReason = finishReason;
+    // The one place every request ends — aborted, failed, or finished — so
+    // the capture decision is made here, once.
+    onFinish: (flags) => {
+      failures.onFinish(flags);
+      lastFinishReason = flags.finishReason;
     },
     // WebMCP UI tools are no-execute server-side; the stream pauses until
     // the client supplies the result via `addToolOutput`. Non-UI names fall

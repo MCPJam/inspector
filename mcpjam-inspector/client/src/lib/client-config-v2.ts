@@ -64,7 +64,7 @@ import type {
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
-import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
+import { selectionConfigKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -124,8 +124,8 @@ export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
  * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
- * the real CLI runtime (the `@ai-sdk/harness-claude-code` /
- * `@ai-sdk/harness-codex` / `@ai-sdk/harness-cursor` adapter) inside the
+ * the real CLI runtime (the `@ai-sdk/harness-claude-code` adapter, MCPJam's
+ * Codex app-server adapter, or the `@ai-sdk/harness-cursor` adapter) inside the
  * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
  * emulated. The backend enforces `harness ⇒ computer`.
  *
@@ -1179,9 +1179,12 @@ export function hostConfigInputsEqual(
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
+  // `selectionConfigKey`, not `selectionKey`: the row key ignores settings, so
+  // an effort-only (or temperature-only) edit would read as "unchanged" and
+  // leave Save disabled.
   if (
-    (a.modelSelection ? selectionKey(a.modelSelection) : "") !==
-    (b.modelSelection ? selectionKey(b.modelSelection) : "")
+    (a.modelSelection ? selectionConfigKey(a.modelSelection) : "") !==
+    (b.modelSelection ? selectionConfigKey(b.modelSelection) : "")
   )
     return false;
   if (a.systemPrompt !== b.systemPrompt) return false;

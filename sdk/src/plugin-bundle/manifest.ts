@@ -61,8 +61,19 @@ export interface NormalizedPluginManifest {
   keywords?: string[];
   /** Bundle-relative icon path from the `com.mcpjam` namespace. */
   icon?: string;
-  /** Bundle-relative logo path from the `com.mcpjam` namespace. */
+  /**
+   * Bundle-relative directory icon (light). From OpenAI's `interface.logo`
+   * (top-level, or `extensions["com.openai"].interface`); the `com.mcpjam`
+   * namespace's `logo` overrides it.
+   */
   logo?: string;
+  /** Bundle-relative directory icon (dark), from OpenAI's `interface.logoDark`. */
+  logoDark?: string;
+  /**
+   * Bundle-relative composer icon, from OpenAI's `interface.composerIcon`.
+   * Optional: composer chips fall back to the directory icon.
+   */
+  composerIcon?: string;
   /**
    * Client-extension data keyed by reverse-domain namespace, sanitized
    * (secret-looking keys/values dropped, depth-capped). MCPJam applies only
@@ -116,6 +127,8 @@ const HANDLED_FIELDS = new Set<string>([
   "author",
   "keywords",
   "extensions",
+  // OpenAI's plugin presentation block. Only its icons are read.
+  "interface",
   ...STRING_FIELDS,
   ...URL_FIELDS,
 ]);
@@ -273,6 +286,98 @@ function applyMcpjamExtension(
   }
 }
 
+/** Reverse-domain namespace OpenAI keeps its plugin data in. */
+export const OPENAI_EXTENSION_NAMESPACE = "com.openai";
+
+const OPENAI_INTERFACE_ICON_FIELDS = [
+  "logo",
+  "logoDark",
+  "composerIcon",
+] as const;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Read OpenAI's plugin icons — `interface.logo` / `logoDark` (the plugin
+ * directory icon, light and dark) and `interface.composerIcon` — from the
+ * top-level `interface` block and from `extensions["com.openai"].interface`
+ * (which wins when both are present). Each must be a bundle-relative path to
+ * a file in the bundle; anything else is reported and ignored, never fatal,
+ * so a plugin with a bad icon still imports. The `com.mcpjam` namespace
+ * applies afterwards and overrides `logo`.
+ */
+function applyOpenAiInterfaceIcons(
+  manifest: NormalizedPluginManifest,
+  sources: Array<{ label: string; value: unknown }>,
+  filePaths: ReadonlySet<string>,
+  issues: PluginIssueCollector
+): void {
+  for (const { label, value } of sources) {
+    if (value === undefined) continue;
+    if (!isPlainRecord(value)) {
+      issues.warn(
+        "MANIFEST_INVALID_FIELD",
+        `"${label}" must be an object; its icons were ignored`
+      );
+      continue;
+    }
+    for (const key of OPENAI_INTERFACE_ICON_FIELDS) {
+      const ref = value[key];
+      if (ref === undefined) continue;
+      if (typeof ref !== "string") {
+        issues.warn(
+          "MANIFEST_INVALID_FIELD",
+          `"${label}.${key}" must be a bundle-relative path; ignored`
+        );
+        continue;
+      }
+      const resolved = resolveContainedPath("", ref);
+      if (!resolved.ok) {
+        issues.warn(resolved.code, `"${label}.${key}": ${resolved.message}`);
+        continue;
+      }
+      if (!filePaths.has(resolved.path)) {
+        issues.warn(
+          "MANIFEST_MISSING_FILE",
+          `"${label}.${key}" references a file that is not in the bundle: "${resolved.path}"`,
+          { path: resolved.path }
+        );
+        continue;
+      }
+      manifest[key] = resolved.path;
+    }
+  }
+}
+
+/**
+ * OpenAI requires a plugin directory icon in light and dark. Only checked
+ * for plugins that carry OpenAI data, so a plain Agent Plugins bundle is not
+ * held to OpenAI's listing rules.
+ */
+function checkOpenAiDirectoryIcon(
+  manifest: NormalizedPluginManifest,
+  issues: PluginIssueCollector
+): void {
+  if (manifest.logo === undefined && manifest.logoDark === undefined) {
+    issues.warn(
+      "MANIFEST_DIRECTORY_ICON_MISSING",
+      `plugin has no directory icon: OpenAI requires "interface.logo" (light) and "interface.logoDark" (dark), PNG`
+    );
+    return;
+  }
+  if (manifest.logo === undefined || manifest.logoDark === undefined) {
+    const missing = manifest.logo === undefined ? "logo" : "logoDark";
+    issues.warn(
+      "MANIFEST_DIRECTORY_ICON_VARIANT_MISSING",
+      `plugin directory icon has no ${
+        missing === "logo" ? "light" : "dark"
+      } variant: add "interface.${missing}"`
+    );
+  }
+}
+
 export interface PluginManifestNormalization {
   /** `null` when the manifest is unusable (errors were collected). */
   manifest: NormalizedPluginManifest | null;
@@ -419,6 +524,25 @@ export function normalizePluginManifest(
     }
   }
 
+  // OpenAI icons — before `extensions`, so the `com.mcpjam` namespace (applied
+  // there) overrides them.
+  const rawOpenAi = isPlainRecord(record.extensions)
+    ? record.extensions[OPENAI_EXTENSION_NAMESPACE]
+    : undefined;
+  const declaresOpenAi = record.interface !== undefined || rawOpenAi !== undefined;
+  applyOpenAiInterfaceIcons(
+    manifest,
+    [
+      { label: "interface", value: record.interface },
+      {
+        label: `extensions.${OPENAI_EXTENSION_NAMESPACE}.interface`,
+        value: isPlainRecord(rawOpenAi) ? rawOpenAi.interface : undefined,
+      },
+    ],
+    filePaths,
+    issues
+  );
+
   // extensions — reverse-domain namespace map. Non-object: report + ignore
   // (explicitly non-fatal per spec). Object: sanitize before storing, so no
   // secret-looking key or value at any depth rides into the persisted
@@ -452,6 +576,8 @@ export function normalizePluginManifest(
     }
   }
 
+  if (declaresOpenAi) checkOpenAiDirectoryIcon(manifest, issues);
+
   // Unknown top-level fields: reported and IGNORED (closed manifest) —
   // except execution-ambiguous names, which are rejected outright.
   for (const key of Object.keys(record)) {
@@ -480,4 +606,36 @@ export function normalizePluginManifest(
   );
 
   return { manifest };
+}
+
+/**
+ * Directory icon path for a theme (plugin lists and cards): the matching
+ * variant, else the other one. `undefined` means fall back to the server
+ * icon, then a generic icon.
+ */
+export function pluginDirectoryIconPath(
+  manifest: Pick<NormalizedPluginManifest, "logo" | "logoDark">,
+  theme: "light" | "dark"
+): string | undefined {
+  return theme === "dark"
+    ? manifest.logoDark ?? manifest.logo
+    : manifest.logo ?? manifest.logoDark;
+}
+
+/**
+ * Composer icon path (composer chips naming the plugin): `composerIcon`,
+ * then the `com.mcpjam` icon, then the directory icon.
+ */
+export function pluginComposerIconPath(
+  manifest: Pick<
+    NormalizedPluginManifest,
+    "composerIcon" | "icon" | "logo" | "logoDark"
+  >,
+  theme: "light" | "dark"
+): string | undefined {
+  return (
+    manifest.composerIcon ??
+    manifest.icon ??
+    pluginDirectoryIconPath(manifest, theme)
+  );
 }

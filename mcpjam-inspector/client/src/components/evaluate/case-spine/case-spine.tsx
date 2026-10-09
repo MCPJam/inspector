@@ -25,7 +25,7 @@ import { afterTheRunRows } from "./case-spine-model";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import { Target } from "lucide-react";
+import { Target, Wrench } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -34,6 +34,7 @@ import {
   newStepId,
   stepTurnIndices,
   type AssertStep,
+  type SpineAction,
   type TestStep,
 } from "@/shared/steps";
 import { blankPredicate } from "@/shared/predicate-kinds";
@@ -57,7 +58,7 @@ import {
 } from "@/components/evals/step-fields";
 import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
-import { RouteRow } from "../case-scorecard/route-row";
+import { RouteRow, type ToolCatalogStatus } from "../case-scorecard/route-row";
 import {
   initialToolsChoice,
   isPromptFirst,
@@ -77,9 +78,12 @@ import {
   deleteActionPlan,
   moveActionBlock,
   removeActionWithChecks,
+  replaceActionTools,
   spineStatus,
+  toolsByLaterAction,
   type DeleteActionPlan,
 } from "./case-spine-model";
+import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
 
 export type CaseSpineProps = {
   steps: TestStep[];
@@ -97,6 +101,8 @@ export type CaseSpineProps = {
   suppressedSuiteStandardCheckIds?: string[];
   snapshotPredicates?: Predicate[];
   availableTools?: AvailableTool[];
+  toolsStatus?: ToolCatalogStatus;
+  onRetryTools?: () => void;
   suiteServers?: string[];
   projectServers?: RemoteServer[];
   isNegativeTest?: boolean;
@@ -149,6 +155,8 @@ export function CaseSpine({
   suppressedSuiteStandardCheckIds,
   snapshotPredicates,
   availableTools = [],
+  toolsStatus,
+  onRetryTools,
   suiteServers = [],
   projectServers,
   isNegativeTest,
@@ -211,6 +219,12 @@ export function CaseSpine({
   const [pendingDelete, setPendingDelete] = useState<
     (DeleteActionPlan & { stepId: string }) | null
   >(null);
+  /**
+   * The prompt whose tool picker "Expect a tool call" opened. A prompt with no
+   * tool yet has no block to show one in, so the block is drawn once the author
+   * asks for it and stays for as long as the prompt has a tool.
+   */
+  const [toolPickerFor, setToolPickerFor] = useState<string | null>(null);
 
   const card = useMemo(
     () =>
@@ -266,6 +280,32 @@ export function CaseSpine({
     [card.groups, trialIteration, trialChain, steps, stepStatusById],
   );
   const wholeCaseRows = afterTheRunRows(card);
+  const ownWholeCaseRows = wholeCaseRows.filter(
+    (row) => row.provenance !== "suite",
+  );
+  const suiteWholeCaseRows = wholeCaseRows.filter(
+    (row) => row.provenance === "suite",
+  );
+  const suiteRowFailed = suiteWholeCaseRows.some((row) => {
+    const state = results?.get(row.key)?.result.state;
+    return state === "failed" || state === "error";
+  });
+  // Each later prompt's own tools, and what the first prompt's block keeps.
+  const laterTools = useMemo(() => toolsByLaterAction(steps), [steps]);
+  const laterToolList = useMemo(
+    () => [...laterTools.values()].flat(),
+    [laterTools],
+  );
+  const firstRoute = useMemo(() => {
+    const route = card.route.route;
+    if (route?.kind !== "tools" || laterToolList.length === 0)
+      return card.route;
+    const later = new Set(laterToolList.map((tool) => tool.id));
+    return {
+      ...card.route,
+      route: { ...route, tools: route.tools.filter((t) => !later.has(t.id)) },
+    };
+  }, [card.route, laterToolList]);
   const [emptyPromptId] = useState(() => newStepId("prompt"));
   const rows = useMemo(
     () =>
@@ -382,6 +422,91 @@ export function CaseSpine({
       return;
     }
     setPendingDelete({ ...plan, stepId });
+  };
+
+  const renderWholeCaseRow = (row: (typeof wholeCaseRows)[number]) => {
+    const result = results?.get(row.key);
+    if (result)
+      return (
+        <TrialScorecardRow
+          key={row.key}
+          row={result}
+          syncedStepId={syncedStepId}
+          onSyncStep={onHoverStep}
+        />
+      );
+    return (
+      <ScorecardRowView
+        key={row.key}
+        row={row}
+        readOnly={readOnly}
+        checkPolicy={checkPolicy}
+        availableTools={availableTools.map((tool) => tool.name)}
+        onChangePredicate={
+          row.provenance === "case"
+            ? (next) =>
+                onPredicatesChange({
+                  mode: predicates?.mode ?? "extend",
+                  list: (predicates?.list ?? []).map((item, index) =>
+                    index === row.predicateIndex ? next : item,
+                  ),
+                })
+            : undefined
+        }
+        onRemove={
+          row.provenance === "case"
+            ? () =>
+                onPredicatesChange({
+                  mode: predicates?.mode ?? "extend",
+                  list: (predicates?.list ?? []).filter(
+                    (_, index) => index !== row.predicateIndex,
+                  ),
+                })
+            : undefined
+        }
+      />
+    );
+  };
+
+  // ── which prompt draws a tools block ───────────────────────────────────────
+
+  const routeKind = card.route.route?.kind;
+  // "Expect a tool call" needs somewhere to write. A negative case forbids the
+  // call, a pinned-first one has no model turn for it, and an empty draft has
+  // no prompt step yet for a tool to follow.
+  const canExpectTool =
+    !readOnly &&
+    steps.length > 0 &&
+    routeKind !== "noTool" &&
+    routeKind !== "locked";
+  const firstBlockShown = (action: SpineAction) =>
+    action.ordinal === 1 &&
+    (view.tools.length > 0 ||
+      toolsChoice === "noTool" ||
+      routeKind === "locked" ||
+      (canExpectTool && toolPickerFor === action.step.id));
+  const laterBlockShown = (action: SpineAction) =>
+    action.ordinal > 1 &&
+    ((laterTools.has(action.step.id) && routeKind === "tools") ||
+      (canExpectTool && toolPickerFor === action.step.id));
+  /** A later prompt's tools block, drawn from the case's route or, when the
+   * case has no tool yet, from an empty one. */
+  const laterRow = (action: SpineAction) => {
+    const tools = laterTools.get(action.step.id) ?? [];
+    const route = card.route.route;
+    return {
+      ...card.route,
+      key: `${card.route.key}:${action.step.id}`,
+      route:
+        route?.kind === "tools"
+          ? { ...route, tools }
+          : {
+              kind: "tools" as const,
+              tools,
+              matchMode: "capability" as const,
+              resolvedMatch: resolvedMatch,
+            },
+    };
   };
 
   // ── the spine ──────────────────────────────────────────────────────────────
@@ -545,30 +670,103 @@ export function CaseSpine({
               <div className="flex justify-end">{defaultChecks}</div>
             ) : null}
 
+            {/* Every prompt can expect a tool call. The block that holds them
+                is drawn only for a prompt that already has one, so a prompt
+                without one offers the way in. */}
+            {action.step.kind === "prompt" &&
+            canExpectTool &&
+            !firstBlockShown(action) &&
+            !laterBlockShown(action) ? (
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 border-dashed text-xs"
+                  data-testid="spine-expect-tool"
+                  onClick={() => setToolPickerFor(action.step.id)}
+                >
+                  <Wrench className="size-3.5" aria-hidden />
+                  Expect a tool call
+                </Button>
+              </div>
+            ) : null}
+
             {/* The route question belongs to the action that opens the model
                 turn it grades — the first prompt, or the pinned call on a
                 model-free case. */}
-            {action.ordinal === 1 &&
-            (view.tools.length > 0 ||
-              toolsChoice === "noTool" ||
-              card.route.route?.kind === "locked") ? (
+            {firstBlockShown(action) ? (
               <ul className="space-y-1.5">
                 {results?.get(card.route.key) ? (
                   <TrialScorecardRow row={results.get(card.route.key)!} />
                 ) : (
                   <RouteRow
-                    row={card.route}
+                    row={firstRoute}
                     availableTools={availableTools.map((tool) => tool.name)}
+                    toolsStatus={toolsStatus}
+                    onRetryTools={onRetryTools}
                     readOnly={readOnly}
                     showUnsetError={showUnsetError}
                     negativeContradiction={card.negativeContradiction}
-                    onSetTools={setTools}
+                    onSetTools={(tools) =>
+                      setTools([...tools, ...laterToolList])
+                    }
                     onChooseNoTool={chooseNoTool}
                     onChooseTools={chooseTools}
-                    onAddTool={addTool}
+                    onAddTool={(toolName) => {
+                      setToolPickerFor(null);
+                      addTool(toolName);
+                    }}
                     onSetKind={setKind}
                   />
                 )}
+              </ul>
+            ) : null}
+
+            {/* A later prompt's own tools, under that prompt: the runner grades
+                them against its turn. */}
+            {laterBlockShown(action) ? (
+              <ul className="space-y-1.5">
+                <RouteRow
+                  turnScoped
+                  row={laterRow(action)}
+                  availableTools={availableTools.map((tool) => tool.name)}
+                  toolsStatus={toolsStatus}
+                  onRetryTools={onRetryTools}
+                  readOnly={readOnly}
+                  showUnsetError={false}
+                  negativeContradiction={false}
+                  onSetTools={(next) =>
+                    !readOnly &&
+                    onStepsChange(
+                      replaceActionTools(
+                        steps,
+                        action.step.id,
+                        laterTools.get(action.step.id) ?? [],
+                        next,
+                      ),
+                    )
+                  }
+                  onAddTool={(toolName) => {
+                    const name = toolName.trim();
+                    if (readOnly || !name) return;
+                    const current = laterTools.get(action.step.id) ?? [];
+                    setToolPickerFor(null);
+                    onStepsChange(
+                      replaceActionTools(steps, action.step.id, current, [
+                        ...current,
+                        {
+                          id: newStepId("assert"),
+                          toolName: name,
+                          arguments: {},
+                        },
+                      ]),
+                    );
+                  }}
+                  onChooseNoTool={() => {}}
+                  onChooseTools={() => {}}
+                  onSetKind={setKind}
+                />
               </ul>
             ) : null}
 
@@ -647,7 +845,7 @@ export function CaseSpine({
           placeholder={
             readOnly
               ? "No expected outcome captured"
-              : "States the signed-in account's email address."
+              : "One sentence the judge scores against"
           }
           className={cnBorder(undefined)}
         />
@@ -656,51 +854,21 @@ export function CaseSpine({
       {wholeCaseRows.length > 0 && (
         <section className="space-y-2" aria-label="Whole-case assertions">
           <h3 className="text-sm font-semibold">Whole-case assertions</h3>
-          <ul className="space-y-1.5">
-            {wholeCaseRows.map((row) => {
-              const result = results?.get(row.key);
-              if (result)
-                return (
-                  <TrialScorecardRow
-                    key={row.key}
-                    row={result}
-                    syncedStepId={syncedStepId}
-                    onSyncStep={onHoverStep}
-                  />
-                );
-              return (
-                <ScorecardRowView
-                  key={row.key}
-                  row={row}
-                  readOnly={readOnly}
-                  checkPolicy={checkPolicy}
-                  availableTools={availableTools.map((tool) => tool.name)}
-                  onChangePredicate={
-                    row.provenance === "case"
-                      ? (next) =>
-                          onPredicatesChange({
-                            mode: predicates?.mode ?? "extend",
-                            list: (predicates?.list ?? []).map((item, index) =>
-                              index === row.predicateIndex ? next : item,
-                            ),
-                          })
-                      : undefined
-                  }
-                  onRemove={
-                    row.provenance === "case"
-                      ? () =>
-                          onPredicatesChange({
-                            mode: predicates?.mode ?? "extend",
-                            list: (predicates?.list ?? []).filter(
-                              (_, index) => index !== row.predicateIndex,
-                            ),
-                          })
-                      : undefined
-                  }
-                />
-              );
-            })}
-          </ul>
+          {ownWholeCaseRows.length > 0 ? (
+            <ul className="space-y-1.5">
+              {ownWholeCaseRows.map(renderWholeCaseRow)}
+            </ul>
+          ) : null}
+          {suiteWholeCaseRows.length > 0 ? (
+            <SuiteRowsDisclosure
+              rows={suiteWholeCaseRows}
+              defaultOpen={suiteRowFailed}
+            >
+              <ul className="space-y-1.5">
+                {suiteWholeCaseRows.map(renderWholeCaseRow)}
+              </ul>
+            </SuiteRowsDisclosure>
+          ) : null}
         </section>
       )}
       {pendingDelete ? (

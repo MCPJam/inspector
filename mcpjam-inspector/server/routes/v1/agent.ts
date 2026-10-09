@@ -34,6 +34,13 @@
  *    interactive fallback, so an unattended turn must never spend on the
  *    model's own initiative. Destructive ops stay excluded entirely — a
  *    proposal makes spend deliberate, not a deletion recoverable.
+ *  - The direct tier's WRITES additionally require a human surface
+ *    (MJ-008). A caller with no chat surface — an `sk_` key or a plain JWT —
+ *    gets the read-only catalog and nothing else: its model must not mutate
+ *    the workspace unattended, whatever the request body says. The surface is
+ *    resolved from the AUTH METHOD (`approval-surface.ts`), never the body,
+ *    and the flag is the operation's own catalog `readOnly`, so neither half
+ *    of the decision is caller-supplied.
  *  - Every operation is HARD-CLAMPED to the route's `projectId`. The op
  *    catalog's `project` selector allows cross-project roaming for other
  *    surfaces; prompt instructions are not an authorization boundary, so
@@ -82,7 +89,7 @@ import {
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { parseWithSchema } from "../web/errors.js";
+import { hostedOnlyRouteError, parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
@@ -92,6 +99,8 @@ import {
   hasUnresolvedApprovalResponses,
 } from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
   deriveOperationIdempotencyKey,
@@ -114,6 +123,12 @@ import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { MCPJAM_AGENT_FAILURE_CAPTURE } from "../../utils/agent-failure-capture.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  hasServiceCredential,
+  serviceCredentialHeaders,
+} from "../../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
@@ -776,10 +791,25 @@ export function buildAgentApiToolSet(opts: {
    * and there is nothing about a read that makes it exempt.
    */
   disabledOperations?: ReadonlySet<string>;
+  /**
+   * Whether this turn renders into a chat surface where a person sees what
+   * ran and approvals are collected (`resolveProposalSurface` — Slack/Discord
+   * service auth plus a conversation). Resolved from the AUTH METHOD, never
+   * from the request body. Absent or false, every operation that is not
+   * read-only is OMITTED, same rule as the gated tier (MJ-008): a
+   * headless caller's model must not mutate the workspace unattended, and the
+   * caller can always issue the write itself through the plain /api/v1
+   * operation under its own name.
+   */
+  hasHumanSurface?: boolean;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
     if (opts.disabledOperations?.has(operation.name)) continue;
+    // Read off the operation's own catalog flag — a missing flag counts as a
+    // write — so nothing caller-supplied can widen what a headless turn may
+    // execute (MJ-008).
+    if (operation.readOnly !== true && opts.hasHumanSurface !== true) continue;
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
@@ -1124,6 +1154,30 @@ agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });
 
+/**
+ * The scoping read behind the job routes. A structured refusal keeps the
+ * backend's own mapping; a plain membership refusal — masked to "Server
+ * Error" in production — answers the same 404 an unknown job id does instead
+ * of escaping to the boundary's 500 (MJ-021).
+ */
+async function readAgentJobStatus(
+  convex: ReturnType<typeof createConvexClient>,
+  jobId: string,
+): Promise<{ projectId?: string } | null> {
+  try {
+    return await convex.query("agentTurnState:status" as any, { jobId });
+  } catch (error) {
+    throw (
+      translateStructuredConvexRefusal(error) ??
+      translateConvexReadError(error, {
+        scope: "v1.agent",
+        notFoundMessage: "Agent job not found.",
+        redactedIsRefusal: true,
+      })
+    );
+  }
+}
+
 agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
   if (!process.env.CONVEX_URL)
     return v1Error(
@@ -1132,9 +1186,7 @@ agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const result = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const result = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!result || result.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   return v1Resource(c, result);
@@ -1147,9 +1199,7 @@ agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
       "The agent endpoint requires a hosted MCPJam deployment.",
     );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
-  const status = await convex.query("agentTurnState:status" as any, {
-    jobId: c.req.param("jobId"),
-  });
+  const status = await readAgentJobStatus(convex, c.req.param("jobId"));
   if (!status || status.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   await convex.mutation("agentTurnState:cancel" as any, {
@@ -1162,12 +1212,19 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
-  if (!process.env.CONVEX_HTTP_URL || !process.env.INSPECTOR_SERVICE_TOKEN) {
-    return v1Error(
-      c,
-      "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint requires a hosted MCPJam deployment.",
+  // The shared hosted-only answer (thrown, so the v1 envelope maps it the
+  // same way as every other credential-backed feature: 422 with
+  // `details.reason` on a self-hosted build, 500 on a misconfigured hosted
+  // one, naming what is actually missing).
+  if (!process.env.CONVEX_HTTP_URL) {
+    throw hostedOnlyRouteError(
+      "The agent endpoint",
+      undefined,
+      "CONVEX_HTTP_URL",
     );
+  }
+  if (!hasServiceCredential()) {
+    throw hostedOnlyRouteError("The agent endpoint");
   }
 
   if (!isHostedCatalogModel(String(AGENT_API_MODEL.id), "anthropic")) {
@@ -1240,7 +1297,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${await getConvexBearerForRequest(c)}`,
-          "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN!,
+          ...serviceCredentialHeaders(),
         },
         body: JSON.stringify({
           projectId,
@@ -1347,7 +1404,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Proposals need a surface to render the control on AND an org to
     // attribute the spend to. Both come from the auth context, resolved by a
     // single helper so no route re-implements "which chat product is this".
-    // Callers with neither get the read/write tiers only — the gated tools are
+    // Callers without a surface get only read-only direct tools; gated tools are
     // omitted entirely rather than offered and then refused, so the model
     // never plans around an action it cannot take.
     const proposalSurface = durable?.surface ?? resolveProposalSurface(c, body);
@@ -1371,6 +1428,9 @@ agent.post("/projects/:projectId/agent", async (c) => {
           : {}),
         clientWithHeaders: makeClient,
         disabledOperations,
+        // The same presence test that decides whether the gated tools exist
+        // at all: without it the direct tier's writes are omitted too.
+        hasHumanSurface: proposalSurface !== undefined,
       }),
       ...(proposalSurface
         ? buildGatedProposalTools({
@@ -1473,8 +1533,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     }
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
 
     let turnMessages = durable?.messages ?? body.messages;
     if (durable) {
@@ -1542,9 +1601,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       runtime: {
         ...rt.runtime,
         // MCPJam pays for agent turns on every surface, not just the in-app
-        // panel. This rail already requires the Inspector service token at its
-        // boundary and only accepts signed-in delegated org JWTs, which is
-        // exactly what the backend re-checks before honouring the claim.
+        // panel. The backend honours the claim on the caller's own sign-in,
+        // and only for the credentials it accepts for this — the org-scoped
+        // delegated token this route mints for `sk_` keys, Slack and Discord,
+        // or a first-party session — so a bearer minted for another audience
+        // is refused rather than billed.
         extraBodyFields: {
           ...(rt.runtime.extraBodyFields ?? {}),
           billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
@@ -1565,6 +1626,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
+      // Every failure of an agent turn reaches Sentry, classified — and is
+      // recorded on THIS request, so the request-log backstop does not
+      // capture the `v1Error` this route then answers with a second time.
+      failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
+      failureReporter: createRequestStreamFailureReporter(c, "v1-agent"),
       // The SHARED ceiling, not a local 16. Now that this route sends the
       // billing claim, the backend refuses any step at or past
       // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy

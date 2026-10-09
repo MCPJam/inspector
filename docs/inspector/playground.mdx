@@ -122,6 +122,8 @@ Higher-priced models are greyed out in the picker for guests, with a "Sign in to
 
 Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response — including tool calls and rendered widgets — appears in its own column.
 
+The reasoning effort chip stays visible in compare mode. The chip in the chat input controls the lead card's effort; each card also has its own chip so you can set a different effort per card. Two cards of the same model at different effort levels are treated as two separate columns — for example, Sonnet at Low and Sonnet at High run side by side as distinct targets.
+
 <Note>
   The **Multiple models** toggle is hidden when the active session is shared
   with the project (project-visible). Enabling it on a shared session would
@@ -195,9 +197,11 @@ Each host style ships with a distinct `hostCapabilities` preset. Switching from 
 | ------- | ---------------------- | --------------------------------- |
 | Claude  | Included               | `["inline", "fullscreen", "pip"]` |
 | Copilot | Omitted (`undefined`)  | `["inline", "fullscreen"]`        |
-| ChatGPT | Included               | `["inline", "fullscreen", "pip"]` |
+| ChatGPT | Included               | `["inline", "fullscreen"]`        |
 
 **Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
+
+**ChatGPT** (web) advertises `inline` and `fullscreen` only — `pip` is not offered by the ChatGPT web host (probe: 2026-09-29).
 
 ### Host Capabilities
 
@@ -369,6 +373,13 @@ Others never pause even when it is on: read-only lookups of your own project, th
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
+When a **local harness** (Claude Code or Codex) is active, turning Tool Approval off requires a separate **Run without asking?** confirmation before the first send. The dialog names the harness and explains that it will run commands and change files on your computer without asking first. Consent is scoped to your signed-in account, this machine, the current project, and the harness — it is not shared across projects or machines.
+
+- **Cancel** restores Tool Approval to On and keeps your draft intact.
+- Once confirmed, MCPJam answers native approval requests on your behalf. The runtime stays in ask mode — toggling the switch does not decide any approval that was already waiting; your explicit answer still controls it.
+- Host-executed tools marked as always requiring approval continue to pause regardless of the toggle.
+- Forgetting the local authorization clears the Off consent; the confirmation dialog reappears the next time you turn it off.
+
 **Message history**
 Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.
 
@@ -409,6 +420,7 @@ When you are signed in as a project member, the Playground gives the model a set
 | `read_server_resource`       | Read one resource from a server by URI and return its contents.                                                                                                                                                                                                                      |
 | `start_claude_readiness_run` | Grade a saved server against Anthropic's connector-directory rules. Returns a receipt with a run id — poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits. Requires approval. |
 | `start_openai_readiness_run` | Grade a saved server against OpenAI's app-directory rules. `submissionMode` is required and never inferred. Returns a receipt; poll `get_readiness_run` for the verdict. Requires approval.                                                                                          |
+| `start_muse_readiness_run`   | Grade a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns a receipt; poll `get_readiness_run` for the verdict. Requires approval.                                                                                                   |
 | `get_readiness_run`          | Read one readiness run: `status` (whether the run finished), `overallStatus` (the grade), and `llmObservations` (whether the optional model pass ran). A `completed` run can be `not-ready`.                                                                                         |
 | `list_readiness_runs`        | List a project's readiness runs, newest first, optionally narrowed to one publisher or server.                                                                                                                                                                                       |
 | `cancel_readiness_run`       | Stop a readiness run that is still going. The run's real terminal state arrives on a later `get_readiness_run`.                                                                                                                                                                      |
@@ -416,7 +428,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-Workspace tools that change something — `call_server_tool`, `start_claude_readiness_run`, `start_openai_readiness_run`, `cancel_readiness_run`, and every tool that creates, updates, deletes, starts, cancels or dismisses — always pause so you can approve or deny each call, whatever the **Tool Approval** toggle says. The reads that open a connection to one of your servers (`diagnose_server`, `list_server_tools`, `read_server_resource`, and the other prompt, resource and skill reads) follow the **Require tool approval** setting saved on the client or project — on when nothing is saved. The composer toggle can add these pauses for a conversation but cannot remove them. Read-only listing and polling tools never require approval, on any model.
+Workspace tools that change something — `call_server_tool`, `start_claude_readiness_run`, `start_openai_readiness_run`, `start_muse_readiness_run`, `cancel_readiness_run`, and every tool that creates, updates, deletes, starts, cancels or dismisses — always pause so you can approve or deny each call, whatever the **Tool Approval** toggle says. The reads that open a connection to one of your servers (`diagnose_server`, `list_server_tools`, `read_server_resource`, and the other prompt, resource and skill reads) follow the **Require tool approval** setting saved on the client or project — on when nothing is saved. The composer toggle can add these pauses for a conversation but cannot remove them. Read-only listing and polling tools never require approval, on any model.
 
 <Note>
   These tools are only available when you are signed in as a project member.

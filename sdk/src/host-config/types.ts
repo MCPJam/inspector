@@ -279,6 +279,41 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "toolCallCancellation",
 ] as const;
 
+/**
+ * The OpenAI plugin extensions a client can offer, one toggle each, stored
+ * under `mcpProfile.apps.pluginExtensions.capabilities`. Order is the order
+ * the client editor lists them in; the canonical form sorts keys.
+ */
+export const PLUGIN_EXTENSION_CAPABILITY_KEYS = [
+  "sidebarApps",
+  "conversationPanels",
+  "fileViewers",
+  "fileResources",
+  "localFiles",
+  "settings",
+  "displayModes",
+  "deepLinks",
+  "modelContext",
+  "messages",
+  "mentions",
+  "forms",
+  "onboarding",
+] as const;
+export type PluginExtensionCapabilityKey =
+  (typeof PLUGIN_EXTENSION_CAPABILITY_KEYS)[number];
+
+/**
+ * Per-client "OpenAI plugin extensions" setting. `enabled` is the master
+ * switch. `capabilities` is sparse: an absent key means "on whenever the
+ * master switch is on", so only switched-off extensions need to be stored.
+ * The whole object absent means "use the client style's default" (on for
+ * ChatGPT and Codex, off for everything else).
+ */
+export type HostConfigPluginExtensionsV1 = {
+  enabled: boolean;
+  capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+};
+
 export type CspDomainSet = {
   connectDomains?: string[];
   resourceDomains?: string[];
@@ -343,11 +378,12 @@ export type HostConfigMcpProfileV1 = {
   //   refetches — after receiving the notification, the client re-issues
   //               `tools/list`.
   //
-  // The two are independent. `refetches` was originally documented as only
-  // measurable when `listens` is true; the 2026-08-26 Copilot capture
-  // disproved that — a server can publish the notification on an open
-  // `tools/call` response stream, reaching a client that never opened the
-  // standalone channel, so `listens: false, refetches: true` is real.
+  // The two are independent. A server can publish the notification on an
+  // open `tools/call` response stream, reaching a client whether or not it
+  // opened the standalone channel — the 2026-09-29 Cursor and VS Code runs
+  // received it that way and re-fetched — so `listens: false, refetches: true`
+  // is possible. (Copilot's 2026-08-26 re-fetch, once cited here, came 30 s
+  // late and is now recorded as unknown.)
   //
   // Absent -> spec-conforming (listens and refetches), like every knob above.
   toolListChanged?: {
@@ -437,6 +473,9 @@ export type HostConfigMcpProfileV1 = {
     // Sparse per-dimension override on the SEP-1865 MCP Apps `app.*`
     // spec-bridge matrix. Independent from `compatRuntime`.
     mcpAppsOverrides?: McpAppsCapabilities;
+    // OpenAI plugin extensions (sidebar Apps, file viewers, forms, …) this
+    // client offers. Absent → the client style's default.
+    pluginExtensions?: HostConfigPluginExtensionsV1;
   };
   extensions?: Record<string, unknown>;
 };

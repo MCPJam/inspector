@@ -1,3 +1,8 @@
+import {
+  guestTabRecovery,
+  recoverRevokedGuest,
+} from "./auth/guest-tab-recovery";
+import { authRefusalDiagnostics } from "./auth/auth-refusal-diagnostics";
 import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
@@ -5,6 +10,7 @@ import { reportCaught } from "./error-reporting";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 import { notifySessionRevoked } from "./auth/session-revoked";
 import {
@@ -42,18 +48,29 @@ export function traceConvexQueries(
   }
   const watchQuery = client.watchQuery.bind(client);
   client.watchQuery = (query, ...args) => {
+    let observedGuest = guestTabRecovery.getGuest();
     const watch = watchQuery(query, ...args);
     let lastReportedMessage: string | undefined;
     const report = (error: unknown) => {
       try {
-        if (isAuthorizationRefusal(error) || isParentDeletedRefusal(error))
-          return;
-        // Signed out elsewhere: not a fault, and this tab should follow.
-        // `notifySessionRevoked` acts once per page load.
-        if (isSessionRevokedError(error)) {
-          notifySessionRevoked();
+        const revoked = isSessionRevokedError(error);
+        if (revoked || isUnauthenticatedError(error)) {
+          try {
+            authRefusalDiagnostics.record(
+              revoked ? "session_revoked" : "unauthenticated",
+              error instanceof Error ? error.message : "",
+              getFunctionName(query),
+              queryBackend,
+            );
+          } catch {
+            /* Recovery must continue even if diagnostics fail. */
+          }
+          if (revoked && !recoverRevokedGuest(observedGuest))
+            notifySessionRevoked();
           return;
         }
+        if (isAuthorizationRefusal(error) || isParentDeletedRefusal(error))
+          return;
         const original =
           error instanceof Error
             ? error
@@ -77,6 +94,7 @@ export function traceConvexQueries(
     const inspect = () => {
       try {
         watch.localQueryResult();
+        observedGuest = guestTabRecovery.getGuest();
         lastReportedMessage = undefined;
       } catch (error) {
         report(error);
@@ -87,6 +105,7 @@ export function traceConvexQueries(
       localQueryResult: () => {
         try {
           const result = watch.localQueryResult();
+          observedGuest = guestTabRecovery.getGuest();
           lastReportedMessage = undefined;
           return result;
         } catch (error) {

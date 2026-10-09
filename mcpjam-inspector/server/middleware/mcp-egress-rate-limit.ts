@@ -5,6 +5,7 @@ import { HOSTED_MODE } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { serverCheckScope } from "../utils/server-check-scope.js";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
+import { getServiceCredential } from "../services/service-credential.js";
 
 const decisionSchema = z.object({
   state: z.enum([
@@ -31,7 +32,7 @@ function coordinatorFor(
   metadata?: { requestId: string; intent?: "manual" | "automatic" },
 ): CheckCoordinator {
   const url = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   const requestId = metadata?.requestId ?? randomUUID();
   const guestId = c.get("guestId");
   const userId = c.get("workosUserId");
@@ -94,6 +95,10 @@ function refused(c: Context, reason: string, status: 409 | 429 | 503) {
 export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
   return async (c: Context, next: Next): Promise<Response | void> => {
     if (!HOSTED_MODE || c.req.method !== "POST") return next();
+    // Before the body is read: the hosted Connect route counts its deadline
+    // (`WEB_SERVER_CHECK_DEADLINE_MS`) from the request's arrival, so the body
+    // read and the queue wait below both count against it.
+    const arrivedAt = Date.now();
     let metadata:
       | { requestId: string; intent: "manual" | "automatic"; resumed?: boolean }
       | undefined;
@@ -193,6 +198,7 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
         intent: metadata?.intent ?? "manual",
         resumed: metadata?.resumed ?? false,
       });
+      c.set("serverCheckStartedAt", arrivedAt);
       await serverCheckScope.run(signal, next);
       if (preempted) return refused(c, "SERVER_CHECK_PREEMPTED", 409);
       if (leaseFailed) return refused(c, "SERVER_CHECK_QUEUE_UNAVAILABLE", 503);

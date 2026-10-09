@@ -1,10 +1,15 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
 import { AccessRequired } from "./components/AccessRequired";
 import { traceConvexQueries } from "./lib/trace-convex-queries";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useEffect, type ReactNode } from "react";
 import { appRoot as root } from "./app-root";
+import {
+  GuestTabRecoveryBoundary,
+  GuestTabTransitionListener,
+} from "./components/GuestTabRecoveryBoundary";
 import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
 import "./index.css";
@@ -13,8 +18,9 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
-import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
+import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
+import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
+import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
@@ -101,13 +107,21 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  useEffect(() => {
+    authRefusalDiagnostics.update({ ready: isUserReady });
+    return () => authRefusalDiagnostics.update({ ready: false });
+  }, [isUserReady]);
 
   return (
     <DbUserReadyProvider
       isEnsuringUser={isEnsuringUser}
       isUserReady={isUserReady}
     >
-      {children}
+      <GuestTabRecoveryBoundary ready={isUserReady}>
+        <AuthRecoveryBoundary ready={isUserReady}>
+          {children}
+        </AuthRecoveryBoundary>
+      </GuestTabRecoveryBoundary>
     </DbUserReadyProvider>
   );
 }
@@ -222,6 +236,20 @@ if (isInIframe) {
   );
 } else if (
   import.meta.env.DEV &&
+  window.location.pathname === "/__e2e/oauth-debugger"
+) {
+  // This isolated harness uses fake MCP servers, not an app account. Keep it
+  // outside auth providers so unavailable test credentials cannot block it.
+  // The route itself is also DEV-only; production keeps the normal auth gate.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  root.render(
+    <StrictMode>
+      <AppRouterProvider />
+    </StrictMode>,
+  );
+} else if (
+  import.meta.env.DEV &&
   window.location.pathname.startsWith("/__preview/plan-limit")
 ) {
   // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
@@ -256,7 +284,8 @@ if (isInIframe) {
   // Convex URL above does: the deployed bundle is shared across environments
   // and only the serving process knows which WorkOS environment it belongs to.
   const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
-    string | undefined;
+    | string
+    | undefined;
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
@@ -348,6 +377,7 @@ if (isInIframe) {
   const convex = new ConvexReactClient(convexUrl, {
     authRefreshTokenLeewaySeconds: 60,
   });
+  installConvexAuthRecovery(convex);
   traceConvexQueries(convex, convexUrl);
   normalizeInitialLegacyHashBookmark();
 
@@ -415,13 +445,16 @@ if (isInIframe) {
       }}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
+      <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
+        <GuestTabTransitionListener />
         <SignOutBoundary>
-          <AuthBootstrap>
-            <AppRouterProvider />
-          </AuthBootstrap>
+          <AuthRecoveryBoundary>
+            <AuthBootstrap>
+              <AppRouterProvider />
+            </AuthBootstrap>
+          </AuthRecoveryBoundary>
         </SignOutBoundary>
-      </ConvexProviderWithAuthKit>
+      </ConvexProviderWithAuth>
     </AuthKitProvider>
   );
 

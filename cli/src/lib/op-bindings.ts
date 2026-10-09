@@ -389,6 +389,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // hosted one can spend for model observations or leave a record.
   start_claude_readiness_run: { command: "readiness start claude" },
   start_openai_readiness_run: { command: "readiness start openai" },
+  start_muse_readiness_run: { command: "readiness start muse" },
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
@@ -429,4 +430,5 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   install_registry_directory_server: { command: "registry install" },
   install_registry_server: { command: "registry install --card" },
   uninstall_registry_server: { command: "registry uninstall" },
+  send_feedback: { command: "cloud feedback" },
 };

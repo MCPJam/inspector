@@ -1,3 +1,4 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -56,6 +57,7 @@ import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
   MCPJamEngineErrorEvent,
@@ -71,6 +73,8 @@ import {
 } from "./eval-trace-capture";
 import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
+import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
 
 type ToolCall = {
   toolName: string;
@@ -110,6 +114,12 @@ export type HostedEvalTurnOutcome =
       errorCode?: string;
       /** HTTP status, when the failure came from a non-OK response. */
       errorHttpStatus?: number;
+      /**
+       * The producer's STRUCTURED evidence that one of OUR layers failed,
+       * copied from the engine's event or a typed throw — never derived from
+       * the message. Read only by the eval infra-error classifier.
+       */
+      errorInfra?: InfraFailureEvidence;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -173,9 +183,9 @@ export interface DriveHostedEvalTurnParams {
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
-   *  (no interactive approval yet). The emulated eval path is unchanged (it
-   *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
+   *  an interactive approval flow; a gated call can fail during streaming.
+   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -531,12 +541,19 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
+  const appContext = browser.getModelContext?.();
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
     inputTokens: acc.accumulatedUsage.inputTokens ?? 0,
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
+  };
+  // The reasoning / cached-input breakdown at turn start. Kept apart from
+  // `baselineUsage` (the live step sinks only roll the three totals).
+  const baselineBreakdown: UsageTotals = {
+    reasoningTokens: acc.accumulatedUsage.reasoningTokens,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens,
   };
 
   // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
@@ -668,6 +685,10 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
+    // Structured evidence ONLY from a typed thrower (a harness setup step, a
+    // bridge's typed provider error) — an arbitrary object with a status
+    // could be the customer's server talking.
+    const errorInfra = harnessFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
@@ -677,6 +698,7 @@ export async function driveHostedEvalTurn(
         failedStage === "pre-turn setup"
           ? ("setup" as const)
           : ("model" as const),
+      ...(errorInfra ? { errorInfra } : {}),
     };
   };
 
@@ -728,10 +750,11 @@ export async function driveHostedEvalTurn(
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
   // through `extraBodyFields` since the engine options don't expose them as
-  // first-class fields. `maxOutputTokens: 16384` matches the legacy per-step
-  // Convex body (Cursor round-2 "Dropped eval maxOutputTokens limit").
+  // first-class fields. The ceiling matches the legacy per-step Convex body
+  // (Cursor round-2 "Dropped eval maxOutputTokens limit"), and is shared with
+  // the swarm host steps.
   const mergedExtraBodyFields: Record<string, unknown> = {
-    maxOutputTokens: 16384,
+    maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
     ...(params.extraBodyFields ?? {}),
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
@@ -746,7 +769,7 @@ export async function driveHostedEvalTurn(
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
     turnResult = await runAssistantTurn({
-      messages: inputMessages,
+      messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
       // in as `modelId`. The engine reads `modelDefinition.id` for the wire
@@ -777,8 +800,8 @@ export async function driveHostedEvalTurn(
       persistMode: "caller",
       approvalMode: "auto-deny",
       // Harness eval (host harness === "claude-code"): forward the selector and
-      // the host's real approval intent so runHarnessTurn fail-closes on a
-      // requireToolApproval host (it can't do interactive approval yet) while
+      // the host's real approval intent. A gated native call can fail during
+      // streaming because evals cannot interactively approve it, while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
       ...(params.harness
@@ -979,6 +1002,12 @@ export async function driveHostedEvalTurn(
       baselineUsage.outputTokens + (turnResult.usage.outputTokens ?? 0);
     acc.accumulatedUsage.totalTokens =
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
+    for (const key of ["reasoningTokens", "cachedInputTokens"] as const) {
+      const turnValue = turnResult.usage[key];
+      if (typeof turnValue === "number") {
+        acc.accumulatedUsage[key] = (baselineBreakdown[key] ?? 0) + turnValue;
+      }
+    }
   }
 
   // Per-turn tool calls — rebuilt from the new messages only, then run
@@ -1065,6 +1094,9 @@ export async function driveHostedEvalTurn(
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
+      // The producer's own typed evidence, passed through untouched: the
+      // classifier, not this call site, decides what it means.
+      ...(lastEngineError?.infra ? { errorInfra: lastEngineError.infra } : {}),
     };
   };
 

@@ -7,7 +7,9 @@ process.env.MCPJAM_SESSION_TOKEN = token;
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "local-access.spec.ts",
+  forbidOnly: !!process.env.CI,
   workers: 1,
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
     ...devices["Desktop Chrome"],

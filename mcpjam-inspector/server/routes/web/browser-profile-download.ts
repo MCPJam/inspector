@@ -20,6 +20,7 @@ import {
   readJsonBody,
   webErrorFromRoute,
 } from "./auth.js";
+import { hostedOnlyRouteError } from "./errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
 import {
@@ -117,11 +118,7 @@ async function resolveArchiveLocation(
   // The backend names an archive location only to a caller that also holds
   // the inspector service token.
   if (!getConfiguredInspectorServiceToken()) {
-    throw new WebRouteError(
-      503,
-      ErrorCode.INTERNAL_ERROR,
-      "Browser profile downloads are not available on this server",
-    );
+    throw hostedOnlyRouteError("Browser profile downloads");
   }
   const bearer = await getConvexBearerForRequest(c);
   const deadline = new AbortController();

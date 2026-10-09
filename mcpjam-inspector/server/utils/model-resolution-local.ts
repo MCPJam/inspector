@@ -37,6 +37,7 @@ import {
   validateModelSelection,
   type ModelConnectionRef,
   type ModelSelection,
+  type LegacyModelSelection,
   type ModelSelectionPurpose,
   type RequestedModelSelection,
 } from "@mcpjam/sdk";
@@ -308,6 +309,61 @@ export function readStoredModelSelection(
   if (value === undefined || value === null) return undefined;
   const result = validateModelSelection(value);
   return result.ok ? result.selection : undefined;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const LEGACY_KEYS: ReadonlySet<string> = new Set([
+  "source",
+  "modelId",
+  "provider",
+]);
+
+/**
+ * A STORED legacy selection (`{ source: "legacy", modelId, provider? }`), or
+ * `undefined`. Strict: an unknown key, a blank id or a non-string provider
+ * reads as no selection — a malformed row is never guessed at.
+ */
+export function readStoredLegacySelection(
+  value: unknown,
+): LegacyModelSelection | undefined {
+  if (!isPlainRecord(value) || value.source !== "legacy") return undefined;
+  for (const key of Object.keys(value)) {
+    if (!LEGACY_KEYS.has(key)) return undefined;
+  }
+  const { modelId, provider } = value;
+  if (typeof modelId !== "string" || modelId.trim() === "") return undefined;
+  if (provider !== undefined && typeof provider !== "string") return undefined;
+  return {
+    source: "legacy",
+    modelId,
+    ...(typeof provider === "string" && provider.trim() !== ""
+      ? { provider }
+      : {}),
+  };
+}
+
+/**
+ * The selection that decides a row's rail: a valid saved selection
+ * (normalized by the SDK validator), else a stored legacy one, else
+ * `undefined` (an unlabelled row, which keeps today's path).
+ */
+export function readRoutingSelection(
+  value: unknown,
+): RequestedModelSelection | undefined {
+  return readStoredModelSelection(value) ?? readStoredLegacySelection(value);
+}
+
+/** The marker a conversion stamps BESIDE the selection it chose. */
+export type ModelSelectionOrigin = "backfill";
+
+/** The conversion marker beside a selection, or `undefined`. */
+export function readSelectionOrigin(
+  value: unknown,
+): ModelSelectionOrigin | undefined {
+  return value === "backfill" ? "backfill" : undefined;
 }
 
 /** The requested selection for a record: its selection, else legacy. */

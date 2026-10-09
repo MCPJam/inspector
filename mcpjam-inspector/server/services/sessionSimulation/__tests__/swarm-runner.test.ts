@@ -65,8 +65,10 @@ import {
   classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
+import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 
@@ -170,6 +172,9 @@ describe("swarm single-host runner — attempt ordering", () => {
     // engine's Playground default; a persona turn resends every tool result
     // on every step, so this is what bounds turn time and tokens.
     expect(adapter.runtime.maxSteps).toBe(10);
+    // …and its own output ceiling: the backend holds credits against it
+    // before every step, and the model-sized default overstated the hold.
+    expect(adapter.runtime.maxOutputTokens).toBe(16_384);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a
@@ -859,6 +864,118 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
       ),
     ).toBe(false);
   });
+  // `user_rate_limit` is the credit denial. Stored beside a sentence that is not
+  // a hold it reads as an empty wallet, and the run opens the credits dialog
+  // and locks hosted models. A busy reservation stops the target the same way
+  // but is not about credits, so the sessions it stops keep its own code.
+  it("keeps a busy reservation's own code on the sessions it stops", async () => {
+    // "spend" in the sentence is what folds the turn into rate_limited.
+    const message =
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "rate_limited",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that tripped the stop carries the busy code too, so the run
+    // reads the whole stop the same way (a bare `rate_limited` reads as the
+    // user's provider throttling their key).
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 0),
+    ).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spending_reservation_busy",
+    });
+    const stopped = terminals.filter(
+      (t) => t.hostId === "host-1" && t.sessionIdx > 0,
+    );
+    expect(stopped.map((t) => t.sessionIdx).sort()).toEqual([1, 2]);
+    for (const row of stopped) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+      // How the run reads the stored pair: not an empty wallet.
+      expect(
+        isCreditExhaustion({ code: row.errorCode, message: row.errorMessage }),
+      ).toBe(false);
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+  // The core folds a failure into `rate_limited` by its WORDS (`spend`, `cap`,
+  // `quota`, ...). The backend's current sentence says "spending capacity", which
+  // has none of them, so the core returns `failed` and the stop was never
+  // reached for it: whether a busy reservation stopped its target depended on
+  // how the backend worded it. Its structured code decides instead, the way a
+  // hold's does.
+  it("stops the target's remaining sessions on a busy refusal worded as the backend words it today", async () => {
+    const message =
+      'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","isRetryable":true,"retryAfter":2000,"error":"MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry."}';
+    // The premise: nothing in it is a word the core folds on.
+    expect(classifyTurnFailure(message)).toBe("failed");
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "failed",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that hit it waited on MCPJam, so it is not a failure of its
+    // own, and the rest of its target stops the same way.
+    const host1 = terminals.filter((t) => t.hostId === "host-1");
+    expect(host1.map((t) => t.sessionIdx).sort()).toEqual([0, 1, 2]);
+    for (const row of host1) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
   it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
     // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
     // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
@@ -917,9 +1034,82 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
       errorCode: "spend_cap_exceeded",
     });
   });
+  // A busy reservation stops its target as a wait, but a session the run's own
+  // stop cancelled is an abort artifact whatever its last refusal was: the run
+  // is over because of the cap, not because MCPJam was busy.
+  it("keeps a session the spend-cap abort cancelled an abort artifact even when its last refusal was a busy reservation", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      return await new Promise((resolve) => {
+        const finish = () =>
+          resolve({
+            outcome: "failed",
+            errorMessage:
+              'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","error":"MCPJam could not reserve spending capacity."}',
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          });
+        if (adapter.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        adapter.abortSignal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 1 }),
+    );
+
+    const host2 = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.hostId === "host-2" && a.status !== "running")!;
+    expect(host2).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
 });
 
 describe("swarm single-host runner — heartbeat", () => {
+  it("keeps only one heartbeat in flight when a poll is slow", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation(
+        async (adapter: any) =>
+          new Promise((resolve) => {
+            adapter.abortSignal.addEventListener("abort", () =>
+              resolve({ outcome: "failed" }),
+            );
+          }),
+      );
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      resolveHeartbeat("failed");
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not execute a claim that resolves after the backend ends the run", async () => {
     vi.useFakeTimers();
     try {
@@ -932,7 +1122,7 @@ describe("swarm single-host runner — heartbeat", () => {
       );
       heartbeatJourneyRunMock.mockResolvedValue("failed");
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(reportAttemptMock).toHaveBeenCalledTimes(1);
       resolveClaim({ ok: true, applied: true });
       await done;
@@ -964,7 +1154,7 @@ describe("swarm single-host runner — heartbeat", () => {
         });
       });
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       resolveSession({ outcome: "succeeded" });
       await done;
       resolveHeartbeat("completed");
@@ -994,7 +1184,7 @@ describe("swarm single-host runner — heartbeat", () => {
           return { outcome: "failed", errorMessage: "aborted" };
         });
         const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(5_000);
         await done;
 
         expect(signal?.aborted).toBe(true);
@@ -1013,7 +1203,7 @@ describe("swarm single-host runner — heartbeat", () => {
     },
   );
 
-  it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
+  it("fires the heartbeat on an independent 5s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {
       let resolveRun!: () => void;
@@ -1028,9 +1218,9 @@ describe("swarm single-host runner — heartbeat", () => {
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(2);
 
       // Finish the session; the runner's finally clears the interval.
@@ -1081,6 +1271,40 @@ describe("swarm runner — live stream emit", () => {
     expect(seen).toContain("text_delta");
     expect(seen).toContain("run_complete");
     expect(getRunningJourneyStreamHub("run-1")).toBeUndefined();
+  });
+
+  // The humanized message the live event carries has dropped the code, so the
+  // run screen could not tell a busy reservation (MCPJam's own wait) from the
+  // user's provider throttling their key until the attempt row arrived.
+  it("carries the code the attempt is stored under on the terminal attempt_status", async () => {
+    const events: any[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      getRunningJourneyStreamHub("run-1")!.subscribe((e) => events.push(e));
+      return {
+        outcome: "rate_limited",
+        errorMessage:
+          'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      };
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = events.find(
+      (e) => e.type === "attempt_status" && e.status === "rate_limited",
+    );
+    expect(terminal).toMatchObject({
+      errorCode: "spending_reservation_busy",
+      errorMessage: "MCPJam is temporarily busy. Please retry.",
+    });
+    // The same pair the attempt row is written with.
+    const row = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "rate_limited");
+    expect(row).toMatchObject({
+      errorCode: terminal.errorCode,
+      errorMessage: terminal.errorMessage,
+    });
   });
 
   it("wires emit on the adapter for every session", async () => {
@@ -1465,6 +1689,20 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
 });
 
 describe("classifyRateLimit — a halt needs a real spend signal", () => {
+  it("treats spending reservation timeouts as temporary capacity", () => {
+    expect(
+      classifyRateLimit(
+        'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}',
+      ),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("MCPJam could not reserve spend capacity.", {
+        code: "spending_reservation_busy",
+        httpStatus: 503,
+      }),
+    ).toBe("transient_capacity");
+  });
+
   it("keeps transient holds scoped to one target", () => {
     expect(
       classifyRateLimit(
@@ -1483,6 +1721,21 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
         refusalReason: "allowance_exhausted",
       }),
     ).toBe("org_spend_cap");
+  });
+
+  // What a stored row or a flattened error keeps: the backend's sentence, with
+  // no JSON, no structured reason and no hint. Blaming the user's provider for
+  // it (or halting the whole run as a spend cap) would both be wrong.
+  it("reads a hold from its sentence alone as temporary capacity", () => {
+    const held =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.";
+    expect(classifyRateLimit(held)).toBe("transient_capacity");
+    expect(classifyRateLimit(`${held} (user_rate_limit, HTTP 429)`)).toBe(
+      "transient_capacity",
+    );
+    expect(classifyRateLimit(held, { code: "user_rate_limit" })).toBe(
+      "transient_capacity",
+    );
   });
 
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
@@ -1661,5 +1914,19 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("swarm durable cancellation response", () => {
+  it("aborts the run on a refused canceled claim without executing or claiming another session", async () => {
+    reportAttemptMock.mockResolvedValueOnce({
+      ok: true,
+      applied: false,
+      canceled: true,
+    });
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });

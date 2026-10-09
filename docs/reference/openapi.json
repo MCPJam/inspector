@@ -112,6 +112,10 @@
     {
       "name": "Registry",
       "description": "Search the scraped MCP directories (Claude, ChatGPT, and any future source), list curated/org registry cards, and install them into a project. Install writes a `servers` row and provenance — it does not open a live session. There is no catalog-uninstall route: delete the project server instead. Directory reads require a bearer (including minted guest tokens) but do not materialize a user. Card/connection reads and all writes are authed-non-guest."
+    },
+    {
+      "name": "Feedback",
+      "description": "Feedback about MCPJam itself (bugs, missing capabilities, confusing behavior), sent to the MCPJam team and kept for 180 days. The `send_feedback` MCP tool calls the same endpoint."
     }
   ],
   "paths": {
@@ -3065,6 +3069,242 @@
           },
           "409": {
             "description": "The run already finished and cannot be cancelled."
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/rerun-preview": {
+      "get": {
+        "operationId": "getEvalRunRerunPreview",
+        "tags": ["Eval runs"],
+        "summary": "Preview a failed-cases rerun",
+        "description": "What `POST /projects/{projectId}/eval-runs/{runId}/rerun` with `scope: \"failed_cases\"` would execute, before anything spends. The platform selects every case with a trial that is not completed and passed; cancelled and skipped trials do not count. `reasons` and `excluded` count trials; `selectedCaseCount` counts cases. `rerunnable` is `false` while the run is still in flight (including `grading`) and when nothing qualifies.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rerun selection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "suiteId",
+                    "scope",
+                    "sourceStatus",
+                    "sourceTerminal",
+                    "totalCaseCount",
+                    "selectedCaseCount",
+                    "selectedCaseIds",
+                    "reasons",
+                    "excluded",
+                    "rerunnable"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteId": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": ["failed_cases"]
+                    },
+                    "sourceStatus": {
+                      "type": "string"
+                    },
+                    "sourceTerminal": {
+                      "type": "boolean",
+                      "description": "`false` while the source run is still executing or grading."
+                    },
+                    "totalCaseCount": {
+                      "type": "integer"
+                    },
+                    "selectedCaseCount": {
+                      "type": "integer"
+                    },
+                    "selectedCaseIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "reasons": {
+                      "type": "object",
+                      "description": "Qualifying trials by the most specific reason: `failed`, `evaluator_error`, `timed_out`, `execution_failed`, `setup_failed`, `pending`.",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    },
+                    "excluded": {
+                      "type": "object",
+                      "description": "Trials that did not qualify: `passed`, `cancelled`, `skipped`.",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    },
+                    "rerunnable": {
+                      "type": "boolean",
+                      "description": "The source run finished and at least one case qualifies."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/rerun": {
+      "post": {
+        "operationId": "rerunEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Rerun a run's failed cases",
+        "description": "Replay a finished run's frozen snapshot narrowed to the cases that did not pass: every case with a trial that is not completed and passed (cancelled and skipped trials do not count). The platform selects the cases — see the rerun preview. The new run records `rerunOfRunId` and `rerunScope`, and because its pass rate is biased by that selection it is never used as the suite's latest run, a trend point, or a comparison/gate baseline. Returns `409` with `details.reason` `RERUN_NOTHING_TO_RERUN` when nothing qualifies, or `RERUN_SOURCE_NOT_TERMINAL` while the run is still in flight. Honors the `Idempotency-Key` header.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["scope"],
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": ["failed_cases"],
+                    "description": "The only scope: every case with a trial that did not complete and pass."
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The rerun was started (or, on an idempotent retry, the run it already started).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "suiteId",
+                    "status",
+                    "rerunOfRunId",
+                    "rerunScope"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "deduped": {
+                      "type": "boolean"
+                    },
+                    "rerunOfRunId": {
+                      "type": "string"
+                    },
+                    "rerunScope": {
+                      "type": "string",
+                      "enum": ["failed_cases"]
+                    },
+                    "servers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "environment": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/EvalRunEnvironment"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Nothing in the run qualifies (`RERUN_NOTHING_TO_RERUN`), or the run is still in flight (`RERUN_SOURCE_NOT_TERMINAL`)."
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -7945,7 +8185,7 @@
         "operationId": "listModels",
         "tags": ["Catalog"],
         "summary": "The MCPJam-provided model catalog",
-        "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.",
+        "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.\n\nEach model row (see `CatalogModel`) carries `supportedReasoningEfforts`: the reasoning-effort levels the model accepts (`settings.reasoningEffort` on a `ModelSelection`, or a chat turn's `reasoningEffort`). An empty or absent list means the model takes no effort, or the catalog does not know — never guess a level for it.",
         "security": [],
         "responses": {
           "200": {
@@ -9508,10 +9748,10 @@
         "operationId": "cancelGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Cancel a journey run",
-        "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
+        "description": "Accepts a durable Stop request and returns immediately. cleanupPending indicates that attempts are being settled in the background; status remains the current stored run status. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
         "responses": {
           "200": {
-            "description": "The run was cancelled (or already was).",
+            "description": "Stop accepted (or already requested); cleanup may still be pending.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11165,6 +11405,70 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/muse": {
+      "post": {
+        "operationId": "startMuseReadinessRun",
+        "tags": ["Directory readiness"],
+        "summary": "Start a Muse connector readiness run",
+        "description": "Grades the saved server against Meta's Muse connector guidelines and returns `202` with a run id. Free: Muse readiness has no AI observations, so the body has no field that can spend, and no submission mode, which belongs to the OpenAI plugin directory. The submission-ready verdict stays `incomplete` on a hosted run, because Muse's submission requirements are declared by the submitter and only the CLI accepts a submission profile. Meta reviews every submission by hand, so `ready` is a preflight, not a prediction of approval.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key (including `includeLlmObservations`, which Muse does not offer), or the server uses a transport no directory can list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/readiness-runs": {
       "get": {
         "operationId": "listReadinessRuns",
@@ -11180,9 +11484,9 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": ["claude", "openai"]
+              "enum": ["claude", "openai", "muse"]
             },
-            "description": "Narrow to one publisher. Omitted lists both, newest first."
+            "description": "Narrow to one publisher. Omitted lists all, newest first."
           },
           {
             "name": "serverId",
@@ -13774,6 +14078,73 @@
           }
         }
       }
+    },
+    "/feedback": {
+      "post": {
+        "operationId": "sendFeedback",
+        "tags": [
+          "Feedback"
+        ],
+        "summary": "Send feedback to the MCPJam team",
+        "description": "Tell the MCPJam team about MCPJam itself (a bug, a missing capability, something confusing, or a docs gap) at the moment you hit it. THE TEXT IS SENT TO THE MCPJAM TEAM, outside your organization, and kept for 180 days. It is stored in MCPJam's own database and never published. Summarize: never include secrets, tokens, or raw tool output. When a call failed, include its `requestId` (the failing response's `x-request-id`) so the report can be joined to our logs.\n\nA `201` means the report is stored; notifying the team happens afterwards and cannot fail it. An identical report from you in the last 24 hours is answered with the existing report's id and `duplicate: true` instead of being filed again. Requires a signed-in account: guest tokens get `401`. Rate-limited per user (`429` with `Retry-After`); duplicates and key replays do not count.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe report key, validated STRICTLY. Replaying the SAME key with the SAME report returns the original receipt; reusing it for DIFFERENT content is a `409`. A header that is present but empty, or longer than 256 characters, is a `400`, never silently ignored. `x-mcpjam-idempotency-key` is accepted as an alternative spelling; sending both with different values is a `400`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The report.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The report is stored. `duplicate: true` means an identical report from you was already recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -15591,10 +15962,25 @@
               "required": ["model"],
               "properties": {
                 "model": {
-                  "type": "string"
+                  "type": "string",
+                  "readOnly": true,
+                  "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
                 },
                 "provider": {
                   "type": "string"
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+                },
+                "selectionOrigin": {
+                  "type": "string",
+                  "enum": ["backfill"],
+                  "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `selection` rather than a person. Absent when a person chose it, and on rows with no selection."
                 }
               }
             }
@@ -15743,6 +16129,14 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -15941,6 +16335,17 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -16180,13 +16585,28 @@
             "type": ["object", "null"],
             "properties": {
               "model": {
-                "type": "string"
+                "type": "string",
+                "readOnly": true,
+                "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
               },
               "systemPrompt": {
                 "type": "string"
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+              },
+              "modelSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
               }
             }
           },
@@ -16291,6 +16711,17 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The saved model choice (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are sent; sent alone it pins its own model. `null` clears it. A bare `model` change drops a selection saved for a different model rather than failing."
               }
             }
           },
@@ -16579,10 +17010,25 @@
               ],
               "properties": {
                 "model": {
-                  "type": "string"
+                  "type": "string",
+                  "readOnly": true,
+                  "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
                 },
                 "provider": {
                   "type": "string"
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+                },
+                "selectionOrigin": {
+                  "type": "string",
+                  "enum": ["backfill"],
+                  "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `selection` rather than a person. Absent when a person chose it, and on rows with no selection."
                 }
               }
             }
@@ -16897,6 +17343,14 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -17507,6 +17961,17 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestedModelSelection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -18159,7 +18624,7 @@
           },
           "advancedConfig": {
             "type": "object",
-            "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+            "description": "Optional `system`, `temperature`, `toolChoice` overrides. `reasoningEffort` is NOT accepted (`400`): nothing ever applied it. Save an effort as `models[].selection.settings.reasoningEffort` instead.",
             "additionalProperties": true
           },
           "scenario": {
@@ -18421,7 +18886,7 @@
                 },
                 "advancedConfig": {
                   "type": "object",
-                  "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+                  "description": "Optional `system`, `temperature`, `toolChoice` overrides. `reasoningEffort` is NOT accepted (`400`): nothing ever applied it. Save an effort as `models[].selection.settings.reasoningEffort` instead.",
                   "additionalProperties": true
                 },
                 "intent": {
@@ -18921,7 +19386,20 @@
               },
               "model": {
                 "type": ["string", "null"],
-                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                "description": "Resolved judge model, COMPUTED: `judgeSelection.modelId` when the suite stores a judge selection, else the stored bare id, else the platform default. `null` only from deployments that predate resolution. A bare id is accepted on writes as a shorthand (the platform converts it)."
+              },
+              "judgeSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The judge's saved model choice (source, connection, `settings.reasoningEffort`), when the suite stores one. May be a STORED legacy selection: own key only. Absent on an unlabelled suite and on older deployments."
+              },
+              "judgeSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion chose `judgeSelection` rather than a person."
               },
               "autoRun": {
                 "type": "boolean",
@@ -19076,7 +19554,20 @@
               },
               "model": {
                 "type": ["string", "null"],
-                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                "description": "Resolved judge model, COMPUTED: `judgeSelection.modelId` when the suite stores a judge selection, else the stored bare id, else the platform default. `null` only from deployments that predate resolution. A bare id is accepted on writes as a shorthand (the platform converts it)."
+              },
+              "judgeSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The judge's saved model choice (source, connection, `settings.reasoningEffort`), when the suite stores one. May be a STORED legacy selection: own key only. Absent on an unlabelled suite and on older deployments."
+              },
+              "judgeSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion chose `judgeSelection` rather than a person."
               },
               "autoRun": {
                 "type": "boolean",
@@ -19313,13 +19804,28 @@
             "type": ["object", "null"],
             "properties": {
               "model": {
-                "type": "string"
+                "type": "string",
+                "readOnly": true,
+                "description": "COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
               },
               "systemPrompt": {
                 "type": "string"
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  }
+                ],
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+              },
+              "modelSelectionOrigin": {
+                "type": "string",
+                "enum": ["backfill"],
+                "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
               }
             }
           },
@@ -20147,6 +20653,15 @@
           "runGroupId": {
             "type": "string",
             "description": "Shared by every per-target run from the same fan-out launch. Absent on a single-target launch and on rows created before run groups."
+          },
+          "rerunOfRunId": {
+            "type": "string",
+            "description": "The run this one re-ran a subset of. Present only with `rerunScope`."
+          },
+          "rerunScope": {
+            "type": "string",
+            "enum": ["failed_cases"],
+            "description": "`failed_cases`: this run re-ran only the cases of `rerunOfRunId` that did not pass. Its pass rate is biased by that selection, so it is never a suite's latest run, a trend point, or a baseline. Absent on every other run."
           },
           "effectiveModelId": {
             "type": "string",
@@ -21300,6 +21815,37 @@
           }
         }
       },
+      "EvalInfraError": {
+        "type": "object",
+        "required": [
+          "class",
+          "layer",
+          "retryable"
+        ],
+        "description": "Why MCPJam's own infrastructure, not the server under test, failed a trial. Present only on such a trial, which is `status: \"failed\"`, measured nothing about the server, is excluded from every pass rate and verdict, and has its eval fee refunded.",
+        "properties": {
+          "class": {
+            "type": "string",
+            "description": "`provider_unavailable`, `rate_limited`, `capacity`, `auth`, `account_limit`, `configuration` or `sandbox`. Read unknown values as an infrastructure failure of an unnamed kind."
+          },
+          "layer": {
+            "type": "string",
+            "description": "`model`, `sandbox` or `platform`."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether the failure looked transient. Advisory."
+          },
+          "code": {
+            "type": "string",
+            "description": "The producer's structured code, when it sent one."
+          },
+          "httpStatus": {
+            "type": "integer",
+            "description": "The upstream HTTP status, when there was one."
+          }
+        }
+      },
       "EvalIteration": {
         "type": "object",
         "required": [
@@ -21384,6 +21930,9 @@
           },
           "error": {
             "type": ["string", "null"]
+          },
+          "infraError": {
+            "$ref": "#/components/schemas/EvalInfraError"
           },
           "scores": {
             "type": ["array", "null"],
@@ -23442,6 +23991,17 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RequestedModelSelection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The saved model choice (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are sent; sent alone it pins its own model. `null` clears it. A bare `model` change drops a selection saved for a different model rather than failing."
               }
             }
           },
@@ -24436,6 +24996,133 @@
         ],
         "additionalProperties": false
       },
+      "CatalogModel": {
+        "type": "object",
+        "description": "One row of the MCPJam-provided model catalog (`GET /v1/models`). Rows carry more fields than are listed here; only the ones callers branch on are pinned.",
+        "required": ["id"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`."
+          },
+          "supportedReasoningEfforts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            },
+            "description": "The reasoning-effort levels this model accepts. Empty or absent: no effort is offered for it (it takes none, or the catalog does not know). Pass one as `settings.reasoningEffort` on a `ModelSelection` or as a chat turn's `reasoningEffort`."
+          }
+        }
+      },
+      "LegacyModelSelection": {
+        "type": "object",
+        "description": "A STORED legacy selection: a model id with no saved source. Written when a save sends a bare id the platform does not host (the shorthand), or by the old-data backfill. It means OWN KEY ONLY: the call runs on the organization's connection for the model's provider (or a key on the caller's machine) and never on MCPJam credits. It carries no settings; to save an effort, send a full `ModelSelection`. A read may be sent back verbatim.",
+        "required": ["source", "modelId"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["legacy"]
+          },
+          "modelId": {
+            "type": "string",
+            "description": "The id exactly as stored (it may be a bare, non-canonical id)."
+          },
+          "provider": {
+            "type": "string",
+            "description": "The case entry's provider hint, kept so the stored `{ model, provider }` pair survives the round trip."
+          }
+        }
+      },
+      "RequestedModelSelection": {
+        "description": "What a store-once row holds as its ONLY copy of the model: a full `ModelSelection` (`hosted` runs on MCPJam credits, `org` on an organization connection, `local` on a key on the caller's machine) or a STORED `LegacyModelSelection` (own key only). Wherever one sits beside a model id (`modelId`, `model`), that id is COMPUTED from it on reads, and accepted on writes as a shorthand the platform converts. A row with neither is an unlabelled old row and runs exactly as it always has.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ModelSelection"
+          },
+          {
+            "$ref": "#/components/schemas/LegacyModelSelection"
+          }
+        ]
+      },
+      "ModelSelection": {
+        "type": "object",
+        "description": "A saved model choice. Never carries a secret: an unknown key is refused. `settings.reasoningEffort` is where a reasoning effort is saved — there is no other saved carrier (`advancedConfig.reasoningEffort` is refused). Which efforts a model accepts is `supportedReasoningEfforts` on `GET /v1/models`; a saved effort the route the run takes cannot apply is refused (`capability_missing`), never dropped.",
+        "required": ["modelId", "source", "fallback"],
+        "additionalProperties": false,
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "Canonical `provider/model` id."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["hosted", "org", "local"],
+            "description": "Whose credentials pay for and serve the call."
+          },
+          "connectionRef": {
+            "type": "object",
+            "description": "Required for `org` (`kind: orgProvider`) and `local` (`kind: localProvider`), absent for `hosted`.",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["orgProvider", "localProvider"]
+              },
+              "id": {
+                "type": "string",
+                "description": "The organization model provider row (`orgProvider`)."
+              },
+              "providerKey": {
+                "type": "string",
+                "description": "The provider configured on the user's own machine (`localProvider`)."
+              },
+              "customProviderName": {
+                "type": "string"
+              }
+            }
+          },
+          "nativeModelId": {
+            "type": "string",
+            "description": "Deployment or native id where it is not derivable from `modelId` (Azure deployment name, Bedrock inference profile, custom provider)."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "reasoningEffort": {
+                "type": "string",
+                "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+                "description": "Reasoning effort. An effort replaces the sampling temperature: a `temperature` beside it is dropped or refused, depending on the route."
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              }
+            }
+          },
+          "fallback": {
+            "type": "object",
+            "required": ["provider", "model"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["none", "openrouter"]
+              },
+              "model": {
+                "type": "string",
+                "enum": ["none"],
+                "description": "Always `none`: no surface substitutes a different model."
+              }
+            }
+          }
+        }
+      },
       "ClientFieldSet": {
         "type": "object",
         "description": "Named fields to change, applied over the client's current config INSIDE the write transaction. Absent always means keep. `null` means \"make it go away\", and what that means depends on the field: a required field resets to its documented default, an optional one clears to absent. Object-valued fields are whole-object replacements, not merges — to change a deep knob, read the client, overlay the sub-object, and send it back whole. `hostStyle`, `clientCapabilities`, `hostContext` and server membership are deliberately not settable here (use a whole-`config` replacement, or the servers operation).",
@@ -24447,6 +25134,17 @@
             "minLength": 1,
             "pattern": ".*\\S.*",
             "description": "Model id the client pins. Value only — there is no `null`, and a blank string is refused: a client that pins a model cannot be edited into one that does not."
+          },
+          "modelSelection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved model choice: source, connection, and `settings.reasoningEffort`. A full selection, or a STORED legacy selection read back from the client and sent back verbatim. Must be FOR `modelId` when both are sent; sent alone it pins its own model. `null` clears the saved selection and keeps the bare `modelId`."
           },
           "systemPrompt": {
             "type": ["string", "null"],
@@ -24893,7 +25591,21 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
+            "readOnly": true,
+            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run. COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
+          },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -25274,7 +25986,21 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The stack's model override. Absent means it inherits the host's."
+            "readOnly": true,
+            "description": "The stack's model override. Absent means it inherits the host's. COMPUTED in responses: the selection's `modelId` when there is one, else the stored bare id. Accepted on writes as a shorthand: send a bare id and the platform converts it (a hosted id becomes a `hosted` selection, any other a `LegacyModelSelection`)."
+          },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model. May be a STORED legacy selection (`LegacyModelSelection`, `source: \"legacy\"`): own key only, never MCPJam credits. The model id beside it is computed from it."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "`backfill` when a conversion (a save of a bare id, or the old-data backfill) chose `modelSelection` rather than a person. Absent when a person chose it, and on rows with no selection."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -25340,6 +26066,14 @@
             "type": "string",
             "description": "Model to run instead of the host's pinned one. Stored verbatim."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25403,6 +26137,14 @@
             "pattern": ".*\\S.*",
             "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25458,6 +26200,17 @@
             "pattern": ".*\\S.*",
             "nullable": true,
             "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+          },
+          "modelSelection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability. `null` clears the saved selection and keeps the bare `modelId`."
           },
           "skillSelection": {
             "allOf": [
@@ -26366,6 +27119,10 @@
           "modelMatrix": {
             "type": "boolean",
             "description": "Environment cells may vary by model on one host (the compare grid)."
+          },
+          "modelSelections": {
+            "type": "boolean",
+            "description": "`modelSelection` is accepted on environment create, update and ensure-adhoc, so an environment can carry a saved model selection (source, connection, reasoning effort). Absent or false on older backends, which reject the unknown field with a validator error naming nothing — probe this before sending one."
           },
           "ephemeralEnvironmentLaunch": {
             "type": "boolean",
@@ -27405,6 +28162,14 @@
           "createdAt"
         ],
         "properties": {
+          "cancelRequested": {
+            "type": "boolean",
+            "description": "A durable Stop request exists, including while status is still running. Optional for older servers."
+          },
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Cancellation cleanup is pending. Absent means false."
+          },
           "id": {
             "type": "string"
           },
@@ -27777,6 +28542,11 @@
             },
             "minItems": 1,
             "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+          },
+          "expectedSponsored": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` whose `details.code` is `swarm_funding_changed` (with `expectedSponsored`, `actualSponsored` and `totalConversations`) and nothing is created. Omit it to accept whatever split applies."
           }
         }
       },
@@ -27802,6 +28572,22 @@
           "deduped": {
             "type": "boolean",
             "description": "True when an `Idempotency-Key` replayed onto a run that ALREADY existed, so nothing new was started. The response is otherwise identical, which is how a retry of a dropped request tells \"I launched it\" from \"it was already going\" without a second read."
+          },
+          "funding": {
+            "type": "object",
+            "description": "How the run's conversations are funded. `sponsored` conversations are paid from MCPJam's per-user allowance; the `credits` remainder is paid from your organization's credits. Absent when the server does not report it.",
+            "required": ["sponsored", "credits", "total"],
+            "properties": {
+              "sponsored": {
+                "type": "integer"
+              },
+              "credits": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -27815,12 +28601,16 @@
           "finalized"
         ],
         "properties": {
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Stop accepted; background cleanup is pending. Absent means false on older servers."
+          },
           "id": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "description": "The run's terminal status after the cancel settled it."
+            "description": "Current run status; may still be running while cleanup is pending."
           },
           "canceled": {
             "type": "boolean",
@@ -29862,9 +30652,10 @@
               "submission-artifacts",
               "experience-insights",
               "plugin-package",
-              "release-contract"
+              "release-contract",
+              "tool-policy"
             ],
-            "description": "Anthropic defines five lanes and OpenAI seven, overlapping on four. Which subset applies is decided by the run's `readinessKind`."
+            "description": "Anthropic defines five lanes, OpenAI seven and Muse four. Which subset applies is decided by the run's `readinessKind`."
           },
           "status": {
             "type": "string",
@@ -29915,7 +30706,8 @@
                 "submission-artifacts",
                 "experience-insights",
                 "plugin-package",
-                "release-contract"
+                "release-contract",
+                "tool-policy"
               ]
             },
             "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
@@ -29991,7 +30783,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "serverId": {
             "type": "string",
@@ -30113,7 +30905,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "status": {
             "type": "string",
@@ -30492,6 +31284,11 @@
             "minimum": 0,
             "maximum": 2,
             "description": "First turn only — pinned to the session and reused on every continuation."
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+            "description": "First turn only \u2014 pinned to the session and reused on every continuation. Reasoning effort for the turn; wins over the effort a `hostId`'s saved selection carries, and is applied or refused by the rail the model runs on, never dropped. Which levels a model accepts is `supportedReasoningEfforts` on `GET /v1/models`. Mutually exclusive with `temperature`: an effort replaces the sampling temperature."
           },
           "maxSteps": {
             "type": "integer",
@@ -33387,6 +34184,11 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "selectionKey": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
                     }
                   },
                   "required": [
@@ -34553,6 +35355,79 @@
           "updatedAt"
         ],
         "additionalProperties": false
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "missing_capability",
+              "confusing",
+              "docs",
+              "other"
+            ],
+            "description": "What sort of problem this is."
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "One line: what went wrong or what is missing. Trimmed. Appears in the team's notification."
+          },
+          "details": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried; there may be no request id. Summarize; never paste secrets, tokens, or raw tool output. Stored only in MCPJam's database, never emailed, and deleted after 180 days."
+          },
+          "operation": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "The tool, CLI command or app page in use."
+          },
+          "requestId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The failing call's `x-request-id`, when there is one."
+          },
+          "errorCode": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "The failing call's error code, e.g. `INTERNAL_ERROR`."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "A project you can see, when the report is about one; anything else is a `404`. Omit it otherwise: no project is assumed."
+          }
+        }
+      },
+      "FeedbackReceipt": {
+        "type": "object",
+        "required": [
+          "id",
+          "receivedAt",
+          "duplicate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The stored report's id."
+          },
+          "receivedAt": {
+            "type": "number",
+            "description": "When the report was received, in epoch milliseconds."
+          },
+          "duplicate": {
+            "type": "boolean",
+            "description": "True when an identical report from you was already recorded in the last 24 hours; `id` is that report."
+          }
+        }
       }
     },
     "responses": {

@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => ({
-    getAllFlags: mocks.getAllFlags,
-    capture: vi.fn(),
-    shutdown: vi.fn().mockResolvedValue(undefined),
-  })),
+  PostHog: vi.fn(function () {
+    return {
+      getAllFlags: mocks.getAllFlags,
+      capture: vi.fn(),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock("../../../config.js", async (importOriginal) => ({

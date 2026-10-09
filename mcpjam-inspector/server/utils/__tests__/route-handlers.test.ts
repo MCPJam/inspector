@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { listTools } from "../route-handlers.js";
+import { listTools, listToolsMulti } from "../route-handlers.js";
 
 // Mock tokenizer-helpers
 vi.mock("../tokenizer-helpers.js", () => ({
@@ -83,5 +83,57 @@ describe("listTools (inspector enrichment)", () => {
 
     const result = await listTools(manager, { serverId: "srv" });
     expect(result.toolsMetadata).toEqual(meta);
+  });
+});
+
+describe("listToolsMulti", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lists every server through the enriched listTools", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn(async (serverId: string) => ({
+        tools: [{ name: `${serverId}-tool` }],
+      })),
+      getAllToolsMetadata: vi.fn((serverId: string) => ({
+        [`${serverId}-tool`]: { count: 1 },
+      })),
+    });
+
+    const result = await listToolsMulti(manager, {
+      serverIds: ["a", "b"],
+      modelId: "claude-sonnet-4-5",
+      cacheMode: "bypass",
+    });
+
+    expect(result.results.a).toMatchObject({
+      tools: [{ name: "a-tool" }],
+      toolsMetadata: { "a-tool": { count: 1 } },
+      tokenCount: 150,
+    });
+    expect(result.results.b.tools).toEqual([{ name: "b-tool" }]);
+    expect(result).not.toHaveProperty("failures");
+    expect(manager.listTools).toHaveBeenCalledWith("b", undefined, {
+      cacheMode: "bypass",
+    });
+  });
+
+  it("hands back a failing server's throw and keeps the others", async () => {
+    const refused = new Error("connect ECONNREFUSED");
+    const manager = createMockManager({
+      listTools: vi.fn(async (serverId: string) => {
+        if (serverId === "down") throw refused;
+        return { tools: [{ name: `${serverId}-tool` }] };
+      }),
+    });
+
+    const result = await listToolsMulti(manager, {
+      serverIds: ["up", "down"],
+    });
+
+    expect(Object.keys(result.results)).toEqual(["up"]);
+    // The throw itself, so the route can map it as it maps a single call.
+    expect(result.failures).toEqual({ down: refused });
   });
 });

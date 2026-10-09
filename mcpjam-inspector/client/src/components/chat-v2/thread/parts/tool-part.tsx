@@ -1,3 +1,4 @@
+import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
   useEffect,
   useMemo,
@@ -59,6 +60,13 @@ import {
 } from "@/lib/client-config-v2";
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
+import { HarnessAgentActivity } from "../harness-agent-activity";
+import { HarnessLiveOutput } from "../harness-live-output";
+import {
+  describeHarnessToolStep,
+  harnessToolTarget,
+  isHarnessActivityToolName,
+} from "../harness-tool-steps";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
@@ -229,6 +237,29 @@ export function ToolPart({
   );
 
   const inputData = (part as any).input;
+  // A harness built-in (a command, a read, an edit) says what it did, from
+  // its input: "Run npm test", "Read app.ts". Never an MCP server's tool,
+  // whatever its name.
+  const harnessStep =
+    !serverId && isHarnessActivityToolName(label)
+      ? describeHarnessToolStep(label, inputData)
+      : undefined;
+  // Approving needs what will literally run, not the model's description.
+  const harnessTarget = harnessStep
+    ? harnessToolTarget(label, inputData)
+    : undefined;
+  const harnessStepDetail = harnessStep?.detail ? (
+    <span
+      data-testid="tool-step-detail"
+      className={cn(
+        "min-w-0 truncate text-muted-foreground",
+        harnessStep.code && "font-mono",
+      )}
+      title={harnessStep.title}
+    >
+      {harnessStep.detail}
+    </span>
+  ) : null;
   const outputData = (part as any).output;
   const rawResultData = rawOutput ?? outputData;
   // Where this bash call actually ran. Read from the RAW output (the frozen
@@ -872,9 +903,18 @@ export function ToolPart({
               <Terminal className="h-3 w-3" />
               <span>Run</span>
             </span>
-            <span className="font-mono text-[13px] text-foreground truncate min-w-0">
+            <span className="font-mono text-[13px] text-foreground truncate min-w-0 shrink-0 max-w-[40%]">
               {displayLabel}
             </span>
+            {harnessTarget && (
+              <span
+                data-testid="tool-approval-target"
+                className="min-w-0 truncate font-mono text-[12px] text-muted-foreground"
+                title={harnessTarget}
+              >
+                {harnessTarget}
+              </span>
+            )}
             {appToolAttribution && (
               <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
                 from {appToolAttribution.appName}
@@ -988,6 +1028,14 @@ export function ToolPart({
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {displayLabel}
             </span>
+            {harnessStep && (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-xs font-normal">
+                <span className="shrink-0 text-foreground">
+                  {harnessStep.verb}
+                </span>
+                {harnessStepDetail}
+              </span>
+            )}
             {appToolAttribution && (
               <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0">
                 from {appToolAttribution.appName}
@@ -1069,6 +1117,20 @@ export function ToolPart({
         </span>
       </div>
 
+      <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      {harnessStep &&
+        (state === "input-streaming" || state === "input-available") && (
+          <HarnessLiveOutput toolCallId={toolCallId} />
+        )}
+      <HarnessAgentActivity
+        toolCallId={toolCallId}
+        toolState={state}
+        description={
+          typeof inputData?.description === "string"
+            ? inputData.description
+            : undefined
+        }
+      />
       {renderInlineImagePreview()}
 
       {isExpanded && (

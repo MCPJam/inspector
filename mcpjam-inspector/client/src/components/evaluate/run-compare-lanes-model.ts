@@ -12,6 +12,7 @@
  * zero. See {@link RunCompareRow.baselineRunId} for what "honest" costs.
  */
 import { compactModelIdTail } from "@/lib/environment-label";
+import { runTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 import {
   compareRunsBySequence,
   runClientIdentity,
@@ -23,7 +24,7 @@ import {
   formatDurationMs,
 } from "../evals/metric-strip-data";
 import type { RunMetrics, RunMetricsByRun } from "../evals/run-metrics";
-import type { EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { EvalSuite, EvalSuiteRunListItem } from "../evals/types";
 import { launchRuns } from "./run-results-matrix-model";
 import {
   deltaOf,
@@ -52,7 +53,7 @@ export type RunCompareCell = {
 
 export type RunCompareRow = {
   runId: string;
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   /** `"#12"`. */
   label: string;
   createdAt: number;
@@ -78,7 +79,9 @@ export type RunCompareRow = {
 export type RunCompareLane = {
   key: string;
   /** The lane's newest run — feed it to `RunContextChip` for the visible label. */
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
+  /** `RunContextChip`'s `modelSuffix` for {@link run}: only what differs. */
+  modelSuffix: string;
   /** Screen-reader label only; the visible one is the chip. */
   label: string;
   /** Newest first. */
@@ -129,42 +132,60 @@ export function resolveSuitePassThreshold(
  * every time someone edits it.
  *
  * A legacy or host-backed run has no such pin, so it falls back to
- * `pairingKey` (client::model) and still splits by model.
+ * `pairingKey` (client::target) and still splits by target — the model id,
+ * or for a non-default selection its `targetKey`, so Sonnet at Low and at
+ * High are two lanes.
  */
-export function runCompareLaneKey(run: EvalSuiteRun): string {
+export function runCompareLaneKey(run: EvalSuiteRunListItem): string {
   return run.configSnapshot?.environmentRef
     ? runContextKey(run)
     : pairingKey(run);
 }
 
-function runModelId(run: EvalSuiteRun): string | null {
+function runModelId(run: EvalSuiteRunListItem): string | null {
   return run.effectiveModelId ?? run.client?.modelId ?? null;
 }
 
-function runModelTail(run: EvalSuiteRun): string | null {
+function runModelTail(
+  run: EvalSuiteRunListItem,
+  modelSuffix = "",
+): string | null {
   const modelId = runModelId(run);
-  return modelId ? compactModelIdTail(modelId) : null;
+  return modelId ? `${compactModelIdTail(modelId)}${modelSuffix}` : null;
+}
+
+/**
+ * `" · High"` when another run on the page ran the same model with a different
+ * selection; `""` for a lone or default target.
+ */
+function runModelSuffix(
+  run: EvalSuiteRunListItem,
+  siblingKeys: readonly string[],
+): string {
+  const key = runTargetKey(run);
+  return key ? targetKeySuffix(key, siblingKeys) : "";
 }
 
 function laneLabel(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   hostNamesById: ReadonlyMap<string, string | null> | undefined,
+  modelSuffix = "",
 ): string {
   const name = runClientIdentity(run, hostNamesById).name;
-  const tail = runModelTail(run);
+  const tail = runModelTail(run, modelSuffix);
   return tail ? `${name} · ${tail}` : name;
 }
 
-function runLabel(run: EvalSuiteRun): string {
+function runLabel(run: EvalSuiteRunListItem): string {
   return run.runNumber != null ? `#${run.runNumber}` : run._id.slice(0, 8);
 }
 
 /** `grading` is still happening — treating it as settled reports a verdict that does not exist. */
-function isSettled(run: EvalSuiteRun): boolean {
+function isSettled(run: EvalSuiteRunListItem): boolean {
   return !["pending", "running", "grading"].includes(run.status);
 }
 
-function runCompareStatus(run: EvalSuiteRun): RunCompareStatus {
+function runCompareStatus(run: EvalSuiteRunListItem): RunCompareStatus {
   if (!isSettled(run)) return "running";
   const result = run.result;
   if (result === "passed" || result === "failed" || result === "inconclusive")
@@ -196,7 +217,7 @@ function runCompareStatus(run: EvalSuiteRun): RunCompareStatus {
  *   - `cancelled` / `timed_out` — the summary is partial. Work a run never
  *     finished can neither clear a bar nor miss it.
  */
-function isDecided(run: EvalSuiteRun): boolean {
+function isDecided(run: EvalSuiteRunListItem): boolean {
   if (!isSettled(run)) return false;
   const status = runCompareStatus(run);
   return (
@@ -228,7 +249,7 @@ type RowMeasurements = {
 };
 
 function measureRun(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   runMetrics: RunMetrics | undefined,
 ): RowMeasurements {
   const settled = isSettled(run);
@@ -280,8 +301,8 @@ export function buildRunCompareLanes({
   hostNamesById,
   passThreshold,
 }: {
-  currentRun: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
+  currentRun: EvalSuiteRunListItem;
+  runs: readonly EvalSuiteRunListItem[];
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
   hostNamesById?: ReadonlyMap<string, string | null>;
@@ -294,13 +315,22 @@ export function buildRunCompareLanes({
     launchRuns(currentRun, all).map((run) => run._id),
   );
 
-  const grouped = new Map<string, EvalSuiteRun[]>();
+  const grouped = new Map<string, EvalSuiteRunListItem[]>();
   for (const run of all) {
     const key = runCompareLaneKey(run);
     const bucket = grouped.get(key);
     if (bucket) bucket.push(run);
     else grouped.set(key, [run]);
   }
+
+  const siblingKeys = [
+    ...new Set(
+      all.flatMap((run) => {
+        const key = runTargetKey(run);
+        return key ? [key] : [];
+      }),
+    ),
+  ];
 
   const lanes: RunCompareLane[] = [];
   for (const [key, laneRuns] of grouped) {
@@ -339,7 +369,7 @@ export function buildRunCompareLanes({
         run,
         label: runLabel(run),
         createdAt: run.createdAt,
-        modelTail: runModelTail(run),
+        modelTail: runModelTail(run, runModelSuffix(run, siblingKeys)),
         isCurrentRun: run._id === currentRun._id,
         inCurrentLaunch: currentLaunchIds.has(run._id),
         settled: isSettled(run),
@@ -408,10 +438,12 @@ export function buildRunCompareLanes({
         ? currentRow.run.summary
         : undefined;
 
+    const modelSuffix = runModelSuffix(rows[0].run, siblingKeys);
     lanes.push({
       key,
       run: rows[0].run,
-      label: laneLabel(rows[0].run, hostNamesById),
+      modelSuffix,
+      label: laneLabel(rows[0].run, hostNamesById, modelSuffix),
       rows,
       currentRow,
       // The EXACT fraction, never the rounded percent on screen: a suite whose
