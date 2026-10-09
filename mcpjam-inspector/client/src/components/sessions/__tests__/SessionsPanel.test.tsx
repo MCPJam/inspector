@@ -9,8 +9,10 @@
  *   - the default feed is `sessionsFeed:listProjectSessions` with ONLY
  *     `{ projectId }` (no sourceTypes/status/q keys — absent, not undefined),
  *   - a source pill narrows SERVER-side via `sourceTypes`,
- *   - a typed search switches to `sessionsFeed:searchProjectSessions` with the
- *     debounced `q`,
+ *   - a typed search switches to `sessionsFeed:searchProjectSessionTranscripts`
+ *     with the debounced `q`, and the Titles toggle swaps it for
+ *     `sessionsFeed:searchProjectSessions` with the same args,
+ *   - a transcript hit renders its `matchPreview` with the terms marked,
  *   - the row's `id` (not `chatSessionId`) is what the detail pane opens.
  *
  * Fixtures are typed against `SessionFeedItem`, so a backend DTO rename forces
@@ -122,7 +124,19 @@ beforeEach(() => {
   // one rendering a detail pane it never asked for.
   window.history.replaceState({}, "", "/sessions");
   setRows([]);
+  // Search tests fake the debounce clock; don't let one leak into the next.
+  vi.useRealTimers();
 });
+
+/** Type into the search box and let the debounce settle. */
+function search(value: string) {
+  fireEvent.change(screen.getByTestId("sessions-search"), {
+    target: { value },
+  });
+  act(() => {
+    vi.advanceTimersByTime(300);
+  });
+}
 
 describe("SessionsPanel — query contract", () => {
   test("dispatches the unified feed with ONLY { projectId } by default", () => {
@@ -152,7 +166,7 @@ describe("SessionsPanel — query contract", () => {
     expect(lastCall().args).toEqual({ projectId: "p1" });
   });
 
-  test("typing a search switches to the relevance-ranked search query after the debounce", () => {
+  test("typing a search switches to transcript search after the debounce", () => {
     vi.useFakeTimers();
     render(<SessionsPanel projectId="p1" />);
 
@@ -167,7 +181,7 @@ describe("SessionsPanel — query contract", () => {
       vi.advanceTimersByTime(300);
     });
     expect(lastCall()).toEqual({
-      name: "sessionsFeed:searchProjectSessions",
+      name: "sessionsFeed:searchProjectSessionTranscripts",
       args: { projectId: "p1", q: "checkout bug" },
     });
 
@@ -179,6 +193,119 @@ describe("SessionsPanel — query contract", () => {
       vi.advanceTimersByTime(300);
     });
     expect(lastCall().name).toBe("sessionsFeed:listProjectSessions");
+  });
+
+  test("the Titles toggle swaps in title search with the same args", () => {
+    vi.useFakeTimers();
+    render(<SessionsPanel projectId="p1" />);
+
+    // With an empty box the toggle only changes what the NEXT search hits —
+    // the recency feed must stay exactly as it was.
+    fireEvent.click(screen.getByTestId("sessions-search-scope-titles"));
+    expect(lastCall()).toEqual({
+      name: "sessionsFeed:listProjectSessions",
+      args: { projectId: "p1" },
+    });
+
+    fireEvent.click(screen.getByTestId("sessions-source-pill-eval"));
+    search("refund");
+    expect(lastCall()).toEqual({
+      name: "sessionsFeed:searchProjectSessions",
+      args: { projectId: "p1", sourceTypes: ["eval"], q: "refund" },
+    });
+
+    // Clicking the pressed item again must not leave the box searching
+    // nothing — Radix reports that as an empty value.
+    fireEvent.click(screen.getByTestId("sessions-search-scope-titles"));
+    expect(lastCall().name).toBe("sessionsFeed:searchProjectSessions");
+
+    fireEvent.click(screen.getByTestId("sessions-search-scope-transcripts"));
+    expect(lastCall()).toEqual({
+      name: "sessionsFeed:searchProjectSessionTranscripts",
+      args: { projectId: "p1", sourceTypes: ["eval"], q: "refund" },
+    });
+  });
+
+  test("an empty search result names what was searched", () => {
+    vi.useFakeTimers();
+    render(<SessionsPanel projectId="p1" />);
+
+    search("nothing says this");
+    expect(
+      screen.getByText("No conversations match this search")
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("sessions-search-scope-titles"));
+    expect(
+      screen.getByText("No session titles match this search")
+    ).toBeInTheDocument();
+  });
+});
+
+describe("SessionsPanel — transcript match previews", () => {
+  test("a hit shows its match preview, with every query term marked", () => {
+    vi.useFakeTimers();
+    setRows([
+      makeRow({
+        chatSessionId: "cs_hit",
+        title: "Bits & Bolts",
+        firstMessagePreview: "open bits & bolts",
+        matchPreview: "…the Checkout tool returned a 500 on checkout…",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+    search("checkout");
+
+    const row = within(screen.getByTestId("session-row-cs_hit"));
+    const preview = row.getByTestId("session-match-preview");
+    expect(preview).toHaveTextContent(
+      "…the Checkout tool returned a 500 on checkout…"
+    );
+    // Case-insensitive, every occurrence, the transcript's own casing kept.
+    expect(
+      Array.from(preview.querySelectorAll("mark")).map((m) => m.textContent)
+    ).toEqual(["Checkout", "checkout"]);
+    // The preview is the evidence for the hit, so it replaces the opening
+    // message rather than stacking under it.
+    expect(row.queryByText("open bits & bolts")).toBeNull();
+  });
+
+  test("regex characters in the query are matched literally", () => {
+    vi.useFakeTimers();
+    setRows([
+      makeRow({
+        chatSessionId: "cs_re",
+        title: "Rewrite",
+        matchPreview: "we rewrote it in c++ (again)",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+    search("c++ (again");
+
+    const preview = within(screen.getByTestId("session-row-cs_re")).getByTestId(
+      "session-match-preview"
+    );
+    expect(
+      Array.from(preview.querySelectorAll("mark")).map((m) => m.textContent)
+    ).toEqual(["c++", "(again"]);
+  });
+
+  test("a null matchPreview falls back to the opening message", () => {
+    // The index stems, so a row can match with no literal occurrence to
+    // quote; the backend sends null rather than a misleading window.
+    setRows([
+      makeRow({
+        chatSessionId: "cs_stem",
+        title: "Stemmed",
+        firstMessagePreview: "refunds please",
+        matchPreview: null,
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const row = within(screen.getByTestId("session-row-cs_stem"));
+    expect(row.queryByTestId("session-match-preview")).toBeNull();
+    expect(row.getByText("refunds please")).toBeInTheDocument();
   });
 });
 
