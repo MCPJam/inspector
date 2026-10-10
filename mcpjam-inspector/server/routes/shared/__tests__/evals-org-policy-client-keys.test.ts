@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveOrgModelConfig = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/org-model-config", async (importOriginal) => ({
@@ -9,6 +9,8 @@ vi.mock("../../../utils/org-model-config", async (importOriginal) => ({
 import { orgPolicyConfigForClientKeys } from "../evals";
 import { resolveEvalSelectionRoute } from "../../../services/evals-runner";
 import { ModelResolutionRefusalError } from "../../../utils/model-resolution-local";
+import { WebRouteError } from "../../web/errors.js";
+import { ServiceCredentialUnavailableError } from "../../../services/service-credential.js";
 
 const target = { projectId: "project_local_keys" };
 const auth = { bearerToken: "tok" };
@@ -16,6 +18,10 @@ const auth = { bearerToken: "tok" };
 describe("orgPolicyConfigForClientKeys", () => {
   beforeEach(() => {
     resolveOrgModelConfig.mockReset();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("carries the org config while the organization requires its own keys", async () => {
@@ -46,9 +52,28 @@ describe("orgPolicyConfigForClientKeys", () => {
     expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
   });
 
-  it("keeps a failed read from blocking the run", async () => {
+  it("refuses the run, retryably, when the policy read fails", async () => {
     resolveOrgModelConfig.mockRejectedValue(new Error("boom"));
+    const error = await orgPolicyConfigForClientKeys(target, auth).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(WebRouteError);
+    expect(error).toMatchObject({
+      status: 503,
+      details: { code: "ai_policy_unavailable", isRetryable: true },
+    });
+  });
+
+  it("runs as before when the build cannot reach the organization's config", async () => {
+    resolveOrgModelConfig.mockRejectedValue(
+      new ServiceCredentialUnavailableError("org-model-config"),
+    );
     expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
+
+    vi.stubEnv("CONVEX_HTTP_URL", "");
+    resolveOrgModelConfig.mockClear();
+    expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
+    expect(resolveOrgModelConfig).not.toHaveBeenCalled();
   });
 
   it("the config it carries refuses a saved local selection on the request's key", async () => {

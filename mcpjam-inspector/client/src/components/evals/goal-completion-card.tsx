@@ -168,12 +168,10 @@ export function GoalCompletionCard({
   // one, so on such a deployment the card sends the model id alone (as
   // `JudgesSection` does) and offers no effort.
   const saveSelections = useModelSelectionsSupported();
-  // While the organization requires its own keys there is no default judge:
-  // grading waits for a judge chosen from an organization provider.
-  const judgeUnset =
-    requireOrgKeys &&
-    selectedSelection?.source !== "org" &&
-    (!selectedModelId || selectedModelId === DEFAULT_JUDGE_MODEL);
+  // While the organization requires its own keys only a judge chosen from an
+  // organization provider can grade: an unset judge, and a saved model the
+  // policy no longer allows, both wait for that choice.
+  const judgeUnset = requireOrgKeys && selectedSelection?.source !== "org";
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the

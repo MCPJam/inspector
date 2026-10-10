@@ -523,6 +523,31 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(current).toHaveTextContent("Not eligible");
   });
 
+  it("keeps Run judge disabled under the org key policy until an organization judge is chosen", () => {
+    // A saved hosted judge (not the default) is no more runnable than an
+    // unset one while the organization requires its own keys.
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+              },
+            },
+          },
+        })}
+        availableModels={[hosted]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
+  });
+
   it("shows the suite judge's effort; running it unchanged sends no override", async () => {
     const judge: ModelDefinition = {
       id: "anthropic/claude-haiku-4.5",

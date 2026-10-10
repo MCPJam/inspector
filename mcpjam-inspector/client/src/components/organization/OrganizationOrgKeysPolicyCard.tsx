@@ -87,7 +87,11 @@ export function OrganizationOrgKeysPolicyCard({
               aria-label={TOGGLE_LABEL}
               data-testid="org-ai-keys-toggle"
               onCheckedChange={(checked) => {
-                void setRequireOrgKeys(checked).catch(() => {});
+                void setRequireOrgKeys(checked).catch(() => {
+                  // The hook already shows the failure on this card
+                  // (`useOrgScopedWrite`'s `error`); there is nothing more
+                  // to do with it here.
+                });
               }}
             />
           ) : (
