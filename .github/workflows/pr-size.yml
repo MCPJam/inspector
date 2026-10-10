@@ -1,0 +1,35 @@
+name: PR Size
+
+# Counts changed lines of hand-written source (scripts/slop/pr-size.mjs).
+# Over 400 asks for `large-pr`; over 1,500 fails unless labelled `mechanical`.
+# `labeled` / `unlabeled` re-run it when a label changes the verdict.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  size:
+    name: PR Size
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+
+      - name: Count hand-written changed lines
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node scripts/slop/pr-size.mjs --base HEAD^1

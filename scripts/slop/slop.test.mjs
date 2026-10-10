@@ -179,3 +179,22 @@ describe("ratchet", () => {
     assert.match(result.stdout, /Waived/);
   });
 });
+
+describe("pr-size verdict", async () => {
+  const { verdict, LARGE, LIMIT } = await import("./pr-size.mjs");
+
+  it("is ok within budget", () => {
+    assert.equal(verdict(LARGE, []), "ok");
+  });
+
+  it("flags a large PR and accepts either label", () => {
+    assert.equal(verdict(LARGE + 1, []), "large");
+    assert.equal(verdict(LARGE + 1, ["large-pr"]), "large-labelled");
+    assert.equal(verdict(LARGE + 1, ["mechanical"]), "large-labelled");
+  });
+
+  it("fails over the hard limit unless mechanical", () => {
+    assert.equal(verdict(LIMIT + 1, ["large-pr"]), "fail");
+    assert.equal(verdict(LIMIT + 1, ["mechanical"]), "large-labelled");
+  });
+});
