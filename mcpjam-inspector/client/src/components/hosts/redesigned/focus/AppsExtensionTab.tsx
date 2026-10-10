@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
@@ -1986,8 +1986,13 @@ function SameOriginAppIframeCard({
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
 }) {
-  const sameOrigin =
-    draft.mcpProfile?.apps?.sandbox?.sameOriginAppIframe !== false;
+  const stored = draft.mcpProfile?.apps?.sandbox?.sameOriginAppIframe;
+  const sameOrigin = stored !== false;
+  // An explicit `true` is a measurement (ChatGPT's template carries one). Once
+  // switched off, the draft only holds `false`, so remember the `true` to put
+  // it back when the switch goes on again.
+  const explicitTrueRef = useRef(stored === true);
+  if (stored === true) explicitTrueRef.current = true;
   const setSameOrigin = (enabled: boolean) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -1995,9 +2000,15 @@ function SameOriginAppIframeCard({
       };
       const apps = base.apps ?? {};
       const sandbox = { ...(apps.sandbox ?? {}) };
-      // Absence means same-origin, so only persist the non-default finding.
-      if (enabled) delete sandbox.sameOriginAppIframe;
-      else sandbox.sameOriginAppIframe = false;
+      // Absence means same-origin, so only persist the non-default finding,
+      // unless the client had recorded an explicit `true`.
+      if (!enabled) sandbox.sameOriginAppIframe = false;
+      else if (
+        sandbox.sameOriginAppIframe === true ||
+        explicitTrueRef.current
+      ) {
+        sandbox.sameOriginAppIframe = true;
+      } else delete sandbox.sameOriginAppIframe;
       const nextApps = { ...apps };
       if (Object.keys(sandbox).length > 0) nextApps.sandbox = sandbox;
       else delete nextApps.sandbox;

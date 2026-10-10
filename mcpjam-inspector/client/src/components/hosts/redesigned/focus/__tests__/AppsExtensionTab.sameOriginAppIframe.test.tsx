@@ -58,6 +58,24 @@ describe("AppsExtensionTab — same-origin app iframe", () => {
     expect(draftRef.current.mcpProfile).toBeUndefined();
   });
 
+  it("puts an explicit true back after off and on again", async () => {
+    const user = userEvent.setup();
+    const { draftRef } = renderTab({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { sandbox: { sameOriginAppIframe: true } },
+      },
+    });
+    await user.click(toggle());
+    expect(
+      draftRef.current.mcpProfile?.apps?.sandbox?.sameOriginAppIframe,
+    ).toBe(false);
+    await user.click(toggle());
+    expect(
+      draftRef.current.mcpProfile?.apps?.sandbox?.sameOriginAppIframe,
+    ).toBe(true);
+  });
+
   it("shows off for a client measured like claude.ai", () => {
     renderTab({
       mcpProfile: {
