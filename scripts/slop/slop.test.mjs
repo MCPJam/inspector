@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -392,6 +392,34 @@ describe("hook paths", async () => {
       repoPath("C:\\repo\\sdk\\src\\a.ts", "C:\\repo", win32),
       "sdk/src/a.ts"
     );
+  });
+
+  it("measures the checkout in the hook's cwd, not the one the script lives in", () => {
+    const other = mkdtempSync(join(tmpdir(), "slop-hook-cwd-"));
+    after(() => rmSync(other, { recursive: true, force: true }));
+    const git = (...args) =>
+      execFileSync("git", args, { cwd: other, encoding: "utf8" });
+    mkdirSync(join(other, "sdk/src"), { recursive: true });
+    writeFileSync(join(other, "sdk/src/a.ts"), "const a = b as any;\n");
+    git("init", "-q");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "test");
+    git("add", ".");
+    git("commit", "-qm", "base");
+    const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
+    // The cast is already in that checkout's HEAD, so rewriting the file
+    // unchanged adds nothing. Read against this repo's HEAD instead, the path
+    // would be new and the cast would count.
+    const result = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({
+        cwd: join(other, "sdk"),
+        hook_event_name: "PostToolUse",
+        tool_name: "Write",
+        tool_input: { file_path: join(other, "sdk/src/a.ts"), content: "" },
+      }),
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
   });
 
   it("fails open when git cannot read HEAD", async () => {

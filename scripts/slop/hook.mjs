@@ -16,13 +16,35 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import path, { dirname } from "node:path";
+import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
 
-const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const SCRIPT_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+
+/**
+ * The checkout the agent is editing. `${CLAUDE_PROJECT_DIR}` in
+ * settings.json stays at the checkout where the session started, so in a
+ * worktree this script runs from the main checkout while the edits land in
+ * the worktree. The hook input's `cwd` follows the worktree; its git top
+ * level is the repo to measure. Without one, measure the repo this script
+ * lives in.
+ */
+export function resolveRoot(cwd) {
+  if (!cwd) return SCRIPT_ROOT;
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Not inside a git checkout, or no git: fall back to this script's repo.
+    return SCRIPT_ROOT;
+  }
+}
 
 /** Root files that already exist. Anything else at the root needs an RFC. */
 const ROOT_ALLOWLIST = new Set([
@@ -44,10 +66,10 @@ const ROOT_ALLOWLIST = new Set([
 const NOT_IN_HEAD =
   /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/;
 
-function gitShow(path) {
+function gitShow(path, root) {
   try {
     return execFileSync("git", ["show", `HEAD:${path}`], {
-      cwd: ROOT,
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -61,7 +83,7 @@ function gitShow(path) {
 }
 
 /** Repo-relative and `/`-separated, whatever the platform's separator. */
-export function repoPath(filePath, root = ROOT, paths = path) {
+export function repoPath(filePath, root = SCRIPT_ROOT, paths = path) {
   return paths.relative(root, filePath).split(paths.sep).join("/");
 }
 
@@ -130,13 +152,17 @@ export function editFragments(toolName, toolInput, headText, fileText) {
   return { before: headText, after: fileText };
 }
 
-function runStop(input) {
+function runStop(input, root) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
   if (input.stop_hook_active) return 0;
+  // The checkout's own ratchet when it has one, so its rules apply; a branch
+  // from before the ratchet landed is measured with this script's copy.
+  const own = join(root, "scripts/slop/ratchet.mjs");
+  const ratchet = existsSync(own) ? own : join(SCRIPT_ROOT, "scripts/slop/ratchet.mjs");
   try {
-    execFileSync("node", ["scripts/slop/ratchet.mjs"], {
-      cwd: ROOT,
+    execFileSync("node", [ratchet], {
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -150,11 +176,12 @@ function runStop(input) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "Stop") return runStop(input);
+  const root = resolveRoot(input.cwd);
+  if (input.hook_event_name === "Stop") return runStop(input, root);
 
   const filePath = input.tool_input?.file_path;
   if (!filePath) return 0;
-  const path = repoPath(filePath);
+  const path = repoPath(filePath, root);
 
   if (input.hook_event_name === "PreToolUse") {
     const problem = checkNewPath(path, existsSync(filePath));
@@ -165,7 +192,7 @@ function main() {
 
   if (input.hook_event_name === "PostToolUse") {
     if (path.startsWith("..") || !existsSync(filePath)) return 0;
-    const fileBefore = gitShow(path);
+    const fileBefore = gitShow(path, root);
     const fileAfter = readFileSync(filePath, "utf8");
     const fragments = editFragments(
       input.tool_name,
