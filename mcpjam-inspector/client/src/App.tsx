@@ -3654,7 +3654,14 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
-  usePostHogOrgContext(activeOrganizationId);
+  const activeOrganizationName = effectiveOrganizations.find(
+    (org) => org._id === activeOrganizationId,
+  )?.name;
+  // Org names reach analytics only for people in no enterprise-privacy org.
+  usePostHogOrgContext(
+    activeOrganizationId,
+    enterprisePrivacyMember === false ? activeOrganizationName : undefined,
+  );
   useSentryOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
@@ -3711,9 +3718,6 @@ export default function App() {
       }
     });
   }, [setSelectedServer]);
-  const activeOrganizationName = effectiveOrganizations.find(
-    (org) => org._id === activeOrganizationId,
-  )?.name;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     isConvexAuthLoading: isAuthLoading,

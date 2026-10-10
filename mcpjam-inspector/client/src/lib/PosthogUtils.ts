@@ -200,6 +200,7 @@ export function sanitizeAnalyticsProperties(
       if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);
     }
   }
+  if (maskNames) delete properties.organization_name;
   if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
 }

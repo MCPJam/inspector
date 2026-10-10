@@ -364,6 +364,25 @@ describe("PosthogUtils", () => {
       );
     });
 
+    it("drops the organization name unless the level is full", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { sanitizeAnalyticsProperties: sanitize } =
+        await import("../PosthogUtils");
+      const { setSessionPrivacy } = await import("../session-privacy");
+      const withOrg = () => ({
+        organization_id: "org_123",
+        organization_name: "Acme",
+      });
+
+      expect(sanitize(withOrg())).toEqual({ organization_id: "org_123" });
+      setSessionPrivacy("masked");
+      expect(sanitize(withOrg())).toEqual({ organization_id: "org_123" });
+      setSessionPrivacy("full");
+      expect(sanitize(withOrg())).toEqual(withOrg());
+    });
+
     it("still redacts credential tokens at every level", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
       vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
