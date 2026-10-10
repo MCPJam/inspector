@@ -1,0 +1,51 @@
+name: Slop Ratchet
+
+# Fails a PR whose changed source files add more type escapes, swallowed
+# errors, suppressions, server `console` calls or history comments than they
+# remove, or that adds repo litter or pushes a file past 800 lines. The rules live in scripts/slop/rules.mjs; this job only runs them.
+#
+# `labeled` / `unlabeled` re-run the check when a CODEOWNER applies or removes
+# `slop-waiver`, so the waiver takes effect without a new push.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slop-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ratchet:
+    name: Slop Ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The PR merge commit and its first parent, the base it merges into, are
+      # all the ratchet compares. No install: the scripts use only Node builtins.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+
+      - name: Test the ratchet
+        run: node --test scripts/slop/slop.test.mjs
+
+      - name: Compare with the base branch
+        env:
+          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
+        run: node scripts/slop/ratchet.mjs --base HEAD^1
+
+      # The agent hooks' file rules, for every author: no new root files or
+      # scratch notes, and no source file crossing 800 lines.
+      - name: Repo hygiene
+        if: ${{ !cancelled() }}
+        env:
+          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
+        run: node scripts/slop/repo-hygiene.mjs --base HEAD^1

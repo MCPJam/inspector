@@ -53,7 +53,9 @@
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:publish": "changeset publish",
-    "check:mirrors": "node scripts/check-authoring-mirror.mjs"
+    "check:mirrors": "node scripts/check-authoring-mirror.mjs",
+    "slop:measure": "node scripts/slop/measure.mjs",
+    "slop:check": "node scripts/slop/ratchet.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
