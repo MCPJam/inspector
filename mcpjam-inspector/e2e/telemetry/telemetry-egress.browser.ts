@@ -21,6 +21,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   assertTelemetryBuild,
   drain,
+  fireUnloadFlush,
   installEgressRecorder,
   interact,
   ORIGIN,
@@ -242,6 +243,9 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.mouse.click(5, 5);
   await throwUncaught(page, "just before closing");
   // No waiting: the tab goes with PostHog's queue and replay buffer full.
+  // Its unload flush runs first from the live page, so the beacon it sends
+  // is one the route can read (`fireUnloadFlush`).
+  await fireUnloadFlush(page);
   await page.goto("about:blank");
   await page.waitForTimeout(1_500);
   const scan = expectClean(recorder, "closed on a credential page", {

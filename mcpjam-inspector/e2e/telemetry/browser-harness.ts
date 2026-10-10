@@ -272,10 +272,28 @@ function decodeURIComponentSafe(value: string): string {
 }
 
 /**
+ * Run the page's unload flush while the page is still alive: dispatch the
+ * `pagehide` posthog-js listens for, so its request queue and replay buffer
+ * leave by `sendBeacon` exactly as on a real unload — but from a live
+ * document, where `page.route` sees (and contains) the beacon. A beacon sent
+ * by a document that is already going away can leave outside the page's
+ * request interception (CI's Chromium recorded none from a real unload), and
+ * an unobserved request proves nothing.
+ */
+export async function fireUnloadFlush(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: false }),
+    );
+  });
+  await page.waitForTimeout(500);
+}
+
+/**
  * Ship what is buffered the way a real session does: wait past PostHog's
  * request-queue (3s) and replay-buffer (2s) timers and Sentry's replay flush
- * delay (5s), read the SDKs' storage, then unload the page so whatever is
- * left leaves by beacon.
+ * delay (5s), read the SDKs' storage, run the unload flush, then unload the
+ * page.
  */
 export async function drain(
   page: Page,
@@ -283,6 +301,7 @@ export async function drain(
 ): Promise<void> {
   await page.waitForTimeout(7_000);
   await readSdkStorage(page, recorder);
+  await fireUnloadFlush(page);
   const before = recorder.telemetry.length;
   await page.goto("about:blank");
   await page.waitForTimeout(1_000);
