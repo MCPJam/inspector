@@ -32,6 +32,29 @@ const SERVER_PATH = /^mcpjam-inspector\/server\//;
 /** A comment line: `//`, or a line inside a block comment that starts with `*`. */
 const COMMENT_LINE = /^\s*(?:\/\/|\/?\*)/;
 
+/**
+ * MCP protocol and MCP Apps versions are dates, and comments cite them to
+ * explain era-specific behavior. They are not history, so the history rule
+ * removes them first. Add a version here when the SDK starts using it.
+ */
+export const PROTOCOL_VERSIONS = [
+  "2024-11-05",
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-01-26",
+  "2026-07-28",
+];
+
+const PROTOCOL_VERSION = new RegExp(PROTOCOL_VERSIONS.join("|"), "g");
+
+function stripProtocolVersions(text) {
+  return text.replace(PROTOCOL_VERSION, "");
+}
+
+const HISTORY =
+  /(?:(?:^|[^\w&])#\d{3,5}\b|\bPR\s*#?\d{3,5}\b|\b20\d\d-\d\d-\d\d\b)/;
+
 function countMatches(text, regex) {
   return text.match(regex)?.length ?? 0;
 }
@@ -72,7 +95,7 @@ export const RULES = [
     count: (text) =>
       countMatches(
         text,
-        /\.catch\(\s*(?:\(\s*\w*\s*\)|\w+)\s*=>\s*(?:\{\s*\}|undefined|null|void 0)\s*\)/g
+        /\.catch\(\s*(?:async\s+)?(?:\(\s*\w*\s*\)|\w+)\s*=>\s*(?:\{\s*\}|undefined|null|void 0)\s*\)/g
       ),
   },
   {
@@ -96,11 +119,7 @@ export const RULES = [
   {
     id: "history-comment",
     label: "comments citing a PR number or a date",
-    count: (text) =>
-      countCommentLines(
-        text,
-        /(?:(?:^|[^\w&])#\d{3,5}\b|\bPR\s*#?\d{3,5}\b|\b20\d\d-\d\d-\d\d\b)/
-      ),
+    count: (text) => countCommentLines(stripProtocolVersions(text), HISTORY),
   },
 ];
 

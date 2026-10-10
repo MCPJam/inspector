@@ -55,9 +55,9 @@ describe("rules", () => {
 
   it("counts swallowed promise rejections", () => {
     const counts = count(
-      "p.catch(() => {});\np.catch((_e) => undefined);\np.catch(() => null);\np.catch((e) => log(e));\n"
+      "p.catch(() => {});\np.catch((_e) => undefined);\np.catch(() => null);\np.catch(async () => {});\np.catch((e) => log(e));\n"
     );
-    assert.equal(counts["swallowed-catch-callback"], 3);
+    assert.equal(counts["swallowed-catch-callback"], 4);
   });
 
   it("counts empty catch blocks but not ones with a reason comment", () => {
@@ -90,6 +90,17 @@ describe("rules", () => {
       ].join("\n")
     );
     assert.equal(counts["history-comment"], 3);
+  });
+
+  it("does not count MCP protocol versions as history", () => {
+    const counts = count(
+      [
+        "// 2026-07-28 servers omit X.",
+        "// A 2025-11-25 server can land on the legacy wire.",
+        "// Spec 2025-06-18, changed on 2026-09-24.",
+      ].join("\n")
+    );
+    assert.equal(counts["history-comment"], 1);
   });
 
   it("counts suppressions", () => {
