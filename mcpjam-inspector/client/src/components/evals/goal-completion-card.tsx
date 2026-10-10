@@ -278,7 +278,7 @@ export function GoalCompletionCard({
             size="sm"
             className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => handleRun(true)}
-            disabled={!completedRun || inFlight}
+            disabled={!completedRun || inFlight || judgeUnset}
           >
             <RotateCw className="h-3 w-3" />
             Retry

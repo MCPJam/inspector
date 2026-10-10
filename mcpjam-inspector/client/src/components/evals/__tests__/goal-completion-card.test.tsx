@@ -548,6 +548,30 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
   });
 
+  it("keeps Retry disabled under the org key policy until an organization judge is chosen", () => {
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        failedGeneration
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+              },
+            },
+          },
+        })}
+        availableModels={[hosted]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Retry/i })).toBeDisabled();
+  });
+
   it("shows the suite judge's effort; running it unchanged sends no override", async () => {
     const judge: ModelDefinition = {
       id: "anthropic/claude-haiku-4.5",
