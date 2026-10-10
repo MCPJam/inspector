@@ -9,10 +9,14 @@
  *   Stop                      run the ratchet over the whole change once before the turn ends
  *
  * Any failure of the hook itself exits 0: a broken check must not wedge a session.
+ *
+ * `.claude/settings.json` skips these hooks in CI. claude-code-action restores
+ * `.claude/` from the base branch but runs this file from the PR head, and
+ * there it would hold the action's API key and write token.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative } from "node:path";
+import path, { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
@@ -36,17 +40,29 @@ const ROOT_ALLOWLIST = new Set([
   "railway.json",
 ]);
 
+/** Git's own error text for a path that is not in HEAD. */
+const NOT_IN_HEAD =
+  /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/;
+
 function gitShow(path) {
   try {
     return execFileSync("git", ["show", `HEAD:${path}`], {
       cwd: ROOT,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-  } catch {
-    // New since HEAD: nothing to compare against.
-    return "";
+  } catch (error) {
+    // New since HEAD: nothing to compare against. Any other failure (no git,
+    // no HEAD) rethrows, and the hook exits 0 rather than count the whole
+    // file as new.
+    if (NOT_IN_HEAD.test(String(error.stderr ?? ""))) return "";
+    throw error;
   }
+}
+
+/** Repo-relative and `/`-separated, whatever the platform's separator. */
+export function repoPath(filePath, root = ROOT, paths = path) {
+  return paths.relative(root, filePath).split(paths.sep).join("/");
 }
 
 const lineCount = (text) => (text ? text.split("\n").length : 0);
@@ -138,7 +154,7 @@ function main() {
 
   const filePath = input.tool_input?.file_path;
   if (!filePath) return 0;
-  const path = relative(ROOT, filePath);
+  const path = repoPath(filePath);
 
   if (input.hook_event_name === "PreToolUse") {
     const problem = checkNewPath(path, existsSync(filePath));

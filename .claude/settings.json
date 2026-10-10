@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
             "timeout": 10
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
             "timeout": 30
           }
         ]
