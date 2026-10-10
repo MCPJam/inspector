@@ -6,8 +6,7 @@ import {
   getLastFailedRequest,
   installFailedRequestTracker,
 } from "../failed-request-tracker";
-import type { CaptureResult } from "posthog-js";
-import { scrubCaptureEvent } from "../PosthogUtils";
+import { sanitizeAnalyticsProperties } from "../PosthogUtils";
 
 const realFetch = window.fetch;
 let uninstall: () => void;
@@ -100,17 +99,9 @@ describe("failed request tracker", () => {
 });
 
 describe("PostHog $exception enrichment", () => {
-  // Through the `before_send` pass the app wires up (it replaced the
-  // deprecated `sanitize_properties`).
-  const sanitize = (
-    properties: Record<string, any>,
-    eventName: string,
-  ): Record<string, any> =>
-    scrubCaptureEvent({
-      uuid: "u-1",
-      event: eventName,
-      properties,
-    } as unknown as CaptureResult)?.properties ?? {};
+  // `before_send` (scrubCaptureEvent) runs this enrichment pass before the
+  // credential walker; it replaced the deprecated `sanitize_properties`.
+  const sanitize = sanitizeAnalyticsProperties;
 
   const loadFailedException = () => ({
     $exception_list: [
