@@ -13,7 +13,7 @@
  *   node scripts/slop/deletion-candidates.mjs [--limit 20] [--exclude paths.txt]
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { measure, packageOf } from "./measure.mjs";
@@ -137,8 +137,9 @@ function argValue(name) {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
-// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compared as URLs of the real path: on Windows argv[1] is a `C:\` path,
+// and import.meta.url has symlinks such as macOS /var -> /private/var resolved.
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const limit = Number(argValue("--limit") ?? 20);
   // Paths an open or rejected bot PR already touched, one per line.
   const excludeFile = argValue("--exclude");

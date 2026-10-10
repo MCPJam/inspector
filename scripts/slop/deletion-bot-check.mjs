@@ -16,7 +16,7 @@
  * valid, 1 otherwise. Prints the changed paths, one per line, on success.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { compare } from "./ratchet.mjs";
 
@@ -108,8 +108,9 @@ export function checkLane(lane, entries, { before, after, linesOf }) {
   return { problems, total };
 }
 
-// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compared as URLs of the real path: on Windows argv[1] is a `C:\` path,
+// and import.meta.url has symlinks such as macOS /var -> /private/var resolved.
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const index = process.argv.indexOf("--lane");
   const lane = index === -1 ? "" : process.argv[index + 1];
   const entries = changes();

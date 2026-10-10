@@ -164,7 +164,7 @@ jobs:
             echo "scripts/slop or .github was modified; refusing." >&2
             exit 1
           fi
-          gate="$(mktemp -d)"
+          gate="$(cd "$(mktemp -d)" && pwd -P)"
           git archive HEAD scripts/slop | tar -x -C "$gate"
           node "$gate/scripts/slop/deletion-bot-check.mjs" --lane "$LANE" > "$RUNNER_TEMP/paths.txt"
           echo "changed=$(wc -l < "$RUNNER_TEMP/paths.txt" | tr -d ' ')" >> "$GITHUB_OUTPUT"
