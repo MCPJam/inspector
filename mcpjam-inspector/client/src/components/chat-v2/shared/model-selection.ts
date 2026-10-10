@@ -318,10 +318,11 @@ export function storedModelChoice(
  * (same source, same connection, same model) — so an id listed both in the
  * hosted catalog and under an org OpenRouter connection resolves to the row
  * that was actually picked. With a stored legacy selection ("own key only"):
- * an own-key row with that id, the provider hint's when it has one, and no
- * row at all rather than the hosted twin, which would move the model onto
- * MCPJam credits. Without one (a legacy row): the row with that id, hosted
- * rows first, exactly as the legacy read did.
+ * the one own-key row with that id (narrowed by the provider hint when it
+ * has one); none when several qualify, since the legacy fields cannot say
+ * which connection ran it, and none rather than the hosted twin, which would
+ * move the model onto MCPJam credits. Without one (a legacy row): the row
+ * with that id, hosted rows first, exactly as the legacy read did.
  */
 export function findModelForStoredChoice(
   choice: { modelId: string; selection?: RequestedModelSelection | null },
@@ -334,11 +335,10 @@ export function findModelForStoredChoice(
     const own = models.filter(
       (model) => String(model.id) === id && !isHostedRow(model),
     );
-    return (
-      (hint
-        ? own.find((model) => String(model.provider) === hint)
-        : undefined) ?? own[0]
-    );
+    const named = hint
+      ? own.filter((model) => String(model.provider) === hint)
+      : own;
+    return named.length === 1 ? named[0] : undefined;
   }
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);

@@ -568,6 +568,16 @@ describe("stored choices", () => {
         orgConfig,
       ),
     ).toBeUndefined();
+    // Two own-key rows with that id: the legacy fields cannot tell which
+    // connection ran it, so neither is picked.
+    const twin = { ...byok, name: `${byok.name} (second)` };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, twin],
+        orgConfig,
+      ),
+    ).toBeUndefined();
   });
 
   it("bare BYOK ids round-trip through the canonical stored id", () => {
