@@ -175,7 +175,7 @@ describe("runEmulatedOAuthPreflight — completion", () => {
       dcrRegistrations: 1,
       tokensIssued: 1,
     });
-    expect(result.comparison).toBe("not_compared");
+    expect(result.comparison.status).toBe("not_compared");
   });
 
   it("a token without a valid JSON-RPC result is NOT a completion", async () => {
@@ -779,6 +779,6 @@ describe("runEmulatedOAuthPreflight — coverage and parity", () => {
     expect(result.outcome).toBe("completed");
     expect(result.coverageSummary).toBe("partial");
     expect(result.coverage.scopeRequest).toBe("not_modeled");
-    expect(result.comparison).toBe("not_compared");
+    expect(result.comparison.status).toBe("not_compared");
   });
 });
