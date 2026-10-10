@@ -3,6 +3,13 @@
 Repository-wide instructions for AI coding agents. Package-specific rules live
 alongside their code — see `mcpjam-inspector/AGENTS.md` for the inspector app.
 
+## Pull requests
+
+`gh pr create --body` skips GitHub's PR template. When you write a PR body,
+read `.github/pull_request_template.md` and fill in every section. Where a
+section does not apply, use the exact text that section's comment gives
+("Nothing", "Nothing applicable", or "None: …").
+
 ## Code quality contract
 
 These rules bind every change, human or agent. Agents write most of the code
@@ -27,8 +34,8 @@ Script names differ in a few workspaces:
 | `@mcpjam/slack-app`, `@mcpjam/discord-app`, `@mcpjam/surface-core` | `verify` (check, lint and test)        | `verify`    |
 | `@mcpjam/soundcheck`                                               | `typecheck`                            | `test:auth` |
 
-Then fill in `.github/pull_request_template.md`. In your last message, list
-what you deleted and what existing code you reused.
+Then write the PR body as described under Pull requests above. In your last
+message, list what you deleted and what existing code you reused.
 
 ### Size
 
