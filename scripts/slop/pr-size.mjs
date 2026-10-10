@@ -13,6 +13,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { isMeasuredFile } from "./rules.mjs";
 
 export const LARGE = 400;
@@ -136,7 +137,8 @@ function report({ total, files }, labels) {
   return result === "fail" ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const labels = (process.env.PR_LABELS ?? "")
     .split(",")
     .map((label) => label.trim())
