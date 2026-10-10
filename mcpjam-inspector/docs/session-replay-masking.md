@@ -5,13 +5,19 @@ what session replay (PostHog and Sentry Replay) and product analytics may
 record. The policy lives in one module, `client/src/lib/session-privacy.ts`,
 and both recorders read the same state from it.
 
+Independently of the level, URLs that are credentials (share links, handoff
+links, OAuth and sign-in callbacks, secret query keys) are scrubbed from every
+telemetry exit and never recorded at all. See [Credential URLs](#credential-urls).
+The public summary of this document is `docs/inspector/telemetry-privacy.mdx`
+at the repository root.
+
 ## The levels
 
 | Level    | Replay records                                                     | Product analytics                                    |
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| `off`    | Nothing. No recorder is constructed.                               | Unchanged                                            |
-| `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
+| `off`    | Nothing. No recorder is constructed.                               | Credentials scrubbed from URLs                       |
+| `masked` | PostHog: layout and interaction only (see [Masked profile](#masked-profile)). Sentry Replay: nothing. | Element text and attributes masked; credentials and names scrubbed from URLs |
+| `full`   | The page, with inputs and annotated secrets masked                 | Credentials scrubbed from URLs                       |
 
 ## Who gets which level
 
@@ -92,8 +98,9 @@ it. Nothing recorded after the stop uses the old profile.
 masked meanwhile. The previous organization's content can stay on screen for a
 moment while the next one loads.
 
-**Sentry Replay** needs no restart. Its options mask at both levels, and the
-masked-only extras are applied frame by frame (see below).
+**Sentry Replay** does not record at `masked`. `full` → `masked` stops it in
+the same layout effect, before the new organization's DOM is reported;
+`masked` → `full` starts it after the same 3-second settle.
 
 ## Masked profile
 
@@ -120,7 +127,9 @@ masked-only extras are applied frame by frame (see below).
 
 ### URLs
 
-`scrubNamesFromUrl` scrubs URLs at `masked` and `pending`:
+Credentials come out of every URL first, at every level (see
+[Credential URLs](#credential-urls)). On top of that, `scrubNamesFromUrl`
+scrubs names from URLs at `masked` and `pending`:
 
 - In `$current_url`, `$pathname` and the other URL properties
   (`sanitizeAnalyticsProperties`).
@@ -134,18 +143,16 @@ dropped. For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 
 ### Sentry Replay
 
-`SENTRY_REPLAY_OPTIONS` apply at every level:
+Sentry Replay does not record at `masked` (or `pending`). Its frame-level hooks
+cannot keep names out of the rrweb meta event's page URL, and PostHog's masked
+profile already covers crash debugging at that level.
+
+At `full`, `SENTRY_REPLAY_OPTIONS` apply:
 
 - `maskAllText`, `maskAllInputs` and `blockAllMedia` are `true`.
 - `maskAttributes` adds `alt` and `aria-description` to Sentry's defaults.
 - `networkDetailAllowUrls: []` and `networkCaptureBodies: false`: no request or
   response detail for any URL.
-
-Short of `full`:
-
-- `beforeAddRecordingEvent` drops console breadcrumbs.
-- It also scrubs URLs in navigation breadcrumbs and network spans.
-- A `preprocessEvent` hook scrubs the replay event's `urls` list.
 
 ## Identity
 
@@ -163,25 +170,132 @@ membership is known. Before the list loads, a boot crash keeps its attribution.
 
 Desktop identity is unchanged for everyone else.
 
-## `/results/<token>` and other credential links
+## Credential URLs
 
-The token in `/results/<token>`, `/conformance/shared/<token>` and
-`/evals/shared/<token>` *is* the credential. A replay would capture it in the
-DOM snapshot, even though `scrubSensitiveUrl` already keeps it out of event
-properties. Neither recorder records on these paths, at any level.
+Some URLs are bearer credentials: the token in `/results/<token>` is the only
+access control on a run, an OAuth callback's `?code=` is a one-time
+authorization code, `?_token=` is a session. Every telemetry sink sees URLs, so
+every sink has to agree on what a credential URL is. They read one registry.
 
-- **Hard load.** Neither recorder is started on the route. When the user leaves
-  it, recording starts at the session's level. Sentry's integration is
+### The registry
+
+`shared/credential-urls.ts` defines:
+
+- **`CREDENTIAL_ROUTES`**: every route whose path, query or fragment carries a
+  secret, with an `id`, a `pattern` (`/results/:runToken`, `/oauth/callback*`),
+  where the secret sits (`path`, `query`, `fragment`), whether it is a `page`
+  or an `api` route, its TTL, and `reserved` values that are app vocabulary
+  rather than secrets (`/user-testing/<id>/edit`,
+  `/connect/server/request/<id>`). Today: score and bench results, shared
+  conformance and eval reports, tester links (and their pre-rename
+  `/chatbox/` shape), the server-connection handoff, the MCP OAuth, GitHub App
+  and sign-in callbacks, the local access link's `#token=`, the API reads
+  behind the share links, the SSE `?_token=`, and signed artifact links' `?t=`.
+- **`SECRET_PARAM_KEYS`**: query and fragment keys whose value is a credential
+  on any URL, ours or not (`code`, `state`, `token`, `_token`,
+  `access_token`, `client_secret`, `signature`, SAML and SSO keys, …), plus
+  the families no list can enumerate: presigned `X-Amz-*` / `X-Goog-*` and
+  anything ending in `token`, `secret`, `password`, `signature`, `apikey` or
+  `credential`. URL userinfo (`https://user:pass@host`) is always stripped.
+- **The scrubbers**: `scrubCredentialUrl` (one URL, spelling kept),
+  `scrubCredentialsInText` (URLs and credential paths anywhere in free text,
+  raw or percent-encoded), and `scrubTelemetryValue` (any JSON-ish value,
+  object keys included). The secret becomes `[redacted]`.
+
+The module is pure (no DOM, no Node APIs, no SDK, no lookbehind) so the
+browser, the server, Electron main and the relay all import the same code.
+
+### Where each sink applies it
+
+| Sink                         | Where the scrubber runs                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostHog events               | `before_send`, over every property: `$set`/`$set_once`, `$elements_chain` and `$elements`, `$external_click_url`, web vitals, heatmap data (keys included), `$exception_list`. |
+| PostHog replay network/URL   | `maskCapturedNetworkRequestFn` at every level: keeps the scrubbed URL and timing only. Headers and bodies are dropped at every level, not just `masked`.             |
+| Sentry                       | `beforeSend`, `beforeSendTransaction` and `beforeBreadcrumb`. Transaction names are set to the route template (`credentialRouteTemplate`), never the visited path. |
+| Server logs (Axiom)          | Every log line and its context, before it is shipped.                                                                                                              |
+| `/relay` (PostHog proxy)     | Decodes each event payload, rewrites it through `scrubTelemetryEvent`, and re-encodes it. Strips `Referer`.                                                        |
+
+### Replay is blocked, not scrubbed
+
+A recorder snapshots the address bar, the DOM that renders the secret and the
+requests that send it. Scrubbing that afterwards is not a guarantee; not
+recording is. `isReplayBlockedLocation` is true for a registered credential
+path, a callback route, and any URL with a secret query or fragment key
+(including one nested in another parameter's value). Neither recorder records
+there, at any level.
+
+- **Hard load.** Neither recorder is started on a blocked URL. When the user
+  leaves it, recording starts at the session's level. Sentry's integration is
   constructed then too: starting it earlier and stopping it would flush the
   token-bearing page.
-- **In-app navigation.** `useSessionRecordingPathGuard` stops both recorders on
-  entry and resumes them on exit.
+- **In-app navigation.** `useSessionRecordingPathGuard` stops both recorders
+  **before** the navigation onto a blocked URL commits, and resumes them on
+  exit.
   - PostHog resumes with `startSessionRecording()` without an override, which
     still honours the project's sampling.
   - Sentry resumes only a replay the guard itself stopped, because Sentry's
     `replay.start()` bypasses `replaysSessionSampleRate`. Its armed flag is
     never cleared on the way in, so `/results/a` → `/results/b` does not forget
     that the guard is what stopped the replay.
+
+### Out of the address bar early
+
+- The OAuth callback inbox removes `code` and `state` from the address bar
+  before telemetry starts.
+- A failed share-link redeem, or a refused handoff claim, drops the token from
+  the address bar.
+- Credential pages are served with `Referrer-Policy: no-referrer`.
+
+### Fail closed on credentials
+
+A payload that cannot be shown clean is dropped, never forwarded:
+
+- `scrubTelemetryEvent` never throws. If the walker cannot finish (a cycle,
+  more than 64 levels, more than 200,000 nodes) it deletes the URL-bearing
+  fields (`URL_BEARING_FIELDS`) and scrubs the rest; if that fails too it
+  returns `null` and the caller drops the event.
+- The relay drops what it cannot read: oversized, malformed, or in an
+  encoding it does not decode. It does not forward the original instead.
+- A replay batch that contains a credential is accepted and dropped: the relay
+  answers 200 so posthog-js does not retry it.
+
+### Completeness in CI
+
+`client/src/lib/__tests__/credential-route-completeness.test.ts` and
+`server/routes/web/__tests__/credential-route-completeness.test.ts` walk every
+client route and every server route. A parameter whose name looks secret
+(`/token|secret|code|key|sig|cred/i`) fails the build unless it is in
+`CREDENTIAL_ROUTES` or allow-listed with a reason.
+
+`shared/__tests__/credential-leak-monitor.test.ts` checks the production leak
+monitor (`ops/credential-leak-monitor/`) against the same registry: every
+route has a pattern that catches its unredacted URL and misses its
+`[redacted]` form.
+
+### Production monitor
+
+`.github/workflows/credential-leak-monitor.yml` runs daily. It counts PostHog
+events and Sentry events from the last 24 hours whose URL properties still
+carry an unredacted credential, by registry route id, and posts to the alerts
+channel when there are any, or when it could not check. Its patterns are
+generated from the registry at run time. Setup and runbook:
+`ops/credential-leak-monitor/README.md`.
+
+### Adding a credential route
+
+Add an entry to `CREDENTIAL_ROUTES` (a key that is a credential on any URL goes
+in `SECRET_PARAM_KEYS`). The secret must be the template's last parameter.
+Nothing else: the scrubbers, both replay guards, the relay and the monitor
+all read the registry.
+
+### Old desktop builds
+
+Installed desktop builds keep the code they shipped with. PostHog replay on
+those builds is blocked before capture by PostHog's remote URL blocklist
+(project settings), which old clients honour. Their events and error reports
+are contained after transmission by vendor-side scrubbing rules, and by the
+auto-update. We do not claim an old build never sends a credential; the
+monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
@@ -250,22 +364,32 @@ recorders, or they drift.
 
 ## Known gaps
 
-- **Sentry's page URL.** Sentry's rrweb meta event still carries the page URL.
-  Sentry offers no hook to edit rrweb events, only its own frames.
+- **Sentry's page URL.** Sentry's rrweb meta event still carries the page URL,
+  and Sentry offers no hook to edit rrweb events. It is never a credential URL
+  (replay is blocked there) and never a `masked` session (Sentry Replay does
+  not record at `masked`), so what remains is names at `full`.
 - **Sentry email at boot.** Before the organization list loads, Sentry still
   has the signed-in email.
 - **Viewers outside the organization.** The posture of an organization the
   viewer does not belong to is unknown. Share links are `masked` for that
   reason, but a project shared to a non-member outside a share link is judged
   by the viewer's own organizations.
-- **Heatmaps.** Heatmap data keyed by URL is not scrubbed.
+- **Heatmaps.** Credentials are scrubbed from heatmap data, keys included.
+  Names in heatmap URLs are not scrubbed at `masked`.
+- **Edge request logs.** The hosting provider's edge and CDN keep their own
+  request logs. Nothing here runs before them.
+- **Content in logs.** Customer content (tool arguments and results, prompts)
+  in log lines and error context is a separate content-scrubbing concern; the
+  credential registry only covers URLs.
+- **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
-## Follow-up: a server-side backstop
+## Follow-up: a server-side backstop for the masked level
 
-Everything above runs in the browser. A modified or stale client could still
-send unmasked data.
-
-A backstop in the same-origin `/relay` proxy (`server/routes/relay.ts`) could:
+The `/relay` proxy (`server/routes/relay.ts`) already scrubs credentials from
+every event it forwards and drops replay batches that carry one (see
+[Fail closed on credentials](#fail-closed-on-credentials)). It does not enforce the `masked` level: a
+modified or stale client could still send unmasked replay or name-bearing
+URLs. A backstop could:
 
 - refuse or scrub `$snapshot` payloads from sessions that declared `masked`;
 - strip name-like URL segments server-side.

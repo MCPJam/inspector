@@ -1,0 +1,132 @@
+---
+title: "Telemetry & privacy"
+description: "What the Inspector sends to analytics and error reporting, how links that act as credentials are kept out of it, and how to opt out"
+icon: "eye-off"
+---
+
+MCPJam uses three telemetry services: **PostHog** for product analytics and session replay, **Sentry** for error reports, performance traces and error replays, and **Axiom** for server logs on the hosted service. This page describes what each one receives, how links that work as credentials are kept out of all of them, what this does not cover, and how to turn telemetry off.
+
+For the command-line tool, see [CLI telemetry](/cli/telemetry).
+
+## Privacy levels
+
+Every browser session runs at one of three privacy levels. The level decides what session replay may record and how much detail product analytics keeps.
+
+| Level    | Session replay                                                                                                                  | Product analytics                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `off`    | None. No recorder is loaded, and the browser does not report exceptions.                                                         | Usage events, scrubbed as described below                                          |
+| `masked` | Layout and interaction only. Every text node and input is masked, media is blocked, and there are no console logs or network headers or bodies. Sentry Replay does not record at all. | Element text and attributes masked. Names in URLs are replaced, ids and route words stay. |
+| `full`   | The page, with every input and every surface that shows a secret (tokens, API keys) masked.                                     | Usage events, scrubbed as described below                                          |
+
+| Session                                                                          | Level    |
+| -------------------------------------------------------------------------------- | -------- |
+| Self-hosted with `npx` or Docker                                                 | `off`    |
+| Any build made with `VITE_DISABLE_POSTHOG_LOCAL=true`                            | `off`    |
+| Desktop app                                                                      | `masked` |
+| Hosted, a share link to a published study                                        | `masked` |
+| Hosted, signed in, and an organization in view has enterprise privacy turned on  | `masked` |
+| Hosted, signed in, and no organization in view has enterprise privacy            | `full`   |
+| Hosted, signed out (landing pages, guests)                                       | `full`   |
+
+The level fails closed. Nothing is recorded until the level is known. A signed-in hosted session waits for its organization list, and if the answer has not arrived within 10 seconds the session records at `masked`, never `full`. Switching to an organization with enterprise privacy stops the recorder and restarts it masked before the new organization's content is captured.
+
+Members of an organization with enterprise privacy are identified in analytics and error reports by user id only. Name and email are not sent, and values sent earlier are cleared.
+
+## What each service receives
+
+| Service        | What it receives                                                                                                                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostHog events | Usage events with their properties: page URL, referrer, clicked links and element chains, web vitals, heatmap data, captured exceptions, person properties. Every property passes through the credential scrubber before it leaves the browser, and again in the proxy that forwards it. |
+| PostHog replay | At `masked` and `full`, a recording of the page as described above. For network activity, only the scrubbed URL and timing of each request. Request and response headers and bodies are never recorded, at any level.                                                                 |
+| Sentry         | Error reports with stack traces and breadcrumbs, and performance traces. Transaction names are route templates (`/results/:runToken`), not the URL as visited. Events, transactions and breadcrumbs pass through the credential scrubber before sending.                              |
+| Sentry Replay  | At `full` only, a replay of the session around an error, with text, inputs and media masked and no network detail.                                                                                                                                                                       |
+| Axiom          | Log lines from the hosted service. URLs in a log line are scrubbed before it is written.                                                                                                                                                                                               |
+
+Analytics traffic from the browser goes to a proxy on the app's own origin, not straight to PostHog. The proxy forwards to PostHog only, strips the `Referer` header, and rewrites each event payload through the same scrubber.
+
+## Links that are credentials
+
+Some MCPJam URLs are credentials. Anyone holding the link has access, so a copy of the URL in a telemetry service is a copy of the credential.
+
+- **Share links**: score and benchmark results (`/results/…`, `/bench/results/…`), shared conformance and eval reports, and published study tester links.
+- **Handoff links** that pass a server connection from one device to another.
+- **Sign-in and authorization callbacks**: the MCP OAuth callback, the GitHub App install callback and the sign-in callback, which carry one-time codes.
+- **Secret parameters on any URL**: `code`, `state`, `token`, `access_token`, `client_secret`, `signature`, presigned storage parameters (`X-Amz-*`, `X-Goog-*`) and similar, plus a username and password embedded in a URL.
+
+One registry in the source code lists every such route and parameter, and every telemetry path uses it. The secret part is replaced with `[redacted]` wherever a URL appears: an event property, a breadcrumb, an exception message, a log line or free text, raw or percent-encoded.
+
+### Replay never records these pages
+
+A recording captures the address bar, the page that displays the secret and the requests that send it, and scrubbing a recording after the fact is not a guarantee. So neither PostHog nor Sentry records on:
+
+- a share or handoff link,
+- a sign-in or authorization callback page,
+- any page whose URL has a secret parameter in its query string or fragment.
+
+This holds at every privacy level. Recording stops before the app navigates onto such a page and resumes, at the session's level, after it leaves.
+
+### Secrets leave the address bar early
+
+- A callback's code and state are removed from the address bar before telemetry starts.
+- When opening a share link fails, or a handoff link is refused, the token is removed from the address bar.
+- Pages on a credential link are served with `Referrer-Policy: no-referrer`, so the link is not passed to other sites as a referrer.
+
+### Fail closed
+
+Anything that cannot be shown to be clean is dropped, not sent. This includes a payload that is too large, malformed or in an encoding the scrubber cannot read, and any payload where the scrubber itself fails. The proxy applies the same rule: it drops what it cannot read, and it accepts and drops a replay batch that contains a credential so the browser does not retry it.
+
+### Monitoring
+
+A daily job counts events stored in PostHog and Sentry that still carry a credential in a URL, and alerts if there are any. Its patterns are generated from the same registry, so it covers every registered route.
+
+## Limits
+
+### Desktop builds installed before this change
+
+Installed desktop apps keep the code they shipped with until they update. For those builds:
+
+- **PostHog replay** is blocked before capture on credential pages by a URL blocklist that PostHog sends to every client from its project settings, so it reaches old builds without an update.
+- **Other data** (events and error reports) is contained after it is sent, by scrubbing rules applied on the vendor side. The gap closes as installed apps auto-update.
+
+We do not claim that an older build never sends a credential. Updating the desktop app removes this gap.
+
+### Not covered
+
+- **Hosting provider request logs.** The edge and CDN in front of the hosted service keep their own request logs. The scrubbing on this page runs in the browser, the proxy and the app server, which come after the edge, so those logs are not covered by it.
+- **Your content.** Tool arguments, tool results, prompts and chat messages are content, not URLs. Keeping content out of logs and error reports is handled by separate content scrubbing, not by the mechanism on this page.
+
+## Opting out
+
+| Setting                             | Where                                       | Effect                                                                                                                                                         |
+| ----------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DO_NOT_TRACK=1`                    | Environment of the Inspector server process | The server sends no analytics events and no error reports, and ships no logs. Also accepts `true`.                                                               |
+| `VITE_DISABLE_POSTHOG_LOCAL=true`   | When building the Inspector from source     | The browser sends no analytics events, records no replay and reports no exceptions. Set at runtime, it also turns off the server's analytics events.            |
+
+`npx` and Docker installs already record no replay and report no browser exceptions. The browser bundle published to npm still sends usage events, scrubbed as above. To turn those off, build from source with `VITE_DISABLE_POSTHOG_LOCAL=true`. `DO_NOT_TRACK` covers the server only.
+
+```bash
+DO_NOT_TRACK=1 npx @mcpjam/inspector@latest
+```
+
+## For contributors: registering a credential route
+
+If you add a route or a link whose URL carries a secret, register it before it ships. The registry is `CREDENTIAL_ROUTES` in `mcpjam-inspector/shared/credential-urls.ts`:
+
+```ts
+{
+  id: "my-share-link",            // stable id; the monitor reports by it
+  pattern: "/my-share/:token",    // `:name` is one segment, a trailing `*` any suffix
+  secretParam: "token",           // the segment (or query/fragment key) that is the secret
+  secretIn: "path",               // "path" | "query" | "fragment"
+  scope: "page",                  // "page" (a page the browser shows) or "api"
+  ttl: "permanent",               // how long the secret is good for
+  reserved: ["new"],              // segment values that are app vocabulary, not secrets
+  note: "What it is, for reviewers.",
+}
+```
+
+The secret must be the last parameter in `pattern`. A new query or fragment key that is a credential on any URL goes in `SECRET_PARAM_KEYS` instead.
+
+That one entry is enough. Every scrubber, both replay blocks and the monitor read the registry, so there is no second list to update. CI enforces it: a route parameter whose name looks like a secret (`token`, `secret`, `code`, `key`, `sig`, `cred`) fails the build unless it is registered or allow-listed with a reason. The monitor's tests then check that the new route has a pattern that catches the unredacted URL and ignores the `[redacted]` one.
+
+To report a privacy or security problem, see [`SECURITY.md`](https://github.com/MCPJam/inspector/blob/main/SECURITY.md).
