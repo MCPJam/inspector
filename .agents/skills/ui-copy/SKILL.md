@@ -1,6 +1,6 @@
 ---
 name: ui-copy
-description: Review or write the short copy a user sees in MCPJam (errors, toasts, empty states, tooltips, labels). Names the slop pattern in each string and gives the fix, or rewrites a string so it says what happened and what to do next. Use before a PR adds or changes user-facing text, or when asked to review such text.
+description: Review or write the short copy a user sees in MCPJam (errors, toasts, empty states, tooltips, labels). Names the slop pattern in each string and gives the fix, or rewrites a string so it says what happened and what to do next. Use before a PR adds or changes user-facing text, or when asked to review such text. Same rubric CI runs.
 ---
 
 # UI copy
@@ -8,8 +8,9 @@ description: Review or write the short copy a user sees in MCPJam (errors, toast
 Copy is the text a person reads in the product: toasts, error messages, empty
 states, tooltips, dialog bodies, button labels. CI runs this rubric over every
 string a PR adds (`scripts/slop/copy-review.mjs`), so following it here saves a
-round trip. The rules adapt Peter Yang's MIT-licensed `no-ai-slop` skill to
-copy of five to forty words.
+round trip. It lives in `.agents/skills/` so Codex and Cursor load it as is;
+`.claude/skills/ui-copy` is a symlink to it for Claude Code. The rules adapt
+Peter Yang's MIT-licensed `no-ai-slop` skill to copy of five to forty words.
 
 ## Two jobs
 

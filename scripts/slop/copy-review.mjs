@@ -8,8 +8,8 @@
  *   1. `ui-strings.mjs` lists the copy the change added: strings in the
  *      working tree that were not at `--base`, by file and line.
  *   2. Claude Haiku 5.5 names the pattern in each string that has one,
- *      against `.claude/skills/ui-copy/SKILL.md`, the rubric an author runs
- *      as `/ui-copy`.
+ *      against `.agents/skills/ui-copy/SKILL.md`, the rubric Claude Code,
+ *      Codex and Cursor load as the `ui-copy` skill.
  *   3. Claude Sonnet 5.5 rewrites only the flagged strings.
  *   4. The rewrites go on the PR as one-click suggestions, and the check
  *      fails unless the `slop-waiver` label is set.
@@ -34,7 +34,7 @@ export const MODELS = {
   rewrite: { id: "claude-sonnet-5-5", input: 2, output: 10 },
 };
 
-const RUBRIC_PATH = ".claude/skills/ui-copy/SKILL.md";
+const RUBRIC_PATH = ".agents/skills/ui-copy/SKILL.md";
 const MAX_STRINGS = 150;
 
 function git(args) {
@@ -64,7 +64,7 @@ export function collectAdded(base) {
   return items;
 }
 
-/** The skill body without its front matter: the same text `/ui-copy` loads. */
+/** The skill body without its front matter: the same text the editors load. */
 export function rubric(path = RUBRIC_PATH) {
   return readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, "");
 }

@@ -231,9 +231,9 @@ describe("copy review", () => {
     execFileSync("git", args, { cwd: repo, encoding: "utf8" });
   const ui = "mcpjam-inspector/client/src/A.tsx";
   mkdirSync(join(repo, "mcpjam-inspector/client/src"), { recursive: true });
-  mkdirSync(join(repo, ".claude/skills/ui-copy"), { recursive: true });
+  mkdirSync(join(repo, ".agents/skills/ui-copy"), { recursive: true });
   writeFileSync(
-    join(repo, ".claude/skills/ui-copy/SKILL.md"),
+    join(repo, ".agents/skills/ui-copy/SKILL.md"),
     "---\nname: ui-copy\n---\n# Rubric\nvague-error: say what failed.\n"
   );
   writeFileSync(join(repo, ui), '<p>Try again</p>\n');

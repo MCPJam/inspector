@@ -6,7 +6,7 @@ node_modules/
 node_modules
 .mcpjam/skills/
 **/.mcpjam/skills/
-# Shared hooks and skills are committed; local settings, launch configs and worktrees are not.
+# Shared hooks are committed, and skills/ links to .agents/skills; local settings, launch configs and worktrees are not.
 .claude/*
 !.claude/settings.json
 !.claude/skills/
