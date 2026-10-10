@@ -55,11 +55,7 @@ export type CredentialScope = "page" | "api";
  *  - `session`       — valid for the session it authenticates.
  */
 export type CredentialTtl =
-  | "permanent"
-  | "expiring"
-  | "single_use"
-  | "one_time_code"
-  | "session";
+  "permanent" | "expiring" | "single_use" | "one_time_code" | "session";
 
 export interface CredentialRoute {
   /** Stable id: metrics, docs and the leak monitor key on it. */
@@ -313,7 +309,12 @@ interface CompiledRoute {
   paramNames: string[];
 }
 
-const SEGMENT = "([^/?#]+)";
+/**
+ * A path segment. Never one that starts with `:` — that is a route template's
+ * parameter (`/results/:runToken`), not a value, and templates are exactly
+ * what the scrubbers replace secrets WITH.
+ */
+const SEGMENT = "((?!:)[^/?#]+)";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
@@ -524,8 +525,7 @@ function splitUrl(value: string): {
   if (absolute) {
     const afterSlashes = absolute[0].length;
     const authorityEnd = rest.slice(afterSlashes).search(/[/?#]/);
-    const end =
-      authorityEnd === -1 ? rest.length : afterSlashes + authorityEnd;
+    const end = authorityEnd === -1 ? rest.length : afterSlashes + authorityEnd;
     authority = rest.slice(0, end);
     rest = rest.slice(end);
   }
@@ -602,7 +602,7 @@ function safeTextFallback(value: string): string {
 /** A slash, raw or percent-encoded (URLs nested in other URLs' queries). */
 const SLASH = "(?:/|%2[Ff])";
 /** A segment inside free text: stops at the usual URL and prose delimiters. */
-const TEXT_SEGMENT = `((?:(?!%2[Ff]|%3[Ff]|%23)[^/?#\\s"'<>\\\\()[\\]\`|,;])+)`;
+const TEXT_SEGMENT = `((?!:)(?:(?!%2[Ff]|%3[Ff]|%23)[^/?#\\s"'<>\\\\()[\\]\`|,;])+)`;
 
 interface TextPattern {
   regex: RegExp;
@@ -799,9 +799,10 @@ export interface ScrubTelemetryOptions {
 
 /**
  * Scrub every credential out of a JSON-ish value: every string (URL or
- * prose) and every object KEY (heatmap data is keyed by URL). Returns a new
- * value; the input is not mutated. Non-plain objects (Dates, typed arrays)
- * pass through.
+ * prose) and every object KEY (heatmap data is keyed by URL). The input is
+ * never mutated: whatever changed is copied, and a value with nothing to
+ * scrub comes back as the same object. Non-plain objects (Dates, typed
+ * arrays) pass through.
  *
  * THROWS `TelemetryScrubError` on a cycle, excessive depth, or excessive size
  * — the one function here that does, because its callers must know the value
@@ -822,18 +823,30 @@ export function scrubTelemetryValue<T>(
     if (seen.has(node)) throw new TelemetryScrubError("cycle");
     seen.add(node);
     try {
+      // Copy on write: a value with nothing to scrub comes back as the very
+      // same object, so callers that check identity — and the cost of the
+      // common case — are unaffected.
       if (Array.isArray(node)) {
-        return node.map((item) => walk(item, depth + 1));
+        let changed = false;
+        const out = node.map((item) => {
+          const next = walk(item, depth + 1);
+          if (next !== item) changed = true;
+          return next;
+        });
+        return changed ? out : node;
       }
       const proto = Object.getPrototypeOf(node);
       if (proto !== Object.prototype && proto !== null) return node;
+      let changed = false;
       const out: Record<string, unknown> = {};
       for (const [key, child] of Object.entries(node)) {
         const cleanKey = scrubCredentialsInText(key);
-        out[cleanKey] =
+        const next =
           depth === 0 && preserve.has(key) ? child : walk(child, depth + 1);
+        if (cleanKey !== key || next !== child) changed = true;
+        out[cleanKey] = next;
       }
-      return out;
+      return changed ? out : node;
     } finally {
       seen.delete(node);
     }
@@ -894,7 +907,9 @@ export const URL_BEARING_FIELDS: readonly string[] = [
  */
 export function scrubTelemetryEvent<T extends object>(
   event: T,
-  options: ScrubTelemetryOptions & { onFallback?: (reason: string) => void } = {},
+  options: ScrubTelemetryOptions & {
+    onFallback?: (reason: string) => void;
+  } = {},
 ): T | null {
   try {
     return scrubTelemetryValue(event, options);
@@ -910,7 +925,9 @@ export function scrubTelemetryEvent<T extends object>(
 }
 
 function stripUrlBearingFields<T extends object>(event: T): T {
-  const copy: Record<string, unknown> = { ...(event as Record<string, unknown>) };
+  const copy: Record<string, unknown> = {
+    ...(event as Record<string, unknown>),
+  };
   for (const field of URL_BEARING_FIELDS) delete copy[field];
   for (const [key, child] of Object.entries(copy)) {
     if (child && typeof child === "object" && !Array.isArray(child)) {

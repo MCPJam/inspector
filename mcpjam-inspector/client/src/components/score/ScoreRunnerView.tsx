@@ -309,7 +309,12 @@ export function ScoreRunnerView({
           {phase === "done" && (
             <>
               {resultUrl && (
-                <div className="flex w-full max-w-[624px] flex-col gap-2 sm:flex-row">
+                // The private result link is a credential: kept out of
+                // autocapture and both replays.
+                <div
+                  className="ph-no-capture rr-block flex w-full max-w-[624px] flex-col gap-2 sm:flex-row"
+                  data-ph-no-capture
+                >
                   <label className="sr-only" htmlFor="score-result-url">
                     Private result link
                   </label>

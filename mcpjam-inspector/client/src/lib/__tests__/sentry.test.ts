@@ -225,7 +225,7 @@ describe("syncSentryReplay", () => {
 
     it("not on a hard load onto /results/, only after leaving it", async () => {
       clientWithoutReplay();
-      const { syncSentryReplay } = await loadAt("masked");
+      const { syncSentryReplay } = await loadAt("full");
 
       syncSentryReplay("/results/secret-token");
       expect(addIntegration).not.toHaveBeenCalled();
@@ -301,18 +301,52 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  it("needs no restart between full and masked: it masks at both", async () => {
+  it("does not record at masked: stopped on the way in, resumed at full", async () => {
+    // Sentry offers no hook over rrweb's page metadata and DOM events, so a
+    // masked replay is PostHog's alone.
     const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
     const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
 
     syncSentryReplay("/servers");
     setSessionPrivacy("masked");
     syncSentryReplay("/servers");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes a buffering replay as a buffering replay", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true) as ReturnType<typeof stubReplay> & {
+      getRecordingMode: ReturnType<typeof vi.fn>;
+      startBuffering: ReturnType<typeof vi.fn>;
+    };
+    replay.getRecordingMode = vi.fn(() => "buffer");
+    replay.startBuffering = vi.fn();
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+
+    syncSentryReplay("/results/secret-token");
     setSessionPrivacy("full");
     syncSentryReplay("/servers");
 
-    expect(replay.stop).not.toHaveBeenCalled();
+    expect(replay.startBuffering).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
+  });
+
+  it("stops on a location whose query carries a secret", async () => {
+    const { syncSentryReplay } = await loadAt("full");
+    const replay = stubReplay(true);
+
+    syncSentryReplay({ pathname: "/servers", search: "?code=abc" });
+    expect(replay.stop).toHaveBeenCalledTimes(1);
   });
 
   it("holds the replay stopped while the level drops back to pending", async () => {
@@ -326,7 +360,7 @@ describe("syncSentryReplay", () => {
     syncSentryReplay("/servers");
     expect(replay.stop).toHaveBeenCalledTimes(1);
 
-    setSessionPrivacy("masked");
+    setSessionPrivacy("full");
     syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });

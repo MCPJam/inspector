@@ -32,9 +32,11 @@ describe("useSessionRecordingPathGuard", () => {
 
     expect(syncSessionRecording).toHaveBeenCalledWith(
       posthogClient,
-      "/results/secret-token",
+      expect.objectContaining({ pathname: "/results/secret-token" }),
     );
-    expect(syncSentryReplay).toHaveBeenCalledWith("/results/secret-token");
+    expect(syncSentryReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/results/secret-token" }),
+    );
   });
 
   it("still guards Sentry Replay when PostHog is unavailable", () => {
@@ -47,7 +49,9 @@ describe("useSessionRecordingPathGuard", () => {
     renderHook(() => useSessionRecordingPathGuard());
 
     expect(syncSessionRecording).not.toHaveBeenCalled();
-    expect(syncSentryReplay).toHaveBeenCalledWith("/results/secret-token");
+    expect(syncSentryReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/results/secret-token" }),
+    );
   });
 
   it.each([
@@ -55,7 +59,8 @@ describe("useSessionRecordingPathGuard", () => {
     ["absent", undefined],
   ])("re-applies on every router navigation, PostHog %s", (_label, client) => {
     usePostHog.mockReturnValue(client);
-    let notify: ((state: { location: { pathname: string } }) => void) | undefined;
+    let notify:
+      ((state: { location: { pathname: string } }) => void) | undefined;
     getAppRouter.mockReturnValue({
       subscribe: (fn: (state: { location: { pathname: string } }) => void) => {
         notify = fn;
@@ -68,13 +73,13 @@ describe("useSessionRecordingPathGuard", () => {
 
     expect(syncSentryReplay).toHaveBeenNthCalledWith(
       2,
-      "/results/another-token",
+      expect.objectContaining({ pathname: "/results/another-token" }),
     );
     if (client) {
       expect(syncSessionRecording).toHaveBeenNthCalledWith(
         2,
         client,
-        "/results/another-token",
+        expect.objectContaining({ pathname: "/results/another-token" }),
       );
     } else {
       expect(syncSessionRecording).not.toHaveBeenCalled();

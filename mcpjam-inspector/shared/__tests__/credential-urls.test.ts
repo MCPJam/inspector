@@ -193,7 +193,9 @@ describe("scrubCredentialsInText", () => {
 
   it("scrubs a form body", () => {
     expect(
-      scrubCredentialsInText("code=abc&state=def&grant_type=authorization_code"),
+      scrubCredentialsInText(
+        "code=abc&state=def&grant_type=authorization_code",
+      ),
     ).toBe("code=[redacted]&state=[redacted]&grant_type=authorization_code");
   });
 
@@ -256,9 +258,9 @@ describe("isReplayBlockedLocation", () => {
     expect(
       isReplayBlockedLocation({ pathname: "/servers", search: "?code=x" }),
     ).toBe(true);
-    expect(
-      isReplayBlockedLocation({ pathname: "/", hash: "#token=abc" }),
-    ).toBe(true);
+    expect(isReplayBlockedLocation({ pathname: "/", hash: "#token=abc" })).toBe(
+      true,
+    );
   });
 
   it("records ordinary pages", () => {
@@ -344,6 +346,18 @@ describe("scrubTelemetryEvent (fail closed)", () => {
   it("drops the event when even that fails", () => {
     let deep: unknown = "x";
     for (let i = 0; i < 100; i++) deep = { d: deep };
-    expect(scrubTelemetryEvent({ event: "x", properties: { deep } })).toBeNull();
+    expect(
+      scrubTelemetryEvent({ event: "x", properties: { deep } }),
+    ).toBeNull();
+  });
+});
+
+describe("route templates", () => {
+  it("are never mistaken for a secret", () => {
+    for (const route of CREDENTIAL_ROUTES) {
+      const template = route.pattern.replace(/\*$/, "");
+      expect(scrubCredentialUrl(template)).toBe(template);
+      expect(scrubCredentialsInText(`GET ${template}`)).toBe(`GET ${template}`);
+    }
   });
 });

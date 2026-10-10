@@ -19,6 +19,12 @@
  * Fail closed. Nothing records until the level is known; an answer that does
  * not arrive becomes `masked` (`useSessionPrivacy`), never `full`.
  */
+import {
+  isReplayBlockedLocation,
+  scrubCredentialsInText,
+  scrubCredentialUrl,
+  type LocationLike,
+} from "../../../shared/credential-urls";
 import { APP_ROUTES } from "./app-routes";
 import { HOSTED_MODE } from "./config";
 
@@ -62,22 +68,29 @@ function isPackagedDesktop(): boolean {
 }
 
 /**
- * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
- * already redact it out of event properties (`scrubSensitiveUrl`), but a
- * replay of that page would capture the address bar's contents in the DOM
- * snapshot regardless. Don't record there at all, at any level.
+ * Whether neither recorder may run on this location, at any level: a
+ * credential URL (`/results/<token>`, a tester link, an OAuth callback, any
+ * secret query or fragment key — the registry in `shared/credential-urls.ts`
+ * decides). A replay of such a page would capture the address bar, the DOM
+ * that renders the secret and the requests that send it. Scrubbing those
+ * afterwards is not a guarantee; not recording is.
+ *
+ * Takes a pathname (the old signature) or a whole location. With no argument
+ * it reads the window's current location, search and fragment included.
  */
 export function isCredentialBearingPath(
-  pathname: string | undefined = typeof window === "undefined"
-    ? undefined
-    : window.location?.pathname,
+  location: string | LocationLike | undefined = currentLocation(),
 ): boolean {
-  return (
-    !!pathname &&
-    (pathname.startsWith("/results/") ||
-      pathname.startsWith("/conformance/shared/") ||
-      pathname.startsWith("/evals/shared/"))
+  if (!location) return false;
+  return isReplayBlockedLocation(
+    typeof location === "string" ? { pathname: location } : location,
   );
+}
+
+function currentLocation(): LocationLike | undefined {
+  if (typeof window === "undefined" || !window.location) return undefined;
+  const { pathname, search, hash } = window.location;
+  return { pathname, search, hash };
 }
 
 export type RecordingSurface = "off" | "desktop" | "hosted";
@@ -241,36 +254,75 @@ function scrubSegment(segment: string): string {
 }
 
 /**
+ * Hosts whose names are ours to keep: the hosted app and its vanity domains,
+ * and loopback, where npx and desktop serve the app. Any other host in a URL
+ * is a customer's (an MCP server, an OAuth provider) and is itself a name.
+ */
+function isOwnHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "mcpjam.com" ||
+    host.endsWith(".mcpjam.com") ||
+    host === "caniuse.dev" ||
+    host.endsWith(".caniuse.dev") ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    (typeof window !== "undefined" &&
+      host === window.location?.hostname?.toLowerCase())
+  );
+}
+
+/**
  * Replace every name-like part of a URL — server names, project slugs, host
  * names, free-form query values — with a placeholder, keeping route words and
- * ids. The fragment is dropped (it can hold anything, OAuth responses
- * included). A value that is not a URL or path is returned unchanged; one
- * that fails to parse becomes the placeholder.
+ * ids. Credentials go first (`scrubCredentialUrl`), so a share token that
+ * happens to look like an id — the hex bench secret does — can never survive
+ * as one. A host that is not ours becomes the placeholder too. The fragment
+ * is dropped (it can hold anything, OAuth responses included). A value that
+ * is not a URL or path has its credentials scrubbed and is otherwise returned
+ * unchanged; one that fails to parse becomes the placeholder.
  */
-export function scrubNamesFromUrl(value: string): string {
+export function scrubNamesFromUrl(rawValue: string): string {
+  const value = scrubCredentialUrl(rawValue);
   const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
   if (!isAbsolute && !value.startsWith("/")) return value;
   try {
     const url = new URL(value, "http://scrub.invalid");
     const path = url.pathname
       .split("/")
-      .map((segment) => scrubSegment(decodeURIComponent(segment)))
+      .map((segment) =>
+        segment === "[redacted]"
+          ? segment
+          : scrubSegment(decodeURIComponent(segment)),
+      )
       .join("/");
     const query = [...url.searchParams]
       .map(
         ([key, param]) =>
           `${encodeURIComponent(key)}=${
-            isIdLike(param) ? encodeURIComponent(param) : NAME_PLACEHOLDER
+            param === "[redacted]"
+              ? param
+              : isIdLike(param)
+                ? encodeURIComponent(param)
+                : NAME_PLACEHOLDER
           }`,
       )
       .join("&");
-    return `${isAbsolute ? url.origin : ""}${path}${query ? `?${query}` : ""}`;
+    const origin = !isAbsolute
+      ? ""
+      : isOwnHost(url.hostname)
+        ? url.origin
+        : `${url.protocol}//${NAME_PLACEHOLDER}`;
+    return `${origin}${path}${query ? `?${query}` : ""}`;
   } catch {
     return NAME_PLACEHOLDER;
   }
 }
 
 // ── PostHog profiles ───────────────────────────────────────────────────
+
+export type PostHogProfile = "full" | "masked";
 
 /**
  * Replay masking at `full`.
@@ -279,17 +331,146 @@ export function scrubNamesFromUrl(value: string): string {
  * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
  * key reveal, the SDK quickstart snippet — which no input-level masking can
  * reach. Those already carry this repo's `ph-no-capture rr-block` +
- * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
- * points at the SAME attribute rather than introducing a second thing to
- * remember: annotate a credential surface once and it is opted out of
- * autocapture AND masked in replay.
+ * `data-ph-no-capture` convention for autocapture, so text under the SAME
+ * attribute is masked in replay too: annotate a credential surface once and
+ * it is opted out of autocapture AND masked in replay.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
+
+/** rrweb's own masking: every non-space character becomes `*`. */
+function maskAllCharacters(text: string): string {
+  return text.replace(/[\S]/g, "*");
+}
+
+function isUnderSecretSurface(element: Element | null | undefined): boolean {
+  try {
+    return !!element?.closest?.(`[${SECRET_SURFACE_ATTRIBUTE}]`);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * `maskTextFn` at `full`. rrweb calls it only for text its `maskTextSelector`
+ * matches, so the full profile matches every node (`*`) and decides here:
+ * text under a secret surface is masked as before, and every other text node
+ * keeps its words but loses any credential URL in it — a share link shown on
+ * the page is a credential whatever the level.
+ */
+export function maskReplayTextFull(text: string, element?: Element): string {
+  if (isUnderSecretSurface(element)) return maskAllCharacters(text);
+  // Cheap pre-check: a credential needs a `/` or an `=` to exist at all.
+  if (!text || (!text.includes("/") && !text.includes("="))) return text;
+  return scrubCredentialsInText(text);
+}
+
+/** `maskTextFn` at `masked`: every text node, as `maskTextSelector: "*"` did. */
+export function maskReplayTextMasked(text: string): string {
+  return maskAllCharacters(text);
+}
+
+/**
+ * `maskAttributeFn` at `full`: attribute values keep their content, minus any
+ * credential URL — the Preview iframe's `src`, a share button's `href` or
+ * `title`.
+ */
+export function maskReplayAttributeFull(_name: string, value: string): string {
+  if (!value || (!value.includes("/") && !value.includes("="))) return value;
+  return scrubCredentialsInText(value);
+}
+
+/**
+ * The page URL a replay meta event may carry when nothing else can be shown.
+ * posthog-js uses whatever `maskCapturedNetworkRequestFn` returns as the
+ * `href`; an empty one breaks the player, so a placeholder stands in.
+ */
+export const REPLAY_PLACEHOLDER_HREF = "https://redacted.invalid/";
+
+/**
+ * The fields of a captured network entry a replay keeps: its URL (scrubbed)
+ * and its timing. Everything else is dropped — request and response headers
+ * and bodies above all, but also `serverTiming`, which a server can fill with
+ * anything. posthog-js uses this callback INSTEAD of its own body scrubber,
+ * so nothing it used to scrub may pass through here.
+ */
+const KEPT_NETWORK_FIELDS = [
+  "entryType",
+  "initiatorType",
+  "method",
+  "status",
+  "responseStatus",
+  "isInitial",
+  "startTime",
+  "endTime",
+  "duration",
+  "timeOrigin",
+  "timestamp",
+  "fetchStart",
+  "domainLookupStart",
+  "domainLookupEnd",
+  "connectStart",
+  "secureConnectionStart",
+  "connectEnd",
+  "requestStart",
+  "responseStart",
+  "responseEnd",
+  "redirectStart",
+  "redirectEnd",
+  "workerStart",
+  "transferSize",
+  "encodedBodySize",
+  "decodedBodySize",
+  "nextHopProtocol",
+  "renderBlockingStatus",
+  "deliveryType",
+] as const;
+
+type CapturedRequest = { name?: string; url?: string } & Record<
+  string,
+  unknown
+>;
+
+function buildReplayRequestMasker(profile: PostHogProfile) {
+  const scrubUrl = (url: string) =>
+    profile === "masked" ? scrubNamesFromUrl(url) : scrubCredentialUrl(url);
+  return function maskRequest<T extends CapturedRequest>(request: T): T | null {
+    // posthog-js calls this with `{ name: href }` alone for the page URL of
+    // a meta or URL-change event, and with a full entry for network requests.
+    const isPageUrl = request.entryType === undefined && !request.isInitial;
+    try {
+      const out: Record<string, unknown> = {};
+      for (const field of KEPT_NETWORK_FIELDS) {
+        if (request[field] !== undefined) out[field] = request[field];
+      }
+      if (typeof request.name === "string") {
+        out.name = scrubUrl(request.name);
+      }
+      if (typeof request.url === "string") out.url = scrubUrl(request.url);
+      if (isPageUrl && !out.name) out.name = REPLAY_PLACEHOLDER_HREF;
+      return out as T;
+    } catch {
+      // Cannot show it clean: drop a request, and give a page URL the
+      // placeholder (an empty href breaks the player).
+      return isPageUrl ? ({ name: REPLAY_PLACEHOLDER_HREF } as T) : null;
+    }
+  };
+}
+
+/** `maskCapturedNetworkRequestFn` at `full`: credentials out of the URL. */
+export const maskReplayRequestFull = buildReplayRequestMasker("full");
 
 export const SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
-  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
+  // Every text node goes through `maskTextFn`; see `maskReplayTextFull`.
+  maskTextSelector: "*",
+  maskTextFn: maskReplayTextFull,
+  maskAttributeFn: maskReplayAttributeFull,
+  // Explicit at every level: `false` wins over the project's remote network
+  // settings, so a dashboard toggle can never widen what is captured.
+  recordHeaders: false,
+  recordBody: false,
+  maskCapturedNetworkRequestFn: maskReplayRequestFull,
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
@@ -367,40 +548,31 @@ const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
 
 const MASKED_ATTRIBUTE_VALUE = "***";
 
+/**
+ * `maskAttributeFn` at `masked`: the kept attributes keep their value (with
+ * any credential URL scrubbed — a `style` can carry a `url(…)`), every other
+ * attribute is masked.
+ */
 export function maskReplayAttribute(name: string, value: string): string {
   return MASKED_REPLAY_KEPT_ATTRIBUTES.has(name.toLowerCase())
-    ? value
+    ? maskReplayAttributeFull(name, value)
     : MASKED_ATTRIBUTE_VALUE;
 }
 
 /**
- * posthog-js routes BOTH the recorded page URL (rrweb meta and URL-change
- * events) and every captured network request through this callback. At
- * `masked`: names scrubbed from the URL, headers and bodies dropped.
+ * `maskCapturedNetworkRequestFn` at `masked`. posthog-js routes BOTH the
+ * recorded page URL (rrweb meta and URL-change events) and every captured
+ * network request through this callback: credentials and names scrubbed from
+ * the URL, a host that is not ours replaced, and only timing kept.
  */
-export function maskReplayRequest<T extends { name?: string; url?: string }>(
-  request: T,
-): T {
-  return {
-    ...request,
-    ...(typeof request.name === "string"
-      ? { name: scrubNamesFromUrl(request.name) }
-      : {}),
-    ...(typeof request.url === "string"
-      ? { url: scrubNamesFromUrl(request.url) }
-      : {}),
-    requestHeaders: undefined,
-    responseHeaders: undefined,
-    requestBody: undefined,
-    responseBody: undefined,
-  };
-}
+export const maskReplayRequest = buildReplayRequestMasker("masked");
 
 export const MASKED_SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
   // `*` masks every text node; rrweb leaves `<style>` text alone.
   maskTextSelector: "*",
+  maskTextFn: maskReplayTextMasked,
   blockSelector: MASKED_BLOCK_SELECTOR,
   maskAttributeFn: maskReplayAttribute,
   // `false` wins over the project's remote network settings.
@@ -411,8 +583,6 @@ export const MASKED_SESSION_RECORDING_OPTIONS = {
   recordCrossOriginIframes: false,
   maskCapturedNetworkRequestFn: maskReplayRequest,
 } as const;
-
-export type PostHogProfile = "full" | "masked";
 
 /**
  * Everything posthog-js reads for one profile, as a `set_config` argument.
@@ -448,6 +618,13 @@ export interface PostHogRecorder {
 
 let posthogProfile: PostHogProfile | null = null;
 let posthogRecording = false;
+/** The client `syncSessionRecording` last drove, for the navigation guard. */
+let lastPostHogClient: PostHogRecorder | null = null;
+
+/** The PostHog client the recorders were last synced with, if any. */
+export function lastSyncedPostHogClient(): PostHogRecorder | null {
+  return lastPostHogClient;
+}
 
 /**
  * Bring PostHog in line with the level in effect and the current path.
@@ -461,15 +638,17 @@ let posthogRecording = false;
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
- * declined. `pending` and credential paths hold the recorder stopped.
+ * declined. `pending` and credential locations (`isCredentialBearingPath`:
+ * path, query and fragment) hold the recorder stopped.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
  */
 export function syncSessionRecording(
   client: PostHogRecorder,
-  pathname: string,
+  location: string | LocationLike,
 ): void {
+  lastPostHogClient = client;
   try {
     const privacy = currentSessionPrivacy();
     if (privacy === "off") return;
@@ -485,7 +664,7 @@ export function syncSessionRecording(
       posthogProfile = profile;
     }
     const shouldRecord =
-      privacy !== "pending" && !isCredentialBearingPath(pathname);
+      privacy !== "pending" && !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
       client.startSessionRecording?.();
       posthogRecording = true;
@@ -505,24 +684,37 @@ interface ReplayFrame {
 }
 
 /**
- * Sentry's `beforeAddRecordingEvent`. Sentry Replay masks text, inputs and
- * media at every level (`SENTRY_REPLAY_OPTIONS`); short of `full` this also
- * drops console breadcrumbs and scrubs the URLs in navigation and network
- * frames. Only Sentry's own frames come through here — rrweb's DOM events
- * cannot be edited, which is why the DOM masking is on everywhere.
+ * Sentry's `beforeAddRecordingEvent`. Sentry Replay records only at `full`
+ * (`syncSentryReplay`), masks text, inputs and media there
+ * (`SENTRY_REPLAY_OPTIONS`), and never on a credential location. This scrubs
+ * credentials out of the URLs in navigation and network frames at every
+ * level, and short of `full` also drops console breadcrumbs and names. Only
+ * Sentry's own frames come through here — rrweb's DOM events and page
+ * metadata cannot be edited, which is why recording is blocked at capture on
+ * credential pages rather than scrubbed afterwards.
  */
 export function filterSentryReplayFrame<T extends ReplayFrame>(
   frame: T,
 ): T | null {
-  if (!shouldMaskAnalytics()) return frame;
+  const maskNames = shouldMaskAnalytics();
+  const scrubUrl = maskNames ? scrubNamesFromUrl : scrubCredentialUrl;
   const data = frame?.data;
   const payload = data?.payload as Record<string, unknown> | undefined;
   if (!data || !payload) return frame;
-  if (data.tag === "breadcrumb" && payload.category === "console") {
+  if (
+    maskNames &&
+    data.tag === "breadcrumb" &&
+    payload.category === "console"
+  ) {
     return null;
   }
   if (data.tag === "breadcrumb" && payload.category === "navigation") {
     const detail = (payload.data ?? {}) as Record<string, unknown>;
+    const unchanged =
+      (typeof detail.from !== "string" ||
+        scrubUrl(detail.from) === detail.from) &&
+      (typeof detail.to !== "string" || scrubUrl(detail.to) === detail.to);
+    if (unchanged) return frame;
     return {
       ...frame,
       data: {
@@ -532,10 +724,10 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
           data: {
             ...detail,
             ...(typeof detail.from === "string"
-              ? { from: scrubNamesFromUrl(detail.from) }
+              ? { from: scrubUrl(detail.from) }
               : {}),
             ...(typeof detail.to === "string"
-              ? { to: scrubNamesFromUrl(detail.to) }
+              ? { to: scrubUrl(detail.to) }
               : {}),
           },
         },
@@ -546,13 +738,29 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
     data.tag === "performanceSpan" &&
     typeof payload.description === "string"
   ) {
+    if (scrubUrl(payload.description) === payload.description) return frame;
     return {
       ...frame,
       data: {
         ...data,
         payload: {
           ...payload,
-          description: scrubNamesFromUrl(payload.description),
+          description: scrubUrl(payload.description),
+        },
+      },
+    };
+  }
+  if (data.tag === "breadcrumb" && typeof payload.message === "string") {
+    if (scrubCredentialsInText(payload.message) === payload.message) {
+      return frame;
+    }
+    return {
+      ...frame,
+      data: {
+        ...data,
+        payload: {
+          ...payload,
+          message: scrubCredentialsInText(payload.message),
         },
       },
     };
@@ -562,19 +770,31 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
 
 /**
  * `Sentry.replayIntegration` options, explicit rather than inherited from
- * defaults that could move: text, inputs and media masked, and no request or
- * response detail for any URL.
+ * defaults that could move: text, inputs and media masked, no request or
+ * response detail for any URL, and every attribute that can hold a URL
+ * masked — Sentry offers no attribute callback, and a share link's `href` is
+ * a credential. Elements under this repo's secret-surface convention
+ * (`rr-block`, `data-ph-no-capture`) are blocked outright.
  */
 export const SENTRY_REPLAY_OPTIONS = {
   maskAllText: true,
   maskAllInputs: true,
   blockAllMedia: true,
+  block: [".rr-block", `[${SECRET_SURFACE_ATTRIBUTE}]`],
   maskAttributes: [
     "title",
     "placeholder",
     "aria-label",
     "aria-description",
     "alt",
+    "href",
+    "src",
+    "srcset",
+    "action",
+    "formaction",
+    "poster",
+    "data",
+    "value",
   ],
   networkDetailAllowUrls: [] as string[],
   networkCaptureBodies: false,

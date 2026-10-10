@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/node";
 import {
   buildServerSentryConfig,
+  scrubSentryCredentials,
   scrubServerSentryBreadcrumb,
   scrubServerSentryEvent,
 } from "../shared/sentry-config.js";
@@ -51,7 +52,14 @@ export function initServerSentry(): void {
     // and headers; outgoing-request and console breadcrumbs — carries
     // customer content regardless of `sendDefaultPii`. These keep its shape
     // and drop its values. `logger.ts` scrubs the context it attaches.
-    beforeSend: scrubServerSentryEvent,
+    //
+    // Then every credential out of the whole event: a share token in the
+    // request path (`/api/web/score/runs/<token>`), an OAuth code quoted in an
+    // exception, a callback URL in a breadcrumb (`shared/credential-urls.ts`).
+    // An event that cannot be shown clean is dropped.
+    beforeSend: (event) =>
+      scrubSentryCredentials(scrubServerSentryEvent(event)),
+    beforeSendTransaction: scrubSentryCredentials,
     beforeBreadcrumb: scrubServerSentryBreadcrumb,
     integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that

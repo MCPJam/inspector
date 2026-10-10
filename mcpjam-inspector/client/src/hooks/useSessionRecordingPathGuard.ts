@@ -3,6 +3,7 @@ import { usePostHog } from "posthog-js/react";
 import { getAppRouter } from "@/router-ref";
 import { syncSessionRecording } from "@/lib/session-privacy";
 import { syncSentryReplay } from "@/lib/sentry";
+import type { LocationLike } from "@/shared/credential-urls";
 
 /**
  * Stop session recording while the user is on a bearer-credential route.
@@ -34,14 +35,26 @@ export function useSessionRecordingPathGuard(): void {
     // The PostHog half is conditional on a client, the Sentry half is not:
     // Sentry Replay is gated on the platform, so an ad-blocked or disabled
     // PostHog would otherwise leave it recording `/results/<token>`.
-    const apply = (pathname: string) => {
-      if (posthog) syncSessionRecording(posthog, pathname);
-      syncSentryReplay(pathname);
+    //
+    // The whole location, not only the path: a secret query or fragment key
+    // (`?code=`, `#token=`) blocks recording too. The STOP side also runs
+    // before navigation, in `installRecorderNavigationGuard`; this is where
+    // recording resumes once the location is clean again.
+    const apply = (location: LocationLike) => {
+      if (posthog) syncSessionRecording(posthog, location);
+      syncSentryReplay(location);
     };
-    apply(window.location.pathname);
+    const { pathname, search, hash } = window.location;
+    apply({ pathname, search, hash });
 
     const router = getAppRouter();
     if (!router) return;
-    return router.subscribe((state) => apply(state.location.pathname));
+    return router.subscribe((state) =>
+      apply({
+        pathname: state.location.pathname,
+        search: state.location.search,
+        hash: state.location.hash,
+      }),
+    );
   }, [posthog]);
 }

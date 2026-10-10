@@ -17,6 +17,7 @@ import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "elect
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
+  scrubSentryCredentials,
   scrubServerSentryBreadcrumb,
   scrubServerSentryEvent,
 } from "../shared/sentry-config.js";
@@ -66,10 +67,18 @@ Sentry.init({
   // What survives is scrubbed like the standalone server's events: the
   // embedded server runs in this process, so its request bodies and outgoing
   // requests reach Sentry through this client (see `server/sentry.ts`).
+  //
+  // Last, every credential out of the whole event — the renderer's events
+  // arrive here over IPC too, so this is the one place they all pass
+  // (`shared/credential-urls.ts`; an event that cannot be shown clean is
+  // dropped).
   beforeSend: (event) => {
     const kept = dropUpdaterInstallSpawnRejection(event);
-    return kept === null ? null : scrubServerSentryEvent(kept);
+    return kept === null
+      ? null
+      : scrubSentryCredentials(scrubServerSentryEvent(kept));
   },
+  beforeSendTransaction: scrubSentryCredentials,
   beforeBreadcrumb: scrubServerSentryBreadcrumb,
 });
 
