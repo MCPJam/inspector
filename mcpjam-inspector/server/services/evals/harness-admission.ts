@@ -41,7 +41,11 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  validateModelSelection,
+  type ModelReasoningEffort,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import {
   checkHarnessRuntimeAvailable,
   selectionReasoningEffort,
@@ -76,9 +80,30 @@ export interface EvalHarnessCase {
   /**
    * The case's saved model-entry selection, exactly as the recorder's
    * `config.tests` rows carry it (`selection`). This is where a persisted
-   * effort actually lives, so it is read when `reasoningEffort` is absent.
+   * effort actually lives, so it is read when `reasoningEffort` is absent;
+   * its `source` decides whether the case runs on MCPJam's key or an
+   * organization connection's.
    */
-  selection?: { settings?: { reasoningEffort?: string } } | null;
+  selection?: unknown;
+}
+
+/** A saved selection, validated, or undefined. Never trusts the shape. */
+function validSelection(value: unknown): ModelSelection | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const validated = validateModelSelection(value);
+  return validated.ok ? validated.selection : undefined;
+}
+
+/**
+ * The picker's own-provider stamp a case's selection implies, the same rule
+ * `withSelectionRouting` applies to a live turn: any non-hosted selection is
+ * `hosted: false`; no selection leaves today's hosted-list check in charge.
+ */
+function selectionHostedFlag(selection: ModelSelection | undefined): {
+  hosted?: boolean;
+} {
+  if (!selection) return {};
+  return selection.source === "hosted" ? {} : { hosted: false };
 }
 
 /** The effort a case's own model entry asks for: explicit, else its selection. */
@@ -289,6 +314,14 @@ export function checkEvalHarnessStaticAdmission(args: {
       ? hostConfig.modelId.trim()
       : undefined;
 
+  // The host's saved selection, when it is for the pinned model: an org
+  // connection on the harness's own vendor runs on the organization's key.
+  const hostSelection = validSelection(hostConfig.modelSelection);
+  const pinnedSelection =
+    hostSelection && hostModelId && hostSelection.modelId === hostModelId
+      ? hostSelection
+      : undefined;
+
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
@@ -297,7 +330,8 @@ export function checkEvalHarnessStaticAdmission(args: {
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
     // rules rather than fail on a model nobody named: `checkModelEligibility`
     // below owns that decision once the run's cases are known.
-    model: { id: hostModelId ?? "" },
+    model: { id: hostModelId ?? "", ...selectionHostedFlag(pinnedSelection) },
+    ...(pinnedSelection ? { selection: pinnedSelection } : {}),
     // The same id again, under the name the external-account rule reads. It is
     // not redundant on the FULL check below, where `model` becomes a per-case
     // model and this stays the host's — an external-account host must carry the
@@ -395,7 +429,17 @@ export function checkEvalHarnessAdmission(args: {
   >();
   for (const test of modelCases) {
     const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
-    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}`;
+    // The case's own saved selection, only when it is for the case's model.
+    const caseSelection = validSelection(test.selection);
+    const selection =
+      caseSelection && caseSelection.modelId === String(test.model).trim()
+        ? caseSelection
+        : undefined;
+    const connection =
+      selection?.connectionRef?.kind === "orgProvider"
+        ? selection.connectionRef.id
+        : "";
+    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}::${selection?.source ?? ""}:${connection}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
@@ -406,7 +450,12 @@ export function checkEvalHarnessAdmission(args: {
         model: {
           id: String(test.model),
           ...(test.provider ? { provider: test.provider } : {}),
+          // Without it, a case saved to run on an org key reads as hosted
+          // when its id has a hosted twin, and admission passes a case the
+          // turn then refuses.
+          ...selectionHostedFlag(selection),
         },
+        ...(selection ? { selection } : {}),
         // The HOST's id, not the case's: the external-account rule is about
         // this host carrying the runtime's sentinel, and a case model can no
         // more answer that than a request body can.
@@ -639,6 +688,7 @@ export function executionEngineLabel(
 function isModelKind(kind: HarnessUnavailableKind): boolean {
   return (
     kind === "model-not-hosted" ||
+    kind === "model-provider-unsupported" ||
     kind === "model-unsupported" ||
     kind === "model-unverified"
   );

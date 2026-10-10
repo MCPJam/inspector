@@ -16,7 +16,11 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  validateModelSelection,
+  type ModelReasoningEffort,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -328,6 +332,28 @@ export interface RunAssistantTurnOptions {
   endpointPath?: string;
   extraHeaders?: Record<string, string>;
   extraBodyFields?: Record<string, unknown>;
+  /**
+   * The turn's saved model selection, typed. A harness turn reads it to run on
+   * the organization's own key when it names an org connection on the
+   * harness's own vendor. Absent ⇒ the selection forwarded on
+   * `extraBodyFields.modelSelection`, when there is one.
+   */
+  modelSelection?: ModelSelection;
+}
+
+/**
+ * The selection a harness turn runs under: the typed option, else the one the
+ * caller forwarded to the backend on `extraBodyFields` (the eval, swarm and
+ * synthetic paths carry it there for `/stream/org`).
+ */
+function turnModelSelectionOf(
+  opts: Pick<RunAssistantTurnOptions, "modelSelection" | "extraBodyFields">,
+): ModelSelection | undefined {
+  if (opts.modelSelection) return opts.modelSelection;
+  const forwarded = opts.extraBodyFields?.modelSelection;
+  if (!forwarded || typeof forwarded !== "object") return undefined;
+  const validated = validateModelSelection(forwarded);
+  return validated.ok ? validated.selection : undefined;
 }
 
 /**
@@ -684,6 +710,9 @@ export async function runAssistantTurn(
   // pre-flight.
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
+  const turnSelection = harnessRequested
+    ? turnModelSelectionOf(opts)
+    : undefined;
   if (harnessRequested) {
     // Venue-aware: a local target runs the local arm (app-server for Codex),
     // and this backstop must judge the adapter that will actually run.
@@ -702,6 +731,8 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      // An org connection on the harness's own vendor runs on the org's key.
+      ...(turnSelection ? { selection: turnSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -735,6 +766,11 @@ export async function runAssistantTurn(
     }
   }
   const useHarness = harnessRequested;
+  // The org selection travels TYPED into the harness turn: its canonical id is
+  // the turn's model and its connection is what the lease is minted for.
+  if (useHarness && turnSelection?.source === "org") {
+    handlerOptions.modelSelection = turnSelection;
+  }
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);

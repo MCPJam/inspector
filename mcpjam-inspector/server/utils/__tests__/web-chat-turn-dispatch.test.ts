@@ -332,6 +332,63 @@ describe("streamWebChatTurn model dispatch", () => {
     });
   });
 
+  describe("a harness on the organization's own key", () => {
+    const orgSel = (modelId: string) => ({
+      modelId,
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+      fallback: { provider: "none", model: "none" } as const,
+    });
+
+    it("an org Anthropic row on Claude Code runs the REAL harness, with its selection", async () => {
+      const selection = orgSel("anthropic/claude-sonnet-4.5");
+      await streamWebChatTurn(
+        args(
+          { id: "claude-sonnet-4-5", provider: "anthropic", hosted: false },
+          "claude-code",
+          { routingSelection: selection },
+        ) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.harness).toBe("claude-code");
+      expect(opts.modelSelection).toEqual(selection);
+    });
+
+    it("an org row on another vendor is refused, never emulated", async () => {
+      await expect(
+        streamWebChatTurn(
+          args(
+            { id: "gpt-5", provider: "openai", hosted: false },
+            "claude-code",
+            { routingSelection: orgSel("openai/gpt-5") },
+          ) as never,
+        ),
+      ).rejects.toThrow(/organization's Anthropic key/);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    });
+
+    it("a hosted harness turn carries no selection to the harness", async () => {
+      await streamWebChatTurn(
+        args({
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+        }) as never,
+      );
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.harness).toBe("claude-code");
+      expect("modelSelection" in opts).toBe(false);
+    });
+  });
+
   describe("reasoning effort", () => {
     it("MCPJam path: forwards the effort to the hosted engine and to prepare", async () => {
       const orchestration = await import("../chat-v2-orchestration.js");

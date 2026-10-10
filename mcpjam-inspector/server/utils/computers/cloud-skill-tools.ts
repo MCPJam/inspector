@@ -17,6 +17,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { runsHarness } from "../harness/harness-availability.js";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { PinnableSkill } from "../../../shared/skill-types.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import { logger } from "../logger.js";
@@ -79,11 +81,29 @@ export function shouldEnableCloudSkillTools(args: {
   harness: string | undefined;
   modelId: string;
   provider?: string;
+  /** The picker's own-provider stamp (`hosted: false` ⇒ not MCPJam's). */
+  hosted?: boolean;
+  /**
+   * The turn's saved selection. A brokered harness on an org connection to its
+   * own vendor runs the REAL runtime (on the organization's key), so it gets
+   * the adapter's skills, not the emulated ones.
+   */
+  selection?: RequestedModelSelection;
   hasProjectId: boolean;
 }): boolean {
   const willRunHarness =
-    args.harness !== undefined &&
-    isHostedCatalogModel(args.modelId, args.provider);
+    args.selection?.source === "org"
+      ? runsHarness({
+          harness: args.harness,
+          model: {
+            id: args.modelId,
+            ...(args.provider !== undefined ? { provider: args.provider } : {}),
+            ...(args.hosted !== undefined ? { hosted: args.hosted } : {}),
+          },
+          selection: args.selection,
+        })
+      : args.harness !== undefined &&
+        isHostedCatalogModel(args.modelId, args.provider);
   return !args.isGuest && !willRunHarness && args.hasProjectId;
 }
 

@@ -88,7 +88,14 @@ import {
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
   type HarnessBrokerBox,
+  type HarnessOrgLeaseUpstream,
 } from "./harness-model-broker.js";
+import {
+  orgResumeAllowed,
+  orgUpstreamProfileFor,
+  stampOrgCredentialRevision,
+  unstampOrgCredentialRevision,
+} from "./org-credential-continuity.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   emitError,
@@ -276,6 +283,7 @@ import {
   harnessModelPurposeForSourceType,
   harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
+  orgHarnessSelection,
   turnReasoningEffortOf,
 } from "./harness-availability.js";
 
@@ -649,6 +657,18 @@ export function harnessRuntimeFingerprint(parts: {
    */
   commandSandbox?: string;
   /**
+   * WHOSE KEY the runtime runs on, for a turn on the ORGANIZATION'S own
+   * provider key: the connection and the upstream profile. A session created
+   * on MCPJam's Gateway lease must never resume onto an org key or the other
+   * way round (the opaque provider state belongs to an account), and two
+   * connections are two accounts. The key's REVISION is not here — the lease
+   * that knows it is minted after the lane is claimed — so a replaced key is
+   * caught by the revision stamped into the committed resume state
+   * (`org-credential-continuity.ts`). Appended only for an org turn, after
+   * every existing dimension, so no existing session's hash moves.
+   */
+  credential?: { source: "org"; connectionId: string; profile: string };
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -689,6 +709,12 @@ export function harnessRuntimeFingerprint(parts: {
         ]
       : []),
     ...(parts.commandSandbox ? [`command-sandbox:${parts.commandSandbox}`] : []),
+    ...(parts.credential
+      ? [
+          `credential:${parts.credential.source}:` +
+            `${parts.credential.connectionId}:${parts.credential.profile}`,
+        ]
+      : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -833,7 +859,22 @@ export async function runHarnessTurn(
   // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
   // attribution, fingerprint — relies on the canonical form, so a bare id can't
   // make Codex silently fall back to its default model.
-  const modelId = getCanonicalModelId(rawModelId, provider);
+  //
+  // An ORG selection's row id is the native one (`claude-sonnet-4-5`), which
+  // canonicalizes to nothing the lease or the evidence table knows; its saved
+  // selection already names the canonical id, so that is the turn's model.
+  const orgSelection = orgHarnessSelection(options.modelSelection);
+  const modelId = orgSelection
+    ? orgSelection.modelId
+    : getCanonicalModelId(rawModelId, provider);
+  // The upstream profile an org turn runs under. The lease itself — set from
+  // the backend's answer once it exists — names the native id it admits.
+  const orgProfile = orgSelection
+    ? orgUpstreamProfileFor(harness ?? "")
+    : undefined;
+  let orgUpstream: HarnessOrgLeaseUpstream | undefined;
+  // The credential revision the claimed lane's state was stamped with.
+  let continuityCredentialRevision: string | undefined;
   // The harness adapter declares the per-harness bits (auth, native model
   // mapping, MCP delivery, tool-name attribution, file-change naming, approval,
   // skills). runHarnessTurn stays harness-agnostic and reads capabilities off it.
@@ -1010,6 +1051,9 @@ export async function runHarnessTurn(
   // free the box on any exit before that point instead of leaving the next turn
   // to wait out the reservation TTL.
   let reservationHeld = false;
+  // For an org selection: the hashed credential revision `/reserve` prepared
+  // this turn for, handed back to the lease start.
+  let preparedCredentialRevision: string | undefined;
   let releaseBoxReservation: (() => Promise<void>) | undefined;
   let reservationHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let reservationRenewalInFlight = false;
@@ -1984,6 +2028,15 @@ export async function runHarnessTurn(
         ...(commandSandboxPolicy !== null
           ? { commandSandbox: sandboxPolicyFingerprint(commandSandboxPolicy) }
           : {}),
+        ...(orgSelection && orgProfile
+          ? {
+              credential: {
+                source: "org" as const,
+                connectionId: String(orgSelection.connectionRef.id),
+                profile: orgProfile,
+              },
+            }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "scenario"
@@ -2087,6 +2140,19 @@ export async function runHarnessTurn(
               "a moment.",
           );
         } else {
+          // An org turn's committed state carries the credential revision it
+          // ran on; the adapter only ever sees the state it wrote.
+          let claimedState = claim.fingerprintChanged ? null : claim.state;
+          if (claimedState && orgSelection) {
+            const unstamped = unstampOrgCredentialRevision(
+              claimedState.resumeState,
+            );
+            continuityCredentialRevision = unstamped.credentialRevision;
+            claimedState = {
+              ...claimedState,
+              resumeState: unstamped.resumeState,
+            };
+          }
           continuity = {
             owner,
             leaseId,
@@ -2095,7 +2161,7 @@ export async function runHarnessTurn(
             // yield no resumable state, so the adapter re-writes skills on a
             // fresh start (it skips writes on resume). Enforce here rather than
             // trusting the endpoint to null `state` on mismatch.
-            state: claim.fingerprintChanged ? null : claim.state,
+            state: claimedState,
             // `stateVersion` only moves on a commit, so > 0 means there was a
             // session to lose, not just a lane a failed first turn created.
             runtimeChanged: claim.fingerprintChanged && claim.stateVersion > 0,
@@ -2230,6 +2296,7 @@ export async function runHarnessTurn(
           ...(turnReasoningEffort !== undefined
             ? { reasoningEffort: turnReasoningEffort }
             : {}),
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!preparation.ok) {
@@ -2239,6 +2306,17 @@ export async function runHarnessTurn(
           );
         }
         localPrepared = preparation.prepared;
+        if (orgSelection) {
+          // The loopback start refuses (and revokes) a lease that does not
+          // confirm the org binding; this is the turn's own backstop.
+          if (!preparation.prepared.orgUpstream) {
+            await preparation.prepared.teardown().catch(() => {});
+            throw new Error(
+              "The model broker did not confirm a lease on the organization's key; the turn was not started.",
+            );
+          }
+          orgUpstream = preparation.prepared.orgUpstream;
+        }
         // A failed or stopped turn must not erase an already saved conversation.
         retainLocalState = Boolean(localEligibility?.resume && localPrepared.sessionStateExists);
         localTeardown = preparation.prepared.teardown;
@@ -2365,17 +2443,26 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: turnRunId,
+          // An org selection is resolved by the backend HERE, before anything
+          // is installed: a disabled or mismatched connection fails now.
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!reservation.ok) {
           // Typed: the box claim is our sandbox layer's concurrency control.
+          // An org selection the backend refused is a CONFIGURATION failure
+          // and keeps the backend's own code (`provider_mismatch`, …).
           throw new HarnessInfraSetupError(reservation.error, {
             source: "sandbox_setup",
-            code: "harness_box_reservation_failed",
+            code:
+              orgSelection && reservation.code
+                ? reservation.code
+                : "harness_box_reservation_failed",
             httpStatus: reservation.status,
           });
         }
+        preparedCredentialRevision = reservation.credentialRevision;
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
         // Cleared once the broker start succeeds, because recording the lease
@@ -2503,7 +2590,9 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
-        modelEndpoint = "platform";
+        // On the org's own key the endpoint is still one MCPJam operates (the
+        // model proxy), serving a first-party provider: `byok_hosted`.
+        modelEndpoint = orgSelection ? "byok_hosted" : "platform";
       } else if (externalAccountAuth) {
         modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
@@ -2531,6 +2620,12 @@ export async function runHarnessTurn(
           runId: brokerRunId,
           ...(turnReasoningEffort !== undefined
             ? { reasoningEffort: turnReasoningEffort }
+            : {}),
+          // The org selection, and the credential revision `/reserve`
+          // prepared this turn for: a key replaced since is refused.
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
+          ...(orgSelection && preparedCredentialRevision
+            ? { expectedCredentialRevision: preparedCredentialRevision }
             : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -2562,9 +2657,30 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
-        modelEndpoint = "platform";
+        modelEndpoint = orgSelection ? "byok_hosted" : "platform";
+        if (orgSelection) orgUpstream = broker.orgUpstream;
       }
       tBroker = Date.now();
+
+      // A turn on the organization's own key resumes only state produced on
+      // the SAME key. The lease's revision is known only now; a lane whose
+      // state was stamped with another one (the org replaced its key) — or
+      // never stamped — starts a fresh runtime session, visibly, rather than
+      // carrying one account's opaque provider state into another's.
+      if (
+        orgUpstream &&
+        continuity?.state &&
+        !orgResumeAllowed(
+          continuityCredentialRevision,
+          orgUpstream.credentialRevision,
+        )
+      ) {
+        continuity = {
+          ...continuity,
+          state: null,
+          runtimeChanged: continuity.stateVersion > 0,
+        };
+      }
 
       // 4. Assemble the harness over the host's E2B computer (the provider and
       // its working directory were resolved in step 3a, so the streaming session
@@ -2578,7 +2694,17 @@ export async function runHarnessTurn(
       // `createHarness`: the AI SDK adapters removed their deprecated
       // construction-time `model` setting (harness 1.0.108), so a model handed
       // only to the adapter would silently run the runtime's default model.
-      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+      // On the organization's own key the runtime talks to the vendor natively:
+      // the backend-resolved profile plus the admitted native id.
+      const runtimeUpstream = orgUpstream
+        ? {
+            profile: orgUpstream.profile,
+            nativeModelId: orgUpstream.nativeModelId,
+          }
+        : undefined;
+      const nativeModel = runtimeUpstream
+        ? harnessAdapter.toNativeModel?.(modelId, runtimeUpstream)
+        : harnessAdapter.toNativeModel?.(modelId);
 
       // `createHarness` returns the HarnessAgent boundary type directly.
       //
@@ -2599,6 +2725,7 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
+              ...(runtimeUpstream ? { upstream: runtimeUpstream } : {}),
             })
           : harnessAdapter.createHarness({
               modelId,
@@ -2607,6 +2734,7 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
+              ...(runtimeUpstream ? { upstream: runtimeUpstream } : {}),
               ...(commandSandboxPolicy !== null
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
@@ -4425,7 +4553,12 @@ export async function runHarnessTurn(
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessSessionId: session.sessionId,
-              resumeState: continueState,
+              resumeState: orgUpstream
+                ? stampOrgCredentialRevision(
+                    continueState,
+                    orgUpstream.credentialRevision,
+                  )
+                : continueState,
               computerId,
               runtimeFingerprint,
               awaitingApproval: true,
@@ -4477,7 +4610,12 @@ export async function runHarnessTurn(
               expectedStateVersion: continuity.stateVersion,
               harnessId: harnessAdapter.id,
               harnessSessionId: session.sessionId,
-              resumeState,
+              resumeState: orgUpstream
+                ? stampOrgCredentialRevision(
+                    resumeState,
+                    orgUpstream.credentialRevision,
+                  )
+                : resumeState,
               computerId,
               runtimeFingerprint,
               // Persist only a real (ok:true) hash; omit on failure so the

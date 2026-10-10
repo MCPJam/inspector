@@ -14,8 +14,69 @@
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
-import { harnessPinnedVersion } from "@/shared/harness-model-support";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  harnessPinnedVersion,
+  type HarnessUpstreamProfile,
+} from "@/shared/harness-model-support";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
+
+/**
+ * The non-secret facts a start response echoes for a lease on the
+ * ORGANIZATION'S own provider key — read from what the backend's ledger
+ * recorded, so they say what was actually minted rather than what was asked
+ * for. `credentialRevision` is a short one-way hash: equal ⇒ the same key.
+ */
+export type HarnessOrgLeaseUpstream = {
+  credentialSource: "org";
+  profile: Exclude<HarnessUpstreamProfile, "gateway">;
+  /** The exact native model id the lease admits (`claude-sonnet-4-5`). */
+  nativeModelId: string;
+  credentialRevision: string;
+};
+
+/**
+ * The org selection a broker request carries, or nothing. Only a `source:
+ * 'org'` selection travels: a hosted request's body stays byte-identical to
+ * what an older backend expects.
+ */
+function orgSelectionField(selection: ModelSelection | null | undefined): {
+  modelSelection?: ModelSelection;
+} {
+  return selection?.source === "org" ? { modelSelection: selection } : {};
+}
+
+/** The org facts of a start response, or null when absent or incomplete. */
+export function orgLeaseUpstreamFrom(
+  payload: unknown,
+): HarnessOrgLeaseUpstream | null {
+  const p = payload as Record<string, unknown> | null;
+  if (
+    p?.credentialSource !== "org" ||
+    (p.upstreamProfile !== "anthropic-native" &&
+      p.upstreamProfile !== "openai-native") ||
+    typeof p.credentialRevision !== "string" ||
+    p.credentialRevision.length === 0 ||
+    typeof p.upstreamModelId !== "string" ||
+    p.upstreamModelId.length === 0 ||
+    p.upstreamModelId.includes("/")
+  ) {
+    return null;
+  }
+  return {
+    credentialSource: "org",
+    profile: p.upstreamProfile,
+    nativeModelId: p.upstreamModelId,
+    credentialRevision: p.credentialRevision,
+  };
+}
+
+/**
+ * Error code for a start that was ASKED for an org-key lease and came back
+ * without confirming one — an older backend that ignored the selection and
+ * minted a lease on MCPJam's key. The lease is revoked and the turn fails
+ * before the runtime starts: an org binding is never assumed.
+ */
+export const ORG_BINDING_UNCONFIRMED = "org_binding_unconfirmed";
 
 /**
  * The harness runtime CLI version the lease is for — the adapter's pinned
@@ -53,6 +114,8 @@ export type HarnessBrokerStartResult =
       protocol: "anthropic" | "openai";
       proxyBaseUrl: string;
       delivery: "e2b-network-transform";
+      /** Present exactly when the lease runs on the org's own key. */
+      orgUpstream?: HarnessOrgLeaseUpstream;
     }
   | {
       ok: false;
@@ -90,8 +153,10 @@ export type HarnessLoopbackStartResult =
        * instead.
        */
       lease: string;
+      /** Present exactly when the lease runs on the org's own key. */
+      orgUpstream?: HarnessOrgLeaseUpstream;
     }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; code?: string };
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -167,6 +232,17 @@ export async function startHarnessModelBroker(args: {
    * omitted when the turn has none, so an older backend sees the same body.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved selection. Sent only when it names an org connection
+   * (`source: 'org'`): the lease then runs on that organization's key, and
+   * the backend resolves the connection itself.
+   */
+  modelSelection?: ModelSelection | null;
+  /**
+   * The org credential revision `/reserve` prepared this turn for. The start
+   * is refused (`byok_connection_changed`) if the key was replaced since.
+   */
+  expectedCredentialRevision?: string;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -205,6 +281,11 @@ export async function startHarnessModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
+        ...orgSelectionField(args.modelSelection),
+        ...(args.modelSelection?.source === "org" &&
+        args.expectedCredentialRevision
+          ? { expectedCredentialRevision: args.expectedCredentialRevision }
+          : {}),
       }),
       signal: args.signal,
     });
@@ -239,6 +320,25 @@ export async function startHarnessModelBroker(args: {
     Number.isFinite(payload.expiresAt) &&
     (payload?.protocol === "anthropic" || payload?.protocol === "openai") &&
     payload?.delivery === "e2b-network-transform";
+  const orgUpstream = orgLeaseUpstreamFrom(payload);
+  if (validShape && args.modelSelection?.source === "org" && !orgUpstream) {
+    // Asked for the org's key, got a lease that does not say it is one: an
+    // older backend minted it on MCPJam's key. Kill it before anything runs.
+    await revokeHarnessModelBroker({
+      runId: payload.runId,
+      ...(args.box.kind === "computer"
+        ? { projectId: args.box.projectId }
+        : {}),
+      bearer: args.bearer,
+    }).catch(() => {});
+    return {
+      ok: false,
+      status: 502,
+      error:
+        "The model broker did not confirm a lease on the organization's key; the turn was not started.",
+      code: ORG_BINDING_UNCONFIRMED,
+    };
+  }
   if (!validShape) {
     return {
       ok: false,
@@ -260,6 +360,9 @@ export async function startHarnessModelBroker(args: {
     protocol: payload.protocol,
     proxyBaseUrl: payload.proxyBaseUrl,
     delivery: "e2b-network-transform",
+    ...(args.modelSelection?.source === "org" && orgUpstream
+      ? { orgUpstream }
+      : {}),
   };
 }
 
@@ -357,6 +460,8 @@ export async function startLoopbackModelBroker(args: {
   maxOutputTokens?: number;
   /** See `startHarnessModelBroker`. */
   reasoningEffort?: ModelReasoningEffort;
+  /** See `startHarnessModelBroker`: sent only for an org selection. */
+  modelSelection?: ModelSelection | null;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessLoopbackStartResult> {
@@ -404,6 +509,7 @@ export async function startLoopbackModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
+        ...orgSelectionField(args.modelSelection),
       }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
@@ -442,6 +548,22 @@ export async function startLoopbackModelBroker(args: {
     // usable local start, whatever else it says.
     typeof payload?.lease === "string" &&
     payload.lease.length > 0;
+  const orgUpstream = orgLeaseUpstreamFrom(payload);
+  if (validShape && args.modelSelection?.source === "org" && !orgUpstream) {
+    // Same guard as the box path: never run on a lease that does not confirm
+    // the org binding that was asked for.
+    await revokeHarnessModelBroker({
+      runId: payload.runId,
+      bearer: args.bearer,
+    }).catch(() => {});
+    return {
+      ok: false,
+      status: 502,
+      error:
+        "The model broker did not confirm a lease on the organization's key; the turn was not started.",
+      code: ORG_BINDING_UNCONFIRMED,
+    };
+  }
   if (!validShape) {
     return {
       ok: false,
@@ -450,6 +572,9 @@ export async function startLoopbackModelBroker(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Harness model-broker failed (${response.status})`,
+      ...(!response.ok && typeof payload?.code === "string"
+        ? { code: payload.code }
+        : {}),
     };
   }
 
@@ -461,6 +586,9 @@ export async function startLoopbackModelBroker(args: {
     proxyBaseUrl: payload.proxyBaseUrl,
     delivery: "inspector-loopback-gateway",
     lease: payload.lease,
+    ...(args.modelSelection?.source === "org" && orgUpstream
+      ? { orgUpstream }
+      : {}),
   };
 }
 
@@ -522,8 +650,14 @@ export type HarnessBoxReservationResult =
   | {
       ok: true;
       expiresAt?: number;
+      /**
+       * For an org selection: the hashed credential revision the turn is
+       * being prepared for. Handed back to the start, which refuses if the
+       * organization's key was replaced in between.
+       */
+      credentialRevision?: string;
     }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; code?: string };
 
 /**
  * Claim a box for the span of a turn's PREPARATION — waking it and installing
@@ -540,6 +674,8 @@ export async function reserveHarnessBox(args: {
   harnessId: HarnessId;
   modelId: string;
   runId: string;
+  /** See `startHarnessModelBroker`: an org selection is checked here first. */
+  modelSelection?: ModelSelection | null;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBoxReservationResult> {
@@ -575,6 +711,9 @@ export async function reserveHarnessBox(args: {
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         runId: args.runId,
+        // An org selection is resolved HERE, before the box installs
+        // anything: a disabled or mismatched connection fails early.
+        ...orgSelectionField(args.modelSelection),
       }),
       signal: args.signal,
     });
@@ -596,12 +735,17 @@ export async function reserveHarnessBox(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Couldn't reserve the computer (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
   return {
     ok: true,
     ...(typeof payload.expiresAt === "number"
       ? { expiresAt: payload.expiresAt }
+      : {}),
+    ...(args.modelSelection?.source === "org" &&
+    typeof payload.credentialRevision === "string"
+      ? { credentialRevision: payload.credentialRevision }
       : {}),
   };
 }

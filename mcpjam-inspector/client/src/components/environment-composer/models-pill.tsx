@@ -53,7 +53,7 @@ import { setEffortForRow } from "@/lib/reasoning-effort-selection";
 import { modelTargetLabel } from "@/lib/environment-label";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
-  harnessModelLockReason,
+  harnessModelLockReasonsByRow,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
@@ -115,16 +115,17 @@ export function ModelsPill({
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
     projectId,
   });
-  const harnessLockReasons = useMemo(() => {
-    const byId = new Map<string, string>();
-    if (!harnessTargets || harnessTargets.length === 0) return byId;
-    for (const model of availableModels) {
-      const id = String(model.id);
-      const reason = harnessModelLockReason(id, harnessTargets, purpose);
-      if (reason) byId.set(id, reason);
-    }
-    return byId;
-  }, [availableModels, harnessTargets, purpose]);
+  // Per ROW, not per id: the hosted row and an org-connection row of one id
+  // run on different keys, and a harness may run one and refuse the other.
+  const harnessLockReasons = useMemo(
+    () =>
+      harnessModelLockReasonsByRow(
+        availableModels,
+        harnessTargets ?? [],
+        purpose,
+      ),
+    [availableModels, harnessTargets, purpose],
+  );
 
   const targets = value.explicitTargets;
   const explicit = useMemo(
@@ -291,7 +292,7 @@ export function ModelsPill({
     model: ModelDefinition,
     state: { selected: boolean },
   ): string | undefined =>
-    harnessLockReasons.get(String(model.id)) ?? rowCapReason(model, state);
+    harnessLockReasons.get(modelRowKey(model)) ?? rowCapReason(model, state);
 
   const extraOptions: ModelSelectorExtraOption[] = [
     {

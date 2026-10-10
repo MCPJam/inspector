@@ -467,6 +467,85 @@ describe("runAssistantTurn", () => {
     });
   });
 
+  describe("a brokered harness on the organization's own key", () => {
+    const ORG_ANTHROPIC = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.5",
+      connectionRef: { kind: "orgProvider", id: "orgprov_anthropic_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    // The org row's own id is the native, BARE one; the selection names the
+    // canonical id.
+    const ORG_ROW = {
+      id: "claude-sonnet-4-5",
+      provider: "anthropic",
+      name: "Claude Sonnet 4.5",
+    } as ModelDefinition;
+    const turn = (extra: Partial<Parameters<typeof runAssistantTurn>[0]>) =>
+      runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }] as any,
+        modelDefinition: ORG_ROW,
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType: "eval",
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: "claude-code" as any,
+        ...extra,
+      });
+
+    it("hands the eval's forwarded org selection to the harness turn, typed", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn({ extraBodyFields: { modelSelection: ORG_ANTHROPIC } });
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(runHarnessTurnMock.mock.lastCall?.[0]).toMatchObject({
+        modelSelection: ORG_ANTHROPIC,
+      });
+      // The emulated engine never ran on the org key.
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses an org connection on another vendor, naming the provider rule", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      await expect(
+        turn({
+          modelDefinition: {
+            id: "gpt-5",
+            provider: "openai",
+            name: "GPT-5",
+          } as ModelDefinition,
+          modelSelection: {
+            ...ORG_ANTHROPIC,
+            modelId: "openai/gpt-5",
+          } as any,
+        }),
+      ).rejects.toThrow(/organization's Anthropic key/);
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("the same bare row WITHOUT an org selection is still refused as not hosted", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      await expect(turn({})).rejects.toThrow(
+        /only runs MCPJam-provided models/,
+      );
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("brokered harness dispatch reads the evidence table", () => {
     const turn = (
       modelDefinition: ModelDefinition,

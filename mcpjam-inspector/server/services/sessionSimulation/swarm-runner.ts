@@ -1081,6 +1081,9 @@ async function runJourneyFanOut(
                 // model pair is refused, not run with a warning.
                 purpose: "swarm",
                 unattended: true,
+                // The target's saved selection: an org connection on the
+                // harness's own vendor runs on the organization's key.
+                ...(modelSelection ? { selection: modelSelection } : {}),
               });
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined

@@ -943,6 +943,8 @@ export async function runSyntheticHostSession(
         harness,
         modelId: String(modelDefinition.id),
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        ...(modelSelection ? { selection: modelSelection } : {}),
         hasProjectId: Boolean(projectId),
       });
 

@@ -118,6 +118,7 @@ import {
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
+  runsHarness,
 } from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
@@ -1255,7 +1256,26 @@ export async function streamWebChatTurn(
   // stay separate values.
   const isExternalAccountHarnessTurn =
     !!persist.harness && harnessUsesExternalAccount(persist.harness);
-  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
+  // …OR a brokered harness on the ORGANIZATION'S own key: its saved selection
+  // names an org connection whose provider the harness runs on. Such a turn
+  // runs the REAL runtime (the lease is minted for that connection), so it
+  // takes the harness path, never the org-BYOK branch below — which would run
+  // the emulated engine under the harness's name.
+  const isOrgKeyHarnessTurn =
+    !!persist.harness &&
+    !isExternalAccountHarnessTurn &&
+    prepare.routingSelection?.source === "org" &&
+    runsHarness({
+      harness: persist.harness,
+      model: {
+        id: String(prepare.modelDefinition.id),
+        provider: prepare.modelDefinition.provider,
+        hosted: prepare.modelDefinition.hosted,
+      },
+      selection: prepare.routingSelection,
+    });
+  const usesMcpjamFreePath =
+    isMCPJam || isExternalAccountHarnessTurn || isOrgKeyHarnessTurn;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
@@ -1272,6 +1292,9 @@ export async function streamWebChatTurn(
         hosted: prepare.modelDefinition.hosted,
       },
       purpose: harnessModelPurposeForSourceType(persist.sourceType),
+      ...(prepare.routingSelection
+        ? { selection: prepare.routingSelection }
+        : {}),
     });
     throw new WebRouteError(
       503,
@@ -1685,9 +1708,15 @@ export async function streamWebChatTurn(
   // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
   // which this turn does not have. See `chatModelSourceValidator` in the
   // backend for the two surfaces that read it that way.
+  // A harness turn on the organization's own key is the org's spend, never
+  // MCPJam's: `'byok'`, exactly like an org-BYOK chat turn.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
+    isExternalAccountHarnessTurn
+      ? "external-account"
+      : isOrgKeyHarnessTurn
+        ? "byok"
+        : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1767,6 +1796,11 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // The org selection the harness's lease is minted for (its canonical id
+    // and connection). Only on an org-key harness turn.
+    ...(isOrgKeyHarnessTurn && prepare.routingSelection?.source === "org"
+      ? { modelSelection: prepare.routingSelection }
+      : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),

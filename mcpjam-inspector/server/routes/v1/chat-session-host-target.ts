@@ -286,6 +286,12 @@ export function resolveChatSessionEngine(args: {
    * on a harness host is refused up front instead of dropped.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The selection that decides this turn's rail (the host's saved one, for
+   * this model). An org connection on the harness's own vendor runs the
+   * harness on the organization's key instead of being refused.
+   */
+  selection?: RequestedModelSelection;
 }): ChatSessionEngineResult {
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
@@ -317,6 +323,7 @@ export function resolveChatSessionEngine(args: {
     // runs. A harness that cannot apply it refuses the turn instead of running
     // without it.
     ...(hostEffort !== undefined ? { reasoningEffort: hostEffort } : {}),
+    ...(args.selection ? { selection: args.selection } : {}),
   });
   if (!availability.ok) {
     return {

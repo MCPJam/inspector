@@ -3005,10 +3005,13 @@ export async function prepareEvalRun(
     // The run's OWN snapshotted cases (`config.tests`), not the request's
     // inline tests: a bare rerun has none of the latter, and the snapshot is
     // what actually executes.
+    // `selection` rides through: it decides whether a case runs on MCPJam's
+    // key or an organization connection's, and admission must see it.
     cases: config.tests as Array<{
       title?: string;
       model?: string;
       provider?: string;
+      selection?: unknown;
     }>,
     widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
     // Explicitly `null` when the suite is org-level. `runHarnessTurn` needs a
