@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/vitest",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
   "license": "MIT",
   "type": "module",
@@ -29,7 +29,7 @@
     "vitest": ">=3.2.0 <5"
   },
   "dependencies": {
-    "@mcpjam/sdk": "^9.0.0"
+    "@mcpjam/sdk": "^9.2.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

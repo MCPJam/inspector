@@ -25,6 +25,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 20
     name: Build and Test
 
     steps:

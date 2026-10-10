@@ -167,6 +167,14 @@ import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
+import { useSessionPrivacy } from "./hooks/useSessionPrivacy";
+import {
+  recordingSurface,
+  resolveEnterprisePrivacyInView,
+  resolveEnterprisePrivacyMember,
+  resolveSessionPrivacy,
+} from "./lib/session-privacy";
+import { setSentryIdOnlyIdentity } from "./lib/sentry-identity";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -2999,6 +3007,14 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  // The org list once it is authoritative, for the session privacy level and
+  // identity. `undefined` until then: an empty list reads as "no organization
+  // asked for privacy", which must not be concluded from a list that has not
+  // arrived.
+  const loadedOrganizations =
+    isAuthenticated && !isLoadingOrganizations
+      ? sortedOrganizations
+      : undefined;
   useEffect(() => {
     if (isLoadingOrganizations) {
       return;
@@ -3246,7 +3262,16 @@ export default function App() {
     previousWorkOsUserIdRef.current = workOsUserId;
   }, [workOsUser?.id]);
 
-  usePostHogIdentify();
+  // Members of an organization with enterprise privacy are identified by id
+  // alone, in analytics and in error tracking.
+  const enterprisePrivacyMember =
+    resolveEnterprisePrivacyMember(loadedOrganizations);
+  usePostHogIdentify({ enterprisePrivacyMember });
+  useEffect(() => {
+    if (enterprisePrivacyMember !== undefined) {
+      setSentryIdOnlyIdentity(enterprisePrivacyMember);
+    }
+  }, [enterprisePrivacyMember]);
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
@@ -4692,6 +4717,28 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
+  // The session privacy level (lib/session-privacy.ts) for both recorders.
+  // The same three organizations billing reads are "in view", but it fails
+  // closed: ANY of them with enterprise privacy makes the session `masked`.
+  useSessionPrivacy(
+    resolveSessionPrivacy({
+      surface: recordingSurface(),
+      account: isWorkOsLoading
+        ? "loading"
+        : workOsUser
+          ? "signed_in"
+          : "signed_out",
+      sharedLink: isScenarioChatRoute,
+      enterprisePrivacyInView: resolveEnterprisePrivacyInView(
+        loadedOrganizations,
+        [
+          routeScopedOrganizationId,
+          activeOrganizationId,
+          activeProject?.organizationId,
+        ],
+      ),
+    }),
+  );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness

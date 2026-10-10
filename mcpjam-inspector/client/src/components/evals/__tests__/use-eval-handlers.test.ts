@@ -567,6 +567,38 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it("reruns a suite with no threshold at the 70% default, not the latest run's", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          latestRunBySuiteId: new Map<string, any>([
+            [
+              "suite-456",
+              {
+                _id: "run-old",
+                hasServerReplayConfig: false,
+                passCriteria: { minimumPassRate: 100 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-456",
+        name: "My Suite",
+        description: "Suite description",
+        environment: { servers: ["server-1"] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.passCriteria).toEqual({ minimumPassRate: 70 });
+    });
+
     it("sends iterationOverride as a top-level field while tests[].runs preserves the persisted default", async () => {
       mockConvexQuery.mockResolvedValueOnce([
         {

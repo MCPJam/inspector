@@ -41,6 +41,9 @@ jobs:
     name: Compare authoring contracts with backend
     if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,6 +69,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     name: Run Tests
     # Pinned to the same Playwright version as the `@playwright/test` dependency.
     # The image ships Chromium + every system library preinstalled, so we skip
@@ -167,6 +171,7 @@ jobs:
 
   packaging:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -228,6 +233,7 @@ jobs:
 
   inspector:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -298,6 +304,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.63.0-noble

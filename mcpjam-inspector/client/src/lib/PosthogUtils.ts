@@ -5,6 +5,12 @@ import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { getLastFailedRequest } from "./failed-request-tracker";
+import {
+  isErrorCaptureSurface,
+  MASKED_SESSION_RECORDING_OPTIONS,
+  scrubNamesFromUrl,
+  shouldMaskAnalytics,
+} from "./session-privacy";
 
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
@@ -164,9 +170,10 @@ function attachFailedRequest(properties: Record<string, any>): void {
   const ageMs = Date.now() - failed.at;
   if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
 
-  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(
-    failed.target,
-  )}`;
+  const target = scrubSensitiveUrl(failed.target);
+  properties.failed_request = `${failed.method} ${
+    shouldMaskAnalytics() ? scrubNamesFromUrl(target) : target
+  }`;
   properties.failed_request_age_ms = ageMs;
 }
 
@@ -174,6 +181,9 @@ export function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
   eventName?: string,
 ): Record<string, any> {
+  // Short of a resolved `full` privacy level, names come out of URLs too
+  // (lib/session-privacy.ts), on top of the credential redaction below.
+  const maskNames = shouldMaskAnalytics();
   for (const key of [
     "$current_url",
     "$referrer",
@@ -187,6 +197,7 @@ export function sanitizeAnalyticsProperties(
   ]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
+      if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);
     }
   }
   if (eventName === "$exception") attachFailedRequest(properties);
@@ -241,136 +252,15 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
-/**
- * Whether this surface records session replays and captures exceptions.
- *
- * Hosted (app.mcpjam.com) and the packaged desktop app only. npx/Docker
- * installs run on someone else's machine against their own MCP servers —
- * recording those sessions is not ours to do, and the volume from every OSS
- * install would swamp the quota that makes hosted replay useful.
- */
-export function isErrorCaptureSurface(): boolean {
-  return HOSTED_MODE || isPackagedDesktop();
-}
-
-/**
- * A *shipped* desktop build, as opposed to `electron-forge start`.
- *
- * `src/preload.ts` exposes `isElectron: true` unconditionally, so it cannot
- * tell a packaged app from a developer's local run. `import.meta.env.PROD`
- * can: the dev renderer is served by the vite dev server, the packaged one is
- * a `vite build` output. Without this check every `electron-forge start`
- * session would stream renderer DOM and text into the production Sentry and
- * PostHog projects — and the boundary this file documents is *packaged*
- * desktop, not "anything with a preload attached".
- *
- * `HOSTED_MODE` needs no equivalent: it comes from `VITE_MCPJAM_HOSTED_MODE`,
- * which only the deployed bundle's config sets.
- */
-function isPackagedDesktop(): boolean {
-  return (
-    import.meta.env.PROD &&
-    typeof window !== "undefined" &&
-    (window as unknown as { isElectron?: boolean }).isElectron === true
-  );
-}
-
-/**
- * Replay masking.
- *
- * `maskAllInputs` covers every `<input>`. The inspector also renders secrets
- * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
- * key reveal, the SDK quickstart snippet — which no input-level masking can
- * reach. Those already carry this repo's `ph-no-capture rr-block` +
- * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
- * points at the SAME attribute rather than introducing a second thing to
- * remember: annotate a credential surface once and it is opted out of
- * autocapture AND masked in replay.
- */
-export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
-
-export const SESSION_RECORDING_OPTIONS = {
-  maskAllInputs: true,
-  maskInputOptions: { password: true },
-  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
-} as const;
-
-/**
- * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
- * already redact it out of event properties (`scrubSensitiveUrl`), but a
- * replay of that page would capture the address bar's contents in the DOM
- * snapshot regardless. Don't record there at all.
- */
-export function isCredentialBearingPath(
-  pathname: string | undefined = typeof window === "undefined"
-    ? undefined
-    : window.location?.pathname,
-): boolean {
-  return (
-    !!pathname &&
-    (pathname.startsWith("/results/") ||
-      pathname.startsWith("/conformance/shared/") ||
-      pathname.startsWith("/evals/shared/"))
-  );
-}
-
-export function shouldRecordSession(): boolean {
-  return isErrorCaptureSurface() && !isCredentialBearingPath();
-}
-
-/**
- * Enforce the credential-path carve-out at RUNTIME.
- *
- * `disable_session_recording` is an init-time option, so it only covers a
- * session that *loads* on `/results/<token>`. `/results/:runToken` is an
- * in-app route: a user who lands anywhere else and then follows a results
- * link already has an active recorder, and rrweb snapshots the address bar.
- * Call this on navigation so the token-bearing page is never in a replay.
- *
- * Never throws — this is a privacy guard on a render path, and posthog-js may
- * be ad-blocked or uninitialized.
- */
-let recordingStoppedByGuard = false;
-
-export function syncSessionRecordingForPath(
-  posthogClient: {
-    startSessionRecording?: () => void;
-    stopSessionRecording?: () => void;
-    sessionRecordingStarted?: () => boolean;
-  },
-  pathname: string,
-): void {
-  try {
-    if (!isErrorCaptureSurface()) return;
-    if (isCredentialBearingPath(pathname)) {
-      // Arm the resume only if the recorder was ACTUALLY running. The build
-      // flag is not a proxy for that: PostHog's own project-side sampling can
-      // decline a session, and resuming one it declined would both break
-      // sampling and cost quota.
-      //
-      // Never DISARM here — `stop()` makes the probe read false, so
-      // `/results/a` → `/results/b` would otherwise forget that this guard is
-      // what stopped the recorder and the exit would never resume it.
-      // `stop()` itself stays unconditional: it is idempotent, and an SDK
-      // build without the probe must still stop on a credential path.
-      if (posthogClient.sessionRecordingStarted?.()) {
-        recordingStoppedByGuard = true;
-      }
-      posthogClient.stopSessionRecording?.();
-      return;
-    }
-    // Resume ONLY what this guard itself stopped. Starting on every
-    // non-credential path would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
-    // navigation — silently recording in a build documented as having it off —
-    // and would force a recorder on for a session sampling never selected.
-    if (recordingStoppedByGuard) {
-      recordingStoppedByGuard = false;
-      posthogClient.startSessionRecording?.();
-    }
-  } catch {
-    // A failed guard must not break the render. Recording stays as-is.
-  }
-}
+// The recording policy — surfaces, privacy levels, replay profiles — lives in
+// lib/session-privacy.ts. Re-exported here for the modules that have always
+// imported these from this file.
+export {
+  isCredentialBearingPath,
+  isErrorCaptureSurface,
+  SECRET_SURFACE_ATTRIBUTE,
+  SESSION_RECORDING_OPTIONS,
+} from "./session-privacy";
 
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
@@ -413,10 +303,20 @@ export const options = {
   get capture_exceptions() {
     return isErrorCaptureSurface();
   },
-  get disable_session_recording() {
-    return !shouldRecordSession();
+  // Replay never starts at init, on any surface: `syncSessionRecording`
+  // (lib/session-privacy.ts) starts it once the session's privacy level is
+  // known, with that level's profile. Until then the profile and the
+  // autocapture flags below are the masked ones, so anything that slipped
+  // through early would fail closed.
+  disable_session_recording: true,
+  session_recording: MASKED_SESSION_RECORDING_OPTIONS,
+  enable_recording_console_log: false,
+  get mask_all_text() {
+    return shouldMaskAnalytics();
   },
-  session_recording: SESSION_RECORDING_OPTIONS,
+  get mask_all_element_attributes() {
+    return shouldMaskAnalytics();
+  },
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {

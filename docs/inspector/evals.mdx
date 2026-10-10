@@ -367,6 +367,11 @@ field you edit and the units it takes.
 | **Suite accuracy** | Does one rate across the whole run reach this percentage? Individual cases have no threshold of their own. | Percentage, 0–100 | `settings.minimumAccuracy` |
 | **Per-case pass rate** | Does each case pass at least this share of its own iterations? A case that falls short fails, whatever the rest of the suite did. | Fraction, 0–1 | `settings.passThreshold` |
 
+A suite with no suite accuracy set is judged at **70%**. New runs save the
+threshold they were judged at, so changing the setting later does not re-judge
+them. Older runs that saved no threshold were judged at 100% and keep that
+result.
+
 <Warning>
   **These are not two units of one number.** Take ten equally sized cases, nine
   of which always pass and one of which always fails. A 90% suite accuracy
@@ -429,6 +434,22 @@ condition that does not need a baseline. Baseline comparison conditions
 set via the API or CLI only; if a suite carries one, the settings page lists it
 read-only so you can see what the run will enforce. See [Quality gates](#ci-tab)
 for the full condition reference.
+
+## Execution budgets
+
+Each eval suite can author five execution clocks that cap how long each part of a run may take. Open **Suite settings → Execution budgets** to configure them.
+
+| Clock | What it limits |
+|-------|---------------|
+| **Per-turn timeout** | How long one model turn (prompt → response) may run. |
+| **Per-tool-call timeout** | How long a single tool call may take. |
+| **Per-iteration timeout** | How long one full case iteration (all turns) may run. |
+| **Whole-run timeout** | How long the entire suite run may run. |
+| **Model-call retries** | How many times a failed model call is retried before the iteration fails. |
+
+An empty field shows the platform default it inherits rather than a blank — "no value" means "whatever the platform decides". Clearing a field saves as `null`, which resets to the platform default. The API accepts these at `settings.executionBudgets.*` on the suite PATCH.
+
+Platform-enforced ceilings apply: a value above the platform ceiling is refused at save time, naming the field and the bound. Organization-level ceilings are enforced by the server.
 
 ## Suite execution config
 
