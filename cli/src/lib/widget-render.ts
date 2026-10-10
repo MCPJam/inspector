@@ -41,7 +41,7 @@ export interface WidgetRenderResponse {
 /** The slice of `InspectorApiClient` the render flow uses (injectable for tests). */
 export type WidgetRenderClient = Pick<
   InspectorApiClient,
-  "ensureBackend" | "connectServer" | "request"
+  "ensureBackend" | "connectServerAdhoc" | "request"
 >;
 
 export interface RunWidgetRenderOptions {
@@ -90,7 +90,7 @@ export async function runWidgetRender(
     timeoutMs: options.timeoutMs,
   });
 
-  await client.connectServer(options.serverName, options.config, {
+  await client.connectServerAdhoc(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
   });
 

@@ -181,7 +181,7 @@ async function startMockInspector(
       response.end(JSON.stringify({ ok: true }));
       return;
     }
-    if (request.method === "POST" && url === "/api/mcp/connect") {
+    if (request.method === "POST" && url === "/api/mcp/connect-adhoc") {
       requests.push({ method: "POST", url, body: await readJsonBody(request) });
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ success: true, status: "connected" }));
