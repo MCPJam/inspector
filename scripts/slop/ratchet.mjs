@@ -102,7 +102,15 @@ function report({ deltas, increases }, waived) {
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const base = resolveBase(process.argv.slice(2));
-  const waived = process.env.SLOP_WAIVER === "true";
-  process.exitCode = report(compare(base), waived);
+  try {
+    const base = resolveBase(process.argv.slice(2));
+    const waived = process.env.SLOP_WAIVER === "true";
+    process.exitCode = report(compare(base), waived);
+  } catch (error) {
+    // Exit 1 means a rule went up. A check that could not run (no base to
+    // compare with, git failed) exits 2, so the Stop hook in hook.mjs lets
+    // the turn end instead of blocking it with an empty report.
+    console.error(error.message);
+    process.exitCode = 2;
+  }
 }
