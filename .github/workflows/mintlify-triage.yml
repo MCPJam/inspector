@@ -22,6 +22,7 @@ jobs:
     # human, not the bot, on reopen).
     if: github.event.pull_request.user.login == 'mintlify[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # enable auto-merge
       pull-requests: write # close / comment

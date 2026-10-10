@@ -50,6 +50,7 @@ jobs:
     # Skip Dependabot's own rebases; see local-browser-security.yml.
     if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

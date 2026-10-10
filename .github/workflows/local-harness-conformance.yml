@@ -122,6 +122,7 @@ jobs:
   plan:
     name: plan legs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       claude_pack_version: ${{ steps.plan.outputs.claude_pack_version }}
       codex_pack_version: ${{ steps.plan.outputs.codex_pack_version }}
@@ -143,6 +144,7 @@ jobs:
   unit:
     name: foundation unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Read pack toolchain pins
@@ -183,6 +185,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_claude == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -407,6 +410,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_windows == 'true'
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -628,6 +632,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_codex == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     continue-on-error: ${{ !matrix.certified }}
     strategy:
       fail-fast: false
@@ -792,6 +797,7 @@ jobs:
     # would certify a platform whose scenarios had not run.
     needs: [scenarios, windows, plan]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
@@ -815,6 +821,7 @@ jobs:
     name: codex conformance version
     needs: [codex-scenarios, plan]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
