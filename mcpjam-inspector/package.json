@@ -132,7 +132,7 @@
     "@ai-sdk/openai": "^4.0.84",
     "@ai-sdk/provider-utils": "^5.0.54",
     "@ai-sdk/react": "^4.0.131",
-    "@ai-sdk/xai": "^4.0.59",
+    "@ai-sdk/xai": "^5.0.14",
     "@axiomhq/js": "^2.0.0",
     "@cfworker/json-schema": "^4.1.1",
     "@codemirror/commands": "^6.11.1",
