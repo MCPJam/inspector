@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 import { measure, packageOf } from "./measure.mjs";
 import { isMeasuredFile } from "./rules.mjs";
 
@@ -136,7 +137,8 @@ function argValue(name) {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const limit = Number(argValue("--limit") ?? 20);
   // Paths an open or rejected bot PR already touched, one per line.
   const excludeFile = argValue("--exclude");
