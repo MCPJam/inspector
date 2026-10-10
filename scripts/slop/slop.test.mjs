@@ -179,3 +179,87 @@ describe("ratchet", () => {
     assert.match(result.stdout, /Waived/);
   });
 });
+
+describe("deletion bot check", async () => {
+  const { checkLane, codeLinesChanged, MAX_LINES } = await import(
+    "./deletion-bot-check.mjs"
+  );
+  const CHECK = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "deletion-bot-check.mjs"
+  );
+  const lines = (n) => () => n;
+
+  it("accepts pure deletions in the dead-files lane", () => {
+    const { problems } = checkLane(
+      "dead-files",
+      [{ status: "D", path: "a.ts" }],
+      { diffOf: () => "", linesOf: lines(40) }
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  it("rejects additions, edits and oversize changes", () => {
+    const { problems } = checkLane(
+      "dead-files",
+      [
+        { status: "D", path: "a.ts" },
+        { status: "M", path: "b.ts" },
+        { status: "??", path: "c.ts" },
+      ],
+      { diffOf: () => "", linesOf: lines(MAX_LINES) }
+    );
+    assert.equal(problems.length, 3);
+  });
+
+  it("allows only comment lines to change in the history lane", () => {
+    const commentOnly = [
+      "--- a/x.ts",
+      "+++ b/x.ts",
+      "-// Fixed in #5474 on 2026-09-24.",
+      "+// Retries once: the first read can race the writer.",
+      "- * Landed in PR 4556.",
+      "+",
+    ].join("\n");
+    assert.deepEqual(codeLinesChanged(commentOnly), []);
+    assert.equal(
+      codeLinesChanged("-const a = 1; // #5474\n+const a = 1;").length,
+      2
+    );
+  });
+
+  it("refuses a real tree that adds a file, and passes a real deletion", () => {
+    const repo = mkdtempSync(join(tmpdir(), "slop-bot-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(join(repo, "sdk/src/dead.ts"), "export const x = 1;\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      const run = () => {
+        try {
+          execFileSync("node", [CHECK, "--lane", "dead-files"], {
+            cwd: repo,
+            encoding: "utf8",
+            stdio: "pipe",
+          });
+          return 0;
+        } catch (error) {
+          return error.status;
+        }
+      };
+      git("rm", "-q", "sdk/src/dead.ts");
+      assert.equal(run(), 0);
+      // `git rm` removed the now-empty directory.
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(join(repo, "sdk/src/new.ts"), "export const y = 2;\n");
+      assert.equal(run(), 1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
