@@ -293,6 +293,63 @@ The terminal and desktop installs accept both shapes in the same file. The hoste
 
 For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#3-playground-byok-bring-your-own-key).
 
+## Local harness runtime
+
+When you use a local agent harness (Claude Code or Codex), Inspector downloads and verifies a signed runtime pack on first use. The `harness` subcommand lets you manage that runtime from the terminal.
+
+### Install or check status
+
+```bash
+# Install the Claude Code runtime (default)
+npx @mcpjam/inspector@latest harness install
+
+# Install a specific harness
+npx @mcpjam/inspector@latest harness install --harness codex
+
+# Check what is installed and selected
+npx @mcpjam/inspector@latest harness status
+npx @mcpjam/inspector@latest harness status --harness codex
+```
+
+### Diagnose and repair
+
+```bash
+# Show what runs and why, last failure, disk, proxy, and update policy
+npx @mcpjam/inspector@latest harness doctor
+
+# Same, for a specific harness
+npx @mcpjam/inspector@latest harness doctor --harness codex
+
+# Re-verify every installed byte; re-probe an unhealthy runtime
+npx @mcpjam/inspector@latest harness repair
+
+# Export a redacted report safe to attach to a support ticket
+npx @mcpjam/inspector@latest harness doctor --export report.json
+```
+
+`doctor` exits with status 1 when something needs attention and prints the command to run next. `repair` clears abandoned staging, reinstalls a corrupt pack, and re-probes a pack marked unhealthy.
+
+### Offline and MDM pre-provisioning
+
+Download the three release files for your target — `<stem>.tar.gz`, `<stem>.manifest.json`, and `<stem>.manifest.json.sig` — into one directory, then install without a network connection:
+
+```bash
+npx @mcpjam/inspector@latest harness install --from /path/to/<stem>.tar.gz
+npx @mcpjam/inspector@latest harness install --harness codex --from /path/to/<stem>.tar.gz
+```
+
+Every check a normal download gets still runs: the manifest signature, the archive hash, the tree digest, and the startup probe. An unsigned archive is refused.
+
+### Proxies and private CAs
+
+The installer honours `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (either case). For a proxy that inspects TLS, pass the corporate root certificate to Node at startup:
+
+```bash
+NODE_EXTRA_CA_CERTS=/path/to/corp-root.pem npx @mcpjam/inspector@latest harness install
+```
+
+`NODE_EXTRA_CA_CERTS` must be set in the environment Inspector **starts** in — Node reads it once, at startup.
+
 ## Start with Verbose Logging
 
 Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.
