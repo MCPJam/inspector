@@ -623,6 +623,24 @@ Your LLM provider rejected the API key for this request.
 - Add or update your API key under **Settings → LLM Providers**.
 - Verify the key in the provider's dashboard.
 
+### Provider error (BYOK balance)
+
+`provider_error`
+
+The LLM provider rejected the request and returned its own error message. When you are using your own API key (BYOK), the chat surface shows the provider's message directly — for example:
+
+> Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.
+
+This error is specific to your provider account. MCPJam credits cannot resolve it, and the MCPJam credit top-up dialog does not appear for this code.
+
+**Likely causes**
+- Your provider API account has run out of credits or has a zero balance.
+- The request was rejected by the provider for a billing or account reason.
+
+**Next steps**
+- Add credits to your account on the provider's own dashboard (for example, [console.anthropic.com](https://console.anthropic.com) for Anthropic, [platform.openai.com](https://platform.openai.com) for OpenAI).
+- Or switch to a different API key under **Settings → LLM Providers**.
+
 ### Provider not allowlisted
 
 `provider/not_allowlisted`
@@ -689,6 +707,8 @@ not.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+
+> **BYOK provider balance errors are separate.** If your own API key's account runs out of credits, the chat surface shows the provider's error message directly (for example, "Your Anthropic API account has insufficient credits"). The MCPJam credit top-up dialog does not appear for those errors — buying MCPJam credits cannot fix a balance issue on your provider account. See [Provider error (BYOK balance)](#provider-error-byok-balance) for next steps.
 
 **Swarm and Eval runs**
 
@@ -839,11 +859,22 @@ This environment's server group is gone.
 
 `provider/empty_response`
 
-The model request ended without usable content, so the turn could not complete.
-The recorded error names the provider's finish reason where one was reported.
+The model request ended without usable content, so the turn could not complete. The chat surface shows:
 
-Rerun the affected cases. If the error recurs on an MCPJam model, report it with
-those run details. For BYOK, check the recorded provider error and account configuration.
+> The model returned no response. Please try again.
+
+The full provider diagnostic (including the finish reason, if one was reported) is available under **More details** in the error banner.
+
+**Likely causes**
+- The provider ended the stream without emitting any text, reasoning, or tool call.
+- The model hit a content filter or a length limit before producing output.
+- A transient provider-side issue caused the stream to close early.
+
+**Next steps**
+- Retry the message — transient empty responses usually resolve on the next attempt.
+- If the finish reason shown in **More details** is `length`, shorten the conversation or switch to a model with a larger context window.
+- If the finish reason is `content-filter`, rephrase the message.
+- If the error recurs on an MCPJam model, report it with the run details. For BYOK, check the provider error in **More details** and your account configuration.
 
 ## Unknown error
 
