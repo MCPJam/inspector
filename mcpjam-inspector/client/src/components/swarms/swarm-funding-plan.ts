@@ -116,13 +116,22 @@ export function fundingSplitOf(
 const plural = (count: number, one: string, many: string) =>
   `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
-/** "5 sponsored conversations · 10 use org credits". */
+/**
+ * "5 sponsored · 10 use org credits", or just the side that is non-zero:
+ * "15 sponsored conversations", "15 conversations use org credits".
+ */
 export function fundingHeadline(split: FundingSplit): string {
-  return `${plural(
-    split.sponsored,
-    "sponsored conversation",
-    "sponsored conversations",
-  )} · ${split.credits.toLocaleString()} ${
+  if (split.credits === 0) {
+    return plural(
+      split.sponsored,
+      "sponsored conversation",
+      "sponsored conversations",
+    );
+  }
+  if (split.sponsored === 0) {
+    return `${plural(split.credits, "conversation uses", "conversations use")} org credits`;
+  }
+  return `${split.sponsored.toLocaleString()} sponsored · ${split.credits.toLocaleString()} ${
     split.credits === 1 ? "uses" : "use"
   } org credits`;
 }
@@ -229,22 +238,19 @@ export function creditFundingExplanation(
 }
 
 /**
- * The sentence shown when a launch stops before creating any run because the
- * split is not the one the person was looking at. Nothing was launched, and
- * nothing will be until they launch again with the split now on screen.
+ * Shown when a launch stops before creating any run because fewer
+ * conversations are sponsored than the split that was on screen, so more
+ * would use org credits. Pressing Continue again launches with the new split.
  */
 export function fundingReviewNotice(args: {
-  shown: number | null;
+  shown: number;
   now: FundingSplit;
 }): string {
-  const now = fundingHeadline(args.now);
-  return args.shown === null
-    ? `This launch can use sponsored conversations: ${now}. Nothing was launched. Review the split, then launch again.`
-    : `Sponsored conversations changed while you were reviewing this launch. It was ${plural(
-        args.shown,
-        "sponsored conversation",
-        "sponsored conversations",
-      )}; now it is ${now}. Nothing was launched. Review the split, then launch again.`;
+  return `Sponsored conversations dropped from ${args.shown.toLocaleString()} to ${args.now.sponsored.toLocaleString()}, so ${plural(
+    args.now.credits,
+    "now uses",
+    "now use",
+  )} org credits. Nothing has launched yet. Press Continue to launch with this split.`;
 }
 
 /**
@@ -252,12 +258,8 @@ export function fundingReviewNotice(args: {
  * without it could move conversations onto the organization's credits, so
  * nothing is launched.
  */
-export function fundingUnverifiedNotice(shown: number): string {
-  return `We couldn't confirm the ${plural(
-    shown,
-    "sponsored conversation",
-    "sponsored conversations",
-  )} you were shown, so nothing was launched. Try launching again.`;
+export function fundingUnverifiedNotice(): string {
+  return "We couldn't confirm the sponsored conversations. Nothing has launched yet. Press Continue to try again.";
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   fundingHeadline,
   fundingPreviewRuns,
   fundingReviewNotice,
+  fundingUnverifiedNotice,
   fundingSplitOf,
   launchRunOverrides,
   withChosenIterations,
@@ -163,25 +164,31 @@ describe("alsoFailedNotice", () => {
 });
 
 describe("funding split copy", () => {
-  it("reads 'N sponsored conversations · M use org credits'", () => {
+  it("reads 'N sponsored · M use org credits', dropping a zero side", () => {
     expect(fundingHeadline({ sponsored: 5, credits: 10, total: 15 })).toBe(
-      "5 sponsored conversations · 10 use org credits",
+      "5 sponsored · 10 use org credits",
     );
     expect(fundingHeadline({ sponsored: 1, credits: 1, total: 2 })).toBe(
-      "1 sponsored conversation · 1 uses org credits",
+      "1 sponsored · 1 uses org credits",
     );
-    expect(fundingHeadline({ sponsored: 0, credits: 0, total: 0 })).toBe(
-      "0 sponsored conversations · 0 use org credits",
+    expect(fundingHeadline({ sponsored: 15, credits: 0, total: 15 })).toBe(
+      "15 sponsored conversations",
+    );
+    expect(fundingHeadline({ sponsored: 1, credits: 0, total: 1 })).toBe(
+      "1 sponsored conversation",
+    );
+    expect(fundingHeadline({ sponsored: 0, credits: 2, total: 2 })).toBe(
+      "2 conversations use org credits",
+    );
+    expect(fundingHeadline({ sponsored: 0, credits: 1, total: 1 })).toBe(
+      "1 conversation uses org credits",
     );
   });
 
   it("makes no claim that anything is free or guaranteed", () => {
     const texts = [
       fundingHeadline({ sponsored: 5, credits: 10, total: 15 }),
-      fundingReviewNotice({
-        shown: null,
-        now: { sponsored: 5, credits: 10, total: 15 },
-      }),
+      fundingUnverifiedNotice(),
       fundingReviewNotice({
         shown: 5,
         now: { sponsored: 0, credits: 15, total: 15 },
@@ -420,21 +427,21 @@ describe("creditFundingExplanation", () => {
 });
 
 describe("notices", () => {
-  it("a first look at a split says nothing was launched, a moved split says what changed", () => {
-    expect(
-      fundingReviewNotice({
-        shown: null,
-        now: { sponsored: 2, credits: 0, total: 2 },
-      }),
-    ).toMatch(/can use sponsored conversations: 2 sponsored conversations/);
+  it("a split that lost sponsored conversations says what changed and that nothing launched", () => {
     expect(
       fundingReviewNotice({
         shown: 5,
         now: { sponsored: 3, credits: 2, total: 5 },
       }),
-    ).toMatch(
-      /changed[\s\S]*5 sponsored conversations[\s\S]*3 sponsored[\s\S]*Nothing was launched/,
+    ).toBe(
+      "Sponsored conversations dropped from 5 to 3, so 2 now use org credits. Nothing has launched yet. Press Continue to launch with this split.",
     );
+    expect(
+      fundingReviewNotice({
+        shown: 1,
+        now: { sponsored: 0, credits: 1, total: 1 },
+      }),
+    ).toMatch(/dropped from 1 to 0, so 1 now uses org credits/);
   });
 
   it("a 409 notice separates none-launched from a partial launch and never says the rest will retry", () => {
