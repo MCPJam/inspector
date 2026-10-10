@@ -386,6 +386,9 @@ describe("walker edge cases", () => {
     expect(scrubCredentialsInText("code=4/0AbCdEf123 exchange failed")).toBe(
       "code=[redacted] exchange failed",
     );
+    expect(scrubCredentialsInText("password=HUNTER2")).toBe(
+      "password=[redacted]",
+    );
   });
 });
 

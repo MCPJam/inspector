@@ -713,13 +713,16 @@ function scrubTextParams(text: string, depth = 0): string {
       }
       // At the very start of the text a pair is a credential too
       // (`token=sk_…`, `code=4/0A…`), unless it is a form-less log line that
-      // opens with an error or status code (`code=ENOENT`, `code=500`).
+      // opens with an error or status code (`code=ENOENT`, `code=500`). Only
+      // `code` names one; `password=HUNTER2` is still a password.
+      const decodedKey = safeDecode(key);
       const statusCode =
         lead === "" &&
         depth === 0 &&
         !text.includes("&") &&
+        decodedKey.trim().toLowerCase() === "code" &&
         STATUS_CODE_VALUE.test(value);
-      if (!statusCode && isSecretParamKey(safeDecode(key))) {
+      if (!statusCode && isSecretParamKey(decodedKey)) {
         // Sentence punctuation after a value in prose is not part of it.
         const trailing = TRAILING_PUNCTUATION.exec(value)?.[0] ?? "";
         return `${lead}${key}${eq}${CREDENTIAL_PLACEHOLDER}${trailing}`;

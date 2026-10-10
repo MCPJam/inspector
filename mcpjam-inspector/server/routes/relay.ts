@@ -1257,8 +1257,8 @@ const PROJECT_KEY_SHAPE = /^phc_[A-Za-z0-9]+$/;
 /**
  * The query string as forwarded: every parameter but `data` through the
  * credential scrub. `data` is the payload, already scrubbed and re-encoded by
- * the inspection, and must reach PostHog byte for byte. So must `token` when
- * it is a project key (`phc_…`): public by design, and checked against the
+ * the inspection, and must reach PostHog byte for byte. So must the project
+ * key parameters (`token`, `api_key`) when they hold a project key (`phc_…`): public by design, and checked against the
  * relay's own project above. PostHog's flags (`compression`, `ver`, `ip`, `_`)
  * carry nothing to scrub and pass as they are. Anything else a client added
  * (`redirect_uri=…`, `code=…`) does not reach PostHog in the clear.
@@ -1269,7 +1269,9 @@ function scrubForwardedSearch(search: string): string {
   const out = body.split("&").map((pair) => {
     const [[key, value] = ["", ""]] = new URLSearchParams(pair);
     if (key === "data") return pair;
-    if (key === "token" && PROJECT_KEY_SHAPE.test(value)) return pair;
+    if (TOKEN_QUERY_PARAMS.includes(key) && PROJECT_KEY_SHAPE.test(value)) {
+      return pair;
+    }
     return scrubCredentialUrl(`?${pair}`).slice(1);
   });
   return `?${out.join("&")}`;

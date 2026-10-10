@@ -319,6 +319,16 @@ describe("event payloads are scrubbed and re-encoded the way they came", () => {
     );
   });
 
+  it("forwards a project key in api_key as sent", async () => {
+    const response = await createTestApp().request(
+      `/tlm/i/v0/e/?ver=1&api_key=${KEY}`,
+      { method: "POST", body: json() },
+    );
+    expect(response.status).toBe(200);
+    const { url } = forwardedCall();
+    expect(url.searchParams.get("api_key")).toBe(KEY);
+  });
+
   it("drops a ?data= that a POST carries next to its body", async () => {
     const response = await createTestApp().request(
       `/tlm/i/v0/e/?ver=1&data=${encodeURIComponent(SHARE_URL)}`,
