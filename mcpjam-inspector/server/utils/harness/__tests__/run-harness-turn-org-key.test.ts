@@ -288,6 +288,35 @@ describe("runHarnessTurn on the organization's own key", () => {
       });
     });
 
+    it("a retryable reason the turn ended on (the 409) is adopted", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = bridgeRefusalError;
+      harnessState.recordedRefusal = {
+        reason: "upstream_unreachable",
+        at: Date.now() + 60_000,
+      };
+      const infra = (await failedTurn()).at(-1)?.infra;
+      expect(infra).toMatchObject({
+        code: "upstream_unreachable",
+        httpStatus: 409,
+      });
+      expect(classifyEvalInfraError(infra as never)).toMatchObject({
+        retryable: true,
+      });
+    });
+
+    it("a retryable reason without the 409 may be one the CLI retried past: not adopted", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = new Error("bridge exited");
+      harnessState.recordedRefusal = {
+        reason: "upstream_unreachable",
+        at: Date.now() + 60_000,
+      };
+      const infra = (await failedTurn()).at(-1)?.infra;
+      expect(harnessState.readRefusal).toHaveBeenCalled();
+      expect(infra?.code).not.toBe("upstream_unreachable");
+    });
+
     it("a refusal recorded before this turn is not this turn's", async () => {
       harnessState.streamParts = [{ type: "start-step" }];
       harnessState.streamError = bridgeRefusalError;

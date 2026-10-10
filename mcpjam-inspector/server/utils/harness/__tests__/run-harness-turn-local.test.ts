@@ -970,6 +970,30 @@ describe("runHarnessTurn local continuity", () => {
       ).toBeUndefined();
     });
 
+    it("a run that owns its session id fails the attempt on a replaced key", async () => {
+      // A run's cleanup removes ITS session id's state and no other, so a
+      // fresh id would outlive the run: the attempt fails instead.
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      const events: Array<{ message: string }> = [];
+      const options = orgOptions();
+      await runHarnessTurn(
+        {
+          ...options,
+          harnessExecutionTarget: {
+            ...options.harnessExecutionTarget,
+            localSessionId: "local-session",
+          },
+          onEngineError: (event: { message: string }) => events.push(event),
+        } as any,
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.teardown).toHaveBeenCalled();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
     it("an approval waiting across a key replacement does not run", async () => {
       vi.mocked(claimHarnessSessionState).mockResolvedValue({
         ok: true,

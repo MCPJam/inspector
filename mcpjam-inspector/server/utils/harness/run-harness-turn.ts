@@ -92,6 +92,7 @@ import {
   type HarnessOrgLeaseUpstream,
 } from "./harness-model-broker.js";
 import {
+  HARNESS_PROXY_REFUSAL_REASONS,
   HARNESS_PROXY_REFUSAL_STATUS,
   isHarnessProxyRefusalReason,
   type HarnessProxyRefusalReason,
@@ -806,6 +807,11 @@ const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
  * status (or no status). A definite provider status (a 529, a 401) is the
  * provider's own answer and stands. The reason must be from this turn and from
  * the shared vocabulary; anything else leaves the evidence as it was.
+ *
+ * A retryable reason is adopted only when the runtime's evidence carries the
+ * refusal status, i.e. the turn ended ON it. The lease keeps its latest
+ * refusal even after the CLI retries past it, so without that status it may
+ * describe a call the runtime recovered from, not the failure at hand.
  */
 async function proxyRefusalForFailedTurn(args: {
   evidence: InfraFailureEvidence | undefined;
@@ -829,11 +835,20 @@ async function proxyRefusalForFailedTurn(args: {
       runId: args.leaseRunId,
       bearer: args.bearer,
     });
-    return refusal &&
-      refusal.at >= args.turnStartedAt &&
-      isHarnessProxyRefusalReason(refusal.reason)
-      ? refusal.reason
-      : undefined;
+    if (
+      !refusal ||
+      refusal.at < args.turnStartedAt ||
+      !isHarnessProxyRefusalReason(refusal.reason)
+    ) {
+      return undefined;
+    }
+    if (
+      HARNESS_PROXY_REFUSAL_REASONS[refusal.reason].retry &&
+      evidence?.httpStatus !== HARNESS_PROXY_REFUSAL_STATUS
+    ) {
+      return undefined;
+    }
+    return refusal.reason;
   } catch {
     return undefined;
   }
@@ -2385,6 +2400,15 @@ export async function runHarnessTurn(
             if (isApprovalResume) {
               throw new Error(
                 "The organization's provider key was replaced while the approval was waiting; the pending action will not run. Start a new turn.",
+              );
+            }
+            // A run (eval, swarm) owns its session id: the run's cleanup
+            // removes that id's state and no other, so a fresh id here would
+            // outlive the run. A key replaced mid-run is a configuration
+            // change; the attempt fails instead.
+            if (harnessExecutionTarget.localSessionId) {
+              throw new Error(
+                "The organization's provider key was replaced during this run; the attempt was not continued. Start a new run.",
               );
             }
             continuity = {
