@@ -15,8 +15,8 @@
  * there it would hold the action's API key and write token.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path, { dirname, join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import path, { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
@@ -79,6 +79,22 @@ function gitShow(path, root) {
     // file as new.
     if (NOT_IN_HEAD.test(String(error.stderr ?? ""))) return "";
     throw error;
+  }
+}
+
+/**
+ * The path with symlinks resolved, so it compares with git's top level
+ * (`/var/folders/...` on macOS is really `/private/var/...`). A file that does
+ * not exist yet resolves through its nearest existing parent.
+ */
+export function realPath(filePath) {
+  try {
+    return realpathSync(filePath);
+  } catch {
+    // Not created yet: canonicalize the parent and keep the leaf as given.
+    const parent = dirname(filePath);
+    if (parent === filePath) return filePath;
+    return join(realPath(parent), basename(filePath));
   }
 }
 
@@ -179,8 +195,8 @@ function main() {
   const root = resolveRoot(input.cwd);
   if (input.hook_event_name === "Stop") return runStop(input, root);
 
-  const filePath = input.tool_input?.file_path;
-  if (!filePath) return 0;
+  if (!input.tool_input?.file_path) return 0;
+  const filePath = realPath(input.tool_input.file_path);
   const path = repoPath(filePath, root);
 
   if (input.hook_event_name === "PreToolUse") {

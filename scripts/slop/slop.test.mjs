@@ -400,26 +400,33 @@ describe("hook paths", async () => {
     const git = (...args) =>
       execFileSync("git", args, { cwd: other, encoding: "utf8" });
     mkdirSync(join(other, "sdk/src"), { recursive: true });
-    writeFileSync(join(other, "sdk/src/a.ts"), "const a = b as any;\n");
+    writeFileSync(join(other, "sdk/src/a.ts"), "const a = 1;\n");
     git("init", "-q");
     git("config", "user.email", "test@example.com");
     git("config", "user.name", "test");
     git("add", ".");
     git("commit", "-qm", "base");
+    writeFileSync(join(other, "sdk/src/a.ts"), "const a = b as any;\n");
     const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
-    // The cast is already in that checkout's HEAD, so rewriting the file
-    // unchanged adds nothing. Read against this repo's HEAD instead, the path
-    // would be new and the cast would count.
-    const result = spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify({
-        cwd: join(other, "sdk"),
-        hook_event_name: "PostToolUse",
-        tool_name: "Write",
-        tool_input: { file_path: join(other, "sdk/src/a.ts"), content: "" },
-      }),
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 0, result.stderr);
+    const run = () =>
+      spawnSync(process.execPath, [HOOK], {
+        input: JSON.stringify({
+          cwd: join(other, "sdk"),
+          hook_event_name: "PostToolUse",
+          tool_name: "Write",
+          tool_input: { file_path: join(other, "sdk/src/a.ts"), content: "" },
+        }),
+        encoding: "utf8",
+      });
+    // The cast is new against that checkout's HEAD, so the hook reports it.
+    // Measured from this repo instead, the path is outside the root and the
+    // hook would fail open and say nothing.
+    const added = run();
+    assert.equal(added.status, 2, added.stderr);
+    assert.match(added.stderr, /`as any` casts: \+1/);
+    // Committed there, the same content is no longer new.
+    git("commit", "-qam", "cast");
+    assert.equal(run().status, 0);
   });
 
   it("fails open when git cannot read HEAD", async () => {
