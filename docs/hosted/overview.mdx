@@ -110,6 +110,37 @@ The **Tracing** tab is not available in the hosted app. It is a live log of the 
 
 Getting eval traces OUT of the hosted app is a different thing, and it does work: open a completed run and use **Export traces** for an OTLP JSON file (see [Evals](/inspector/evals#exporting-traces)), or fetch the same projection from `GET /api/v1/trace-exports/otlp` in the [public API](/reference/public-api). Both use OpenInference semantic conventions and land in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
 
+## Session replay and privacy
+
+MCPJam records session replays on the hosted app and the packaged desktop app to help diagnose issues. Every session runs at one of three privacy levels:
+
+| Level | When it applies |
+|-------|----------------|
+| `off` | npx, Docker, and `electron-forge start` (local dev) builds — nothing is recorded |
+| `masked` | Packaged desktop app (all users); hosted sessions where any organization in view has enterprise privacy enabled; hosted share links (tester chat) |
+| `full` | Hosted app, signed in, no enterprise-privacy organization in view; hosted app, signed out (visitors and guests) |
+
+### Masked recording
+
+When a session runs at `masked`, both the PostHog and Sentry recorders apply the same restricted profile:
+
+- All text nodes, inputs, images, video, canvas, and iframes are hidden or replaced with placeholders.
+- Console logs and network request/response bodies are not captured.
+- Names are removed from recorded URLs — route words and IDs are kept, everything else becomes `[name]`.
+- Members of an enterprise-privacy organization are identified by their user ID only; name and email are not sent to analytics.
+
+### Enterprise privacy
+
+Enterprise organizations can enable **enterprise privacy** for their organization. When it is on:
+
+- Any hosted session where that organization is in view is recorded `masked`, regardless of the viewer's own plan.
+- All members of the organization are identified by ID only in analytics and error tracking — name and email are withheld.
+- The setting is enabled automatically when an organization moves to the Enterprise plan. Your MCPJam contact can also set it explicitly.
+
+### Fail-closed behavior
+
+Recording never starts before the session's privacy level is known. While the level is being determined (the organization list is loading), both recorders are held off. If the list does not answer within 10 seconds, the session falls back to `masked` — it never falls back to `full`.
+
 ## Billing
 
 ### Payment history
