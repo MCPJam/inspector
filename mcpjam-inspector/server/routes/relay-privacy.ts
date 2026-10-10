@@ -12,7 +12,7 @@ import {
   maskReplayText,
   mostRestrictivePolicy,
   scrubNamesFromUrl,
-  scrubStyleUrls,
+  maskReplayStyle,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryPolicy,
@@ -417,12 +417,12 @@ function maskAttributeValue(name: string, value: unknown): unknown {
       if (entry === false) {
         style[property] = entry;
       } else if (typeof entry === "string") {
-        style[property] = scrubStyleUrls(entry);
+        style[property] = maskReplayStyle(entry);
       } else if (
         Array.isArray(entry) &&
         entry.every((part) => typeof part === "string")
       ) {
-        style[property] = entry.map((part) => scrubStyleUrls(part));
+        style[property] = entry.map((part) => maskReplayStyle(part));
       }
     }
     return style;
@@ -430,7 +430,7 @@ function maskAttributeValue(name: string, value: unknown): unknown {
   if (typeof value !== "string") {
     throw new UnsupportedReplayError("unknown attribute value");
   }
-  if (key === "style") return scrubStyleUrls(value);
+  if (key === "style") return maskReplayStyle(value);
   if (MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return value;
   return value === "" ? "" : MASKED_ATTRIBUTE_VALUE;
 }

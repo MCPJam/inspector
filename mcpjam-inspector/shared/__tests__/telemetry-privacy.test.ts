@@ -9,7 +9,7 @@ import {
   maskReplayText,
   mostRestrictivePolicy,
   scrubNamesFromUrl,
-  scrubStyleUrls,
+  maskReplayStyle,
 } from "../telemetry-privacy";
 import { scrubSensitiveUrl } from "../credential-url";
 
@@ -114,14 +114,24 @@ describe("replay masking helpers", () => {
   });
 });
 
-describe("scrubStyleUrls", () => {
-  it("leaves a style without URLs alone", () => {
+describe("maskReplayStyle", () => {
+  it("leaves a style without URLs or strings alone", () => {
     for (const style of [
       "width: 10px; color: red",
-      'font-family: Inter, "Segoe UI", sans-serif',
+      "font-family: var(--font-code), monospace",
     ]) {
-      expect(scrubStyleUrls(style)).toBe(style);
+      expect(maskReplayStyle(style)).toBe(style);
     }
+  });
+
+  it("masks every other quoted string like text", () => {
+    const name = "Zelda Quixote-Fairweather";
+    expect(maskReplayStyle(`--label: "${name}"; width: 4px`)).toBe(
+      `--label: "${maskReplayText(name)}"; width: 4px`,
+    );
+    expect(maskReplayStyle("font-family: 'Acme Sans', sans-serif")).toBe(
+      'font-family: "**** ****", sans-serif',
+    );
   });
 
   it("scrubs every url() argument, quoted or bare, in any case", () => {
@@ -131,7 +141,7 @@ describe("scrubStyleUrls", () => {
       "list-style-image: URL( 'https://cdn.acme.example/zelda.png' )",
       "cursor: url(zelda.cur), auto",
     ].join("; ");
-    const scrubbed = scrubStyleUrls(style);
+    const scrubbed = maskReplayStyle(style);
     expect(scrubbed).not.toMatch(/acme|zelda/i);
     expect(scrubbed).toContain(
       'mask-image: url("https://[host]/[name]/[name]")',
@@ -141,12 +151,12 @@ describe("scrubStyleUrls", () => {
 
   it("scrubs data URIs and URL-like strings in image-set()", () => {
     expect(
-      scrubStyleUrls(
+      maskReplayStyle(
         "background: url('data:image/svg+xml;utf8,<svg><text>Zelda</text></svg>')",
       ),
     ).toBe('background: url("[name]")');
     expect(
-      scrubStyleUrls(
+      maskReplayStyle(
         'background-image: image-set("https://cdn.acme.example/z.png" 1x, "zelda@2x.png" 2x)',
       ),
     ).toBe(
@@ -155,31 +165,31 @@ describe("scrubStyleUrls", () => {
   });
 
   it("handles escapes inside the URL", () => {
-    expect(scrubStyleUrls('background: url("a\\"zelda.png")')).toBe(
+    expect(maskReplayStyle('background: url("a\\"zelda.png")')).toBe(
       'background: url("[name]")',
     );
-    expect(scrubStyleUrls("background: url(a\\)zelda.png)")).toBe(
+    expect(maskReplayStyle("background: url(a\\)zelda.png)")).toBe(
       'background: url("[name]")',
     );
   });
 
   it("masks a style it cannot tokenize", () => {
-    expect(scrubStyleUrls('background: url("https://acme.example/z')).toBe(
+    expect(maskReplayStyle('background: url("https://acme.example/z')).toBe(
       "***",
     );
     expect(
-      scrubStyleUrls("background: url(https://acme.example/(z).png)"),
+      maskReplayStyle("background: url(https://acme.example/(z).png)"),
     ).toBe("***");
     expect(
-      scrubStyleUrls("background: u\\72l(https://acme.example/z.png)"),
+      maskReplayStyle("background: u\\72l(https://acme.example/z.png)"),
     ).toBe("***");
   });
 
   it("is idempotent", () => {
-    const once = scrubStyleUrls(
+    const once = maskReplayStyle(
       'background: url("https://cdn.acme.example/avatars/zelda.png")',
     );
-    expect(scrubStyleUrls(once)).toBe(once);
+    expect(maskReplayStyle(once)).toBe(once);
   });
 });
 

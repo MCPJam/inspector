@@ -444,9 +444,10 @@ export const SENTRY_REPLAY_OPTIONS = {
   // rrweb never passes `href`, `src` or `style` through attribute masking —
   // it rewrites their URLs to absolute ones instead — so elements whose job
   // is a URL, or whose inline style holds one (an MCP server's icon drawn as
-  // a CSS mask), are blocked: kept as sized boxes, their URL and content
-  // dropped. Their text is masked at every level anyway, and Sentry's DOM
-  // events cannot be edited per level, so this applies at `full` too.
+  // a CSS mask) or a string (a custom property's label, a brand font), are
+  // blocked: kept as sized boxes, their URL and content dropped. Their text
+  // is masked at every level anyway, and Sentry's DOM events cannot be
+  // edited per level, so this applies at `full` too.
   block: [
     "a[href]",
     "area[href]",
@@ -455,6 +456,8 @@ export const SENTRY_REPLAY_OPTIONS = {
     "track",
     '[style*="url(" i]',
     '[style*="image-set(" i]',
+    `[style*='"']`,
+    `[style*="'"]`,
   ],
   networkDetailAllowUrls: [] as string[],
   networkCaptureBodies: false,

@@ -266,7 +266,7 @@ export const MASKED_ATTRIBUTE_VALUE = "***";
 export function maskReplayAttribute(name: string, value: string): string {
   const key = name.toLowerCase();
   if (!MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return MASKED_ATTRIBUTE_VALUE;
-  return key === "style" ? scrubStyleUrls(value) : value;
+  return key === "style" ? maskReplayStyle(value) : value;
 }
 
 /** Text masked the way rrweb masks it: every visible character a `*`. */
@@ -505,11 +505,10 @@ export function scrubUntrustedUrl(value: unknown): string {
 // ── Inline styles ──────────────────────────────────────────────────────
 
 // A `url(...)`, its argument quoted or bare, or a quoted string: CSS's own
-// tokens, closely enough to find every URL a style can hold.
+// tokens, closely enough to find every URL and string a style can hold.
 const CSS_URL_OR_STRING =
   /url\(\s*("(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|(?:[^"'()\s\\]|\\[\s\S])*)\s*\)|"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'/gi;
-// A quoted string that could be a URL or a file name (`image-set("a.png")`)
-// rather than a font family.
+// A quoted string that could be a URL or a file name (`image-set("a.png")`).
 const URL_LIKE_STRING = /[/:.]/;
 
 function cssTokenValue(token: string): string {
@@ -518,14 +517,15 @@ function cssTokenValue(token: string): string {
 }
 
 /**
- * An inline `style` value with the URLs in it scrubbed. A masked replay keeps
- * `style` for layout, but a style can name the customer's host and files: an
- * MCP server's icon drawn as a CSS mask, an avatar as a background. Every
- * `url(...)` argument, and every quoted string that could be a URL
- * (`image-set("…")`), is `scrubUntrustedUrl`ed. A value with an unparsed
- * `url(`, quote or escape left over is masked whole.
+ * An inline `style` value, masked for a replay. A masked replay keeps `style`
+ * for layout, but a style can name the customer's host and files (an MCP
+ * server's icon drawn as a CSS mask, an avatar as a background) or carry text
+ * in a string (a custom property's label, a brand font). Every `url(...)`
+ * argument, and every quoted string that could be a URL (`image-set("…")`),
+ * is `scrubUntrustedUrl`ed; every other quoted string is masked like text. A
+ * value with an unparsed `url(`, quote or escape left over is masked whole.
  */
-export function scrubStyleUrls(style: string): string {
+export function maskReplayStyle(style: string): string {
   if (!/url\(|["'\\]/i.test(style)) return style;
   const scrubbed = style.replace(
     CSS_URL_OR_STRING,
@@ -535,9 +535,11 @@ export function scrubStyleUrls(style: string): string {
         return `url(${JSON.stringify(url)})`;
       }
       const value = cssTokenValue(token);
-      return URL_LIKE_STRING.test(value)
-        ? JSON.stringify(scrubUntrustedUrl(value))
-        : token;
+      return JSON.stringify(
+        URL_LIKE_STRING.test(value)
+          ? scrubUntrustedUrl(value)
+          : maskReplayText(value),
+      );
     },
   );
   const rest = scrubbed.replace(CSS_URL_OR_STRING, "");

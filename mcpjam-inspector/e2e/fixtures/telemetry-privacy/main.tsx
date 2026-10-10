@@ -10,7 +10,7 @@
  * privacy; `?privacy=full` is a verified non-private context, the positive
  * control that proves the recorders were capturing all along.
  */
-import { StrictMode } from "react";
+import { StrictMode, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
@@ -85,6 +85,17 @@ function Harness() {
             maskImage: `url(${JSON.stringify(SYNTHETIC_PII.iconUrl)})`,
             WebkitMaskImage: `url(${JSON.stringify(SYNTHETIC_PII.iconUrl)})`,
           }}
+        />
+        {/* Text carried in a style string, e.g. a custom property's label. */}
+        <span
+          className="harness-label"
+          style={
+            {
+              display: "inline-block",
+              width: 40,
+              "--harness-label": JSON.stringify(SYNTHETIC_PII.name),
+            } as CSSProperties
+          }
         />
         <input
           className="harness-input"
