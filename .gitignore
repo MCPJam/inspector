@@ -6,7 +6,9 @@ node_modules/
 node_modules
 .mcpjam/skills/
 **/.mcpjam/skills/
-.claude/
+# Shared hooks are committed; local settings, launch configs and worktrees are not.
+.claude/*
+!.claude/settings.json
 docs/superpowers/
 *.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts

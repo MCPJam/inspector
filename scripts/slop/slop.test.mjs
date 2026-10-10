@@ -179,3 +179,90 @@ describe("ratchet", () => {
     assert.match(result.stdout, /Waived/);
   });
 });
+
+describe("agent hooks", async () => {
+  const { checkNewPath, checkEdit, editFragments, FILE_BUDGET } = await import(
+    "./hook.mjs"
+  );
+  const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
+
+  it("refuses scratch notes, spike folders and new root files", () => {
+    assert.match(checkNewPath("NOTES-item-4.md", false), /scratch notes/);
+    assert.match(checkNewPath("sdk/NOTES_plan.md", false), /scratch notes/);
+    assert.match(checkNewPath(".spike-foo/run.mjs", false), /spike/);
+    assert.match(checkNewPath("plan.md", false), /RFC/);
+  });
+
+  it("allows package files, existing files and allowlisted root files", () => {
+    assert.equal(checkNewPath("sdk/src/new.ts", false), null);
+    assert.equal(checkNewPath("plan.md", true), null);
+    assert.equal(checkNewPath("CLAUDE.md", false), null);
+  });
+
+  it("reports what an edit added, not what the file already had", () => {
+    const fragments = editFragments("Edit", {
+      old_string: "const a = b;",
+      new_string: "const a = b as any;",
+    });
+    const problem = checkEdit("sdk/src/a.ts", {
+      ...fragments,
+      fileBefore: "x as any\n",
+      fileAfter: "x as any\nconst a = b as any;\n",
+    });
+    assert.match(problem, /`as any` casts: \+1/);
+
+    const clean = checkEdit("sdk/src/a.ts", {
+      ...editFragments("Edit", { old_string: "a", new_string: "b" }),
+      fileBefore: "x as any\n",
+      fileAfter: "x as any\n",
+    });
+    assert.equal(clean, null);
+  });
+
+  it("flags a file growing past the budget", () => {
+    const big = "x\n".repeat(FILE_BUDGET + 10);
+    const problem = checkEdit("sdk/src/a.ts", {
+      before: "",
+      after: "x\n",
+      fileBefore: big,
+      fileAfter: `${big}x\n`,
+    });
+    assert.match(problem, /line budget/);
+  });
+
+  it("ignores tests", () => {
+    const problem = checkEdit("sdk/src/a.test.ts", {
+      before: "",
+      after: "x as any",
+      fileBefore: "",
+      fileAfter: "x as any",
+    });
+    assert.equal(problem, null);
+  });
+
+  it("exits 2 with the reason on stdin input, and 0 on garbage", () => {
+    const run = (input) => {
+      try {
+        execFileSync("node", [HOOK], {
+          input,
+          encoding: "utf8",
+          stdio: "pipe",
+        });
+        return { code: 0 };
+      } catch (error) {
+        return { code: error.status, stderr: error.stderr };
+      }
+    };
+    const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    const denied = run(
+      JSON.stringify({
+        hook_event_name: "PreToolUse",
+        tool_name: "Write",
+        tool_input: { file_path: join(root, "NOTES-item-9.md") },
+      })
+    );
+    assert.equal(denied.code, 2);
+    assert.match(denied.stderr, /scratch notes/);
+    assert.equal(run("not json").code, 0);
+  });
+});
