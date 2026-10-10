@@ -42,7 +42,7 @@ const STEP_KIND_LABELS: Record<ScriptedStep["kind"], string> = {
  * `StepAssertion` (keyed on `type`) and `WidgetAssertion` (keyed on `kind`) are
  * separate unions over the SAME five kind names, so one label map serves both.
  * This file used to keep its own copy, and it had already drifted —
- * `widgetToolCalled` read "Widget called tool" here and "View called tool" in
+ * `widgetToolCalled` read "Widget called tool" here and "View called a tool" in
  * the step-list editor, two names for one assertion on two screens.
  */
 const ASSERTION_LABELS: Record<StepAssertion["type"], string> =

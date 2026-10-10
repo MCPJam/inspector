@@ -14,7 +14,7 @@ import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
  * trial pane renders, so the two panes cannot drift on a label, a role chip or
  * a provenance. A widget assertion needs its own row: `ScorecardRowView` only
  * expands when `row.predicate` is set, so on the old form a recorded
- * "View called tool" check could be seen and deleted but never edited. It gets
+ * "View called a tool" check could be seen and deleted but never edited. It gets
  * the same chrome and the DOM-level fields underneath.
  */
 
