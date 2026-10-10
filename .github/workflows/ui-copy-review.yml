@@ -1,7 +1,7 @@
 name: UI Copy Review
 
 # Claude reads the user-facing strings a PR adds and fails the check when
-# one matches a pattern in .claude/skills/ui-copy/SKILL.md: vague errors,
+# one matches a pattern in .agents/skills/ui-copy/SKILL.md: vague errors,
 # apologies, filler, no next step. Haiku 5.5 classifies, Sonnet 5.5 rewrites
 # the flagged strings, and the rewrites land as one-click suggestions.
 # scripts/slop/copy-review.mjs is the whole job; this file only runs it.
