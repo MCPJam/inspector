@@ -181,9 +181,8 @@ describe("ratchet", () => {
 });
 
 describe("pr-size verdict", async () => {
-  const { verdict, parseNumstat, countPatchLines, LARGE, LIMIT } = await import(
-    "./pr-size.mjs"
-  );
+  const { verdict, parseNumstat, countPatchLines, parseLabels, LARGE, LIMIT } =
+    await import("./pr-size.mjs");
 
   it("counts NUL-delimited paths, including non-ASCII and tab ones", () => {
     const output = [
@@ -255,6 +254,18 @@ describe("pr-size verdict", async () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  it("keeps a label with a comma in its name whole", () => {
+    assert.deepEqual(parseLabels('["review,mechanical"]'), [
+      "review,mechanical",
+    ]);
+    assert.equal(
+      verdict(LIMIT + 1, parseLabels('["review,mechanical"]')),
+      "fail"
+    );
+    assert.deepEqual(parseLabels(undefined), []);
+    assert.throws(() => parseLabels('"mechanical"'), /JSON array/);
   });
 
   it("is ok within budget", () => {

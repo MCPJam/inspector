@@ -9,7 +9,8 @@
  *
  *   node scripts/slop/pr-size.mjs --base HEAD^1
  *
- * PR_LABELS is the comma-separated label list; CI fills it from the event.
+ * PR_LABELS is a JSON array of label names; CI fills it from the event. A
+ * comma-separated list would split a label whose name contains a comma.
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
@@ -92,6 +93,14 @@ export function measureDiff(base) {
   return { total, files };
 }
 
+/** Label names from PR_LABELS, a JSON array. Unset means no labels. */
+export function parseLabels(value) {
+  if (!value) return [];
+  const labels = JSON.parse(value);
+  if (!Array.isArray(labels)) throw new Error("PR_LABELS must be a JSON array");
+  return labels.map(String);
+}
+
 export function verdict(total, labels) {
   if (total > LIMIT && !labels.includes("mechanical")) return "fail";
   if (total > LARGE)
@@ -139,10 +148,7 @@ function report({ total, files }, labels) {
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const labels = (process.env.PR_LABELS ?? "")
-    .split(",")
-    .map((label) => label.trim())
-    .filter(Boolean);
+  const labels = parseLabels(process.env.PR_LABELS);
   process.exitCode = report(
     measureDiff(resolveBase(process.argv.slice(2))),
     labels
