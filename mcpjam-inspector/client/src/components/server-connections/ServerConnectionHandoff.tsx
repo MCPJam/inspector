@@ -44,6 +44,7 @@ import {
   consumeOAuthCallbackParams,
   readOAuthCallbackParams,
 } from "@/lib/oauth-callback-inbox";
+import { ErrorCard } from "@/components/ui/error-card";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
@@ -647,20 +648,23 @@ export function ServerConnectionHandoff() {
             ? "This link was opened somewhere else"
             : "This link cannot be used"}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          {usedLink
-            ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
-            : error}
-        </p>
-        {retryableCompletion && (
-          <button
-            type="button"
-            className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
-            disabled={busy}
-            onClick={() => void retryCompletion()}
-          >
-            {busy ? "Retrying…" : "Retry connecting"}
-          </button>
+        {usedLink ? (
+          <p className="text-sm text-muted-foreground">
+            Connection links only work in the browser that first opened them.
+            Create a new link from the CLI to connect again.
+          </p>
+        ) : (
+          <ErrorCard
+            error={error}
+            variant="inline"
+            onRetry={
+              retryableCompletion
+                ? () => {
+                    if (!busy) void retryCompletion();
+                  }
+                : undefined
+            }
+          />
         )}
       </Shell>
     );

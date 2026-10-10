@@ -615,9 +615,7 @@ describe("returning from the authorization server", () => {
     captureOAuthCallbackFromUrl();
 
     render(<ServerConnectionHandoff />);
-    const retry = await screen.findByRole("button", {
-      name: "Retry connecting",
-    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
     fireEvent.click(retry);
 
     await waitFor(() =>
