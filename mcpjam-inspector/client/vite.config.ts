@@ -3,6 +3,7 @@ import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import meticulous from "@alwaysmeticulous/recorder-plugin/vite";
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
@@ -151,6 +152,16 @@ export default defineConfig(({ mode }) => {
   // `dist/client` are accepted; the Electron renderer has its own config.
   const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
 
+  // Meticulous session recorder. Injected only into hosted web builds whose
+  // Railway service sets METICULOUS_RECORDING_TOKEN (a public, read-only
+  // token), so npx, Docker self-host, Electron and local builds never record.
+  // `enabled: "always"` because the plugin defaults to dev-server only.
+  const meticulousRecordingToken = env.METICULOUS_RECORDING_TOKEN;
+  const recordWithMeticulous =
+    Boolean(meticulousRecordingToken) &&
+    env.VITE_MCPJAM_HOSTED_MODE === "true" &&
+    buildSurface === "web";
+
   return {
     root: clientDir,
     envDir,
@@ -164,6 +175,21 @@ export default defineConfig(({ mode }) => {
       env.CLIENT_CACHE_DIR || "node_modules/.vite",
     ),
     plugins: [
+      // First, so the recorder is the first <script> in <head>.
+      ...(recordWithMeticulous
+        ? [
+            meticulous({
+              recordingToken: meticulousRecordingToken,
+              enabled: "always",
+              // Every `vite build` is mode "production", so tag staging and
+              // preview builds by their deploy environment instead.
+              attributes: {
+                "data-is-production-environment":
+                  env.VITE_ENVIRONMENT === "production" ? "true" : "false",
+              },
+            }),
+          ]
+        : []),
       react(),
       tailwindcss(),
       lexerSafeMinify(),

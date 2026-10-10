@@ -1,0 +1,145 @@
+# Builds the hosted-mode Inspector client and runs Meticulous visual tests
+# against the static assets. Sessions are recorded on staging and PR previews,
+# so the build uses the staging hosted-mode values: replayed cross-origin
+# requests (Convex) are matched by URL and must point where they were recorded.
+name: Meticulous (mcpjam-inspector)
+
+# Important: The workflow needs to run both on pushes to your main branch and on
+# pull requests. It needs to run on your main branch because it'll use the results
+# from the base commit of the PR on the main branch to compare against.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mcpjam-inspector/client/**"
+      - "mcpjam-inspector/shared/**"
+      - "mcpjam-inspector/package.json"
+      - "mcpjam-inspector/.env.production"
+      - "chat-ui/src/**"
+      - "widget-react/src/**"
+      - "design-system/src/**"
+      - "sdk/src/**"
+      - "sdk/package.json"
+      - "package-lock.json"
+      - ".github/workflows/meticulous-mcpjam-inspector.yml"
+  # No base-branch filter, so stacked PRs run too (same reasoning as test.yml).
+  pull_request:
+    paths:
+      - "mcpjam-inspector/client/**"
+      - "mcpjam-inspector/shared/**"
+      - "mcpjam-inspector/package.json"
+      - "mcpjam-inspector/.env.production"
+      - "chat-ui/src/**"
+      - "widget-react/src/**"
+      - "design-system/src/**"
+      - "sdk/src/**"
+      - "sdk/package.json"
+      - "package-lock.json"
+      - ".github/workflows/meticulous-mcpjam-inspector.yml"
+  # Important: We need the workflow to be triggered on workflow_dispatch events,
+  # so that Meticulous can run the workflow on the base commit to compare
+  # against if an existing workflow hasn't run. The meticulous-commit-sha input
+  # lets Meticulous ask for a specific commit (e.g. stacked PRs); without it,
+  # a dispatched run can only build whatever the branch currently points at.
+  workflow_dispatch:
+    inputs:
+      meticulous-commit-sha:
+        description: Commit Meticulous has asked this run to build. Defaults to the branch head.
+        required: false
+
+# Important: The workflow needs all the permissions below.
+# These permissions are mainly needed to post and update the status check and
+# feedback comment on your PR. Meticulous won't work without them.
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: read
+
+# Cancel a superseded PR run, but never let a Meticulous-dispatched base run or
+# a push to main cancel, or be cancelled by, a PR run: each event gets its own
+# group, and dispatched runs are keyed by the commit Meticulous asked for.
+concurrency:
+  group: meticulous-mcpjam-inspector-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.inputs['meticulous-commit-sha'] || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "24.14.0"
+  # This job never launches Electron, so skip the (occasionally flaky) binary download.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # Prefer the dispatched commit when set; otherwise the PR head. On pull_request github.sha is the merge commit,
+  # not the PR head SHA that Meticulous looks up.
+  METICULOUS_COMMIT_SHA: ${{ github.event.inputs['meticulous-commit-sha'] || (github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha) }}
+
+jobs:
+  test:
+    name: Meticulous (mcpjam-inspector)
+    # Fork and Dependabot PRs get no secrets, so skip them. Push to main and
+    # workflow_dispatch (Meticulous base runs) always run.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # Same workflow file as the upload step: ensure-base dispatches *this*
+      # workflow on the base branch. Run it before checkout/build so the base
+      # can start while this job continues. Needs no checkout. Pass the same
+      # ref as checkout so we pre-warm the base the upload step will ask for.
+      - name: Ensure base tests exist
+        uses: alwaysmeticulous/report-diffs-action/ensure-base@v1
+        with:
+          api-token: ${{ secrets.METICULOUS_API_TOKEN_MCPJAM_INSPECTOR }}
+          ref: ${{ env.METICULOUS_COMMIT_SHA }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.METICULOUS_COMMIT_SHA }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache (and key) as lint.yml.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      # The SDK, chat-ui and widget-react are aliased to source in
+      # client/vite.config.ts, so no SDK build is needed first. Never set
+      # SENTRY_AUTH_TOKEN or POSTHOG_PERSONAL_API_KEY here: with them the build
+      # uploads source maps and deletes them, and Meticulous needs them.
+      # VITE_WORKOS_API_HOSTNAME stays unset: staging and previews use the
+      # same-origin /user_management proxy.
+      - name: Build Inspector client
+        env:
+          # METICULOUS_BUILD marks this as a build for Meticulous testing.
+          METICULOUS_BUILD: "true"
+          VITE_MCPJAM_HOSTED_MODE: "true"
+          VITE_ENVIRONMENT: staging
+          VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+          VITE_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
+          VITE_MCPJAM_SANDBOX_ORIGIN: https://sandbox-staging.mcpjam.com
+          VITE_DISABLE_SENTRY: "true"
+        run: npm run build:client -w @mcpjam/inspector
+
+      - name: Run Meticulous tests
+        uses: alwaysmeticulous/report-diffs-action/upload-assets@v1
+        with:
+          api-token: ${{ secrets.METICULOUS_API_TOKEN_MCPJAM_INSPECTOR }}
+          app-directory: "mcpjam-inspector/dist/client"
