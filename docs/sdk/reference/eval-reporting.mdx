@@ -364,7 +364,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 | `serverNames` | `string[]` | No | MCP server names to associate with the run. When omitted, the SDK infers names from the server IDs in the resolved replay configs. Pass `[]` to opt out of inference and record no server names. |
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
-| `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
+| `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100). Default: the suite's threshold, else 70 |
 | `failOnToolError` | `boolean` | No | When not `false`, results derived from traces treat tool execution failures as failed iterations (default: strict). See [Tool execution and `passed`](#tool-execution-and-passed) |
 | `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
 | `externalRunId` | `string` | No | Custom run ID (auto-generated if omitted) |

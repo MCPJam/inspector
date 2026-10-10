@@ -1,5 +1,27 @@
 # `@mcpjam/sdk` changelog
 
+## 9.2.0
+
+### Minor Changes
+
+- [#6056](https://github.com/MCPJam/inspector/pull/6056) [`76a9d01`](https://github.com/MCPJam/inspector/commit/76a9d01b17d6ffd19830ed421509dc7d2e06d455) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Muse readiness results carry `readinessKind: "muse-directory-readiness"`, with `isMuseReadinessResult`, and render through `toConformanceReport` under their own name. The platform client adds `startMuseReadinessRun` and the `start_muse_readiness_run` operation; `PlatformReadinessKind` gains `muse` and `PlatformReadinessLane` gains `tool-policy`.
+
+- [#5925](https://github.com/MCPJam/inspector/pull/5925) [`691af06`](https://github.com/MCPJam/inspector/commit/691af066216df8769004153e1ad60eb690ecfb7c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `@mcpjam/sdk/platform` now says which platform feature each operation belongs to. `OPERATION_FEATURES` maps every operation, deprecated aliases included, to its feature (`null` when released), and `PLATFORM_FEATURES` names each feature. Given the feature availability the platform reports, `isOperationAvailable(name, features)` and `disabledOperations(features)` say what a caller can use. Both fail closed: a feature that is not reported as on counts as off.
+
+- [#5718](https://github.com/MCPJam/inspector/pull/5718) [`912f6c2`](https://github.com/MCPJam/inspector/commit/912f6c259c6099b43b5ac27064dcf87ee309ed2f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `launchGoalRun` and the deprecated `launchJourneyRun` accept an optional `expectedSponsored`, and a launch response can carry `funding` (`sponsored`, `credits`, `total`). When the sponsored split no longer matches, the launch is refused with a 409 and nothing is created; `describeSwarmFundingChange(error)` reads the typed `swarm_funding_changed` details.
+
+### Patch Changes
+
+- [#6081](https://github.com/MCPJam/inspector/pull/6081) [`03b3c2a`](https://github.com/MCPJam/inspector/commit/03b3c2aae53ddbd701776a25279df0af606fdfac) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Each `cloud eval run --file` invocation starts a new run unless `--idempotency-key` is supplied. The CLI prints the retry key before launch and includes it in receipts and launch errors; replayed runs are marked `deduped` in the receipt and human output. Repeating a file command without a key can now start and bill a second run, while retrying with the printed key safely reuses the first.
+
+- [#6083](https://github.com/MCPJam/inspector/pull/6083) [`c633019`](https://github.com/MCPJam/inspector/commit/c633019c9a362cf371c4aa0d98f1caf2fe0d38dd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Eval suite files now preserve per-case scenario metadata in both schema dialects. Exporting a UI-owned suite uses a stable `s_export_<sourceSuiteId>` identity, and file sync can explicitly clear a removed scenario binding.
+
+- [#6103](https://github.com/MCPJam/inspector/pull/6103) [`555de44`](https://github.com/MCPJam/inspector/commit/555de4414f5241f65fa24d734b1979dc44d98644) Thanks [@nachocossio](https://github.com/nachocossio)! - The hosts page no longer crashes with `Cannot read properties of undefined (reading 'provider')` on a host whose model id is outside the hosted catalog. The backend stores such a host's selection as `{ source: "legacy", modelId }`, without a `fallback`, and the editor's dirty check passed it to `selectionConfigKey`, which read `fallback.provider`. `selectionConfigKey` now accepts a stored legacy selection and keys it as the backend's stored form.
+
+- [#6002](https://github.com/MCPJam/inspector/pull/6002) [`f4d6fa8`](https://github.com/MCPJam/inspector/commit/f4d6fa867bd952f7f3af2e8b926f3739d5d42681) Thanks [@olartgabo](https://github.com/olartgabo)! - Accept `@sentry/node` 10 as the optional Sentry peer (`^8.55.0 || ^10.0.0`). The SDK's error reporting only uses `NodeClient`, `Scope`, `defaultStackParser` and `makeNodeTransport`, which both majors provide.
+- Updated dependencies [[`f693f65`](https://github.com/MCPJam/inspector/commit/f693f6557be383db27974a4287736d385670fa9e)]:
+  - @mcpjam/evaluators@0.5.0
+
 ## 9.1.0
 
 ### Minor Changes

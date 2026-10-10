@@ -131,6 +131,13 @@ export interface PreparedLocalHarnessTurn {
   sandboxWorkDir: string;
   /** Adapter-facing path under the session's synthetic HOME. */
   skillsBaseDir: string;
+  /**
+   * Where this session's composer attachments land: the session's own state
+   * directory, never the workspace (the user's real checkout, reached through
+   * the `project` symlink). `writeDir` is the file API's spelling, `agentDir`
+   * the native path the agent is told to read; they differ only on Windows.
+   */
+  attachmentsDir: { writeDir: string; agentDir: string };
   /** Observed before preparation creates the directory; a sidecar alone is insufficient. */
   sessionStateExists: boolean;
   permissionMode: "allow-reads" | "allow-edits" | "allow-all";
@@ -719,6 +726,10 @@ async function prepareWithReservedRuntime(outer: {
       skillsBaseDir: toAdapterPath(
         join(sessionStateDir, "home", ...LOCAL_SKILLS_SUBDIR[harnessId]),
       ),
+      attachmentsDir: {
+        writeDir: toAdapterPath(join(sessionStateDir, "attachments")),
+        agentDir: join(sessionStateDir, "attachments"),
+      },
       sessionStateExists,
       permissionMode,
       brokerRunId: broker.runId,
