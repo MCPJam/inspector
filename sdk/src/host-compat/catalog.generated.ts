@@ -218,7 +218,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       hostStyle: "mcpjam",
-      modelId: "anthropic/claude-haiku-4.5",
+      modelId: "anthropic/claude-haiku-5.5",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,
