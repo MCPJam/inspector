@@ -311,3 +311,56 @@ describe("hook paths", async () => {
     });
   });
 });
+
+describe("repo hygiene", async () => {
+  const { checkChange, parseNameStatus } = await import("./repo-hygiene.mjs");
+  const { FILE_BUDGET } = await import("./hook.mjs");
+  const sizes = (map) => (path) => map[path] ?? 0;
+
+  it("parses NUL-delimited name-status output", () => {
+    assert.deepEqual(parseNameStatus("A\0NOTES-x.md\0M\0sdk/src/a.ts\0"), [
+      { status: "A", path: "NOTES-x.md" },
+      { status: "M", path: "sdk/src/a.ts" },
+    ]);
+  });
+
+  it("fails litter and files crossing the budget", () => {
+    const { failures } = checkChange(
+      [
+        { status: "A", path: "NOTES-item-9.md" },
+        { status: "A", path: "plan.md" },
+        { status: "A", path: "sdk/src/big.ts" },
+        { status: "M", path: "sdk/src/grew.ts" },
+      ],
+      sizes({ "sdk/src/grew.ts": FILE_BUDGET - 10 }),
+      sizes({
+        "sdk/src/big.ts": FILE_BUDGET + 1,
+        "sdk/src/grew.ts": FILE_BUDGET + 5,
+      })
+    );
+    assert.equal(failures.length, 4);
+  });
+
+  it("only warns when an already-large file grows", () => {
+    const { failures, warnings } = checkChange(
+      [{ status: "M", path: "sdk/src/huge.ts" }],
+      sizes({ "sdk/src/huge.ts": 2000 }),
+      sizes({ "sdk/src/huge.ts": 2050 })
+    );
+    assert.equal(failures.length, 0);
+    assert.equal(warnings.length, 1);
+  });
+
+  it("ignores tests, deletions and shrinking files", () => {
+    const { failures, warnings } = checkChange(
+      [
+        { status: "A", path: "sdk/src/big.test.ts" },
+        { status: "D", path: "sdk/src/gone.ts" },
+        { status: "M", path: "sdk/src/huge.ts" },
+      ],
+      sizes({ "sdk/src/huge.ts": 2000 }),
+      sizes({ "sdk/src/big.test.ts": 5000, "sdk/src/huge.ts": 1900 })
+    );
+    assert.deepEqual([failures, warnings], [[], []]);
+  });
+});
