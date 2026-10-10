@@ -14,6 +14,7 @@ import {
   isSlackServiceToken,
 } from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
 import {
   handleSurfaceServiceAuth,
@@ -413,7 +414,9 @@ export async function bearerAuthMiddleware(
     logger.info("Rejected an AuthKit bearer that failed verification", {
       event: "auth.authkit_jwt_rejected",
       reason: verdict.reason,
-      path: c.req.path,
+      // Scrubbed: a credential route carries its secret in the path, and
+      // this row ships to Axiom.
+      path: scrubCredentialUrl(c.req.path),
     });
     return c.json(
       {

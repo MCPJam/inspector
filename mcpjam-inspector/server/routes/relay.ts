@@ -1,6 +1,10 @@
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
+import {
+  containsCredential,
+  scrubTelemetryValue,
+} from "../../shared/credential-urls.js";
 import { promisify } from "node:util";
-import { gunzip } from "node:zlib";
+import { gunzip, gzip } from "node:zlib";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
@@ -35,7 +39,8 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * one on everything, a tighter one on the ingest subpaths and launch
  * events), and the 30s upstream timeout.
  * Requests are forwarded for our own PostHog project only (see "Project
- * pinning" below).
+ * pinning" below), and event, log and replay payloads only once they carry
+ * no credential URL (see "Credential scrubbing" below).
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -51,10 +56,14 @@ const REPLAY_MAX_BODY_BYTES = 20 * 1024 * 1024;
 // Hop-by-hop and app-specific headers that must not reach PostHog. Host is
 // derived by fetch() from the target URL; cookie may carry our session;
 // accept-encoding is dropped so undici negotiates (and transparently
-// decompresses) its own encoding.
+// decompresses) its own encoding. Referer is the page posthog-js runs on,
+// sent in full because the relay is same-origin: on a share link or an OAuth
+// callback that URL is the credential (`/results/<token>`, `?code=`), and
+// PostHog received it with every request.
 const STRIPPED_REQUEST_HEADERS = new Set([
   "host",
   "cookie",
+  "referer",
   "connection",
   "content-length",
   "accept-encoding",
@@ -106,6 +115,14 @@ const stats = {
   rateLimitRejects: 0,
   projectRejects: 0,
   busyRejects: 0,
+  // Event, log and metric payloads refused because they could not be decoded
+  // or scrubbed (too large, malformed, an unknown encoding, a walker failure).
+  // Answered 400 like a project rejection, counted apart from one.
+  scrubDrops: 0,
+  // Replay batches accepted (200) and dropped instead of forwarded: one held
+  // a credential, or its nested snapshot data could not be decoded.
+  replayCredentialDrops: 0,
+  replayUndecodableDrops: 0,
   latenciesMs: [] as number[],
 };
 
@@ -128,7 +145,10 @@ function percentile(sorted: number[], p: number): number {
 export function flushRelayStats(): void {
   if (stats.requests === 0 && stats.rateLimitRejects === 0) return;
   const sorted = [...stats.latenciesMs].sort((a, b) => a - b);
-  relayLogger.event("relay.stats", {
+  // Built apart from the call: the scrub counters are newer than the
+  // `relay.stats` shape declared in utils/log-events.ts, which should list
+  // them too.
+  const counters = {
     requests: stats.requests,
     res2xx: stats.res2xx,
     res3xx: stats.res3xx,
@@ -142,9 +162,13 @@ export function flushRelayStats(): void {
     rateLimitRejects: stats.rateLimitRejects,
     projectRejects: stats.projectRejects,
     busyRejects: stats.busyRejects,
+    scrubDrops: stats.scrubDrops,
+    replayCredentialDrops: stats.replayCredentialDrops,
+    replayUndecodableDrops: stats.replayUndecodableDrops,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
-  });
+  };
+  relayLogger.event("relay.stats", counters);
   stats.requests = 0;
   stats.res2xx = 0;
   stats.res3xx = 0;
@@ -158,6 +182,9 @@ export function flushRelayStats(): void {
   stats.rateLimitRejects = 0;
   stats.projectRejects = 0;
   stats.busyRejects = 0;
+  stats.scrubDrops = 0;
+  stats.replayCredentialDrops = 0;
+  stats.replayUndecodableDrops = 0;
   stats.latenciesMs = [];
 }
 
@@ -476,39 +503,89 @@ function supportsRelayRequest(path: string, method: string): boolean {
 // POSTHOG_PROJECT_KEY. A capture payload whose tokens cannot be read (an
 // unknown encoding, malformed JSON, no token at all) is not forwarded either.
 // Only /static assets carry no token.
+//
+// Credential scrubbing. No credential URL reaches PostHog through the relay,
+// and a payload the relay cannot show to be clean is dropped, never
+// forwarded. posthog-js puts the page URL everywhere — `$current_url`,
+// `$referrer`, autocapture's element chain, a log's `currentUrl`, a replay's
+// meta event — and on a share link or an OAuth callback that URL is the
+// credential (shared/credential-urls.ts has the list). The client scrubs
+// before it sends; this is the backstop for whatever it missed:
+//
+// - Events (`/e`, `/i/v0/e`), logs and metrics (`/i/v1/logs`,
+//   `/i/v1/metrics`) are decoded whole, every string and key in them goes
+//   through the registry's scrubber (`scrubTelemetryValue`), and the result
+//   is re-encoded the way it arrived — gzip stays gzip, a base64 form stays a
+//   base64 form, a GET `?data=` is rewritten in the query — and forwarded
+//   INSTEAD of the client's bytes. Logs and metrics carry the page URL and
+//   free text, so they are scrubbed like events rather than passed through.
+//   A payload that cannot be decoded, is over RELAY_SCRUB_MAX_TEXT_BYTES, or
+//   that the scrubber cannot finish is answered `unreadable_payload` and
+//   counted in `scrubDrops`.
+// - Replay (`/s`) is never rewritten: a recording with an edited DOM is a
+//   corrupt recording, and nothing in it can be cut without breaking the
+//   ones around it. A batch that holds a credential anywhere — a property,
+//   the meta event's href, a network request's URL, a console line, the DOM
+//   and text inside its nested gzip — is answered 200 (posthog-js retries
+//   anything else, and the retry would fail the same way) and dropped,
+//   counted in `replayCredentialDrops`. A batch whose nested data cannot be
+//   decoded cannot be shown clean either: same answer, counted in
+//   `replayUndecodableDrops`. A clean batch is forwarded byte for byte.
 // ---------------------------------------------------------------------------
 
-type ProjectCheck = "ours" | "other" | "unreadable" | "busy";
-
-// Reading a capture payload's tokens means inflating it and finding its token
-// fields, so that work is bounded (MJ-015). A gzip body inflates off the event
-// loop, to exactly the size its gzip trailer declares, which may be at most
+// Reading a capture payload means inflating it and reading its JSON, so that
+// work is bounded (MJ-015). A gzip body inflates off the event loop, to
+// exactly the size its gzip trailer declares, which may be at most
 // INFLATE_RATIO_LIMIT times its compressed size (never below the floor) and
 // never past its path's cap. posthog-js flushes a replay batch at about
 // 0.9 MiB uncompressed, so real payloads sit well inside these bounds.
 const INFLATE_FLOOR_BYTES = 2 * 1024 * 1024;
 const INFLATE_RATIO_LIMIT = 32;
-const MAX_INFLATED_BODY_BYTES = 8 * 1024 * 1024;
 const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
 
-// A payload of up to RELAY_PARSE_MAX_BYTES is parsed outright. A larger one
-// is read by scanning it for its token fields SCAN_SLICE_BYTES at a time,
-// yielding to the event loop between slices so other requests are served
-// meanwhile.
-export const RELAY_PARSE_MAX_BYTES = 64 * 1024;
+// Event, log and metric payloads are rewritten, so they are parsed whole:
+// JSON.parse, the scrubber, JSON.stringify — synchronous work, bounded by
+// this cap on the JSON text and broken up by a yield every
+// SCRUB_YIELD_EVENTS events. It is the body limit's 2 MiB, which a
+// posthog-js batch never approaches; a gzip body that declares more is
+// dropped before it is inflated.
+export const RELAY_SCRUB_MAX_TEXT_BYTES = INFLATE_FLOOR_BYTES;
+const SCRUB_YIELD_EVENTS = 64;
+
+// A replay payload is never parsed whole. Its JSON is read by a byte scanner
+// SCAN_SLICE_BYTES at a time, yielding to the event loop between slices so
+// other requests are served meanwhile, which finds its project tokens and
+// hands every string in it to the credential check.
 const SCAN_SLICE_BYTES = 256 * 1024;
 const SCAN_MAX_DEPTH = 4096;
 
+// posthog-js gzips a replay batch's full snapshots and DOM mutations a second
+// time, inside the batch (its `cv: "2024-10"` packing: the gzip bytes as a
+// latin1 string). Inspecting a batch means inflating each of those strings
+// too; together they may inflate to at most this much per batch, and a batch
+// past it is dropped as undecodable. A real batch is about 0.9 MiB as sent,
+// and DOM text compresses around tenfold. Each nested string inflates off the
+// event loop, and its JSON is read by the same yielding scanner, so the work
+// is spread out rather than avoided: a batch carrying a 40k-node full
+// snapshot (about 10 MiB inflated) costs roughly 0.6 s of CPU, in turns of
+// the event loop no longer than a few tens of milliseconds. The admission
+// limits bound how many batches do that at once.
+export const RELAY_REPLAY_NESTED_MAX_BYTES = 32 * 1024 * 1024;
+// posthog-js nests one level. Gzip found inside nested data is not something
+// it produces, and is dropped rather than inflated again.
+const REPLAY_MAX_NESTING = 1;
+
 // Capture payloads are admitted once their bodies have arrived: a limited
-// number are inflated and read at a time, and fewer still of those whose text
-// exceeds the floor. Past either limit the relay answers 503, and posthog-js
-// retries later.
+// number are inflated, read, scrubbed or inspected at a time, and fewer still
+// of those whose text exceeds the floor. Past either limit the relay answers
+// 503, and posthog-js retries later.
 export const RELAY_MAX_PAYLOAD_CHECKS = 16;
 export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
 let payloadChecks = 0;
 let largePayloadChecks = 0;
 
 const gunzipAsync = promisify(gunzip);
+const gzipAsync = promisify(gzip);
 
 const TOKEN_QUERY_PARAMS = ["token", "api_key"];
 const TOKEN_FIELDS = ["api_key", "token", "$token"];
@@ -518,26 +595,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isCapturePath(path: string): boolean {
-  return /^\/(?:e|i\/v0\/e|s)\/?$/.test(path);
+// Event capture: POST, and the GET ?data= form.
+function isEventPath(path: string): boolean {
+  return /^\/(?:e|i\/v0\/e)\/?$/.test(path);
+}
+
+function isReplayPath(path: string): boolean {
+  return /^\/s\/?$/.test(path);
+}
+
+// Logs and metrics: OTLP-shaped JSON whose project is named by `?token=`.
+function isOtlpPath(path: string): boolean {
+  return /^\/i\/v1\/(?:logs|metrics)\/?$/.test(path);
 }
 
 // A `data=` value: JSON, or base64-encoded JSON (`compression=base64`).
+function isJsonDataParam(data: string): boolean {
+  const trimmed = data.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
 function dataParamBytes(data: string): Buffer {
   const trimmed = data.trim();
-  return trimmed.startsWith("{") || trimmed.startsWith("[")
+  return isJsonDataParam(trimmed)
     ? Buffer.from(trimmed, "utf8")
     : Buffer.from(trimmed, "base64");
 }
 
-function parseDataParam(data: string): unknown {
-  return JSON.parse(dataParamBytes(data).toString("utf8"));
+// A `data=` value in the encoding the request used.
+function encodeDataParam(json: string, form: "json" | "base64"): string {
+  return form === "base64"
+    ? Buffer.from(json, "utf8").toString("base64")
+    : json;
 }
 
 function capturePayloadCap(subpath: string): number {
-  return subpath.startsWith("/s")
+  return isReplayPath(subpath)
     ? REPLAY_MAX_INFLATED_BODY_BYTES
-    : MAX_INFLATED_BODY_BYTES;
+    : RELAY_SCRUB_MAX_TEXT_BYTES;
 }
 
 function isGzip(bytes: Uint8Array): boolean {
@@ -708,17 +803,32 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Token scan for payloads over RELAY_PARSE_MAX_BYTES. It validates the JSON
-// grammar byte by byte (RFC 8259: string escapes and control characters,
-// number syntax, literals, nesting) without building the payload, yielding
-// every SCAN_SLICE_BYTES, and records the value at every place
+// Replay payload scan: how a replay batch, and the JSON nested inside it, is
+// read. It validates the JSON grammar byte by byte (RFC 8259: string escapes
+// and control characters, number syntax, literals, nesting) without building
+// the payload, yielding every SCAN_SLICE_BYTES, and records the value at
+// every place
 // collectPayloadTokens reads a token from: an event's api_key / token /
 // $token and its properties.token, where an event is the payload itself, an
 // element of a top-level array, or an element of a top-level `batch` array.
 // Every occurrence is recorded, a repeated key included, and a value that is
 // not a string is recorded as null so it never matches. Malformed or
 // truncated JSON throws.
+//
+// It also hands every string it reads, keys included, to an optional
+// visitor, which is how a replay batch is checked for credentials without
+// being built. The visitor may return a promise (a nested gzip string is
+// inflated off the event loop); the scan waits for it before going on.
 // ---------------------------------------------------------------------------
+
+// The string whose quotes are at `open` and `close` in `bytes`, already
+// validated by the scan; `decodeString` reads it.
+type StringVisitor = (
+  bytes: Buffer,
+  open: number,
+  close: number,
+  isKey: boolean,
+) => void | Promise<void>;
 
 const JSON_OBJECT = 1;
 const JSON_ARRAY = 2;
@@ -852,6 +962,7 @@ function isTokenPath(kinds: Uint8Array, keys: string[], depth: number) {
 export async function scanPayloadTokens(
   bytes: Buffer,
   tokens: unknown[],
+  visitString?: StringVisitor,
 ): Promise<void> {
   const kinds = new Uint8Array(SCAN_MAX_DEPTH);
   const keys: string[] = new Array<string>(TRACKED_KEY_DEPTH).fill("");
@@ -900,6 +1011,10 @@ export async function scanPayloadTokens(
       }
       if (end !== QUOTE) throw new Error("control character in a string");
       inside = IN_NOTHING;
+      if (visitString) {
+        const visiting = visitString(bytes, stringOpen, i, stringIsKey);
+        if (visiting) await visiting;
+      }
       if (stringIsKey) {
         const level = depth - 1;
         if (level < TRACKED_KEY_DEPTH) {
@@ -1045,25 +1160,32 @@ export async function scanPayloadTokens(
   }
 }
 
-async function collectJsonTokens(
-  json: Buffer,
-  tokens: unknown[],
-): Promise<void> {
-  if (json.length <= RELAY_PARSE_MAX_BYTES) {
-    collectPayloadTokens(JSON.parse(json.toString("utf8")), tokens);
-  } else {
-    await scanPayloadTokens(json, tokens);
-  }
+// ---------------------------------------------------------------------------
+// Decoding and re-encoding a body.
+// ---------------------------------------------------------------------------
+
+// How a body arrived, so a rewritten one leaves the same way. posthog-js
+// sends gzip (detected by its magic bytes — the SDK drops the `compression`
+// query param for gzip), a form-encoded `data=` body (JSON, or base64 JSON
+// with `compression=base64`, which is what sendBeacon uses), or plain JSON.
+interface BodyEncoding {
+  gzip: boolean;
+  /** A `data=` form body and how its value is written; null for bare JSON. */
+  form: "json" | "base64" | null;
 }
 
-// posthog-js sends gzip (detected by its magic bytes — the SDK drops the
-// `compression` query param for gzip), a form-encoded `data=` body, or JSON.
-async function collectBodyTokens(
+interface DecodedBody {
+  json: Buffer;
+  encoding: BodyEncoding;
+}
+
+// The JSON a body carries, and how it was wrapped. Throws when there is none.
+async function decodeBody(
   bytes: Uint8Array,
   textBytes: number,
-  tokens: unknown[],
-): Promise<void> {
-  const text = isGzip(bytes)
+): Promise<DecodedBody> {
+  const gzip = isGzip(bytes);
+  const text = gzip
     ? await gunzipAsync(bytes, { maxOutputLength: Math.max(1, textBytes) })
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const lookahead = Math.min(text.length, SCAN_SLICE_BYTES);
@@ -1074,34 +1196,78 @@ async function collectBodyTokens(
     (start === lookahead && start < text.length)
   ) {
     // JSON, or a run of leading whitespace the JSON reader works through.
-    await collectJsonTokens(text.subarray(start), tokens);
-    return;
+    return { json: text.subarray(start), encoding: { gzip, form: null } };
   }
   const data = await formDataParam(text);
   if (data === null) throw new Error("no capture payload");
-  await collectJsonTokens(dataParamBytes(data.toString("utf8")), tokens);
+  const value = data.toString("utf8");
+  return {
+    json: dataParamBytes(value),
+    encoding: { gzip, form: isJsonDataParam(value) ? "json" : "base64" },
+  };
 }
 
-type PayloadRead = "read" | "unreadable" | "busy";
+// `json` wrapped the way `encoding` says. A form body is rebuilt as the one
+// `data=` field posthog-js sends; any other field the client added is not
+// forwarded, since nothing scrubbed it.
+async function encodeBody(
+  json: string,
+  encoding: BodyEncoding,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const text =
+    encoding.form === null
+      ? json
+      : `data=${encodeURIComponent(encodeDataParam(json, encoding.form))}`;
+  const bytes = Buffer.from(text, "utf8");
+  // Both are views of a plain ArrayBuffer (never a SharedArrayBuffer), which
+  // is what fetch() takes as a body.
+  return (
+    encoding.gzip ? await gzipAsync(bytes) : bytes
+  ) as Uint8Array<ArrayBuffer>;
+}
 
-// Reads a capture body's tokens under the admission limits above.
-async function readBodyPayloadTokens(
-  subpath: string,
-  body: ArrayBuffer | undefined,
-  tokens: unknown[],
-): Promise<PayloadRead> {
-  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
-  let textBytes = bytes.length;
-  if (isGzip(bytes)) {
-    const declared = gzipDeclaredBytes(bytes);
-    if (
-      declared === null ||
-      declared > inflateBudget(bytes.length, capturePayloadCap(subpath))
-    ) {
-      return "unreadable";
+// The query string with its `data` parameter set to `data`, or removed when
+// `data` is null. Every pair URLSearchParams reads as `data` is replaced or
+// removed — a second `data=` would be a payload nobody scrubbed — and every
+// other pair keeps its spelling, the `compression` flag included.
+function withDataParam(search: string, data: string | null): string {
+  const body = search.startsWith("?") ? search.slice(1) : search;
+  if (body === "") return search;
+  const out: string[] = [];
+  let written = data === null;
+  for (const pair of body.split("&")) {
+    if (new URLSearchParams(pair).keys().next().value !== "data") {
+      out.push(pair);
+    } else if (!written) {
+      out.push(`data=${encodeURIComponent(data as string)}`);
+      written = true;
     }
-    textBytes = declared;
   }
+  return out.length > 0 ? `?${out.join("&")}` : "";
+}
+
+// The text a body holds once inflated: its own length, or for gzip the size
+// its trailer declares. Null when that is more than the path may inflate to,
+// or the gzip is too short to be one.
+function bodyTextBytes(subpath: string, bytes: Uint8Array): number | null {
+  if (!isGzip(bytes)) return bytes.length;
+  const declared = gzipDeclaredBytes(bytes);
+  if (
+    declared === null ||
+    declared > inflateBudget(bytes.length, capturePayloadCap(subpath))
+  ) {
+    return null;
+  }
+  return declared;
+}
+
+// Runs `work` under the admission limits above: it holds a payload slot, and
+// a large one when its text is over the floor, until it has read, scrubbed or
+// inspected the payload and re-encoded what it forwards.
+async function admitted<T>(
+  textBytes: number,
+  work: () => Promise<T>,
+): Promise<T | "busy"> {
   const large = textBytes > INFLATE_FLOOR_BYTES;
   if (
     payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
@@ -1112,54 +1278,414 @@ async function readBodyPayloadTokens(
   payloadChecks++;
   if (large) largePayloadChecks++;
   try {
-    await collectBodyTokens(bytes, textBytes, tokens);
-    return "read";
-  } catch {
-    return "unreadable";
+    return await work();
   } finally {
     payloadChecks--;
     if (large) largePayloadChecks--;
   }
 }
 
-async function checkProjectTokens(
-  subpath: string,
-  url: URL,
-  method: string,
-  body: ArrayBuffer | undefined,
-): Promise<ProjectCheck> {
+// ---------------------------------------------------------------------------
+// Scrubbing events, logs and metrics.
+// ---------------------------------------------------------------------------
+
+// One event, every credential out of it. Its project key goes to PostHog as
+// it came: by now every key in the payload has been pinned to
+// POSTHOG_PROJECT_KEY, which is not a credential URL anyway. The walker
+// leaves the event's own api_key / token / $token alone (top-level keys);
+// properties.token is a level down, out of its reach, so it is put back.
+// THROWS when the walker cannot finish (TelemetryScrubError).
+function scrubCaptureEvent(event: unknown): unknown {
+  const clean = scrubTelemetryValue(event, {
+    preserveTopLevelKeys: TOKEN_FIELDS,
+  });
+  if (
+    isRecord(event) &&
+    isRecord(event.properties) &&
+    Object.hasOwn(event.properties, "token") &&
+    isRecord(clean) &&
+    isRecord(clean.properties)
+  ) {
+    clean.properties.token = event.properties.token;
+  }
+  return clean;
+}
+
+// Each event is walked on its own, so the walker's size limit applies per
+// event rather than to the whole batch, and the event loop gets a turn every
+// SCRUB_YIELD_EVENTS events.
+async function scrubEvents(events: unknown[]): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const [index, event] of events.entries()) {
+    if (index > 0 && index % SCRUB_YIELD_EVENTS === 0) {
+      await yieldToEventLoop();
+    }
+    out.push(scrubCaptureEvent(event));
+  }
+  return out;
+}
+
+// A capture payload in its own shape: an event array, a
+// `{ api_key, batch, sent_at }` envelope, or a single event. THROWS when any
+// event cannot be scrubbed; the caller drops the payload.
+async function scrubCapturePayload(payload: unknown): Promise<unknown> {
+  if (Array.isArray(payload)) return scrubEvents(payload);
+  if (isRecord(payload) && Array.isArray(payload.batch)) {
+    const { batch, ...envelope } = payload;
+    const cleanEnvelope = scrubCaptureEvent(envelope) as Record<
+      string,
+      unknown
+    >;
+    const cleanBatch = await scrubEvents(batch);
+    // Rebuilt in the envelope's own key order, so a payload with nothing to
+    // scrub is forwarded as the same JSON text it arrived as. A key the
+    // scrubber renamed (one that held a credential) goes last.
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(payload)) {
+      if (key === "batch") setOwn(out, key, cleanBatch);
+      else if (Object.hasOwn(cleanEnvelope, key)) {
+        setOwn(out, key, cleanEnvelope[key]);
+      }
+    }
+    for (const [key, value] of Object.entries(cleanEnvelope)) {
+      if (!Object.hasOwn(out, key)) setOwn(out, key, value);
+    }
+    return out;
+  }
+  return scrubCaptureEvent(payload);
+}
+
+// A plain assignment of a JSON key named `__proto__` would set the object's
+// prototype rather than give it the key.
+function setOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Inspecting replay batches.
+// ---------------------------------------------------------------------------
+
+type ReplayVerdict = "clean" | "credential" | "undecodable";
+
+// fflate's `strFromU8(bytes, true)` writes one character per byte, so a
+// nested gzip string starts with the gzip magic as two characters.
+function isNestedGzip(value: string): boolean {
+  return (
+    value.length >= 2 &&
+    value.charCodeAt(0) === 0x1f &&
+    value.charCodeAt(1) === 0x8b
+  );
+}
+
+// A character a latin1 byte string cannot hold.
+const BEYOND_LATIN1 = /[^\u0000-\u00ff]/;
+
+// A recording repeats itself: every node has the same keys, and tag names,
+// class lists and attribute values recur across thousands of nodes (a 40k-node
+// snapshot holds about six times as many strings as distinct ones). Short
+// strings already checked clean are remembered per batch, up to a total size,
+// so each distinct one costs one credential check. Only clean results are
+// kept — a credential settles the batch.
+const CLEAN_MEMO_MAX_STRING_CHARS = 256;
+const CLEAN_MEMO_MAX_TOTAL_CHARS = 4 * 1024 * 1024;
+
+// Reads every string in a replay batch — through the scanner's visitor — for
+// a credential. Strings that are nested gzip are inflated and their JSON read
+// the same way, so the DOM attributes and text of full snapshots and
+// mutations are covered as well as the plain parts (the meta event's href,
+// network requests, console lines, properties). One finding settles the
+// batch; the scan still runs to the end for the project pinning.
+class ReplayInspector {
+  verdict: ReplayVerdict = "clean";
+  private inflatedBytes = 0;
+  private readonly knownClean = new Set<string>();
+  private knownCleanChars = 0;
+
+  readonly visit: StringVisitor = (bytes, open, close) =>
+    this.inspect(bytes, open, close, 0);
+
+  private inspect(
+    bytes: Buffer,
+    open: number,
+    close: number,
+    nesting: number,
+  ): void | Promise<void> {
+    if (this.verdict !== "clean") return;
+    const value = decodeString(bytes, open, close);
+    if (isNestedGzip(value)) return this.inspectNested(value, nesting);
+    if (!this.isClean(value)) this.verdict = "credential";
+  }
+
+  private isClean(value: string): boolean {
+    const memo = value.length <= CLEAN_MEMO_MAX_STRING_CHARS;
+    if (memo && this.knownClean.has(value)) return true;
+    if (containsCredential(value)) return false;
+    if (
+      memo &&
+      this.knownCleanChars + value.length <= CLEAN_MEMO_MAX_TOTAL_CHARS
+    ) {
+      this.knownClean.add(value);
+      this.knownCleanChars += value.length;
+    }
+    return true;
+  }
+
+  private async inspectNested(value: string, nesting: number): Promise<void> {
+    if (nesting >= REPLAY_MAX_NESTING || BEYOND_LATIN1.test(value)) {
+      this.verdict = "undecodable";
+      return;
+    }
+    let text: Buffer;
+    try {
+      text = await gunzipAsync(Buffer.from(value, "latin1"), {
+        maxOutputLength: Math.max(
+          1,
+          RELAY_REPLAY_NESTED_MAX_BYTES - this.inflatedBytes,
+        ),
+      });
+    } catch {
+      // Not gzip after all, truncated, or past the batch's budget.
+      this.verdict = "undecodable";
+      return;
+    }
+    this.inflatedBytes += text.length;
+    try {
+      await scanPayloadTokens(text, [], (b, o, c) =>
+        this.inspect(b, o, c, nesting + 1),
+      );
+    } catch {
+      // Nested data that is not JSON cannot be read for credentials.
+      if (this.verdict === "clean") this.verdict = "undecodable";
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// What the relay does with a request, decided before anything is forwarded.
+// ---------------------------------------------------------------------------
+
+type Inspection =
+  /** Forward `body` with `search` as the query string. */
+  | {
+      kind: "forward";
+      body: Uint8Array<ArrayBuffer> | ArrayBuffer | undefined;
+      search: string;
+    }
+  /** Admission is full: 503, and posthog-js retries. */
+  | { kind: "busy" }
+  /** Names another project: 403. */
+  | { kind: "other_project" }
+  /** Names no project the relay can read: 400. */
+  | { kind: "unreadable" }
+  /** Cannot be decoded or scrubbed: 400, never forwarded. */
+  | { kind: "scrub_drop" }
+  /** A replay batch that is not clean: 200, never forwarded. */
+  | { kind: "replay_drop"; reason: Exclude<ReplayVerdict, "clean"> };
+
+const SCRUB_DROP: Inspection = { kind: "scrub_drop" };
+const UNREADABLE: Inspection = { kind: "unreadable" };
+const OTHER_PROJECT: Inspection = { kind: "other_project" };
+
+// The tokens a request names outside its payload: the query string, and the
+// remote-config path.
+function requestTokens(subpath: string, url: URL): unknown[] {
   const tokens: unknown[] = [];
   for (const param of TOKEN_QUERY_PARAMS) {
     tokens.push(...url.searchParams.getAll(param));
   }
   const configToken = /^\/array\/([^/]+)\/config(?:\.js)?$/.exec(subpath)?.[1];
   if (configToken !== undefined) tokens.push(configToken);
+  return tokens;
+}
 
-  if (isCapturePath(subpath)) {
-    const payloadTokens: unknown[] = [];
-    if (method === "GET" || method === "HEAD") {
-      try {
-        collectPayloadTokens(
-          parseDataParam(url.searchParams.get("data") ?? ""),
-          payloadTokens,
-        );
-      } catch {
-        return "unreadable";
-      }
-    } else {
-      const read = await readBodyPayloadTokens(subpath, body, payloadTokens);
-      if (read !== "read") return read;
-    }
-    if (payloadTokens.length === 0) return "unreadable";
-    tokens.push(...payloadTokens);
-  }
-
-  if (tokens.length === 0) {
-    return subpath.startsWith("/static/") ? "ours" : "unreadable";
-  }
+function pinTokens(tokens: unknown[]): "ours" | "other" | "none" {
+  if (tokens.length === 0) return "none";
   return tokens.every((token) => token === POSTHOG_PROJECT_KEY)
     ? "ours"
     : "other";
+}
+
+// A capture payload must name a project, and only ours. Null when it does.
+function pinCapturePayload(
+  payload: unknown,
+  tokens: unknown[],
+): Inspection | null {
+  const payloadTokens: unknown[] = [];
+  collectPayloadTokens(payload, payloadTokens);
+  if (payloadTokens.length === 0) return UNREADABLE;
+  return pinTokens([...tokens, ...payloadTokens]) === "ours"
+    ? null
+    : OTHER_PROJECT;
+}
+
+function parsePayloadJson(json: Buffer): unknown {
+  if (json.length > RELAY_SCRUB_MAX_TEXT_BYTES) {
+    throw new Error("payload too large to scrub");
+  }
+  return JSON.parse(json.toString("utf8"));
+}
+
+// An event or OTLP payload, scrubbed, as JSON text. THROWS when the walker
+// cannot finish.
+async function scrubbedJson(
+  subpath: string,
+  payload: unknown,
+): Promise<string> {
+  const clean = isEventPath(subpath)
+    ? await scrubCapturePayload(payload)
+    : scrubTelemetryValue(payload);
+  return JSON.stringify(clean);
+}
+
+// GET (or HEAD) /e?data=…: the payload is in the query string, and its
+// scrubbed copy goes back there, written the way it came.
+async function inspectEventQuery(
+  subpath: string,
+  url: URL,
+  tokens: unknown[],
+): Promise<Inspection> {
+  const data = url.searchParams.get("data");
+  if (data === null) return SCRUB_DROP;
+  let payload: unknown;
+  try {
+    payload = parsePayloadJson(dataParamBytes(data));
+  } catch {
+    return SCRUB_DROP;
+  }
+  const refusal = pinCapturePayload(payload, tokens);
+  if (refusal) return refusal;
+  let clean: string;
+  try {
+    clean = await scrubbedJson(subpath, payload);
+  } catch {
+    return SCRUB_DROP;
+  }
+  const form = isJsonDataParam(data) ? "json" : "base64";
+  return {
+    kind: "forward",
+    body: undefined,
+    search: withDataParam(url.search, encodeDataParam(clean, form)),
+  };
+}
+
+// POST to an event, log or metric path: decoded, pinned, scrubbed and
+// re-encoded, all under admission.
+async function inspectRewrittenBody(
+  subpath: string,
+  url: URL,
+  body: ArrayBuffer | undefined,
+  tokens: unknown[],
+): Promise<Inspection> {
+  const events = isEventPath(subpath);
+  if (!events) {
+    // Logs and metrics name their project in the query alone, so another
+    // project is refused before the body is read.
+    const pinned = pinTokens(tokens);
+    if (pinned !== "ours")
+      return pinned === "other" ? OTHER_PROJECT : UNREADABLE;
+  }
+  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
+  const textBytes = bodyTextBytes(subpath, bytes);
+  if (textBytes === null) return SCRUB_DROP;
+  const inspection = await admitted(
+    textBytes,
+    async (): Promise<Inspection> => {
+      let decoded: DecodedBody;
+      let payload: unknown;
+      try {
+        decoded = await decodeBody(bytes, textBytes);
+        payload = parsePayloadJson(decoded.json);
+      } catch {
+        return SCRUB_DROP;
+      }
+      if (events) {
+        const refusal = pinCapturePayload(payload, tokens);
+        if (refusal) return refusal;
+      }
+      try {
+        return {
+          kind: "forward",
+          body: await encodeBody(
+            await scrubbedJson(subpath, payload),
+            decoded.encoding,
+          ),
+          // The body is the payload; a `data=` in the query would be a second
+          // one that nothing read.
+          search: withDataParam(url.search, null),
+        };
+      } catch {
+        return SCRUB_DROP;
+      }
+    },
+  );
+  return inspection === "busy" ? { kind: "busy" } : inspection;
+}
+
+// POST /s: pinned and inspected in one pass of the scanner, forwarded as it
+// came when clean.
+async function inspectReplay(
+  subpath: string,
+  url: URL,
+  body: ArrayBuffer | undefined,
+  tokens: unknown[],
+): Promise<Inspection> {
+  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
+  const textBytes = bodyTextBytes(subpath, bytes);
+  if (textBytes === null) return UNREADABLE;
+  const inspection = await admitted(
+    textBytes,
+    async (): Promise<Inspection> => {
+      const payloadTokens: unknown[] = [];
+      const inspector = new ReplayInspector();
+      try {
+        const { json } = await decodeBody(bytes, textBytes);
+        await scanPayloadTokens(json, payloadTokens, inspector.visit);
+      } catch {
+        return UNREADABLE;
+      }
+      if (payloadTokens.length === 0) return UNREADABLE;
+      if (pinTokens([...tokens, ...payloadTokens]) !== "ours") {
+        return OTHER_PROJECT;
+      }
+      if (inspector.verdict !== "clean") {
+        return { kind: "replay_drop", reason: inspector.verdict };
+      }
+      return { kind: "forward", body, search: url.search };
+    },
+  );
+  return inspection === "busy" ? { kind: "busy" } : inspection;
+}
+
+async function inspectRelayRequest(
+  subpath: string,
+  url: URL,
+  method: string,
+  body: ArrayBuffer | undefined,
+): Promise<Inspection> {
+  const tokens = requestTokens(subpath, url);
+  const read = method === "GET" || method === "HEAD";
+  if (isEventPath(subpath)) {
+    return read
+      ? inspectEventQuery(subpath, url, tokens)
+      : inspectRewrittenBody(subpath, url, body, tokens);
+  }
+  if (isOtlpPath(subpath)) {
+    return inspectRewrittenBody(subpath, url, body, tokens);
+  }
+  if (isReplayPath(subpath)) return inspectReplay(subpath, url, body, tokens);
+  const pinned = pinTokens(tokens);
+  if (pinned === "other") return OTHER_PROJECT;
+  if (pinned === "none" && !subpath.startsWith("/static/")) return UNREADABLE;
+  return { kind: "forward", body, search: url.search };
 }
 
 const relayRoutes = new Hono();
@@ -1207,9 +1733,6 @@ relayRoutes.all("*", async (c) => {
   const upstreamBase = subpath.startsWith("/static/")
     ? ASSET_HOST
     : INGEST_HOST;
-  // Preserve the subpath verbatim (trailing slashes matter to PostHog) and
-  // the full query string (compression=gzip-js, ver, ip flags).
-  const target = `${upstreamBase}${subpath}${url.search}`;
 
   const headers = new Headers();
   for (const [key, value] of Object.entries(c.req.header())) {
@@ -1241,31 +1764,48 @@ relayRoutes.all("*", async (c) => {
       if (typeof read === "string") return refuseBody(c, read);
       body = read;
     }
-    const project = await checkProjectTokens(subpath, url, method, body);
-    if (project === "busy") {
+    const inspection = await inspectRelayRequest(subpath, url, method, body);
+    if (inspection.kind === "busy") {
       stats.busyRejects++;
       recordResponseStatus(503);
       c.header("Retry-After", "1");
       return c.json({ error: "relay_busy" }, 503);
     }
-    if (project !== "ours") {
+    if (inspection.kind === "replay_drop") {
+      if (inspection.reason === "credential") stats.replayCredentialDrops++;
+      else stats.replayUndecodableDrops++;
+      recordResponseStatus(200);
+      // PostHog's own answer to an accepted batch. Anything else and
+      // posthog-js retries a batch that would be dropped again.
+      return c.json({ status: 1 }, 200);
+    }
+    if (inspection.kind === "scrub_drop") {
+      stats.scrubDrops++;
+      recordResponseStatus(400);
+      return c.json({ error: "unreadable_payload" }, 400);
+    }
+    if (inspection.kind !== "forward") {
       stats.projectRejects++;
-      const status = project === "other" ? 403 : 400;
+      const other = inspection.kind === "other_project";
+      const status = other ? 403 : 400;
       recordResponseStatus(status);
       return c.json(
-        {
-          error:
-            project === "other" ? "unsupported_project" : "unreadable_payload",
-        },
+        { error: other ? "unsupported_project" : "unreadable_payload" },
         status,
       );
     }
 
+    // Preserve the subpath verbatim (trailing slashes matter to PostHog) and
+    // the query string (compression=gzip-js, ver, ip flags) — as the
+    // inspection left it: a GET's `?data=` is the scrubbed payload. The body
+    // is the scrubbed, re-encoded payload on the event, log and metric paths;
+    // fetch() sets its Content-Length (the client's was stripped above).
+    const target = `${upstreamBase}${subpath}${inspection.search}`;
     try {
       upstream = await fetch(target, {
         method,
         headers,
-        body,
+        body: inspection.body,
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
         redirect: "follow",
       });

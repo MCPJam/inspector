@@ -17,11 +17,15 @@
  *     — keeps its STRUCTURE (keys, types, string lengths, array lengths) and
  *     loses its values. "The arguments were `{city: string(6)}`" is the part
  *     anyone debugging needs; the city is not.
- *  3. Free text. Every string has URLs cut to their origin (a customer's MCP
- *     server URL carries tenant paths and query strings; the host is what
- *     tells you which server failed) and is length-capped. Error text is
- *     capped harder: the first few hundred characters are the part anyone
- *     reads, and an upstream error can quote an entire response body.
+ *  3. Free text. Every string first loses every credential the credential
+ *     registry knows (`shared/credential-urls.ts`): a share token in a
+ *     RELATIVE path (`/results/<token>`, which no URL pattern below sees),
+ *     an OAuth `?code=`, a presigned signature. Then its absolute URLs are
+ *     cut to their origin (a customer's MCP server URL carries tenant paths
+ *     and query strings; the host is what tells you which server failed) and
+ *     it is length-capped. Error text is capped harder: the first few
+ *     hundred characters are the part anyone reads, and an upstream error can
+ *     quote an entire response body.
  *
  * Ids, codes, statuses, counts, durations, model ids and tool names pass
  * through untouched — they are what makes a row worth writing.
@@ -30,6 +34,7 @@
  * and the Electron main process share it with the server. It moved here from
  * `server/utils/` for that reason.
  */
+import { scrubCredentialsInText } from "./credential-urls";
 import {
   authHeaderLike,
   jwtLike,
@@ -235,11 +240,18 @@ function capText(text: string, maxChars: number): string {
 }
 
 function scrubString(s: string): string {
-  // URLs first: reducing one to its origin also removes any credential in
+  // The credential registry first, over the whole text. Cutting an absolute
+  // URL to its origin already drops its path and query, but the registry is
+  // the only pattern that knows a credential PATH, and those arrive relative
+  // just as often — a request line (`GET /results/<token>`), a route-error
+  // context's `path`, a stack frame quoting a callback's `?code=`. It also
+  // strips userinfo from every scheme, not only the web ones below.
+  //
+  // Then URLs: reducing one to its origin also removes any credential in
   // its userinfo or query, so the narrower patterns below never see half of
   // one. Then the same patterns as the model path, with log-specific
   // replacement strings.
-  return s
+  return scrubCredentialsInText(s)
     .replace(URL_LIKE(), reduceUrlMatch)
     .replace(authHeaderLike(), "$1[redacted]")
     .replace(tokenLike(), "Bearer [redacted-token]")

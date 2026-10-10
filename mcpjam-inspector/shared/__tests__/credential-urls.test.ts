@@ -361,3 +361,20 @@ describe("route templates", () => {
     }
   });
 });
+
+describe("walker edge cases", () => {
+  it("keeps a __proto__ key a key", () => {
+    const out = scrubTelemetryValue(
+      JSON.parse('{"__proto__":{"a":1},"u":"/results/tok"}'),
+    ) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(out.u).toBe("/results/[redacted]");
+  });
+
+  it("does not read a log line opening with code= as a form body", () => {
+    expect(scrubCredentialsInText("code=ENOENT while reading")).toBe(
+      "code=ENOENT while reading",
+    );
+  });
+});

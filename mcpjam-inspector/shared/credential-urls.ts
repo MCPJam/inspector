@@ -674,7 +674,10 @@ function scrubTextParams(text: string, depth = 0): string {
       if (value === "" || value.startsWith(CREDENTIAL_PLACEHOLDER)) {
         return match;
       }
-      if (isSecretParamKey(safeDecode(key))) {
+      // At the very start of the text, only a form body (`code=…&state=…`)
+      // counts; a log line that opens with `code=ENOENT` is not one.
+      const formStart = lead !== "" || depth > 0 || text.includes("&");
+      if (formStart && isSecretParamKey(safeDecode(key))) {
         // Sentence punctuation after a value in prose is not part of it.
         const trailing = TRAILING_PUNCTUATION.exec(value)?.[0] ?? "";
         return `${lead}${key}${eq}${CREDENTIAL_PLACEHOLDER}${trailing}`;
@@ -844,7 +847,14 @@ export function scrubTelemetryValue<T>(
         const next =
           depth === 0 && preserve.has(key) ? child : walk(child, depth + 1);
         if (cleanKey !== key || next !== child) changed = true;
-        out[cleanKey] = next;
+        // Defined, not assigned: a JSON key named `__proto__` must stay a
+        // key, not become the copy's prototype.
+        Object.defineProperty(out, cleanKey, {
+          value: next,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       }
       return changed ? out : node;
     } finally {
