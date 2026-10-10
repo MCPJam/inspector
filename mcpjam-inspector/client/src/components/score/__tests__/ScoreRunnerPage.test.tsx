@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { UserEvent } from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebApiError } from "@/lib/apis/web/base";
 import { readScoreRunResume, writeScoreRunResume } from "../score-run-resume";
 
@@ -129,6 +129,24 @@ describe("ScoreRunnerPage", () => {
     expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
 
+  it("walks the local design path when no project is ready", async () => {
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId={null} />);
+    await submitServerUrl(user, "https://mcp.excalidraw.com/mcp");
+    await submitDeliveryEmail(user);
+
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "Your scorecard is on its way." },
+        { timeout: 2000 },
+      ),
+    ).toBeInTheDocument();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+    expect(mockRunAll).not.toHaveBeenCalled();
+  });
+
   it("handshakes before running suites", async () => {
     const user = userEvent.setup();
     render(<ScoreRunnerPage convexProjectId="proj_1" />);
@@ -251,103 +269,13 @@ describe("ScoreRunnerPage", () => {
     await submitDeliveryEmail(user);
 
     expect(
-      await screen.findByRole("heading", { name: "Your scorecard is ready." }),
+      await screen.findByRole("heading", { name: "Your scorecard is on its way." }),
     ).toBeInTheDocument();
     expect(mockSubmitScoreRun).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText("Private result link")).toHaveValue(
+    expect(screen.getByRole("link", { name: "View in browser" })).toHaveAttribute(
+      "href",
       `${window.location.origin}/results/tok_1`,
     );
-  });
-
-  describe("copying the private result link", () => {
-    const PASSING_SCORE = {
-      score: 84,
-      outcome: "passed",
-      applicable: 10,
-      passed: 8,
-      failed: 1,
-      couldNotRun: 1,
-      notApplicable: 0,
-      advisories: [],
-    };
-
-    /**
-     * `userEvent.setup()` installs its own clipboard stub, so each case
-     * replaces it only once the flow has reached the done phase.
-     */
-    function stubClipboard(writeText: unknown) {
-      Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: writeText === undefined ? undefined : { writeText },
-      });
-    }
-
-    async function renderSavedRun(writeText: unknown) {
-      mockScoreState.pooledScore = PASSING_SCORE;
-      mockScoreState.protocolScore = PASSING_SCORE;
-      mockScoreState.protocolResult = { profile: { pendingCheckIds: [] } };
-      mockSubmitScoreRun.mockResolvedValue({ token: "tok_1" });
-      const user = userEvent.setup();
-      render(<ScoreRunnerPage convexProjectId="proj_1" />);
-
-      await submitServerUrl(user);
-      await submitDeliveryEmail(user);
-      await screen.findByLabelText("Private result link");
-      stubClipboard(writeText);
-      return user;
-    }
-
-    async function clickCopy(user: UserEvent) {
-      await user.click(
-        screen.getByRole("button", { name: "Copy result link" }),
-      );
-    }
-
-    afterEach(() => {
-      Reflect.deleteProperty(navigator, "clipboard");
-    });
-
-    it("confirms a resolved write", async () => {
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      const user = await renderSavedRun(writeText);
-
-      await clickCopy(user);
-
-      expect(writeText).toHaveBeenCalledWith(
-        `${window.location.origin}/results/tok_1`,
-      );
-      expect(
-        await screen.findByRole("button", { name: "Copied result link" }),
-      ).toHaveTextContent("Copied");
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    });
-
-    it("explains an unavailable Clipboard API", async () => {
-      const user = await renderSavedRun(undefined);
-
-      await clickCopy(user);
-
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Could not copy the link. Copy it manually.",
-      );
-      expect(
-        screen.getByRole("button", { name: "Copy result link" }),
-      ).toHaveTextContent("Copy");
-    });
-
-    it("does not claim success when the write rejects", async () => {
-      const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-      const user = await renderSavedRun(writeText);
-
-      await clickCopy(user);
-
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Could not copy the link. Copy it manually.",
-      );
-      expect(
-        screen.getByRole("button", { name: "Copy result link" }),
-      ).toHaveTextContent("Copy");
-    });
   });
 
   it("reports a save failure without retrying indefinitely", async () => {

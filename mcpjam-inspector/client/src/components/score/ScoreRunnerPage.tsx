@@ -81,8 +81,6 @@ export function ScoreRunnerPage({
       formDisabled={controller.formDisabled}
       appReadyMessage={controller.appReadyMessage}
       resultUrl={controller.resultUrl}
-      copied={controller.copied}
-      onCopy={controller.copyResultUrl}
       showAuthorize={controller.showAuthorize}
       onAuthorize={controller.authorizeServer}
       authorizeBusy={controller.authorizeBusy}
