@@ -14,7 +14,13 @@ The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth con
 ## Import
 
 ```typescript
-import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+import {
+  OAuthConformanceTest,
+  OAuthConformanceSuite,
+  // Score helpers
+  scoreFromOAuthResult,
+  describeConformanceScore,
+} from "@mcpjam/sdk";
 ```
 
 ---
@@ -245,6 +251,34 @@ for (const flow of result.results) {
 | `results` | `Array<ConformanceResult & { label }>` | Per-flow results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
+
+---
+
+## Conformance score
+
+Use `scoreFromOAuthResult` to compute the 0–100 score for a run:
+
+```typescript
+import { scoreFromOAuthResult, describeConformanceScore } from "@mcpjam/sdk";
+
+const result = await new OAuthConformanceTest({ ... }).run();
+const score = scoreFromOAuthResult(result);
+
+console.log(score.score);   // e.g. 95, or null when not applicable
+console.log(describeConformanceScore(score));
+// "95/100 — 10/10 applicable checks passed [2025-11-25]"
+// or: "not scored — 0 applicable checks (12 not applicable)"
+```
+
+**OAuth-specific scoring behavior:**
+
+- When `result.outcome === "not-applicable"` (the server serves without auth, which the spec makes OPTIONAL), `score.score` is `null` and all steps count as `notApplicable`. A server without auth has nothing to score.
+- The score is computed from step evidence directly, not from the suite's own `outcome` field, so a run that reports `"passed"` over `could-not-run` steps is scored honestly as incomplete.
+- `teachableMoments` on steps are explanations of failures already counted at MUST weight — they are not advisory deductions.
+
+The CLI prints a `Score:` line to stderr after each run (suppressed by `--quiet`). When the run is not applicable, no score line is printed. `toConformanceReport` attaches the score to `ConformanceReport.score`, and JUnit XML includes it in a `<properties>` block (value `"not-scored"` for not-applicable runs).
+
+See [Protocol Conformance SDK](/sdk/reference/protocol-conformance#conformance-score) for the full scoring formula.
 
 ---
 
