@@ -105,6 +105,8 @@
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:local-access": "playwright test -c playwright.local-access.config.ts",
+    "build:client:telemetry-e2e": "cross-env VITE_MCPJAM_HOSTED_MODE=true VITE_DISABLE_POSTHOG_LOCAL=false VITE_DISABLE_SENTRY=false VITE_CONVEX_URL=https://telemetry-e2e.convex.cloud VITE_WORKOS_CLIENT_ID=client_telemetry_e2e VITE_WORKOS_REDIRECT_URI=https://app.mcpjam.com/callback NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts --outDir ../dist/telemetry-client",
+    "test:e2e:telemetry": "playwright test -c playwright.telemetry.config.ts",
     "test:github-checks-cleanup:e2b": "cross-env RUN_GITHUB_CHECKS_E2B_CLEANUP=1 vitest run server/services/github-checks/__tests__/cleanup.e2b.integration.test.ts",
     "test:e2e:oauth-debugger": "npm run sdk:build && playwright test -c playwright.oauth-debugger.config.ts",
     "ship": "bash scripts/ship.sh",

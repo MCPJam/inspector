@@ -370,3 +370,81 @@ jobs:
             mcpjam-inspector/test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  telemetry-egress:
+    runs-on: ubuntu-latest
+    name: Telemetry egress (Playwright, telemetry on)
+    # Same pinned Playwright image as `e2e` — Chromium + system deps are
+    # preinstalled, and its Chromium is the one this Playwright version expects.
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+    # The one browser job that runs with Sentry and PostHog ON, because they
+    # are what it tests: a hosted build, every request to the PostHog relay and
+    # to Sentry ingest intercepted with `page.route`, recorded, decoded and
+    # searched for planted credentials. Nothing is forwarded — the spec
+    # fulfils every request itself, serves the app from the build, and stands
+    # in for Convex — so unlike `e2e` there is no VITE_DISABLE_SENTRY: turning
+    # Sentry off would turn half the proof off. No server runs, so the
+    # server-side DO_NOT_TRACK has nothing to apply to.
+    # See mcpjam-inspector/e2e/telemetry/browser-harness.ts.
+
+    steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` and `e2e` jobs.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Build inspector
+        # The same build `e2e` runs: it builds the SDK and the bundles the
+        # client imports. The telemetry client build below reuses them.
+        run: npm run build -w @mcpjam/inspector
+
+      - name: Build the telemetry client
+        # Hosted mode (what records), PostHog and Sentry on, a Convex URL the
+        # spec stands in for. Written to dist/telemetry-client, next to the
+        # normal client, never instead of it.
+        run: npm run build:client:telemetry-e2e -w @mcpjam/inspector
+
+      - name: Run telemetry egress e2e
+        run: npm run test:e2e:telemetry -w @mcpjam/inspector
+
+      - name: Upload telemetry egress report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-telemetry
+          path: |
+            mcpjam-inspector/playwright-report/telemetry/
+            mcpjam-inspector/test-results/telemetry/
+          retention-days: 7
+          if-no-files-found: ignore

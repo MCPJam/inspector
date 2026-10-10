@@ -334,3 +334,69 @@ describe("installRecorderNavigationGuard", () => {
     }
   });
 });
+
+describe("Sentry Replay blocks elements whose URL attributes carry a credential", () => {
+  // Sentry's rrweb writes `href`/`src` without consulting `maskAttributes`,
+  // so these elements must be BLOCKED, by selector.
+  it.each([
+    ["href", `https://app.mcpjam.com/results/${SECRET}`],
+    ["href", `/bench/results/${SECRET}`],
+    [
+      "src",
+      `https://app.mcpjam.com/user-testing/acme/${SECRET}?surface=preview`,
+    ],
+    ["href", `/api/mcp/servers/rpc/stream?serverId=a&_token=${SECRET}`],
+    ["href", `/oauth/callback?code=${SECRET}`],
+    ["action", `https://idp.example/sso?SAMLResponse=${SECRET}`],
+  ])("blocks %s=%s", async (attribute, value) => {
+    const { SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+    const element = document.createElement(
+      attribute === "src" ? "iframe" : "a",
+    );
+    element.setAttribute(attribute, value);
+    expect(element.matches(SENTRY_REPLAY_OPTIONS.block.join(","))).toBe(true);
+  });
+
+  it("leaves ordinary links recorded", async () => {
+    const { SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+    for (const href of [
+      "/p/k1/servers?tab=tools",
+      "https://docs.mcpjam.com/x",
+    ]) {
+      const a = document.createElement("a");
+      a.setAttribute("href", href);
+      expect(a.matches(SENTRY_REPLAY_OPTIONS.block.join(","))).toBe(false);
+    }
+  });
+});
+
+describe("scrubPostHogPersistence", () => {
+  it("takes credentials out of what posthog-js stored, in place", async () => {
+    const { scrubPostHogPersistence } = await loadAt("full");
+    const props: Record<string, unknown> = {
+      distinct_id: "user-1",
+      $initial_person_info: {
+        u: `https://app.mcpjam.com/results/${SECRET}`,
+        r: "$direct",
+      },
+    };
+    const save = vi.fn();
+    scrubPostHogPersistence({ persistence: { props, save } });
+    expect(JSON.stringify(props)).not.toContain(SECRET);
+    expect(props.distinct_id).toBe("user-1");
+    expect(props.$initial_person_info).toEqual({
+      u: "https://app.mcpjam.com/results/[redacted]",
+      r: "$direct",
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves nothing when there was nothing to scrub", async () => {
+    const { scrubPostHogPersistence } = await loadAt("full");
+    const save = vi.fn();
+    scrubPostHogPersistence({
+      persistence: { props: { distinct_id: "user-1" }, save },
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+});

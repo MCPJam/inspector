@@ -20,6 +20,7 @@
  * not arrive becomes `masked` (`useSessionPrivacy`), never `full`.
  */
 import {
+  credentialAttributeSelectors,
   isReplayBlockedLocation,
   scrubCredentialsInText,
   scrubCredentialUrl,
@@ -772,15 +773,24 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
  * `Sentry.replayIntegration` options, explicit rather than inherited from
  * defaults that could move: text, inputs and media masked, no request or
  * response detail for any URL, and every attribute that can hold a URL
- * masked — Sentry offers no attribute callback, and a share link's `href` is
- * a credential. Elements under this repo's secret-surface convention
- * (`rr-block`, `data-ph-no-capture`) are blocked outright.
+ * masked where Sentry honours it — Sentry offers no attribute callback, and
+ * its rrweb writes `href`/`src`/`srcset`/`data` as they are. An element whose
+ * URL attribute carries a credential, and anything under this repo's
+ * secret-surface convention (`rr-block`, `data-ph-no-capture`), is therefore
+ * blocked outright.
  */
 export const SENTRY_REPLAY_OPTIONS = {
   maskAllText: true,
   maskAllInputs: true,
   blockAllMedia: true,
-  block: [".rr-block", `[${SECRET_SURFACE_ATTRIBUTE}]`],
+  // Sentry's rrweb serializes `href`, `src` and friends without consulting
+  // `maskAttributes`, so an element whose URL attribute carries a credential
+  // is blocked outright (`credentialAttributeSelectors`).
+  block: [
+    ".rr-block",
+    `[${SECRET_SURFACE_ATTRIBUTE}]`,
+    ...credentialAttributeSelectors(),
+  ],
   maskAttributes: [
     "title",
     "placeholder",

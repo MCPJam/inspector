@@ -5,6 +5,7 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
+const addEventProcessor = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
@@ -12,6 +13,7 @@ vi.mock("@sentry/react", () => ({
   browserTracingIntegration,
   getClient,
   addIntegration,
+  addEventProcessor,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -140,34 +142,39 @@ describe("client sentry init", () => {
     expect(config.integrations).toHaveLength(1);
   });
 
-  it("scrubs the replay event's URL list short of full", async () => {
+  it("scrubs replay events and scope transaction names after the scope applies", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
-    const handlers: Record<string, (event: Record<string, unknown>) => void> =
-      {};
-    getClient.mockReturnValue({
-      on: (hook: string, fn: (event: Record<string, unknown>) => void) => {
-        handlers[hook] = fn;
-      },
-    });
+    addEventProcessor.mockClear();
     const { initSentry } = await import("../sentry");
     const { setSessionPrivacy } = await import("../session-privacy");
     initSentry();
+    expect(addEventProcessor).toHaveBeenCalledTimes(1);
+    const process = addEventProcessor.mock.calls[0][0] as (
+      event: Record<string, unknown>,
+    ) => Record<string, unknown> | null;
 
     const replayEvent = () => ({
       type: "replay_event",
+      transaction: "/results/tok_secret",
+      request: { url: "https://app.mcpjam.com/results/tok_secret" },
       urls: ["https://app.mcpjam.com/servers/acme"],
     });
     setSessionPrivacy("masked");
-    const masked = replayEvent();
-    handlers.preprocessEvent(masked);
-    expect(masked.urls).toEqual(["https://app.mcpjam.com/servers/[name]"]);
+    const masked = process(replayEvent());
+    expect(masked?.urls).toEqual(["https://app.mcpjam.com/servers/[name]"]);
+    expect(masked?.transaction).toBe("/results/:runToken");
+    expect(JSON.stringify(masked)).not.toContain("tok_secret");
 
     setSessionPrivacy("full");
-    const full = replayEvent();
-    handlers.preprocessEvent(full);
-    expect(full.urls).toEqual(["https://app.mcpjam.com/servers/acme"]);
+    const full = process(replayEvent());
+    expect(full?.urls).toEqual(["https://app.mcpjam.com/servers/acme"]);
+    expect(JSON.stringify(full)).not.toContain("tok_secret");
+
+    // An error inherits the scope's raw transaction name.
+    const error = process({ transaction: "/evals/shared/tok_secret" });
+    expect(error?.transaction).toBe("/evals/shared/:token");
   });
 });
 
@@ -484,5 +491,65 @@ describe("query event processor wiring", () => {
         {},
       ).fingerprint,
     ).toEqual(["dom-mutation-conflict", "prod"]);
+  });
+});
+
+describe("syncSentryReplay, a quick in-and-out", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("resumes only after the guard's stop has finished flushing", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    setSessionPrivacy("full");
+    let finishStop: () => void = () => {};
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => (finishStop = resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/tok");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays stopped when the location is blocked again before the flush ends", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    setSessionPrivacy("full");
+    let finishStop: () => void = () => {};
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => (finishStop = resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/servers");
+    syncSentryReplay("/results/b");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
+
+    // …and still resumes on the way out.
+    syncSentryReplay("/servers");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
   });
 });

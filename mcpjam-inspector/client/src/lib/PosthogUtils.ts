@@ -216,6 +216,56 @@ function scrubSnapshotData(data: unknown): unknown[] | null {
   return out;
 }
 
+/** The parts of a posthog-js instance whose stored state is scrubbed. */
+interface PostHogPersistenceLike {
+  props?: Record<string, unknown>;
+  save?: () => void;
+}
+interface PostHogWithPersistence {
+  persistence?: PostHogPersistenceLike | null;
+  sessionPersistence?: PostHogPersistenceLike | null;
+}
+
+let persistedPostHog: PostHogWithPersistence | null = null;
+
+/**
+ * Credentials out of what posthog-js STORES, not only what it sends: on the
+ * first capture of a visit it records the landing URL as
+ * `$initial_person_info` (`u`, `r`) straight from `location.href`, into its
+ * cookie — scoped to the parent domain, so it rides every same-site request —
+ * and into localStorage. Neither `before_send` nor any URL hook sees that
+ * write. A landing on a share link would keep the token there for a year.
+ *
+ * Run from `before_send` (posthog-js writes the person info earlier in the
+ * same `capture`) and once at load, for values an older build stored. A walk
+ * that cannot finish deletes the person info rather than leaving it raw.
+ */
+export function scrubPostHogPersistence(
+  instance: PostHogWithPersistence | null = persistedPostHog,
+): void {
+  if (!instance) return;
+  for (const store of [instance.persistence, instance.sessionPersistence]) {
+    const props = store?.props;
+    if (!store || !props) continue;
+    try {
+      const scrubbed = scrubTelemetryValue(props);
+      if (scrubbed === props) continue;
+      // In place: the SDK holds this object, not a getter for it.
+      for (const key of Object.keys(props)) {
+        if (!(key in scrubbed)) delete props[key];
+      }
+      Object.assign(props, scrubbed);
+    } catch {
+      delete props.$initial_person_info;
+    }
+    try {
+      store.save?.();
+    } catch {
+      // Storage refused the write; nothing else to do here.
+    }
+  }
+}
+
 /**
  * The single `before_send` pass: every credential out of everything an event
  * carries — its properties (URL properties, `$elements_chain`,
@@ -235,6 +285,7 @@ function scrubSnapshotData(data: unknown): unknown[] | null {
 export function scrubCaptureEvent(
   event: CaptureResult | null,
 ): CaptureResult | null {
+  scrubPostHogPersistence();
   if (!event) return event;
   try {
     const properties: Record<string, any> = { ...(event.properties ?? {}) };
@@ -389,6 +440,8 @@ export const options = {
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
+    persistedPostHog = posthog;
+    scrubPostHogPersistence(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),

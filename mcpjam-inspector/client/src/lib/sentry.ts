@@ -119,19 +119,45 @@ export function initSentry() {
       }),
     ],
   });
-  // The replay event lists every URL the replay visited: credentials out
-  // always, names too short of `full`.
-  Sentry.getClient()?.on?.("preprocessEvent", (event) => {
-    if (event.type !== "replay_event") return;
-    const replayEvent = event as { urls?: unknown };
-    if (Array.isArray(replayEvent.urls)) {
-      const scrub = shouldMaskAnalytics()
-        ? scrubNamesFromUrl
-        : scrubCredentialUrl;
-      replayEvent.urls = replayEvent.urls.map((url: unknown) =>
-        typeof url === "string" ? scrub(url) : url,
+  // Every event, at the very end of its processing — an event processor
+  // runs after the scope's data has been applied, which `beforeSend` and the
+  // `preprocessEvent` hook do not see the result of:
+  //
+  //  - `replay_event` bypasses `beforeSend` altogether. It carries the page
+  //    URL (`request.url`), the scope's transaction name and every URL the
+  //    replay visited; a segment flushed by the guard's `stop()` can be sent
+  //    after the address bar has moved onto a credential page.
+  //  - The scope's transaction name is set from the raw pathname by browser
+  //    tracing before `beforeStartSpan` renames the span, and errors inherit
+  //    it.
+  //
+  // So: transaction names become route templates, the URLs lose credentials
+  // (and names, short of `full`), and the whole event goes through the
+  // credential walker — dropped if it cannot be shown clean.
+  Sentry.addEventProcessor((event) => {
+    const scrubUrl = shouldMaskAnalytics()
+      ? scrubNamesFromUrl
+      : scrubCredentialUrl;
+    const target = event as {
+      type?: string;
+      transaction?: unknown;
+      urls?: unknown;
+    };
+    if (
+      target.type !== "transaction" &&
+      typeof target.transaction === "string" &&
+      target.transaction.startsWith("/")
+    ) {
+      target.transaction = sentryTransactionName(
+        target.transaction.split(/[?#]/)[0] ?? "/",
       );
     }
+    if (target.type === "replay_event" && Array.isArray(target.urls)) {
+      target.urls = target.urls.map((url: unknown) =>
+        typeof url === "string" ? scrubUrl(url) : url,
+      );
+    }
+    return scrubSentryCredentials(event);
   });
 }
 
@@ -161,6 +187,10 @@ export function initSentry() {
 let sentryReplayStoppedByGuard = false;
 let sentryReplayResumeMode: "session" | "buffer" = "session";
 let sentryReplayAdded = false;
+/** The guard's last `stop()`, while it is still flushing. */
+let pendingSentryStop: Promise<unknown> | null = null;
+/** Whether the latest sync found the location blocked. */
+let lastSyncBlocked = false;
 
 type ReplayControls = ReturnType<typeof Sentry.replayIntegration> & {
   getRecordingMode?: () => "session" | "buffer" | undefined;
@@ -171,6 +201,7 @@ export function syncSentryReplay(location: string | LocationLike): void {
     if (!isErrorCaptureSurface()) return;
     const privacy = currentSessionPrivacy();
     const blocked = privacy !== "full" || isCredentialBearingPath(location);
+    lastSyncBlocked = blocked;
     const client = Sentry.getClient();
     const replay = client?.getIntegrationByName?.<ReplayControls>("Replay");
     if (!replay) {
@@ -194,7 +225,17 @@ export function syncSentryReplay(location: string | LocationLike): void {
         sentryReplayResumeMode =
           replay.getRecordingMode?.() === "buffer" ? "buffer" : "session";
       }
-      replay.stop?.();
+      const stopping: unknown = replay.stop?.();
+      if (
+        stopping &&
+        typeof (stopping as Promise<unknown>).then === "function"
+      ) {
+        const settled = Promise.resolve(stopping).catch(() => undefined);
+        pendingSentryStop = settled;
+        void settled.then(() => {
+          if (pendingSentryStop === settled) pendingSentryStop = null;
+        });
+      }
       return;
     }
 
@@ -204,8 +245,27 @@ export function syncSentryReplay(location: string | LocationLike): void {
     // it was in.
     if (sentryReplayStoppedByGuard) {
       sentryReplayStoppedByGuard = false;
-      if (sentryReplayResumeMode === "buffer") replay.startBuffering?.();
-      else replay.start?.();
+      const mode = sentryReplayResumeMode;
+      const resume = () => {
+        if (mode === "buffer") replay.startBuffering?.();
+        else replay.start?.();
+      };
+      // `stop()` flushes asynchronously, and a `start()` issued while it is
+      // still in flight is ignored — a quick in-and-out of a credential page
+      // would otherwise leave the replay stopped for good. Wait for it, then
+      // resume only if nothing has blocked the location since.
+      const stopping = pendingSentryStop;
+      if (!stopping) {
+        resume();
+      } else {
+        void stopping.then(() => {
+          if (lastSyncBlocked) {
+            sentryReplayStoppedByGuard = true;
+            return;
+          }
+          resume();
+        });
+      }
     }
   } catch {
     // See doc comment — a failed guard must not break the render.
