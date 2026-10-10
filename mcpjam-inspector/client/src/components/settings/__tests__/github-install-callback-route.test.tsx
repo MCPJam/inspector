@@ -91,7 +91,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { toast } from "@/lib/toast";
-import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";
+import {
+  GITHUB_CALLBACK_STORAGE_KEY,
+  GithubInstallCallbackRoute,
+} from "../GithubInstallCallbackRoute";
 
 const PATH = "/settings/integrations/github/callback";
 
@@ -118,6 +121,9 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The captured callback survives a reload in sessionStorage; no test may
+  // inherit another's.
+  sessionStorage.clear();
   // `clearAllMocks` clears CALLS, not implementations. Two tests here make the
   // redirect throw to prove the guard's developer text never reaches the
   // screen, and without this that throwing implementation leaks into every
@@ -714,6 +720,55 @@ function renderCallbackWithProbe(query: string) {
     </StrictMode>,
   );
 }
+
+describe("a reload before the backend has answered", () => {
+  it("finishes with the stored code and state once auth lands", async () => {
+    // First load: auth still settling, URL scrubbed, nothing called.
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    const first = renderCallbackWithProbe(
+      "?code=gh-code&state=raw-oauth-state",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    first.unmount();
+
+    // Reload of the bare path: the stored copy is used.
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    renderCallbackWithProbe("");
+    await waitFor(() =>
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
+        code: "gh-code",
+        state: "raw-oauth-state",
+      }),
+    );
+    // Spent once the backend answered.
+    await waitFor(() =>
+      expect(sessionStorage.getItem(GITHUB_CALLBACK_STORAGE_KEY)).toBeNull(),
+    );
+  });
+
+  it("ignores an expired stored callback", async () => {
+    sessionStorage.setItem(
+      GITHUB_CALLBACK_STORAGE_KEY,
+      JSON.stringify({
+        code: "old",
+        state: "old-state",
+        installationId: null,
+        expiresAt: Date.now() - 1,
+      }),
+    );
+    renderCallback("");
+    expect(
+      await screen.findByText(/opened without the details GitHub sends/i),
+    ).toBeInTheDocument();
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+  });
+});
 
 describe("the address bar", () => {
   it("drops code and state from the URL on mount, before auth has settled", async () => {
