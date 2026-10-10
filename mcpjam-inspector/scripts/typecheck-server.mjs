@@ -15,13 +15,18 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const INSPECTOR = dirname(dirname(fileURLToPath(import.meta.url)));
 const BASELINE = join(INSPECTOR, "server", "tsc-baseline.json");
 
 const ERROR_LINE = /^(.+?)\(\d+,\d+\): error (TS\d+): (.*)$/;
-const TEST_FILE = /(?:^|\/)__tests__\/|\.test\.tsx?$/;
+/** A diagnostic with no file location: a broken config, not a code error. */
+const GLOBAL_ERROR = /^error TS\d+:/;
+/** The ratchet covers server source only, not what the server imports. */
+const SERVER_SOURCE = /^server\//;
+const TEST_FILE =
+  /(?:^|\/)(?:__tests__|__mocks__|tests?|fixtures)\/|\.(?:test|spec)\.tsx?$/;
 const GENERATED_MODULE =
   /Cannot find module '[^']*\.(?:bundled|generated)(?:\.js)?'/;
 
@@ -31,7 +36,7 @@ export function countErrors(output) {
     const match = ERROR_LINE.exec(line);
     if (!match) continue;
     const [, file, code, message] = match;
-    if (TEST_FILE.test(file)) continue;
+    if (!SERVER_SOURCE.test(file) || TEST_FILE.test(file)) continue;
     if (code === "TS2307" && GENERATED_MODULE.test(message)) continue;
     counts[file] = (counts[file] ?? 0) + 1;
   }
@@ -55,6 +60,20 @@ export function compare(baseline, current) {
   return { regressions, improvements };
 }
 
+/**
+ * Server files that import `@mcpjam/sdk` subpaths resolve them through the
+ * package's `dist/`, so the error count depends on whether the SDK is built.
+ * CI builds it before this step (`npm run typecheck`); building it here when
+ * stale makes a local run count the same thing CI does.
+ */
+function ensureSdkBuilt() {
+  execFileSync("node", [join(INSPECTOR, "scripts", "build-sdk-if-stale.mjs")], {
+    cwd: INSPECTOR,
+    // Quiet unless it fails; execFileSync then throws with the build's stderr.
+    stdio: "pipe",
+  });
+}
+
 function runTsc() {
   try {
     execFileSync(
@@ -70,12 +89,27 @@ function runTsc() {
   }
 }
 
+/** Project-level errors that would otherwise read as "no file has errors". */
+export function globalErrors(output) {
+  return output.split("\n").filter((line) => GLOBAL_ERROR.test(line));
+}
+
 function total(counts) {
   return Object.values(counts).reduce((sum, n) => sum + n, 0);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const current = countErrors(runTsc());
+// Compared as URLs: on Windows argv[1] is a `C:\` path, and a space in the
+// checkout path is percent-encoded only in the URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  ensureSdkBuilt();
+  const output = runTsc();
+  const fatal = globalErrors(output);
+  if (fatal.length) {
+    console.error("tsc failed before checking any file:");
+    for (const line of fatal) console.error(`  ${line}`);
+    process.exit(1);
+  }
+  const current = countErrors(output);
   if (process.argv.includes("--update")) {
     writeFileSync(BASELINE, `${JSON.stringify(current, null, 2)}\n`);
     console.log(

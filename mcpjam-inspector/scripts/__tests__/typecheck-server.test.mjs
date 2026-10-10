@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compare, countErrors } from "../typecheck-server.mjs";
+import { compare, countErrors, globalErrors } from "../typecheck-server.mjs";
 
 const OUTPUT = [
   "server/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
@@ -8,6 +8,9 @@ const OUTPUT = [
   "server/b.ts(3,1): error TS2307: Cannot find module '../Thing.bundled.js' or its corresponding type declarations.",
   "server/b.ts(4,1): error TS2307: Cannot find module 'hono' or its corresponding type declarations.",
   "server/__tests__/c.test.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+  "server/test/support/mock.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+  "client/src/lib/x.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+  "../sdk/src/y.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
   "  continuation line of a long message",
 ].join("\n");
 
@@ -28,4 +31,13 @@ test("a file over its allowance regresses; under it improves", () => {
     improvements.map((r) => r.file),
     ["server/b.ts"],
   );
+});
+
+test("project-level errors are reported, not read as zero file errors", () => {
+  const output =
+    "error TS5058: The specified path does not exist: 'nope.json'.\n" + OUTPUT;
+  assert.deepEqual(globalErrors(output), [
+    "error TS5058: The specified path does not exist: 'nope.json'.",
+  ]);
+  assert.deepEqual(globalErrors(OUTPUT), []);
 });
