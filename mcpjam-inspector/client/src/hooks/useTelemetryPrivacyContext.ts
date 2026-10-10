@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import {
   CONSERVATIVE_TELEMETRY_POLICY,
   isTelemetryPolicy,
@@ -7,6 +8,12 @@ import {
   type TelemetryIdentity,
   type TelemetryPolicy,
 } from "@/shared/telemetry-privacy";
+
+// The backend's query, by name: this package does not import the backend's
+// generated API.
+const GET_TELEMETRY_CONTEXT = makeFunctionReference<"query">(
+  "telemetryPrivacy:getContext",
+);
 
 /** The actor key used for a visitor with no session at all. */
 export const ANONYMOUS_TELEMETRY_ACTOR = "anonymous";
@@ -121,7 +128,7 @@ export function useTelemetryPrivacyContext(
     const [projects, organizations] = argsKey.split("|");
     return {
       policy: {
-        query: "telemetryPrivacy:getContext" as any,
+        query: GET_TELEMETRY_CONTEXT,
         args: {
           projectIds: projects ? projects.split(",") : [],
           organizationIds: organizations ? organizations.split(",") : [],

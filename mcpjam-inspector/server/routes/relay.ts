@@ -17,13 +17,15 @@ import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js"
 import {
   applyEventPolicy,
   decideEventPolicies,
-  gzipDeclaredBytes,
   isRestricted,
   type PolicyDecision,
+} from "./relay-privacy.js";
+import {
+  gzipDeclaredBytes,
   RelayBusyError,
   type RestrictionBudget,
   UnsupportedReplayError,
-} from "./relay-privacy.js";
+} from "./relay-replay-privacy.js";
 
 /**
  * Same-origin PostHog reverse proxy.

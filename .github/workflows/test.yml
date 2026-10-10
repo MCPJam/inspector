@@ -380,6 +380,7 @@ jobs:
 
   telemetry-privacy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Telemetry Privacy (browser)
     # Telemetry ON, unlike the smoke job above: the app's real PostHog and
     # Sentry setup, with both transports intercepted in the browser and every
