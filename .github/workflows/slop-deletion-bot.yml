@@ -118,7 +118,7 @@ jobs:
             --model claude-opus-5-5
             --max-turns 80
             --add-dir ${{ runner.temp }}
-            --allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git rm:*),Bash(git grep:*),Bash(git diff:*),Bash(git status:*),Bash(git restore:*),Bash(git log:*),Bash(npm run typecheck:*),Bash(npx vitest run:*),Bash(node scripts/slop/:*)"
+            --allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git rm:*),Bash(git grep:*),Bash(git diff:*),Bash(git status:*),Bash(git restore:*),Bash(git log:*),Bash(npm run typecheck:*),Bash(npx vitest run:*)"
           prompt: |
             You are the nightly deletion bot for MCPJam/inspector. Your job is one small, safe change that removes slop, or no change at all. A person reviews every PR you cause, so a wrong deletion costs their time; when unsure, skip.
 
@@ -141,7 +141,7 @@ jobs:
             ## Both lanes
 
             - Do not commit, push, or open a PR. Do not edit any file except as described above.
-            - When done, run `node scripts/slop/deletion-bot-check.mjs --lane ${{ steps.plan.outputs.lane }}`. It must pass. If it fails, fix the change or restore the tree.
+            - Do not edit anything under `scripts/slop/` or `.github/`. After you finish, the workflow checks the change with its own copy of `scripts/slop/deletion-bot-check.mjs`: only whole-file deletions in the dead-files lane, only comment changes in the history-comments lane, at most 400 lines, and no slop rule going up. A change that fails that check is discarded.
             - If you made a change, write `${{ runner.temp }}/pr.md`. Line 1 is the PR title: imperative, under 70 characters, naming what went (for example "Delete unused PricingEstimator component"). Line 2 is blank. Then the body, following `.github/pull_request_template.md`:
               - User story: as a maintainer of the package, I want this unused code (or history narration) removed, so that the next reader has less to read and nothing stale to trust.
               - Acceptance criteria: ticked checkboxes for what you actually verified, each naming the command you ran (the greps that came back empty, the typecheck that passed).
@@ -154,9 +154,19 @@ jobs:
         if: steps.plan.outputs.skip != 'true'
         env:
           LANE: ${{ steps.plan.outputs.lane }}
+        # The gate must not be code Claude could have edited: refuse any change
+        # under scripts/slop, then run the scripts as committed at HEAD, which
+        # Claude cannot change (it has no git commit). The copy is made only
+        # now, because Claude could write anywhere under RUNNER_TEMP earlier.
         run: |
           set -euo pipefail
-          node scripts/slop/deletion-bot-check.mjs --lane "$LANE" > "$RUNNER_TEMP/paths.txt"
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/slop .github)" ]; then
+            echo "scripts/slop or .github was modified; refusing." >&2
+            exit 1
+          fi
+          gate="$(mktemp -d)"
+          git archive HEAD scripts/slop | tar -x -C "$gate"
+          node "$gate/scripts/slop/deletion-bot-check.mjs" --lane "$LANE" > "$RUNNER_TEMP/paths.txt"
           echo "changed=$(wc -l < "$RUNNER_TEMP/paths.txt" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       # Pushes made with GITHUB_TOKEN start no workflows, and a PR without its

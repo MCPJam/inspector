@@ -46,6 +46,9 @@ function changes() {
  * literals are skipped so a `//` inside one is not read as a comment.
  */
 export function codeOnly(text) {
+  // Literals are set aside and replaced by a numbered marker, so the
+  // whitespace normalization below cannot reach inside them.
+  const literals = [];
   let out = "";
   let i = 0;
   while (i < text.length) {
@@ -60,7 +63,8 @@ export function codeOnly(text) {
     } else if (c === '"' || c === "'" || c === "`") {
       let j = i + 1;
       while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
-      out += text.slice(i, j + 1);
+      literals.push(text.slice(i, j + 1));
+      out += `\u0000${literals.length - 1}\u0000`;
       i = j + 1;
     } else {
       out += c;
@@ -71,7 +75,8 @@ export function codeOnly(text) {
     .split("\n")
     .map((line) => line.trim().replace(/\s+/g, " "))
     .filter(Boolean)
-    .join("\n");
+    .join("\n")
+    .replace(/\u0000(\d+)\u0000/g, (_, index) => literals[Number(index)]);
 }
 
 export function checkLane(lane, entries, { before, after, linesOf }) {

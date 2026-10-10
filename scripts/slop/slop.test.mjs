@@ -246,6 +246,14 @@ describe("deletion bot check", async () => {
       codeOnly("const a = 1; // #5474"),
       codeOnly("const a = 2;")
     );
+    assert.notEqual(
+      codeOnly('const s = "a  b"; // #5474'),
+      codeOnly('const s = "a b";')
+    );
+    assert.notEqual(
+      codeOnly("const t = `x\n  y`;"),
+      codeOnly("const t = `x\ny`;")
+    );
   });
 
   it("refuses a real tree that adds a file, and passes a real deletion", () => {
