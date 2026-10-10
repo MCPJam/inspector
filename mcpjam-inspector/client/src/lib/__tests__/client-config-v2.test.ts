@@ -4,12 +4,8 @@ import {
   DEFAULT_HOST_TEMPLATE_ID,
   seedHostTemplate,
 } from "@mcpjam/sdk/host-config/templates";
-<<<<<<< HEAD
 import type { LegacyModelSelection } from "@mcpjam/sdk/browser";
-=======
-import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
->>>>>>> c059870df2f174c9103f475898e0c63cd6d98c0a
 import {
   DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
