@@ -3,6 +3,13 @@
 Repository-wide instructions for AI coding agents. Package-specific rules live
 alongside their code — see `mcpjam-inspector/AGENTS.md` for the inspector app.
 
+## Pull requests
+
+`gh pr create --body` skips GitHub's PR template. When you write a PR body,
+read `.github/pull_request_template.md` and fill in every section. Where a
+section does not apply, use the exact text that section's comment gives
+("Nothing", "Nothing applicable", or "None: …").
+
 ## Design
 
 **Read [`DESIGN.md`](./DESIGN.md) before any UI or styling work.** It describes the
