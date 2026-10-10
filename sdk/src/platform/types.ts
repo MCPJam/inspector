@@ -1453,8 +1453,10 @@ export interface PlatformAnalysisTouchpointDisclosure {
      * `gateway_preferred`: Gateway when configured and priced there, else
      * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
      * with a fallback model only when the classifier cannot be reached.
+     * `org_keys`: the organization requires its own provider keys, so the
+     * analyzer runs on its own provider connection.
      */
-    routing?: "gateway_preferred" | "typed_decision";
+    routing?: "gateway_preferred" | "typed_decision" | "org_keys";
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
