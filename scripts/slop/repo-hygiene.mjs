@@ -15,6 +15,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { FILE_BUDGET, checkNewPath } from "./hook.mjs";
 import { isMeasuredFile } from "./rules.mjs";
 
@@ -70,7 +71,8 @@ export function checkChange(entries, linesBefore, linesAfter) {
   return { failures, warnings };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const index = process.argv.indexOf("--base");
   const base =
     index !== -1
