@@ -16,6 +16,7 @@ export const HOSTED_MODEL_IDS = [
   "amazon/nova-pro",
   "anthropic/claude-fable-5",
   "anthropic/claude-haiku-4.5",
+  "anthropic/claude-haiku-5.5",
   "anthropic/claude-opus-4",
   "anthropic/claude-opus-4.1",
   "anthropic/claude-opus-4.5",
