@@ -41,6 +41,7 @@
     "vite-plugin-singlefile": "^2.3.0"
   },
   "overrides": {
-    "shell-quote": "^1.8.4"
+    "shell-quote": "^1.11.0",
+    "source-map-js": "^1.2.2"
   }
 }
