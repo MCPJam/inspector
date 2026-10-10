@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { countFile, isMeasuredFile } from "./rules.mjs";
+import { addedCopy, extractUiStrings, isUiFile } from "./ui-strings.mjs";
 
 const RATCHET = join(dirname(fileURLToPath(import.meta.url)), "ratchet.mjs");
 
@@ -109,6 +110,107 @@ describe("rules", () => {
     );
     assert.equal(counts["ts-suppression"], 3);
     assert.equal(counts["eslint-disable"], 1);
+  });
+});
+
+
+describe("ui strings", () => {
+  const texts = (source) => extractUiStrings(source).map((item) => item.text);
+
+  it("finds copy in literals, templates, attributes and JSX text", () => {
+    const found = extractUiStrings(
+      [
+        'toast.error("Failed to import servers. Try again.");',
+        "toast.error(`Failed to import servers: ${errorMessage}`);",
+        'throw new Error("Choose an image that is 5 MB or smaller.");',
+        "return (",
+        '  <p title="Reload MCPJam to try again">',
+        "    Don't worry, your",
+        "    work is saved",
+        "  </p>",
+        ");",
+      ].join("\n")
+    );
+    assert.deepEqual(found, [
+      { line: 1, text: "Failed to import servers. Try again." },
+      { line: 2, text: "Failed to import servers: ${errorMessage}" },
+      { line: 3, text: "Choose an image that is 5 MB or smaller." },
+      { line: 5, text: "Reload MCPJam to try again" },
+      { line: 5, text: "Don't worry, your work is saved" },
+    ]);
+  });
+
+  it("skips class names, paths, logs, identifiers and comments", () => {
+    assert.deepEqual(
+      texts(
+        [
+          'import { toast } from "@/lib/toast";',
+          '// a comment with "quoted words" in it',
+          '/* and a block comment "with more" */',
+          'const cls = "flex items-center gap-2";',
+          '<div className="text-sm text-muted-foreground" data-testid="row one" />',
+          'console.log("not user facing text");',
+          'logger.warn("not user facing either");',
+          'const url = "https://mcpjam.com/docs here";',
+          'const style = "0.75rem 1.5rem";',
+          'const flag = "SOME_CONSTANT NAME";',
+        ].join("\n")
+      ),
+      []
+    );
+  });
+
+  it("does not read operators, generics or regexes as JSX text", () => {
+    assert.deepEqual(
+      texts(
+        [
+          "if (a > b && c < d) return null;",
+          "const re = /\"['\"]/g;",
+          'function f(x: Foo<string>) { return g("Keep this label"); }',
+          '{count > 0 ? <Empty label="No results yet" /> : "Loading your servers"}',
+          '<span>{"—"}</span>',
+          '<Button onClick={() => save()}>Save changes</Button>',
+          "element: <Boundary />,",
+          "children: [",
+          "  // a comment — about the route",
+          '  { path: "*" },',
+        ].join("\n")
+      ),
+      ["Keep this label", "No results yet", "Loading your servers", "Save changes"]
+    );
+  });
+
+  it("reports copy a change adds, not copy it moves", () => {
+    const before = '<p>\n  Nothing here yet\n</p>\n<p>Try again</p>';
+    const after = '<p>Try again</p>\n<p>Nothing here yet</p>\n<p>Saved to your project</p>';
+    assert.deepEqual(addedCopy(before, after), [
+      { line: 3, text: "Saved to your project" },
+    ]);
+  });
+
+  it("scopes the copy rules to UI packages", () => {
+    assert.equal(isUiFile("mcpjam-inspector/client/src/App.tsx"), true);
+    assert.equal(isUiFile("chat-ui/src/parts/text.tsx"), true);
+    assert.equal(isUiFile("mcpjam-inspector/server/routes/a.ts"), false);
+    assert.equal(isUiFile("sdk/src/index.ts"), false);
+  });
+
+  it("counts dashes, filler and vague errors only in copy", () => {
+    const source = [
+      "// history — not copy",
+      '<div className="flex — gap" />',
+      'toast.error("Something went wrong");',
+      'toast.error("Oops! An error occurred — please try again.");',
+      'toast.error("Could not save the server. Check the URL and try again.");',
+      '<p>Leverage seamless, robust tooling</p>',
+      '<p>Fix prompt copied — paste it into your agent</p>',
+      '<p>The local harness is ready</p>',
+    ].join("\n");
+    const counts = countFile("mcpjam-inspector/client/src/A.tsx", source);
+    assert.equal(counts["ui-dash"], 2);
+    assert.equal(counts["ui-filler"], 1);
+    assert.equal(counts["ui-vague-error"], 2);
+    assert.equal(countFile("sdk/src/a.ts", source)["ui-dash"], 0);
   });
 });
 

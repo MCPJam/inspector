@@ -9,6 +9,8 @@
  * ESLint instead.
  */
 
+import { extractUiStrings, isUiFile } from "./ui-strings.mjs";
+
 const SOURCE_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
 const EXCLUDED_PATH =
@@ -67,6 +69,19 @@ function countCommentLines(text, regex) {
   return count;
 }
 
+/** Strings of user-facing copy in a UI file that match `regex`. */
+function countCopy(text, regex) {
+  return extractUiStrings(text).filter((item) => regex.test(item.text)).length;
+}
+
+/** Words that sell instead of saying what happens. `harness` is a domain term here. */
+const FILLER =
+  /\b(?:leverage|seamless(?:ly)?|robust|effortless(?:ly)?|empower|streamline|delve|supercharge|elevate|cutting-edge|game[- ]chang(?:er|ing)|revolutioni[sz]e|utili[sz]e)\b/i;
+
+/** An error that names neither what failed nor what to do next. */
+const VAGUE_ERROR =
+  /^(?:oops|whoops|uh[- ]oh|something went wrong|an? (?:unexpected |unknown )?error (?:has )?occurred|unknown error|error occurred)\b/i;
+
 export const RULES = [
   {
     id: "as-any",
@@ -120,6 +135,26 @@ export const RULES = [
     id: "history-comment",
     label: "comments citing a PR number or a date",
     count: (text) => countCommentLines(stripProtocolVersions(text), HISTORY),
+  },
+  // Copy rules read only the strings a user sees (ui-strings.mjs), so a dash
+  // or a sales word in a comment or an identifier does not count.
+  {
+    id: "ui-dash",
+    label: "em or en dashes in user-facing copy",
+    appliesTo: isUiFile,
+    count: (text) => countCopy(text, /\w\s*[\u2013\u2014]\s*\w/),
+  },
+  {
+    id: "ui-filler",
+    label: "marketing filler in user-facing copy",
+    appliesTo: isUiFile,
+    count: (text) => countCopy(text, FILLER),
+  },
+  {
+    id: "ui-vague-error",
+    label: "errors that name no cause and no next step",
+    appliesTo: isUiFile,
+    count: (text) => countCopy(text, VAGUE_ERROR),
   },
 ];
 
