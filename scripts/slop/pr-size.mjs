@@ -34,7 +34,9 @@ function resolveBase(argv) {
 export function parseNumstat(output) {
   const files = [];
   for (const record of output.split("\0")) {
-    const [added, deleted, path] = record.split("\t");
+    // A path may itself contain tabs: only the first two separate fields.
+    const [added, deleted, ...rest] = record.split("\t");
+    const path = rest.join("\t");
     // Binary files report "-" for both counts.
     if (!path || added === "-" || !isMeasuredFile(path)) continue;
     files.push({ path, lines: Number(added) + Number(deleted) });

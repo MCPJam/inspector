@@ -189,10 +189,11 @@ describe("pr-size verdict", async () => {
       "5\t0\tsdk/src/a.test.ts",
       "-\t-\tdocs/logo.png",
       "3\t3\tmcpjam-inspector/client/src/App.tsx",
+      "4\t0\tsdk/src/weird\tname.ts",
       "",
     ].join("\0");
     const { total, files } = parseNumstat(output);
-    assert.equal(total, 18);
+    assert.equal(total, 22);
     assert.equal(files[0].path, "sdk/src/caf\u00e9.ts");
   });
 
