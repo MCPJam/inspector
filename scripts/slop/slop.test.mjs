@@ -255,3 +255,48 @@ describe("agent hooks", async () => {
     assert.equal(run("not json").code, 0);
   });
 });
+
+describe("hook paths", async () => {
+  const { repoPath } = await import("./hook.mjs");
+  const { posix, win32 } = await import("node:path");
+
+  it("normalizes native separators to git-style paths", () => {
+    assert.equal(
+      repoPath("/repo/sdk/src/a.ts", "/repo", posix),
+      "sdk/src/a.ts"
+    );
+    assert.equal(
+      repoPath("C:\\repo\\sdk\\src\\a.ts", "C:\\repo", win32),
+      "sdk/src/a.ts"
+    );
+  });
+
+  it("fails open when git cannot read HEAD", async () => {
+    const { isMeasuredFile } = await import("./rules.mjs");
+    const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    // A measured file that already has casts. Read against an empty HEAD, a
+    // Write to it would report all of them as new.
+    const target = execFileSync(
+      "git",
+      ["grep", "-l", "as any", "--", "sdk/src"],
+      {
+        cwd: root,
+        encoding: "utf8",
+      }
+    )
+      .split("\n")
+      .find((path) => path && isMeasuredFile(path));
+    const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
+    const input = JSON.stringify({
+      hook_event_name: "PostToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: join(root, target) },
+    });
+    // No git on PATH: the HEAD read fails for a reason other than a new path.
+    execFileSync(process.execPath, [HOOK], {
+      input,
+      env: { PATH: "/nonexistent" },
+      stdio: "pipe",
+    });
+  });
+});
