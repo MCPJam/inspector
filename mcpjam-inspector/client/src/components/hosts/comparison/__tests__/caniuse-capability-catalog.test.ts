@@ -106,6 +106,31 @@ describe("caniuse capability catalog", () => {
     ).toBe("unknown");
   });
 
+  it("publishes the same-origin app iframe as a yes/no row, unknown until probed", () => {
+    expect(
+      getCaniuseCapabilityBySlug("same-origin-app-iframe")?.field.id
+    ).toBe("sandbox.sameOriginAppIframe");
+
+    const field = hostConfigField("sandbox.sameOriginAppIframe");
+    expect(field.label).toBe("Same-origin app iframe");
+    const withValue = (value: boolean) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { sandbox: { sameOriginAppIframe: value } },
+        },
+      }) as never;
+
+    expect(getCaniuseSupportLevel(field, withValue(true))).toBe("supported");
+    // claude.ai: the app runs in an opaque origin.
+    expect(getCaniuseSupportLevel(field, withValue(false))).toBe("neutral");
+    // A host nobody probed must never be published as one or the other.
+    expect(
+      getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
+    ).toBe("unknown");
+  });
+
   it("excludes config-only fields from public capability pages", () => {
     const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
     expect(ids).not.toContain("modelId");

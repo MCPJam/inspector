@@ -10,8 +10,10 @@
  * `allow=` BEFORE insertion (both are fixed at document creation), the
  * previous frame is removed and the `inner` binding repointed, the explicit
  * `"srcdoc"` mount mode and the opaque-origin fallback both assign `srcdoc`,
- * and a nested `sandbox-proxy-ready` (a widget reloading itself) remounts
- * from the cached arguments instead of being relayed.
+ * a nested `sandbox-proxy-ready` (a widget reloading itself) remounts
+ * from the cached arguments instead of being relayed, and the claude.ai-style
+ * `"opaque"` mount (srcdoc without `allow-same-origin`) buffers host messages
+ * until the view is ready.
  *
  * What is NOT pinned here: that the written document takes the proxy's URL.
  * jsdom's `document.open()` only clears child nodes — it models neither the
@@ -56,6 +58,11 @@ const applyColorSchemeSrc = extract("applyColorScheme");
 const createInnerFrameSrc = extract("createInnerFrame");
 const mountInnerSrc = extract("mountInner");
 const remountLastSrc = extract("remountLast");
+const markInnerReadySrc = extract("markInnerReady");
+const sendToInnerSrc = extract("sendToInner");
+const buildAllowAttributeSrc = extract("buildAllowAttribute");
+const buildInnerAllowValueSrc = extract("buildInnerAllowValue");
+const buildInnerSandboxValueSrc = extract("buildInnerSandboxValue");
 const parseOriginPatternSrc = extract("parseOriginPattern");
 const hostOriginAllowedSrc = extract("hostOriginAllowed");
 
@@ -65,11 +72,11 @@ interface MountHarness {
     sandboxValue: string,
     allowValue: string,
     colorScheme: unknown,
-    mountMode?: "write" | "srcdoc",
+    mountMode?: "write" | "srcdoc" | "opaque",
     appliedCsp?: string,
     appliedCspMode?: "permissive" | "widget-declared",
     cspIntent?: Record<string, unknown>,
-  ) => "url" | "srcdoc" | "srcdoc-fallback";
+  ) => "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   createInnerFrame: (
     sandboxValue: string,
     allowValue: string,
@@ -77,6 +84,11 @@ interface MountHarness {
   getInner: () => HTMLIFrameElement | null;
   getLastMount: () => Record<string, unknown> | null;
   setInner: (frame: HTMLIFrameElement | null) => void;
+  /** Host→view delivery (what the relay calls for every host message). */
+  sendToInner: (data: unknown) => void;
+  /** What the relay calls when the view sends its first message. */
+  markInnerReady: () => void;
+  getDelivery: () => { innerReady: boolean; channelDead: boolean };
   /** Every `window.parent.postMessage` the proxy made. */
   posted: Array<[unknown, string]>;
 }
@@ -107,7 +119,11 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     "proxyInstanceId",
     `
     const INNER_STYLE = "width:100%; height:100%; border:none;";
+    const READY_FLUSH_TIMEOUT_MS = 5000;
     let inner = null;
+    let innerReady = true;
+    let channelDead = false;
+    let pendingForInner = [];
     let mountSequence = 0;
     let currentMountId = null;
     let lastMount = null;
@@ -117,6 +133,8 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     ${createInnerFrameSrc}
     ${mountInnerSrc}
     ${remountLastSrc}
+    ${markInnerReadySrc}
+    ${sendToInnerSrc}
     return {
       mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared", cspIntent) =>
         mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode, cspIntent),
@@ -124,6 +142,9 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
       getInner: () => inner,
       getLastMount: () => lastMount,
       setInner: (frame) => { inner = frame; },
+      sendToInner,
+      markInnerReady,
+      getDelivery: () => ({ innerReady, channelDead }),
       posted,
     };
     `,
@@ -410,6 +431,244 @@ describe("sandbox-proxy mountInner", () => {
   });
 });
 
+describe("sandbox-proxy opaque mount (claude.ai)", () => {
+  // jsdom cannot give a frame an opaque origin or render srcdoc, so the
+  // view's window is stubbed and its `load` fired by hand; what is under test
+  // is the proxy's mount and delivery rules.
+  function stubViewWindow(frame: HTMLIFrameElement) {
+    const sent: Array<[unknown, string]> = [];
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      get: () => ({
+        postMessage: (data: unknown, target: string) => sent.push([data, target]),
+      }),
+    });
+    return sent;
+  }
+  function fireLoad(frame: HTMLIFrameElement) {
+    frame.dispatchEvent(new frame.ownerDocument.defaultView!.Event("load"));
+  }
+  const CLAUDE_SANDBOX = "allow-forms allow-scripts";
+
+  it("sets srcdoc before insertion and reports a view with no URL", () => {
+    const { dom, h } = harness();
+    const body = dom.window.document.body;
+    const seen: Array<{ sandbox: string | null; srcdoc: string | null }> = [];
+    const realAppend = body.appendChild.bind(body);
+    vi.spyOn(body, "appendChild").mockImplementation((node: Node) => {
+      const el = node as HTMLIFrameElement;
+      seen.push({
+        sandbox: el.getAttribute("sandbox"),
+        srcdoc: el.getAttribute("srcdoc"),
+      });
+      return realAppend(node);
+    });
+
+    const mode = h.mountInner(
+      WIDGET,
+      CLAUDE_SANDBOX,
+      "fullscreen *",
+      "light",
+      "opaque",
+    );
+
+    expect(mode).toBe("opaque");
+    expect(seen).toEqual([{ sandbox: CLAUDE_SANDBOX, srcdoc: WIDGET }]);
+    expect(h.getInner()!.getAttribute("allow")).toBe("fullscreen *");
+    expect(h.getLastMount()!.mountMode).toBe("opaque");
+    expect(h.posted[1]).toEqual([
+      {
+        type: "mcpjam:view-mode",
+        mountId: "proxy-a:1",
+        mode: "opaque",
+        url: "about:srcdoc",
+      },
+      "*",
+    ]);
+  });
+
+  it("holds host messages until the view's first load, then delivers them in order", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    const sent = stubViewWindow(h.getInner()!);
+
+    h.sendToInner({ n: 1 });
+    h.sendToInner({ n: 2 });
+    expect(sent).toEqual([]);
+
+    fireLoad(h.getInner()!);
+    expect(sent).toEqual([
+      [{ n: 1 }, "*"],
+      [{ n: 2 }, "*"],
+    ]);
+
+    h.sendToInner({ n: 3 });
+    expect(sent).toHaveLength(3);
+  });
+
+  it("delivers as soon as the view sends its first message", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    const sent = stubViewWindow(h.getInner()!);
+    h.sendToInner({ n: 1 });
+    // The relay calls this for any message from the current view.
+    h.markInnerReady();
+    expect(sent).toEqual([[{ n: 1 }, "*"]]);
+  });
+
+  it("stops waiting after 5 seconds when the view never loads", () => {
+    vi.useFakeTimers();
+    try {
+      const { h } = harness();
+      h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+      const sent = stubViewWindow(h.getInner()!);
+      h.sendToInner({ n: 1 });
+      vi.advanceTimersByTime(4999);
+      expect(sent).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(sent).toEqual([[{ n: 1 }, "*"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops delivering once the view navigates itself", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    const sent = stubViewWindow(h.getInner()!);
+    fireLoad(h.getInner()!);
+    fireLoad(h.getInner()!);
+    expect(h.getDelivery()).toEqual({ innerReady: false, channelDead: true });
+    h.sendToInner({ n: 1 });
+    h.markInnerReady();
+    expect(sent).toEqual([]);
+  });
+
+  it("starts a fresh channel on the next mount", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    fireLoad(h.getInner()!);
+    fireLoad(h.getInner()!);
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    expect(h.getDelivery()).toEqual({ innerReady: false, channelDead: false });
+  });
+
+  it("keeps delivering at once on a written mount", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    const sent = stubViewWindow(h.getInner()!);
+    h.sendToInner({ n: 1 });
+    expect(sent).toEqual([[{ n: 1 }, "*"]]);
+  });
+
+  it("mounts claude.ai's exact frame from a real resource-ready", () => {
+    const dom = new JSDOM(
+      html.replace(
+        '"__MCPJAM_HOST_ORIGINS__"',
+        JSON.stringify(["http://localhost:6274"]),
+      ),
+      {
+        url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
+        runScripts: "dangerously",
+      },
+    );
+    try {
+      const posted: [unknown, unknown][] = [];
+      dom.window.postMessage = (data: unknown, targetOrigin: unknown) => {
+        posted.push([data, targetOrigin]);
+      };
+      dom.window.dispatchEvent(
+        new dom.window.MessageEvent("message", {
+          source: dom.window,
+          origin: "http://localhost:6274",
+          data: {
+            jsonrpc: "2.0",
+            method: "ui/notifications/sandbox-resource-ready",
+            params: {
+              html: WIDGET,
+              // The renderer's legacy baseline still carries allow-same-origin;
+              // the profile's tokens win, and the opaque mount drops it.
+              sandbox: "allow-scripts allow-same-origin allow-forms",
+              sandboxAttrs: ["allow-forms"],
+              permissions: { clipboardWrite: {} },
+              permissive: true,
+              mountMode: "opaque",
+            },
+          },
+        }),
+      );
+      const frames = dom.window.document.querySelectorAll("iframe");
+      expect(frames).toHaveLength(1);
+      expect(frames[0].getAttribute("sandbox")).toBe(CLAUDE_SANDBOX);
+      expect(frames[0].getAttribute("allow")).toBe(
+        "fullscreen *; clipboard-write *",
+      );
+      expect(frames[0].getAttribute("srcdoc")).toContain("<p id='w'>hi</p>");
+      expect(
+        posted.find(
+          ([data]) => (data as { type?: string }).type === "mcpjam:view-mode",
+        )?.[0],
+      ).toEqual(expect.objectContaining({ mode: "opaque", url: "about:srcdoc" }));
+    } finally {
+      dom.window.close();
+    }
+  });
+});
+
+describe("sandbox-proxy inner sandbox and allow values", () => {
+  const sandboxValue = new Function(
+    "sandbox",
+    "sandboxAttrs",
+    "opaque",
+    `${buildInnerSandboxValueSrc}\nreturn buildInnerSandboxValue(sandbox, sandboxAttrs, opaque);`,
+  ) as (sandbox: unknown, sandboxAttrs: unknown, opaque: boolean) => string;
+  const allowValue = new Function(
+    "permissions",
+    "opaque",
+    `${buildAllowAttributeSrc}\n${buildInnerAllowValueSrc}\nreturn buildInnerAllowValue(permissions, opaque);`,
+  ) as (permissions: unknown, opaque: boolean) => string;
+
+  it("gives a same-origin view the mandatory tokens plus the profile's", () => {
+    expect(sandboxValue(undefined, ["allow-forms"], false)).toBe(
+      "allow-forms allow-same-origin allow-scripts",
+    );
+  });
+
+  it("gives an opaque view claude.ai's exact tokens", () => {
+    expect(sandboxValue(undefined, ["allow-forms"], true)).toBe(
+      "allow-forms allow-scripts",
+    );
+  });
+
+  it("drops allow-same-origin on the opaque mount wherever it came from", () => {
+    expect(
+      sandboxValue(undefined, ["allow-forms", "allow-same-origin"], true),
+    ).toBe("allow-forms allow-scripts");
+    expect(
+      sandboxValue(
+        "allow-scripts allow-same-origin allow-forms allow-popups",
+        undefined,
+        true,
+      ),
+    ).toBe("allow-forms allow-popups allow-scripts");
+  });
+
+  it("still rejects a token with internal whitespace", () => {
+    expect(
+      sandboxValue(undefined, ["allow-forms allow-popups"], false),
+    ).toBe("allow-same-origin allow-scripts");
+  });
+
+  it("adds fullscreen * only on the opaque mount", () => {
+    expect(allowValue({ clipboardWrite: {} }, false)).toBe("clipboard-write *");
+    expect(allowValue({ clipboardWrite: {} }, true)).toBe(
+      "fullscreen *; clipboard-write *",
+    );
+    expect(allowValue(undefined, true)).toBe("fullscreen *");
+    expect(allowValue(undefined, false)).toBe("");
+  });
+});
+
 describe("sandbox-proxy blank-reload remount", () => {
   // Chromium answers location.reload() in a written document by reloading
   // the initial about:blank entry. jsdom cannot reload a frame, so the
@@ -537,6 +796,26 @@ describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
 
   it("stamps forwarded violations with the current mount id", () => {
     expect(html).toContain("? { ...data, mountId: currentMountId }");
+  });
+
+  it("routes host traffic through the delivery buffer", () => {
+    const hostBranch = html.slice(
+      html.indexOf('"ui/notifications/sandbox-color-scheme-changed"'),
+      html.indexOf("} else if (event.source === inner.contentWindow)"),
+    );
+    expect(hostBranch).toContain("sendToInner(event.data);");
+    expect(hostBranch).not.toContain("inner.contentWindow.postMessage");
+  });
+
+  it("marks the view ready on its first message, unless it navigated away", () => {
+    const viewBranch = html.slice(
+      html.indexOf("} else if (event.source === inner.contentWindow)"),
+      html.indexOf('data.type === "mcp-apps:csp-violation"'),
+    );
+    const deadIdx = viewBranch.indexOf("if (channelDead) return;");
+    const readyIdx = viewBranch.indexOf("markInnerReady();");
+    expect(deadIdx).toBeGreaterThan(0);
+    expect(readyIdx).toBeGreaterThan(deadIdx);
   });
 });
 

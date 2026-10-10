@@ -136,10 +136,11 @@ export interface WidgetSandboxApplied {
    * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
    * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
    * mount switch, `"srcdoc-fallback"` was forced because the frame's document
-   * was unreachable). Twin of the same field in
-   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   * was unreachable). `"opaque"` is the intended srcdoc mount of a client
+   * whose app iframe is not same-origin (claude.ai). Twin of the same field
+   * in `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
