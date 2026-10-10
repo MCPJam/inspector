@@ -67,6 +67,8 @@ type MCPJamLimitErrorInput = {
   /** Which screen hit the wall; see `MCPJamLimitSurface`. Only affects which
    * actions the dialog offers, never whether it opens. */
   surface?: MCPJamLimitSurface;
+  /** A button the user pressed to see the dialog; see `MCPJamLimitNotifyInput`. */
+  userInitiated?: boolean;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -300,6 +302,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
     ...(shortfall ? { shortfall } : {}),
+    ...(args.userInitiated ? { userInitiated: true } : {}),
   });
   return true;
 }

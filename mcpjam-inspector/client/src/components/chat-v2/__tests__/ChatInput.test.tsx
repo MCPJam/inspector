@@ -6,6 +6,7 @@ import {
   createEvent,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChatInput } from "../chat-input";
 import { useState } from "react";
 import { act } from "@testing-library/react";
@@ -528,6 +529,25 @@ describe("ChatInput", () => {
       );
       expect(submitButton).toBeDefined();
       expect(submitButton).toBeDisabled();
+    });
+
+    it("says why Send is off when the model is out of credits", async () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          submitDisabledReason="Out of MCPJam credits · resets in 3h"
+        />
+      );
+
+      const submitButton = screen.getByRole("button", { name: "Send message" });
+      expect(submitButton).toBeDisabled();
+      // The disabled button gets no hover; its wrapper carries the tooltip.
+      await userEvent.setup().hover(submitButton.parentElement!);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Out of MCPJam credits · resets in 3h"
+      );
     });
 
     it("does not request form submit on Enter when submitDisabled is true", () => {

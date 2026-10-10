@@ -363,6 +363,7 @@ import {
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { artifactStableKey } from "@/lib/artifact-urls";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -1392,6 +1393,7 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
     hiddenEnvironmentOffReason,
+    outOfCreditsReason,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -6176,6 +6178,14 @@ export function PlaygroundMain({
           onReasoningEffortChange: undefined,
         };
 
+  // Out of credits, a send on a locked MCPJam model could only be refused, so
+  // Send says so before the click. A compare grid drops locked models itself.
+  const sendOutOfCreditsReason =
+    !isCompareMode &&
+    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null;
+
   const sharedChatInputProps = {
     mentions: composerMentions.mentions,
     // Forms take the composer's place whether or not mentions are on.
@@ -6245,7 +6255,11 @@ export function PlaygroundMain({
       // refused by this flag before `onSubmit` runs, so disabling for those
       // would make first-send setup unreachable. The composer notice above
       // carries the explanation for each state that does disable.
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
+    ...(sendOutOfCreditsReason
+      ? { submitDisabledReason: sendOutOfCreditsReason }
+      : {}),
     notice: composerNotice,
     ...(executionTargetChip ? { executionTarget: executionTargetChip } : {}),
     tokenUsage,

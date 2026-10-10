@@ -60,6 +60,8 @@ describe("useCreditBalance", () => {
       hasPendingLimit: false,
       outOfCreditsHit: false,
       outOfCreditsOrganizationId: null,
+      outOfCreditsDismissed: false,
+      outOfCreditsDismissedOrganizationId: null,
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -269,5 +271,43 @@ describe("useCreditBalance", () => {
     await waitFor(() => {
       expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
     });
+  });
+
+  it("ends a dismissed dialog only when the balance goes from empty to funded", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    const balance = (freeDailyCreditsRemaining: number) => ({
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 100,
+      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
+    });
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+    });
+
+    // Funded from the start (credits held by in-flight work): still dismissed.
+    mocks.queryResult = balance(5);
+    const { rerender } = renderHook(() => useOutOfCredits());
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      true
+    );
+
+    mocks.queryResult = balance(0);
+    rerender();
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      true
+    );
+
+    mocks.queryResult = balance(20);
+    rerender();
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      false
+    );
   });
 });

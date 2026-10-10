@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allModelsOutOfCredits,
   applyOutOfCreditsLocks,
   OUT_OF_CREDITS_MODEL_REASON,
 } from "../available-models";
@@ -100,5 +101,34 @@ describe("applyOutOfCreditsLocks", () => {
     expect(byId["amazon.nova-micro-v1:0"].disabled).toBeUndefined();
     expect(byId["openai/gpt-5-mini"].disabled).toBeUndefined();
     expect(byId["custom:acme:acme-large"].disabled).toBeUndefined();
+  });
+});
+
+describe("allModelsOutOfCredits", () => {
+  const models = [
+    { id: "anthropic/claude-haiku-4.5", disabledReason: OUT_OF_CREDITS_MODEL_REASON },
+    { id: "openai/gpt-5-mini", disabledReason: OUT_OF_CREDITS_MODEL_REASON },
+    // A BYOK model: never locked for MCPJam credits.
+    { id: "custom:acme:acme-large" },
+  ];
+
+  it("is true only when every model the run uses is locked", () => {
+    expect(
+      allModelsOutOfCredits(
+        ["anthropic/claude-haiku-4.5", "openai/gpt-5-mini"],
+        models
+      )
+    ).toBe(true);
+    expect(
+      allModelsOutOfCredits(
+        ["anthropic/claude-haiku-4.5", "custom:acme:acme-large"],
+        models
+      )
+    ).toBe(false);
+  });
+
+  it("keeps a run with no known model, or an unknown one, available", () => {
+    expect(allModelsOutOfCredits([], models)).toBe(false);
+    expect(allModelsOutOfCredits(["some/unlisted-model"], models)).toBe(false);
   });
 });

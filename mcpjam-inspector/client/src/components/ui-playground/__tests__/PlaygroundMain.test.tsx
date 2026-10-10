@@ -11,6 +11,7 @@ import {
 import { PlaygroundMain } from "../PlaygroundMain";
 import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
@@ -3184,6 +3185,42 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("chat-input-field")).toBeDisabled();
+    });
+
+    it("turns Send off, saying why, for a model locked by credits", () => {
+      const selectedModel = mockUseChatSession.selectedModel;
+      try {
+        Object.assign(mockUseChatSession, {
+          selectedModel: {
+            ...selectedModel,
+            disabled: true,
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+          },
+          outOfCreditsReason: "Out of MCPJam credits · resets in 3h",
+        });
+
+        render(<PlaygroundMain {...defaultProps} />);
+
+        expect(mockChatInputProps).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            submitDisabled: true,
+            submitDisabledReason: "Out of MCPJam credits · resets in 3h",
+          })
+        );
+      } finally {
+        Object.assign(mockUseChatSession, {
+          selectedModel,
+          outOfCreditsReason: undefined,
+        });
+      }
+    });
+
+    it("leaves Send alone for a model credits do not lock", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockChatInputProps).not.toHaveBeenLastCalledWith(
+        expect.objectContaining({ submitDisabledReason: expect.anything() })
+      );
     });
 
     it("shows correct placeholder", () => {

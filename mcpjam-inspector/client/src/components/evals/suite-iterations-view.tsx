@@ -29,6 +29,12 @@ import {
 } from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
+import { preflightTargets } from "../evaluate/suite-run-preflight";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -478,6 +484,7 @@ export function SuiteIterationsView({
   route,
   userMap,
   projectId = null,
+  organizationId,
   navigation,
   onSetupCi,
   onCreateTestCase: onCreateTestCaseProp,
@@ -1280,11 +1287,6 @@ export function SuiteIterationsView({
     suite,
     projectEnvironments ?? undefined,
   );
-  const evalRunsDisabledReason =
-    evalRunsDisabledReasonProp ??
-    (suitePinsSandboxImage && ephemeralCloudAvailable === false
-      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
   // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
   // pick, so it opts into private scenario-backing clients. Naming and
   // offering are different questions: a run that already resolved against a
@@ -1295,6 +1297,31 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
+  // Out of credits, a run whose every model is a locked MCPJam one could only
+  // be refused, so its buttons say so before the click.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const runOutOfCredits = useMemo(
+    () =>
+      allModelsOutOfCredits(
+        preflightTargets({
+          suite,
+          cases,
+          environments: projectEnvironments ?? [],
+          hosts: namableHosts,
+          environmentServerRefs: [],
+        }).models.map((item) => item.model),
+        availableModels,
+      ),
+    [suite, cases, projectEnvironments, namableHosts, availableModels],
+  );
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null) ??
+    (runOutOfCredits
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null);
 
   // Use custom hooks for data calculations
   const legacySuiteData = useSuiteData(
@@ -2162,6 +2189,7 @@ export function SuiteIterationsView({
                 className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <TestTemplateEditor
+                  outOfCreditsReason={outOfCreditsReason}
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   readOnly={editingDisabled}
