@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const signInMock = vi.fn();
 const signUpMock = vi.fn();
@@ -12,6 +12,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 // posthog.capture in components); mock it to assert the surface tag.
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+import {
+  PERMALINK_SIGN_IN_STATE_KEY,
+  takePermalinkSignInReturn,
+} from "@/lib/permalink-signin-return";
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { GATED_FEATURE_COPY } from "@/components/guest-preview/feature-highlights";
@@ -34,6 +38,34 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     expect(screen.getByText(copy.title)).toBeInTheDocument();
     expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(copy.title).toBe("Create an account to run your first swarm");
+    expect(copy.body).toBe(
+      "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create free account" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("shows the jam artwork for both features", () => {
+    const { rerender } = render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).toBeInTheDocument();
+
+    rerender(
+      <FeatureSignUpNudgeDialog
+        feature="user-testing"
+        isOpen
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).toBeInTheDocument();
   });
 
   // The bullets are gone, and this is what stops them coming back by habit.
@@ -86,7 +118,7 @@ describe("FeatureSignUpNudgeDialog", () => {
     ).toHaveLength(2);
   });
 
-  it("Create free account remembers the tab, then starts WorkOS sign-up", () => {
+  it("Create free account remembers the creation flow, then starts WorkOS sign-up", () => {
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
@@ -94,27 +126,61 @@ describe("FeatureSignUpNudgeDialog", () => {
     screen.getByRole("button", { name: "Create free account" }).click();
 
     expect(signUpMock).toHaveBeenCalledTimes(1);
-    // Captured on the click, before WorkOS navigates away — this is what puts
-    // the user back on the tab they were reading rather than the front door.
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
     );
   });
 
-  it("the existing-account path returns to the same tab", () => {
+  it("the existing-account path returns to the swarm creation flow", () => {
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
 
-    screen.getByRole("button", { name: "I already have an account" }).click();
+    screen.getByRole("button", { name: "Sign in" }).click();
 
     expect(signInMock).toHaveBeenCalledTimes(1);
-    expect(readAppSignInReturnPath()).toBe("/swarms");
+    expect(readAppSignInReturnPath()).toBe("/swarms/new");
     expect(track).toHaveBeenCalledWith(
       "login_button_clicked",
       expect.objectContaining({ location: "swarms_guest_preview" }),
+    );
+  });
+
+  describe.each([
+    ["swarms", "/swarms/new"],
+    ["user-testing", "/user-testing/new"],
+  ] as const)("%s authentication return", (feature, destination) => {
+    it.each(["Create free account", "Sign in"])(
+      "%s stores the creation flow before navigating and restores it through AuthKit",
+      (label) => {
+        window.history.replaceState({}, "", `/${feature}`);
+        const authenticate = label === "Sign in" ? signInMock : signUpMock;
+        authenticate.mockImplementation(() => {
+          expect(readAppSignInReturnPath()).toBe(destination);
+        });
+        render(
+          <FeatureSignUpNudgeDialog
+            feature={feature}
+            isOpen
+            onClose={vi.fn()}
+          />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: label }));
+
+        expect(authenticate).toHaveBeenCalledTimes(1);
+        const options = authenticate.mock.calls[0][0];
+        window.history.replaceState({}, "", "/callback");
+        // main.tsx consumes this nonce before App's generic return handler.
+        expect(
+          takePermalinkSignInReturn(
+            options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          ),
+        ).toBe(destination);
+      },
     );
   });
 
@@ -144,13 +210,18 @@ describe("FeatureSignUpNudgeDialog", () => {
       />,
     );
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY["user-testing"].nudge.title),
-    ).toBeInTheDocument();
+    const copy = GATED_FEATURE_COPY["user-testing"].nudge;
+    expect(copy.title).toBe("Create an account to run your first study");
+    expect(copy.body).toBe(
+      "See how real users interact with your MCP server. Find out where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(screen.getByText(copy.title)).toBeInTheDocument();
+    expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
 
     screen.getByRole("button", { name: "Create free account" }).click();
 
-    expect(readAppSignInReturnPath()).toBe("/user-testing");
+    expect(readAppSignInReturnPath()).toBe("/user-testing/new");
     expect(track).toHaveBeenCalledWith(
       "sign_up_button_clicked",
       expect.objectContaining({ location: "user_testing_guest_preview" }),
