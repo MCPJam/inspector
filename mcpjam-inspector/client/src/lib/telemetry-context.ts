@@ -23,10 +23,11 @@
  */
 import {
   encodeCaptureContext,
-  IDENTIFYING_PERSON_PROPERTIES,
+  stripPostHogConfigHeaders,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryIdentity,
+  withoutIdentifyingProperties,
 } from "../../../shared/telemetry-privacy";
 import { currentSessionPrivacy } from "./session-privacy";
 
@@ -129,13 +130,20 @@ export function setTelemetryCaptureContext(ids: {
   };
 }
 
-/** The context an event captured right now is captured under. */
+/**
+ * The context an event captured right now is captured under. The label says
+ * what this client restricted: `masked` while masked or pending. An `off`
+ * surface (npx, Docker) records nothing and masks no analytics
+ * (`shouldMaskAnalytics`), so it claims no restriction and the backend's
+ * answer decides at the relay.
+ */
 export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
+  const level = currentSessionPrivacy();
   return {
     projectIds: [...contextIds.projectIds],
     organizationIds: [...contextIds.organizationIds],
     policy: {
-      recording: currentSessionPrivacy() === "full" ? "full" : "masked",
+      recording: level === "masked" || level === "pending" ? "masked" : "full",
       identity: telemetryNamesAllowed() ? "full" : "id_only",
     },
   };
@@ -148,49 +156,6 @@ interface PostHogCaptureEvent {
   properties?: Record<string, unknown>;
   $set?: Record<string, unknown>;
   $set_once?: Record<string, unknown>;
-}
-
-function withoutIdentifying(
-  props: unknown,
-): Record<string, unknown> | undefined {
-  if (typeof props !== "object" || props === null) return undefined;
-  const out = { ...(props as Record<string, unknown>) };
-  for (const key of IDENTIFYING_PERSON_PROPERTIES) delete out[key];
-  return out;
-}
-
-const REQUEST_HEADER_CONFIG_KEYS = ["request_headers", "xhr_headers"];
-
-/**
- * posthog-js records its whole config into the replay as a `$posthog_config`
- * custom event — including `request_headers`, which carries the bearer the
- * relay authenticates with. The token must never reach PostHog, so it comes
- * out here, as the snapshot is captured. The relay strips it again.
- */
-function scrubSnapshotConfig(snapshotData: unknown): unknown {
-  if (!Array.isArray(snapshotData)) return snapshotData;
-  return snapshotData.map((entry) => {
-    const event = entry as {
-      type?: unknown;
-      data?: { tag?: unknown; payload?: { config?: unknown } };
-    };
-    if (
-      event?.type !== 5 ||
-      event.data?.tag !== "$posthog_config" ||
-      typeof event.data.payload?.config !== "object" ||
-      event.data.payload.config === null
-    ) {
-      return entry;
-    }
-    const config = {
-      ...(event.data.payload.config as Record<string, unknown>),
-    };
-    for (const key of REQUEST_HEADER_CONFIG_KEYS) delete config[key];
-    return {
-      ...event,
-      data: { ...event.data, payload: { ...event.data.payload, config } },
-    };
-  });
 }
 
 /**
@@ -208,19 +173,31 @@ export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
       ...(event.properties ?? {}),
       [TELEMETRY_CONTEXT_PROPERTY]: encodeCaptureContext(context),
     };
+    // posthog-js records its config, the relay bearer in `request_headers`
+    // included, into the replay as `$posthog_config`. The relay strips it
+    // again.
     if (event.event === "$snapshot" && "$snapshot_data" in properties) {
-      properties.$snapshot_data = scrubSnapshotConfig(
+      properties.$snapshot_data = stripPostHogConfigHeaders(
         properties.$snapshot_data,
       );
     }
     const next: PostHogCaptureEvent = { ...event, properties };
     if (context.policy.identity !== "full") {
-      if (event.$set) next.$set = withoutIdentifying(event.$set);
-      if (event.$set_once) next.$set_once = withoutIdentifying(event.$set_once);
-      if (properties.$set)
-        properties.$set = withoutIdentifying(properties.$set);
-      if (properties.$set_once) {
-        properties.$set_once = withoutIdentifying(properties.$set_once);
+      if (event.$set) {
+        next.$set = withoutIdentifyingProperties(event.$set) as Record<
+          string,
+          unknown
+        >;
+      }
+      if (event.$set_once) {
+        next.$set_once = withoutIdentifyingProperties(
+          event.$set_once,
+        ) as Record<string, unknown>;
+      }
+      for (const key of ["$set", "$set_once"]) {
+        if (properties[key]) {
+          properties[key] = withoutIdentifyingProperties(properties[key]);
+        }
       }
     }
     return next as T;

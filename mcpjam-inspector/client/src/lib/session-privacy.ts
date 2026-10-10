@@ -27,6 +27,7 @@ import { HOSTED_MODE } from "./config";
 import {
   MASKED_REPLAY_BLOCKED_TAGS,
   maskReplayAttribute,
+  maskReplayText,
   scrubNamesFromUrl,
   type TelemetryRecording,
 } from "../../../shared/telemetry-privacy";
@@ -331,11 +332,84 @@ interface ReplayFrame {
   data?: { tag?: string; payload?: object };
 }
 
+// One `[attr]` or `[attr="value"]` part of a CSS selector, as Sentry's
+// `htmlTreeAsString` writes them (values are not escaped).
+const SELECTOR_ATTRIBUTE = /\[[\w:.-]+(?:="[^"]*")?\]/g;
+
+/**
+ * A CSS selector from Sentry (`htmlTreeAsString`, web-vitals element names)
+ * without its attribute parts: `[aria-label="…"]`, `[title="…"]`,
+ * `[name="…"]` and `[alt="…"]` carry the page's text. A value holding its
+ * own quote defeats the pattern, so the selector is cut at the first part
+ * left over.
+ */
+export function stripSelectorAttributes(selector: string): string {
+  const stripped = selector.replace(SELECTOR_ATTRIBUTE, "");
+  const leftover = stripped.search(/[["]/);
+  return leftover === -1 ? stripped : stripped.slice(0, leftover);
+}
+
+// What a Sentry Replay click frame's `data.node.attributes` may keep: code,
+// not text. `aria-label`, `title`, `alt` and `name` are masked.
+const UI_FRAME_KEPT_ATTRIBUTES = new Set([
+  "id",
+  "class",
+  "role",
+  "disabled",
+  "aria-disabled",
+  "testId",
+  "data-sentry-component",
+]);
+
+/** A `ui.*` frame's payload (click, slow or multi click, key down), masked. */
+function maskUiFramePayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload };
+  if (typeof payload.message === "string") {
+    out.message = stripSelectorAttributes(payload.message);
+  }
+  const data = payload.data as Record<string, unknown> | undefined;
+  if (data && typeof data === "object") {
+    const nextData: Record<string, unknown> = { ...data };
+    if (typeof data.url === "string") {
+      nextData.url = scrubNamesFromUrl(data.url);
+    }
+    if (typeof data.route === "string") {
+      nextData.route = scrubNamesFromUrl(data.route);
+    }
+    const node = data.node as Record<string, unknown> | undefined;
+    if (node && typeof node === "object") {
+      const attributes =
+        node.attributes && typeof node.attributes === "object"
+          ? Object.fromEntries(
+              Object.entries(node.attributes as Record<string, unknown>).map(
+                ([key, value]) => [
+                  key,
+                  UI_FRAME_KEPT_ATTRIBUTES.has(key) ? value : "***",
+                ],
+              ),
+            )
+          : node.attributes;
+      nextData.node = {
+        ...node,
+        attributes,
+        ...(typeof node.textContent === "string"
+          ? { textContent: maskReplayText(node.textContent) }
+          : {}),
+      };
+    }
+    out.data = nextData;
+  }
+  return out;
+}
+
 /**
  * Sentry's `beforeAddRecordingEvent`. Sentry Replay masks text, inputs and
  * media at every level (`SENTRY_REPLAY_OPTIONS`); short of `full` this also
- * drops console breadcrumbs and scrubs the URLs in navigation and network
- * frames. Only Sentry's own frames come through here — rrweb's DOM events
+ * drops console breadcrumbs, scrubs the URLs in navigation and network
+ * frames, and takes the page's text out of click and key frames (their
+ * selector's attribute parts, the node's text-bearing attributes). Only Sentry's own frames come through here — rrweb's DOM events
  * cannot be edited, which is why the DOM masking is on everywhere.
  */
 export function filterSentryReplayFrame<T extends ReplayFrame>(
@@ -347,6 +421,16 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
   if (!data || !payload) return frame;
   if (data.tag === "breadcrumb" && payload.category === "console") {
     return null;
+  }
+  if (
+    data.tag === "breadcrumb" &&
+    typeof payload.category === "string" &&
+    payload.category.startsWith("ui.")
+  ) {
+    return {
+      ...frame,
+      data: { ...data, payload: maskUiFramePayload(payload) },
+    };
   }
   if (data.tag === "breadcrumb" && payload.category === "navigation") {
     const detail = (payload.data ?? {}) as Record<string, unknown>;
@@ -389,6 +473,7 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
 
 interface SentryBreadcrumb {
   category?: string;
+  message?: string;
   data?: Record<string, unknown>;
 }
 
@@ -411,6 +496,17 @@ export function filterSentryBreadcrumb<T extends SentryBreadcrumb>(
 ): T | null {
   if (!shouldMaskAnalytics()) return breadcrumb;
   if (breadcrumb?.category === "console") return null;
+  // A click or input names its element as a selector (`htmlTreeAsString`),
+  // whose attribute parts are the page's text.
+  if (
+    breadcrumb?.category?.startsWith("ui.") &&
+    typeof breadcrumb.message === "string"
+  ) {
+    const message = stripSelectorAttributes(breadcrumb.message);
+    return message === breadcrumb.message
+      ? breadcrumb
+      : { ...breadcrumb, message };
+  }
   const fields = URL_BREADCRUMB_FIELDS[breadcrumb?.category ?? ""];
   if (!fields || !breadcrumb.data) return breadcrumb;
   const data = { ...breadcrumb.data };

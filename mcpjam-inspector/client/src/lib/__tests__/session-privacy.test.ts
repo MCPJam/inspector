@@ -447,6 +447,68 @@ describe("filterSentryReplayFrame", () => {
     expect(spanFrame.data.payload.description).toContain("acme");
   });
 
+  it("takes the page's text out of click and key frames short of full", async () => {
+    const mod = await load({ hosted: true });
+    const clickFrame = {
+      data: {
+        tag: "breadcrumb",
+        payload: {
+          category: "ui.slowClickDetected",
+          message:
+            'body > div.app > button.btn[aria-label="Delete Acme Prod"][type="button"]',
+          data: {
+            url: "https://app.mcpjam.com/servers/acme-prod",
+            route: "/servers/acme-prod",
+            nodeId: 12,
+            node: {
+              id: 12,
+              tagName: "button",
+              textContent: "Delete Acme Prod",
+              attributes: {
+                id: "delete-server",
+                class: "btn",
+                "aria-label": "Delete Acme Prod",
+                title: "Delete Acme Prod",
+                name: "acme-prod",
+                testId: "delete",
+              },
+            },
+            clickCount: 1,
+          },
+        },
+      },
+    };
+    mod.setSessionPrivacy("full");
+    expect(mod.filterSentryReplayFrame(clickFrame)).toBe(clickFrame);
+
+    mod.setSessionPrivacy("masked");
+    const payload = mod.filterSentryReplayFrame(clickFrame)?.data
+      .payload as any;
+    expect(JSON.stringify(payload)).not.toMatch(/acme/i);
+    expect(payload).toMatchObject({
+      category: "ui.slowClickDetected",
+      message: "body > div.app > button.btn",
+      data: {
+        url: "https://app.mcpjam.com/servers/[name]",
+        route: "/servers/[name]",
+        nodeId: 12,
+        clickCount: 1,
+        node: {
+          tagName: "button",
+          textContent: "****** **** ****",
+          attributes: {
+            id: "delete-server",
+            class: "btn",
+            "aria-label": "***",
+            title: "***",
+            name: "***",
+            testId: "delete",
+          },
+        },
+      },
+    });
+  });
+
   it("is wired into the Sentry options, which mask at every level", async () => {
     const { SENTRY_REPLAY_OPTIONS, filterSentryReplayFrame } = await load();
     expect(SENTRY_REPLAY_OPTIONS).toMatchObject({
@@ -469,6 +531,24 @@ describe("filterSentryReplayFrame", () => {
         `[style*="'"]`,
       ]),
     );
+  });
+});
+
+describe("stripSelectorAttributes", () => {
+  it("drops every attribute part, values with brackets included", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes(
+        'div#main > button.btn[aria-label="a]b"][disabled][title="Zelda"]',
+      ),
+    ).toBe("div#main > button.btn");
+  });
+
+  it("cuts the selector at a value holding its own quote", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes('div > span.x[title="say "Zelda""] > b'),
+    ).toBe("div > span.x");
   });
 });
 
@@ -528,6 +608,20 @@ describe("filterSentryBreadcrumb", () => {
         category: "navigation",
         data: { from: "/servers/[name]", to: "/servers/[name]" },
       });
+      for (const category of ["ui.click", "ui.input"]) {
+        expect(
+          mod.filterSentryBreadcrumb({
+            category,
+            message:
+              'div.row > button.danger[aria-label="Delete Acme Prod"][name="acme"]',
+            data: { "ui.component_name": "DeleteButton" },
+          }),
+        ).toEqual({
+          category,
+          message: "div.row > button.danger",
+          data: { "ui.component_name": "DeleteButton" },
+        });
+      }
       const click = { category: "ui.click", message: "button.harness" };
       expect(mod.filterSentryBreadcrumb(click)).toBe(click);
     }

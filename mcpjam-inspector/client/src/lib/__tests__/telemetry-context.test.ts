@@ -153,5 +153,14 @@ describe("stampPostHogEvent", () => {
   it("reports the policy in effect", () => {
     setSessionPrivacy("masked");
     expect(currentTelemetryCaptureContext().policy.recording).toBe("masked");
+    setSessionPrivacy("pending");
+    expect(currentTelemetryCaptureContext().policy.recording).toBe("masked");
+    setSessionPrivacy("full");
+    expect(currentTelemetryCaptureContext().policy.recording).toBe("full");
+  });
+
+  it("claims no restriction on an off surface, leaving it to the backend", () => {
+    setSessionPrivacy("off");
+    expect(currentTelemetryCaptureContext().policy.recording).toBe("full");
   });
 });

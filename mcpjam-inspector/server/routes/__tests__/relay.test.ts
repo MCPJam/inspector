@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import relayRoutes, {
   RELAY_BODY_READ_TIMEOUT_MS,
   RELAY_MAX_BUFFERED_BYTES,
+  RELAY_MAX_EVENT_BYTES,
   RELAY_MAX_LARGE_PAYLOAD_CHECKS,
   RELAY_MAX_PAYLOAD_CHECKS,
   RELAY_PARSE_MAX_BYTES,
@@ -105,10 +106,16 @@ function largeReplayBatch(snapshotBytes: number): string {
 }
 
 // The JSON a forwarded request carried.
+// The JSON a forwarded request carried: a POST body arrives gzip-compressed.
 function forwardedJson(callIndex = 0): unknown {
   const body = mockedFetchInit(callIndex).body;
+  if (typeof body === "string") return JSON.parse(body);
+  const bytes = Buffer.from(body as Uint8Array);
   return JSON.parse(
-    typeof body === "string" ? body : new TextDecoder().decode(body as never),
+    (bytes[0] === 0x1f && bytes[1] === 0x8b
+      ? gunzipSync(bytes)
+      : bytes
+    ).toString("utf8"),
   );
 }
 
@@ -165,7 +172,7 @@ describe("posthog relay proxy", () => {
     for (const run of zlibControl.held.splice(0)) run();
   });
 
-  it("forwards ingest POSTs with the /relay prefix stripped, preserving trailing slash and query, as plain JSON", async () => {
+  it("forwards ingest POSTs with the /relay prefix stripped, preserving trailing slash and query, as gzip JSON", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
@@ -180,9 +187,10 @@ describe("posthog relay proxy", () => {
     );
 
     expect(res.status).toBe(200);
-    // The payload is re-encoded as JSON, so its `compression` flag goes.
+    // The payload is re-encoded as the JSON the relay checked, gzip-compressed
+    // the way posthog-js sends it.
     expect(mockedFetchUrl()).toBe(
-      "https://us.i.posthog.com/i/v0/e/?ip=1&ver=1.2.3",
+      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js&ip=1&ver=1.2.3",
     );
     const init = mockedFetchInit();
     expect(init.method).toBe("POST");
@@ -191,9 +199,7 @@ describe("posthog relay proxy", () => {
       ...sent,
       batch: sent.batch.map(restricted),
     });
-    expect(new Headers(init.headers).get("content-type")).toBe(
-      "application/json",
-    );
+    expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
   });
 
   it("serves the /tlm alias identically: prefix stripped, static/array/ingest routing intact", async () => {
@@ -219,7 +225,9 @@ describe("posthog relay proxy", () => {
     expect(mockedFetchUrl(1)).toBe(
       `https://us.i.posthog.com/array/${POSTHOG_PROJECT_KEY}/config`,
     );
-    expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/i/v0/e/");
+    expect(mockedFetchUrl(2)).toBe(
+      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
+    );
   });
 
   it("routes /static to the assets host and /array to the ingest host", async () => {
@@ -293,8 +301,11 @@ describe("posthog relay proxy", () => {
         sent.origin + sent.pathname,
       );
       if (/^\/(?:e|i\/v0\/e|s)\/$/.test(sent.pathname)) {
-        // Capture payloads are forwarded as the JSON the relay checked.
-        expect(forwarded.searchParams.has("compression")).toBe(false);
+        // Capture payloads are forwarded as the JSON the relay checked: a
+        // POST gzip-compressed, a GET's `data` as plain JSON.
+        expect(forwarded.searchParams.get("compression")).toBe(
+          method === "POST" ? "gzip-js" : null,
+        );
       } else {
         expect(forwarded.search).toBe(sent.search);
       }
@@ -458,7 +469,9 @@ describe("posthog relay proxy", () => {
     });
     expect(replayRes.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(mockedFetchUrl()).toBe("https://us.i.posthog.com/s/");
+    expect(mockedFetchUrl()).toBe(
+      "https://us.i.posthog.com/s/?compression=gzip-js",
+    );
   });
 
   it("passes the full security middleware stack without any session token", async () => {
@@ -1141,6 +1154,25 @@ describe("posthog relay proxy", () => {
       }
       const sent = forwardedJson() as { batch: unknown[] };
       expect(sent.batch).toHaveLength(80);
+    });
+
+    it("refuses an event too large to parse whole", async () => {
+      const json = JSON.stringify([
+        {
+          event: "$snapshot",
+          properties: {
+            token: POSTHOG_PROJECT_KEY,
+            $snapshot_data: [
+              fullSnapshot(randomBytes(7 * 1024 * 1024).toString("base64")),
+            ],
+          },
+        },
+      ]);
+      expect(json.length).toBeGreaterThan(RELAY_MAX_EVENT_BYTES);
+      const response = await createTestApp().request("/tlm/s/", sized(json));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "unreadable_payload" });
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it.each([

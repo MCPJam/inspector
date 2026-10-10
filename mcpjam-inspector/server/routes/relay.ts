@@ -1,6 +1,6 @@
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
 import { promisify } from "node:util";
-import { gunzip } from "node:zlib";
+import { gunzip, gzip } from "node:zlib";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
@@ -19,6 +19,7 @@ import {
   decideEventPolicies,
   gzipDeclaredBytes,
   isRestricted,
+  type PolicyDecision,
   RelayBusyError,
   type RestrictionBudget,
   UnsupportedReplayError,
@@ -535,6 +536,11 @@ const INFLATE_RATIO_LIMIT = 32;
 const MAX_INFLATED_BODY_BYTES = 8 * 1024 * 1024;
 const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
 
+// One event of a large payload is parsed whole, so an event larger than
+// RELAY_MAX_EVENT_BYTES is refused rather than parsed. posthog-js itself
+// drops a snapshot event past about 6.3 MB.
+export const RELAY_MAX_EVENT_BYTES = 8 * 1024 * 1024;
+
 // A payload of up to RELAY_PARSE_MAX_BYTES is parsed outright. A larger one
 // is read by scanning it for its token fields SCAN_SLICE_BYTES at a time,
 // yielding to the event loop between slices so other requests are served
@@ -555,6 +561,7 @@ let payloadChecks = 0;
 let largePayloadChecks = 0;
 
 const gunzipAsync = promisify(gunzip);
+const gzipAsync = promisify(gzip);
 
 const TOKEN_QUERY_PARAMS = ["token", "api_key"];
 const TOKEN_FIELDS = ["api_key", "token", "$token"];
@@ -1123,9 +1130,10 @@ export async function scanPayloadTokens(
 // split into events: a payload up to RELAY_PARSE_MAX_BYTES is parsed whole,
 // a larger one is scanned (validating it and collecting its tokens) and then
 // parsed one event at a time from the ranges the scan recorded, yielding
-// between events. The privacy gate (relay-privacy.ts) then rewrites each
-// event for its policy, and the payload is re-serialized as plain JSON —
-// what PostHog receives is exactly what the relay checked.
+// between events; an event larger than RELAY_MAX_EVENT_BYTES is refused.
+// The privacy gate (relay-privacy.ts) then rewrites each event for its
+// policy, and the payload is re-serialized — gzip-compressed for a POST —
+// so what PostHog receives is exactly what the relay checked.
 // ---------------------------------------------------------------------------
 
 type CaptureShape = "single" | "array" | "batch";
@@ -1184,8 +1192,10 @@ async function parseByLayout(
   json: Buffer,
   layout: PayloadLayout,
 ): Promise<CapturePayload> {
-  const parseRange = (start: number, end: number): unknown =>
-    JSON.parse(json.toString("utf8", start, end));
+  const parseRange = (start: number, end: number): unknown => {
+    if (end - start > RELAY_MAX_EVENT_BYTES) throw new Error("event too large");
+    return JSON.parse(json.toString("utf8", start, end));
+  };
   const root = layout.events.find((event) => event.level === 0);
   if (!root) {
     // A top-level array: its events are the level-1 ranges.
@@ -1286,8 +1296,8 @@ type CaptureOutcome =
   | { kind: "busy" | "unreadable" | "other" | "unsupported_replay" }
   | {
       kind: "forward";
-      /** The rewritten body; absent for GET. */
-      body: string | undefined;
+      /** The rewritten body, gzip-compressed; absent for GET. */
+      body: Uint8Array<ArrayBuffer> | undefined;
       /** The rewritten query string, `?` included when not empty. */
       search: string;
       /** Whether any event is restricted. */
@@ -1302,19 +1312,92 @@ function bearerToken(header: string | undefined): string | null {
   return match ? match[1] : null;
 }
 
-// Decides each event's policy, rewrites the events and serializes them.
-async function gateCapturePayload(
+// A policy lookup waits on the backend, not the CPU, so it holds no
+// admission slot: a request reads its payload under a slot, gives the slot
+// back while the backend answers, and is admitted again to rewrite. Waiting
+// has bounds of its own: at most RELAY_MAX_POLICY_WAITS requests at once,
+// holding at most RELAY_MAX_POLICY_WAIT_BYTES of decoded payload between
+// them. Past either the relay answers 503, as it does past admission.
+export const RELAY_MAX_POLICY_WAITS = 64;
+export const RELAY_MAX_POLICY_WAIT_BYTES = 64 * 1024 * 1024;
+let policyWaits = 0;
+let policyWaitBytes = 0;
+
+const BUSY = Symbol("busy");
+
+// Runs `work` under an admission slot, a large one too when `large`. The
+// budget it gets bounds the request's compressed replay fields, which widen
+// to a large slot when they need it. BUSY when no slot is free.
+async function admitted<T>(
+  large: boolean,
+  cap: number,
+  work: (budget: RestrictionBudget) => Promise<T>,
+): Promise<T | typeof BUSY> {
+  if (
+    payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
+    (large && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS)
+  ) {
+    return BUSY;
+  }
+  payloadChecks++;
+  let holdsLarge = large;
+  if (holdsLarge) largePayloadChecks++;
+  const budget: RestrictionBudget = {
+    inflatedBytesLeft: holdsLarge ? cap : INFLATE_FLOOR_BYTES,
+    widen: () => {
+      if (holdsLarge) return;
+      if (largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
+        throw new RelayBusyError();
+      }
+      largePayloadChecks++;
+      holdsLarge = true;
+      budget.inflatedBytesLeft += cap - INFLATE_FLOOR_BYTES;
+    },
+  };
+  try {
+    return await work(budget);
+  } catch (error) {
+    if (error instanceof RelayBusyError) return BUSY;
+    throw error;
+  } finally {
+    payloadChecks--;
+    if (holdsLarge) largePayloadChecks--;
+  }
+}
+
+// Each event's policy, asked of the backend as the request's bearer. Only a
+// request with a bearer asks, so only one waits on the budget above.
+async function waitForPolicies(
+  events: readonly unknown[],
+  token: string | null,
+  bytes: number,
+): Promise<PolicyDecision | typeof BUSY> {
+  if (!token) return decideEventPolicies(events, null, resolveTelemetryPolicy);
+  if (
+    policyWaits >= RELAY_MAX_POLICY_WAITS ||
+    policyWaitBytes + bytes > RELAY_MAX_POLICY_WAIT_BYTES
+  ) {
+    return BUSY;
+  }
+  policyWaits++;
+  policyWaitBytes += bytes;
+  try {
+    return await decideEventPolicies(events, token, resolveTelemetryPolicy);
+  } finally {
+    policyWaits--;
+    policyWaitBytes -= bytes;
+  }
+}
+
+// Rewrites each event under its policy and serializes the payload: a POST
+// body gzip-compressed the way posthog-js sends it, a GET's `data` as JSON.
+async function rewriteCapture(
   url: URL,
   method: string,
   payload: CapturePayload,
-  token: string | null,
+  decision: PolicyDecision,
   budget: RestrictionBudget,
 ): Promise<CaptureOutcome> {
-  const decision = await decideEventPolicies(
-    payload.events,
-    token,
-    resolveTelemetryPolicy,
-  );
   const events: Record<string, unknown>[] = [];
   try {
     for (let i = 0; i < payload.events.length; i++) {
@@ -1330,25 +1413,31 @@ async function gateCapturePayload(
     if (error instanceof UnsupportedReplayError) {
       return { kind: "unsupported_replay" };
     }
-    if (error instanceof RelayBusyError) return { kind: "busy" };
     throw error;
   }
   const serialized = await serializeCapture({ ...payload, events });
+  const isGet = method === "GET" || method === "HEAD";
   const params = new URLSearchParams(url.search);
-  // The payload is plain JSON now, whatever it arrived as.
-  params.delete("compression");
-  if (method === "GET" || method === "HEAD") params.set("data", serialized);
+  if (isGet) {
+    params.delete("compression");
+    params.set("data", serialized);
+  } else {
+    params.set("compression", "gzip-js");
+  }
   const query = params.toString();
   return {
     kind: "forward",
-    body: method === "GET" || method === "HEAD" ? undefined : serialized,
+    body: isGet
+      ? undefined
+      : new Uint8Array(await gzipAsync(Buffer.from(serialized))),
     search: query ? `?${query}` : "",
     restricted: decision.policies.some(isRestricted),
     unresolved: decision.unresolved > 0,
   };
 }
 
-// A capture request end to end, under the admission limits above.
+// A capture request end to end: read under an admission slot, decide
+// outside one, rewrite under one again.
 async function processCapture(
   subpath: string,
   url: URL,
@@ -1370,7 +1459,9 @@ async function processCapture(
   const isGet = method === "GET" || method === "HEAD";
   const cap = capturePayloadCap(subpath);
   const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
-  let textBytes = bytes.length;
+  let textBytes = isGet
+    ? (url.searchParams.get("data") ?? "").length
+    : bytes.length;
   if (!isGet && isGzip(bytes)) {
     const declared = gzipDeclaredBytes(bytes);
     if (declared === null || declared > inflateBudget(bytes.length, cap)) {
@@ -1380,28 +1471,8 @@ async function processCapture(
   }
   // A GET's `data` is bounded by the URL, so it is admitted as small.
   const large = !isGet && textBytes > INFLATE_FLOOR_BYTES;
-  if (
-    payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
-    (large && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS)
-  ) {
-    return { kind: "busy" };
-  }
-  payloadChecks++;
-  let holdsLarge = large;
-  if (holdsLarge) largePayloadChecks++;
-  const budget: RestrictionBudget = {
-    inflatedBytesLeft: holdsLarge ? cap : INFLATE_FLOOR_BYTES,
-    widen: () => {
-      if (holdsLarge) return;
-      if (largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
-        throw new RelayBusyError();
-      }
-      largePayloadChecks++;
-      holdsLarge = true;
-      budget.inflatedBytesLeft += cap - INFLATE_FLOOR_BYTES;
-    },
-  };
-  try {
+
+  const read = await admitted(large, cap, async () => {
     let payload: CapturePayload;
     try {
       if (isGet) {
@@ -1415,15 +1486,20 @@ async function processCapture(
         );
       }
     } catch {
-      return { kind: "unreadable" };
+      return "unreadable" as const;
     }
-    const checked = pinned(payload);
-    if (typeof checked === "string") return { kind: checked };
-    return await gateCapturePayload(url, method, checked, token, budget);
-  } finally {
-    payloadChecks--;
-    if (holdsLarge) largePayloadChecks--;
-  }
+    return pinned(payload);
+  });
+  if (read === BUSY) return { kind: "busy" };
+  if (typeof read === "string") return { kind: read };
+
+  const decision = await waitForPolicies(read.events, token, textBytes);
+  if (decision === BUSY) return { kind: "busy" };
+
+  const outcome = await admitted(large, cap, (budget) =>
+    rewriteCapture(url, method, read, decision, budget),
+  );
+  return outcome === BUSY ? { kind: "busy" } : outcome;
 }
 
 const relayRoutes = new Hono();
@@ -1502,7 +1578,7 @@ relayRoutes.all("*", async (c) => {
   const hold = bufferHold(HOSTED_MODE ? relayClientKey(c) : null);
   let upstream: Response;
   try {
-    let body: ArrayBuffer | string | undefined;
+    let body: ArrayBuffer | Uint8Array<ArrayBuffer> | string | undefined;
     if (method !== "GET" && method !== "HEAD") {
       const read = await readRelayBody(c, maxBodyBytes(subpath), hold);
       if (typeof read === "string") return refuseBody(c, read);
@@ -1550,7 +1626,9 @@ relayRoutes.all("*", async (c) => {
       body = capture.body;
       search = capture.search;
       headers.delete("content-encoding");
-      if (body !== undefined) headers.set("Content-Type", "application/json");
+      // posthog-js's own shape for a gzip body: `compression=gzip-js` in the
+      // query (set above) and a text/plain content type.
+      if (body !== undefined) headers.set("Content-Type", "text/plain");
       else headers.delete("content-type");
       // The client's address leaves only with events that all resolved to
       // the full policy; getClientIp prefers the trusted edge headers over

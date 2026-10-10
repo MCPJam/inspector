@@ -1,6 +1,5 @@
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
-import { scrubSensitiveUrl } from "../../shared/credential-url.js";
 import {
   captureContextKey,
   CONSERVATIVE_TELEMETRY_POLICY,
@@ -9,13 +8,19 @@ import {
   MASKED_ATTRIBUTE_VALUE,
   MASKED_REPLAY_BLOCKED_TAGS,
   MASKED_REPLAY_KEPT_ATTRIBUTES,
+  maskReplayStyle,
   maskReplayText,
   mostRestrictivePolicy,
+  scrubCssUrls,
+  scrubHostname,
   scrubNamesFromUrl,
-  maskReplayStyle,
+  scrubUntrustedUrl,
+  scrubUrlsInText,
+  stripPostHogConfigHeaders,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryPolicy,
+  withoutIdentifyingProperties,
 } from "../../shared/telemetry-privacy.js";
 import type { TelemetryPolicyResolution } from "../services/telemetry-privacy-policy.js";
 
@@ -34,11 +39,14 @@ import type { TelemetryPolicyResolution } from "../services/telemetry-privacy-po
  *
  * A restricted event is forwarded only after:
  *   - its person properties lose every field that names a human;
- *   - its URLs lose credential tokens and names, its autocapture elements
- *     lose their text and attributes, and its IP and GeoIP enrichment go;
+ *   - every property, `$set` and `$set_once` included, loses the names in its
+ *     URLs, paths and hosts, and every property named for a name is masked;
+ *     its autocapture elements lose their text and attributes, and its IP
+ *     and GeoIP enrichment go;
  *   - its replay data passes `restrictSnapshotData`: an explicit allowlist of
  *     rrweb structures, rebuilt field by field with text and inputs masked,
- *     media blocked, console and network plugin data removed. Anything the
+ *     URLs scrubbed from styles and stylesheets, media and fonts blocked,
+ *     console and network plugin data removed. Anything the
  *     allowlist does not know is refused (`UnsupportedReplayError`), never
  *     forwarded unchanged.
  */
@@ -88,7 +96,8 @@ export interface PolicyDecision {
 /**
  * The effective policy of each event: the backend's answer for the context it
  * was captured under, tightened by the client's own label. Each distinct
- * context is asked once per request, in parallel, and never cached.
+ * context is asked once per request, in parallel (`resolve` keeps an answer
+ * for a few seconds; see services/telemetry-privacy-policy.ts).
  */
 export async function decideEventPolicies(
   events: readonly unknown[],
@@ -134,7 +143,8 @@ export async function decideEventPolicies(
 
 // ── Events ─────────────────────────────────────────────────────────────
 
-const URL_PROPERTIES = [
+// Properties that hold a page URL or path.
+const URL_PROPERTIES = new Set([
   "$current_url",
   "$referrer",
   "$pathname",
@@ -146,25 +156,97 @@ const URL_PROPERTIES = [
   "$initial_referrer",
   "$prev_pageview_pathname",
   "$prev_pageview_url",
-];
+]);
+// A property named for a name or an email (`project_name`, `serverName`).
+const NAME_PROPERTY = /(?:^|_)(?:name|email)$|[a-z](?:Name|Email)$/;
+// A property holding a host (`$referring_domain`, `$initial_referring_domain`).
+const DOMAIN_PROPERTY = /(?:^|_)domain$/;
+// Handled on their own: the stamp, replay data and autocapture elements.
+const SEPARATELY_RESTRICTED = new Set([
+  TELEMETRY_CONTEXT_PROPERTY,
+  "$snapshot_data",
+  "$elements",
+  "$elements_chain",
+  "$el_text",
+]);
+// Stack frame fields that locate code (the app's own bundle) and that error
+// tracking needs to resolve a trace.
+const CODE_LOCATION_KEYS = new Set(["filename", "abs_path"]);
+const PERSON_PROPERTY_SETS = new Set(["$set", "$set_once"]);
+const MAX_PROPERTY_DEPTH = 16;
 
-function scrubUrl(value: string): string {
-  return scrubNamesFromUrl(scrubSensitiveUrl(value));
-}
-
-/** A URL from a payload nobody vouched for: scrubbed, or a placeholder. */
-function scrubPayloadUrl(value: unknown): string {
-  if (typeof value !== "string") return "[name]";
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value) && !value.startsWith("/")) {
-    return "[name]";
+/**
+ * One property value of a restricted event, generically: a name-named
+ * property is masked, a URL or path is scrubbed, a host is kept only when it
+ * is ours, and any absolute URL inside other text is scrubbed — whatever the
+ * property is called, since heatmaps, web vitals and autocapture switch on
+ * from PostHog's remote config. `$heatmap_data` is keyed by URL, so its keys
+ * are scrubbed too. Person properties that name a human are left to the
+ * identity policy, which has already removed them when it is id-only.
+ */
+function restrictPropertyValue(
+  key: string,
+  value: unknown,
+  depth: number,
+  inPersonProperties: boolean,
+): unknown {
+  if (depth > MAX_PROPERTY_DEPTH) return "[redacted]";
+  if (typeof value === "string") {
+    if (URL_PROPERTIES.has(key)) return scrubNamesFromUrl(value);
+    if (inPersonProperties && IDENTIFYING_PERSON_PROPERTIES.includes(key)) {
+      return value;
+    }
+    if (NAME_PROPERTY.test(key)) return "[name]";
+    if (DOMAIN_PROPERTY.test(key) || key === "$host") {
+      return scrubHostname(value);
+    }
+    if (CODE_LOCATION_KEYS.has(key)) return value;
+    return scrubUrlsInText(value);
   }
-  return scrubUrl(value);
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      restrictPropertyValue(key, item, depth + 1, inPersonProperties),
+    );
+  }
+  if (isRecord(value)) {
+    if (key === "$heatmap_data") return restrictHeatmapData(value, depth);
+    return restrictProperties(
+      value,
+      depth + 1,
+      inPersonProperties || PERSON_PROPERTY_SETS.has(key),
+    );
+  }
+  return value;
 }
 
-function withoutIdentifying(value: unknown): unknown {
-  if (!isRecord(value)) return value;
-  const out = { ...value };
-  for (const key of IDENTIFYING_PERSON_PROPERTIES) delete out[key];
+function restrictProperties(
+  properties: Json,
+  depth: number,
+  inPersonProperties: boolean,
+): Json {
+  const out: Json = {};
+  for (const [key, value] of Object.entries(properties)) {
+    out[key] =
+      depth === 0 && SEPARATELY_RESTRICTED.has(key)
+        ? value
+        : restrictPropertyValue(key, value, depth, inPersonProperties);
+  }
+  return out;
+}
+
+// `$heatmap_data`: `{ [href]: Array<point> }`. Pages that scrub to the same
+// URL are merged.
+function restrictHeatmapData(data: Json, depth: number): Json {
+  const out: Json = {};
+  for (const [href, points] of Object.entries(data)) {
+    const key = scrubUntrustedUrl(href);
+    const masked = restrictPropertyValue("points", points, depth + 1, false);
+    const existing = out[key];
+    out[key] =
+      Array.isArray(existing) && Array.isArray(masked)
+        ? [...existing, ...masked]
+        : masked;
+  }
   return out;
 }
 
@@ -192,36 +274,6 @@ function scrubElement(element: unknown): unknown {
     out[key] = value;
   }
   return out;
-}
-
-const REQUEST_HEADER_CONFIG_KEYS = ["request_headers", "xhr_headers"];
-
-/**
- * posthog-js records its config into replay as a `$posthog_config` custom
- * event, `request_headers` — the relay bearer — included. Removed from every
- * snapshot, whatever its policy. Returns the data unchanged when it is not
- * an event list.
- */
-export function stripSnapshotCredentials(snapshotData: unknown): unknown {
-  if (!Array.isArray(snapshotData)) return snapshotData;
-  return snapshotData.map((entry) => {
-    if (
-      !isRecord(entry) ||
-      entry.type !== 5 ||
-      !isRecord(entry.data) ||
-      entry.data.tag !== "$posthog_config" ||
-      !isRecord(entry.data.payload) ||
-      !isRecord(entry.data.payload.config)
-    ) {
-      return entry;
-    }
-    const config = { ...entry.data.payload.config };
-    for (const key of REQUEST_HEADER_CONFIG_KEYS) delete config[key];
-    return {
-      ...entry,
-      data: { ...entry.data, payload: { ...entry.data.payload, config } },
-    };
-  });
 }
 
 export interface RestrictionBudget {
@@ -278,18 +330,18 @@ export async function applyEventPolicy(
   const out: Json = { ...event, properties };
 
   if (event.event === "$snapshot" && "$snapshot_data" in properties) {
-    properties.$snapshot_data = stripSnapshotCredentials(
+    properties.$snapshot_data = stripPostHogConfigHeaders(
       properties.$snapshot_data,
     );
   }
 
   if (policy.identity === "id_only") {
-    if ("$set" in out) out.$set = withoutIdentifying(out.$set);
-    if ("$set_once" in out) out.$set_once = withoutIdentifying(out.$set_once);
-    if ("$set" in properties)
-      properties.$set = withoutIdentifying(properties.$set);
-    if ("$set_once" in properties) {
-      properties.$set_once = withoutIdentifying(properties.$set_once);
+    for (const target of [out, properties]) {
+      for (const key of PERSON_PROPERTY_SETS) {
+        if (key in target) {
+          target[key] = withoutIdentifyingProperties(target[key]);
+        }
+      }
     }
   }
 
@@ -301,9 +353,12 @@ export async function applyEventPolicy(
   }
 
   if (policy.recording === "masked") {
-    for (const key of URL_PROPERTIES) {
-      if (typeof properties[key] === "string") {
-        properties[key] = scrubUrl(properties[key] as string);
+    Object.assign(properties, restrictProperties(properties, 0, false));
+    // posthog-js puts `$initial_*` person properties in the event's own
+    // `$set_once`, outside `properties`.
+    for (const key of PERSON_PROPERTY_SETS) {
+      if (isRecord(out[key])) {
+        out[key] = restrictProperties(out[key] as Json, 1, true);
       }
     }
     delete properties.$el_text;
@@ -331,11 +386,18 @@ export async function applyEventPolicy(
 const COMPRESSION_VERSION = "2024-10";
 const MAX_NODE_DEPTH = 1024;
 const MAX_CUSTOM_STRING = 128;
+// A compressed field is parsed whole once inflated, so one that would
+// inflate past this is refused rather than parsed.
+export const MAX_INFLATED_FIELD_BYTES = 8 * 1024 * 1024;
+// The node walk yields to the event loop after this many nodes.
+const NODES_PER_YIELD = 2_000;
 
 interface MaskContext {
   budget: RestrictionBudget;
   /** Ids of `<style>` elements seen in this request: their text is CSS. */
   styleIds: Set<number>;
+  /** Nodes walked since the last yield. */
+  nodes: number;
 }
 
 async function decompressField(
@@ -349,6 +411,9 @@ async function decompressField(
   const declared = gzipDeclaredBytes(bytes);
   if (declared === null) {
     throw new UnsupportedReplayError("compressed field is not gzip");
+  }
+  if (declared > MAX_INFLATED_FIELD_BYTES) {
+    throw new UnsupportedReplayError("compressed field is too large");
   }
   // Checked before inflating, against what the request was admitted for: a
   // request admitted as small widens to the large allowance (taking a large
@@ -400,7 +465,9 @@ function maskAttributeValue(name: string, value: unknown): unknown {
   const key = name.toLowerCase();
   if (value === null) return null;
   if (typeof value === "boolean" || typeof value === "number") return value;
-  if (key === "_csstext" && typeof value === "string") return value;
+  if (key === "_csstext" && typeof value === "string") {
+    return scrubCssUrls(value);
+  }
   if (
     (key === "rr_width" ||
       key === "rr_height" ||
@@ -477,32 +544,42 @@ function copyNodeFlags(node: Json, out: Json): void {
 /**
  * One serialized rrweb node, rebuilt with known fields only. `parentTag` is
  * the parent element's tag when it is known; only text directly inside a
- * known `<style>` keeps its content (it is CSS).
+ * known `<style>` keeps its content (it is CSS, its URLs scrubbed). Yields
+ * every NODES_PER_YIELD nodes, so a large DOM does not hold the loop.
  */
-function maskNode(
+async function maskNode(
   node: unknown,
   ctx: MaskContext,
   parentTag: string | null,
   depth: number,
-): Json {
+): Promise<Json> {
   if (depth > MAX_NODE_DEPTH) {
     throw new UnsupportedReplayError("replay node nested too deep");
   }
   if (!isRecord(node) || typeof node.type !== "number") {
     throw new UnsupportedReplayError("replay node has no type");
   }
+  if (++ctx.nodes >= NODES_PER_YIELD) {
+    ctx.nodes = 0;
+    await yieldToEventLoop();
+  }
   const out: Json = { type: node.type };
   copyNodeFlags(node, out);
-  const children = (tag: string | null) =>
-    node.childNodes === undefined
-      ? []
-      : requireArray(node.childNodes, "childNodes is not a list").map((child) =>
-          maskNode(child, ctx, tag, depth + 1),
-        );
+  const children = async (tag: string | null): Promise<Json[]> => {
+    if (node.childNodes === undefined) return [];
+    const masked: Json[] = [];
+    for (const child of requireArray(
+      node.childNodes,
+      "childNodes is not a list",
+    )) {
+      masked.push(await maskNode(child, ctx, tag, depth + 1));
+    }
+    return masked;
+  };
   switch (node.type) {
     case 0: // Document
       if (typeof node.compatMode === "string") out.compatMode = node.compatMode;
-      out.childNodes = children(null);
+      out.childNodes = await children(null);
       return out;
     case 1: // DocumentType
       for (const key of ["name", "publicId", "systemId"]) {
@@ -526,14 +603,14 @@ function maskNode(
         return out;
       }
       out.attributes = maskAttributes(node.attributes);
-      out.childNodes = children(tag);
+      out.childNodes = await children(tag);
       return out;
     }
     case 3: {
       // Text
       const text = typeof node.textContent === "string" ? node.textContent : "";
       const isCss = parentTag === "style";
-      out.textContent = isCss ? text : maskReplayText(text);
+      out.textContent = isCss ? scrubCssUrls(text) : maskReplayText(text);
       if (isCss && node.isStyle === true) out.isStyle = true;
       return out;
     }
@@ -549,11 +626,14 @@ function maskNode(
   }
 }
 
-function maskFullSnapshot(data: unknown, ctx: MaskContext): Json {
+async function maskFullSnapshot(
+  data: unknown,
+  ctx: MaskContext,
+): Promise<Json> {
   if (!isRecord(data)) {
     throw new UnsupportedReplayError("full snapshot has no data");
   }
-  const out: Json = { node: maskNode(data.node, ctx, null, 0) };
+  const out: Json = { node: await maskNode(data.node, ctx, null, 0) };
   if (isRecord(data.initialOffset)) {
     out.initialOffset = {
       top: finiteNumberOr(data.initialOffset.top, 0),
@@ -601,20 +681,27 @@ function maskMutationRemoves(removes: unknown): unknown[] {
   );
 }
 
-function maskMutationAdds(adds: unknown, ctx: MaskContext): unknown[] {
-  return requireArray(adds, "mutation adds are not a list").map((entry) => {
+async function maskMutationAdds(
+  adds: unknown,
+  ctx: MaskContext,
+): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const entry of requireArray(adds, "mutation adds are not a list")) {
     if (!isRecord(entry) || typeof entry.parentId !== "number") {
       throw new UnsupportedReplayError("mutation add has no parent");
     }
     const parentTag = ctx.styleIds.has(entry.parentId) ? "style" : null;
-    const out: Json = {
+    const added: Json = {
       parentId: entry.parentId,
       nextId: typeof entry.nextId === "number" ? entry.nextId : null,
-      node: maskNode(entry.node, ctx, parentTag, 0),
+      node: await maskNode(entry.node, ctx, parentTag, 0),
     };
-    if (typeof entry.previousId === "number") out.previousId = entry.previousId;
-    return out;
-  });
+    if (typeof entry.previousId === "number") {
+      added.previousId = entry.previousId;
+    }
+    out.push(added);
+  }
+  return out;
 }
 
 const MUTATION_FIELDS = ["texts", "attributes", "removes", "adds"] as const;
@@ -638,13 +725,14 @@ async function maskMutation(
           ? maskMutationAttributes(value)
           : field === "removes"
             ? maskMutationRemoves(value)
-            : maskMutationAdds(value, ctx);
+            : await maskMutationAdds(value, ctx);
     out[field] = compressed ? await compressField(masked) : masked;
   }
   return out;
 }
 
-// IncrementalSource values (rrweb). Kept: geometry, interaction and CSS only.
+// IncrementalSource values (rrweb). Kept as they are: geometry and
+// interaction. CSS (8, 13, 15) is rebuilt below with its URLs scrubbed.
 const KEPT_INCREMENTAL_SOURCES = new Set([
   1, // MouseMove
   2, // MouseInteraction
@@ -652,18 +740,119 @@ const KEPT_INCREMENTAL_SOURCES = new Set([
   4, // ViewportResize
   6, // TouchMove
   7, // MediaInteraction (play/pause timing; the media itself is blocked)
-  8, // StyleSheetRule
-  10, // Font
   12, // Drag
-  13, // StyleDeclaration
   14, // Selection
-  15, // AdoptedStyleSheet
   16, // CustomElement
 ]);
 const DROPPED_INCREMENTAL_SOURCES = new Set([
   9, // CanvasMutation: media
+  10, // Font: a font's family and source URL or bytes
   11, // Log: console
 ]);
+
+function numberOrNumbers(value: unknown): number | number[] | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (
+    Array.isArray(value) &&
+    value.every((n) => typeof n === "number" && Number.isFinite(n))
+  ) {
+    return value as number[];
+  }
+  return undefined;
+}
+
+function copySheetIds(data: Json, out: Json): void {
+  if (typeof data.id === "number") out.id = data.id;
+  if (typeof data.styleId === "number") out.styleId = data.styleId;
+}
+
+function cssRules(rules: unknown, what: string): Json[] {
+  return requireArray(rules, what).map((rule) => {
+    if (!isRecord(rule) || typeof rule.rule !== "string") {
+      throw new UnsupportedReplayError(`${what}: rule is not text`);
+    }
+    const out: Json = { rule: scrubCssUrls(rule.rule) };
+    const index = numberOrNumbers(rule.index);
+    if (index !== undefined) out.index = index;
+    return out;
+  });
+}
+
+// StyleSheetRule (8): rules inserted, deleted or replaced, by CSSOM.
+function restrictStyleSheetRule(data: Json): Json {
+  const out: Json = { source: 8 };
+  copySheetIds(data, out);
+  if (data.adds !== undefined) {
+    out.adds = cssRules(data.adds, "style sheet rule adds");
+  }
+  if (data.removes !== undefined) {
+    out.removes = requireArray(data.removes, "style sheet rule removes").map(
+      (entry) => {
+        const index = isRecord(entry) ? numberOrNumbers(entry.index) : null;
+        if (index === undefined || index === null) {
+          throw new UnsupportedReplayError("style sheet rule remove");
+        }
+        return { index };
+      },
+    );
+  }
+  for (const key of ["replace", "replaceSync"]) {
+    if (typeof data[key] === "string") {
+      out[key] = scrubCssUrls(data[key] as string);
+    }
+  }
+  return out;
+}
+
+// StyleDeclaration (13): one property set or removed on a rule — a value
+// like an inline style's, masked the same way.
+function restrictStyleDeclaration(data: Json): Json {
+  const out: Json = { source: 13 };
+  copySheetIds(data, out);
+  const index = numberOrNumbers(data.index);
+  if (index !== undefined) out.index = index;
+  if (isRecord(data.set) && typeof data.set.property === "string") {
+    out.set = {
+      property: data.set.property,
+      value:
+        typeof data.set.value === "string"
+          ? maskReplayStyle(data.set.value)
+          : null,
+      ...(typeof data.set.priority === "string"
+        ? { priority: data.set.priority }
+        : {}),
+    };
+  }
+  if (isRecord(data.remove) && typeof data.remove.property === "string") {
+    out.remove = { property: data.remove.property };
+  }
+  return out;
+}
+
+// AdoptedStyleSheet (15): constructed sheets attached to a document.
+function restrictAdoptedStyleSheet(data: Json): Json {
+  if (typeof data.id !== "number") {
+    throw new UnsupportedReplayError("adopted style sheet has no id");
+  }
+  const styleIds = numberOrNumbers(data.styleIds);
+  const out: Json = {
+    source: 15,
+    id: data.id,
+    styleIds: Array.isArray(styleIds) ? styleIds : [],
+  };
+  if (data.styles !== undefined) {
+    out.styles = requireArray(data.styles, "adopted styles").map((style) => {
+      if (!isRecord(style) || typeof style.styleId !== "number") {
+        throw new UnsupportedReplayError("adopted style has no id");
+      }
+      return {
+        styleId: style.styleId,
+        rules: cssRules(style.rules, "adopted style rules"),
+      };
+    });
+  }
+  return out;
+}
 
 async function restrictIncremental(
   event: Json,
@@ -694,6 +883,9 @@ async function restrictIncremental(
     }
     return { ...event, data: out };
   }
+  if (source === 8) return { ...event, data: restrictStyleSheetRule(data) };
+  if (source === 13) return { ...event, data: restrictStyleDeclaration(data) };
+  if (source === 15) return { ...event, data: restrictAdoptedStyleSheet(data) };
   if (DROPPED_INCREMENTAL_SOURCES.has(source)) return null;
   if (KEPT_INCREMENTAL_SOURCES.has(source)) return event;
   throw new UnsupportedReplayError("unknown incremental snapshot source");
@@ -735,7 +927,7 @@ function restrictCustom(event: Json): Json | null {
   const source = isRecord(event.data.payload) ? event.data.payload : {};
   for (const [key, value] of Object.entries(source)) {
     if (URL_PAYLOAD_KEYS.has(key)) {
-      payload[key] = scrubPayloadUrl(value);
+      payload[key] = scrubUntrustedUrl(value);
     } else if (
       value === null ||
       typeof value === "boolean" ||
@@ -765,7 +957,7 @@ async function restrictRrwebEvent(
       const data = compressed
         ? await decompressField(event.data, ctx)
         : event.data;
-      const masked = maskFullSnapshot(data, ctx);
+      const masked = await maskFullSnapshot(data, ctx);
       return {
         ...event,
         data: compressed ? await compressField(masked) : masked,
@@ -779,7 +971,7 @@ async function restrictRrwebEvent(
       return {
         ...event,
         data: {
-          href: scrubPayloadUrl(data.href),
+          href: scrubUntrustedUrl(data.href),
           width: finiteNumberOr(data.width, 0),
           height: finiteNumberOr(data.height, 0),
         },
@@ -804,7 +996,7 @@ export async function restrictSnapshotData(
   budget: RestrictionBudget,
 ): Promise<unknown[]> {
   const events = requireArray(snapshotData, "snapshot data is not a list");
-  const ctx: MaskContext = { budget, styleIds: new Set() };
+  const ctx: MaskContext = { budget, styleIds: new Set(), nodes: 0 };
   const out: unknown[] = [];
   for (let i = 0; i < events.length; i++) {
     if (i > 0 && i % 64 === 0) await yieldToEventLoop();

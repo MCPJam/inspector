@@ -14,8 +14,9 @@ Three layers enforce the same policy:
 1. **The backend decides.** `telemetryPrivacy:getContext` (mcpjam-backend)
    resolves the contexts in view, through the viewer's own project and
    organization access, to two values: `recording` (`full` | `masked`) and
-   `identity` (`full` | `id_only`). Anything it cannot verify is masked and
-   id-only.
+   `identity` (`full` | `id_only`). Anything it cannot verify is masked, and
+   a private context in view or membership of a private organization makes
+   both restrictive.
 2. **The client applies it** to both recorders, to identify calls, and to
    every event it captures (this document).
 3. **The relay enforces it again** for everything PostHog receives through
@@ -43,13 +44,14 @@ Three layers enforce the same policy:
 | Hosted, the backend answered `masked` for the contexts in view                | `masked`  |
 | Hosted, no context in view, or no session to verify one with                  | `masked`  |
 | Hosted, no answer within 10 seconds                                           | `masked`  |
-| Hosted, the backend verified every context in view as non-private             | `full`    |
+| Hosted, every context in view verified non-private, viewer in no private org  | `full`    |
 | Hosted, waiting for the first answer                                          | `pending` |
 
 `resolveSessionPrivacy` encodes this table, and its tests walk every row.
 **Full replay requires a verified non-private context.** A visitor with no
 session, a page with nothing in view, and a context the viewer cannot reach
-all get `masked`.
+all get `masked`. So does every page for a member of a private organization:
+the shell renders that organization's name and projects wherever they are.
 
 - **npx/Docker** installs run on someone else's machine against their own MCP
   servers. Recording those sessions is not ours to do, and the volume from every
@@ -178,8 +180,10 @@ It runs the credential-URL sanitizer (`scrubSensitiveUrl`,
 Route words (`APP_ROUTE_WORDS`, which a test keeps in step with `APP_ROUTES`),
 ids (Convex ids, UUIDs, numbers) and MCPJam's own hosts stay. Every other path
 segment and query value becomes `[name]`, every other host `[host]`, and the
-fragment and userinfo are dropped. For example,
-`/p/<projectId>/servers/acme-billing?tab=tools` becomes
+fragment and userinfo are dropped. A query key the app's own URLs do not use
+becomes `[key]` (a key can be the name itself), and a credential value
+(`code`, `state`, `token`, `t`, …) becomes `[redacted]` whatever its shape.
+For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 `/p/<projectId>/servers/[name]?tab=[name]`.
 
 ### Sentry Replay
@@ -202,13 +206,18 @@ fragment and userinfo are dropped. For example,
 Short of `full`:
 
 - `beforeAddRecordingEvent` drops console breadcrumbs from the replay and
-  scrubs URLs in navigation breadcrumbs and network spans.
+  scrubs URLs in navigation breadcrumbs and network spans. Click and key
+  frames lose the attribute parts of their selector (`[aria-label="…"]`,
+  `[title="…"]`, `[name="…"]`, `[alt="…"]`), the node's text-bearing
+  attributes, and the names in their page URL.
 - `beforeBreadcrumb` (`filterSentryBreadcrumb`) does the same for the
-  breadcrumbs error events carry, as each breadcrumb is recorded.
-- Error events, transactions and replay events lose names from their page URL
-  and transaction name. Transactions also lose resource URLs, peer host names
-  and the attribute values inside web-vitals element selectors
-  (`lcp.element`, `cls.source.*`).
+  breadcrumbs error events carry, `ui.click` and `ui.input` selectors
+  included, as each breadcrumb is recorded.
+- Error events, transactions and replay events lose names from their page
+  URL, their `Referer` and their transaction name, which
+  `browserTracingIntegration` sets to the raw path on every navigation.
+  Transactions also lose resource URLs, peer host names and the attribute
+  values inside web-vitals element selectors (`lcp.element`, `cls.source.*`).
 - A `preprocessEvent` hook scrubs the replay event's `urls` list.
 
 ## Identity
@@ -217,10 +226,13 @@ Identity starts **id-only** and follows an explicit grant
 (`client/src/lib/telemetry-context.ts`):
 
 - Names and email are allowed only after the backend answers
-  `identity: "full"` for the **current actor**. That needs every context in
-  view to be non-private and the actor to belong, in any role, to no
+  `identity: "full"` for the **current actor**. That needs no context in
+  view to be private and the actor to belong, in any role, to no
   organization with enterprise privacy. Person properties outlive the page,
-  so membership counts even when the organization is not in view.
+  so membership counts even when the organization is not in view. A context
+  that does not resolve (stale, deleted, not the actor's) masks recording
+  but leaves identity alone, so identity does not flip as the person
+  navigates.
 - `setTelemetryActor` clears the grant at once on sign-in, sign-out, an
   account change or a new guest. `setTelemetryIdentity` ignores an answer for
   any actor but the current one. A membership reload clears the grant until
@@ -229,8 +241,9 @@ Identity starts **id-only** and follows an explicit grant
   and memberships, so switching projects does not unname and rename anyone.
 
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
-the grant. When the answer is `id_only`, it calls `unsetPersonProperties` once
-per actor per load to clear values sent earlier. The `before_send` stamp also
+the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
+clear values sent earlier: once per actor, and again whenever the actor turns
+id-only after a `full` answer. The `before_send` stamp also
 strips naming person properties from any event captured while id-only, so a
 caller that sends them anyway is caught.
 
@@ -350,23 +363,32 @@ gate every capture request — event batches, replay batches and GET ingestion:
 
 1. Decode the payload once (gzip, base64 form, JSON) and pin it to our
    project, exactly as before. Large payloads are scanned, then parsed one
-   event at a time.
+   event at a time; an event over 8 MiB is refused.
 2. Group the events by their capture context and ask the backend
    (`telemetryPrivacy:getContext`) once per distinct context, as the
-   request's bearer, never cached. Each event gets the stricter of that
-   answer and its own label. A label can tighten, never authorize full
-   capture.
+   request's bearer. An answer is kept for 15 seconds per bearer and
+   context: short next to a membership or privacy change, and an honest
+   client's own label tightens at once anyway. Each event gets the stricter
+   of that answer and its own label. A label can tighten, never authorize
+   full capture. An `off` surface (npx, Docker) labels nothing restricted,
+   so the backend decides.
 3. No bearer (an anonymous visitor, an old client, an unload beacon), no
    stamp, more than eight contexts, or a backend that fails or does not
    answer within 2 seconds: the conservative policy.
 4. Restricted events lose naming person properties, `$ip` (and get
-   `$geoip_disable`), URL names and credential tokens, and autocapture text
-   and attributes. Their `$snapshot_data` is rebuilt from an explicit
-   allowlist of rrweb structures: posthog-js's compressed fields
-   (`cv: "2024-10"`) are inflated, masked and re-compressed; text, inputs and
-   non-layout attributes are masked, and kept `style` values lose their URLs
-   and strings; media and embeds are blocked; console,
-   network and canvas recordings are dropped. An unknown or undecodable
+   `$geoip_disable`), and autocapture text and attributes. Every property,
+   `$set` and `$set_once` included, loses the names in its URLs, paths and
+   hosts — whatever it is called, since heatmaps and web vitals switch on
+   from PostHog's remote config — and every property named for a name
+   (`project_name`, `serverName`) is masked. Query strings keep only the
+   app's own keys, and credential values (`code`, `state`, `token`, …) are
+   redacted whatever their shape. Their `$snapshot_data` is rebuilt from an
+   explicit allowlist of rrweb structures: posthog-js's compressed fields
+   (`cv: "2024-10"`, at most 8 MiB each inflated) are inflated, masked and
+   re-compressed; text, inputs and non-layout attributes are masked, kept
+   `style` values lose their URLs and strings, and stylesheets and CSS rules
+   their URLs; media, embeds and fonts are blocked; console, network and
+   canvas recordings are dropped. An unknown or undecodable
    structure is refused with a non-retryable `400 unsupported_replay_payload`,
    never forwarded unchanged.
 5. The client address is forwarded only when every event in the request
@@ -374,11 +396,16 @@ gate every capture request — event batches, replay batches and GET ingestion:
    client forwarding headers never reach PostHog. PostHog logs, which carry
    console output that cannot be attributed or masked, are refused.
 
-It reuses the relay's size, decompression, concurrency and rate limits. GET
-captures take an admission slot like any other, and compressed replay fields
-count toward the request's admission: a request admitted as small inflates
-them only to the floor, and past it takes a large-payload slot or gets a
-`503`, which posthog-js retries. The
+It reuses the relay's size, decompression, concurrency and rate limits. A
+request reads its payload under an admission slot, gives the slot back while
+the backend answers (that wait has its own budget: 64 requests, 64 MiB), and
+is admitted again to rewrite it, so a slow backend never holds the slots
+sized for parsing. GET captures take a slot like any other, and compressed
+replay fields count toward the request's admission: a request admitted as
+small inflates them only to the floor, and past it takes a large-payload slot
+or gets a `503`, which posthog-js retries. The DOM walk yields to the event
+loop as it goes. The rewritten payload is forwarded gzip-compressed with
+`compression=gzip-js`, as posthog-js sends it. The
 aggregate `relay.stats` line counts `privacyMasked`, `privacyRejected` and
 `privacyUnresolved` requests; nothing logs payloads, credentials, names or
 emails.
@@ -405,10 +432,14 @@ and the outbound filters above.
 
 - **Sentry's DOM events.** Sentry offers no hook to edit rrweb events, only
   its own frames, so its DOM masking is fixed at init and applies at every
-  level.
-- **Heatmaps.** Heatmap data keyed by URL is not scrubbed.
-- **Exception messages.** Error messages and stack traces are not scrubbed;
-  general log sanitization is out of scope here.
+  level. Stylesheets in a Sentry replay (CSS-in-JS rules included) are
+  recorded as written; the relay scrubs their URLs for PostHog only.
+- **Exception messages.** On restricted PostHog events, URLs inside error
+  messages are scrubbed, but other text in error messages and stack traces
+  is not; general log sanitization is out of scope here.
+- **Restricted replay styling.** Stylesheet URLs (fonts, background images)
+  are scrubbed along with everything else, so a restricted replay can fall
+  back to default fonts.
 
 ## Access and acceptance
 

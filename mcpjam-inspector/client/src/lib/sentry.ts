@@ -6,7 +6,12 @@ import {
   desktopSentryFallback,
   filterSentryEventIdentity,
 } from "./sentry-identity";
+import { withRecordingFilter } from "./sentry-recording-filter";
 import { telemetryNamesAllowed } from "./telemetry-context";
+import {
+  scrubHostname,
+  scrubUrlsInText,
+} from "../../../shared/telemetry-privacy";
 import {
   currentSessionPrivacy,
   filterSentryBreadcrumb,
@@ -16,6 +21,7 @@ import {
   scrubNamesFromUrl,
   SENTRY_REPLAY_OPTIONS,
   shouldMaskAnalytics,
+  stripSelectorAttributes,
 } from "./session-privacy";
 
 /**
@@ -71,29 +77,38 @@ function allowNamesFor(hint: unknown): boolean {
 }
 
 /**
- * Short of `full` at capture or now, the page URL an event reports loses its
- * names, as every other URL does (`scrubNamesFromUrl`). Breadcrumbs were
- * already filtered as they were recorded (`filterSentryBreadcrumb`).
+ * Short of `full` at capture or now, the page URL an event reports, and the
+ * `Referer` it sent, lose their names, as every other URL does
+ * (`scrubNamesFromUrl`). Breadcrumbs were already filtered as they were
+ * recorded (`filterSentryBreadcrumb`).
  */
-function filterSentryEventUrl<T extends { request?: { url?: unknown } }>(
-  event: T,
-  hint: unknown,
-): T {
+function filterSentryEventUrl<
+  T extends { request?: { url?: unknown; headers?: Record<string, string> } },
+>(event: T, hint: unknown): T {
   const masked =
     shouldMaskAnalytics() ||
     typeof hint !== "object" ||
     hint === null ||
     maskedAtCapture.get(hint) !== false;
-  if (masked && typeof event.request?.url === "string") {
-    event.request = {
-      ...event.request,
-      url: scrubNamesFromUrl(event.request.url),
-    };
+  if (!masked || !event.request) return event;
+  const request = { ...event.request };
+  if (typeof request.url === "string") {
+    request.url = scrubNamesFromUrl(request.url);
   }
+  if (request.headers) {
+    request.headers = Object.fromEntries(
+      Object.entries(request.headers).map(([name, value]) => [
+        name,
+        name.toLowerCase() === "referer" && typeof value === "string"
+          ? scrubNamesFromUrl(value)
+          : value,
+      ]),
+    );
+  }
+  event.request = request;
   return event;
 }
 
-const URL_IN_TEXT = /\bhttps?:\/\/[^\s"'<>]+/g;
 const HOST_KEYS = new Set(["server.address", "net.peer.name", "http.host"]);
 // Web-vitals attributes that name the element they measured, as a CSS
 // selector whose attribute values are the page's text (`[title="…"]`).
@@ -101,12 +116,10 @@ const SELECTOR_KEY = /^(?:lcp\.element|cls\.source\.\d+|inp\.target|ui\.)/;
 
 function scrubSpanValue(key: string, value: unknown): unknown {
   if (typeof value !== "string") return value;
-  if (HOST_KEYS.has(key)) {
-    return scrubNamesFromUrl(`https://${value}/`).slice("https://".length, -1);
-  }
-  if (SELECTOR_KEY.test(key)) return value.replace(/\[[^\]]*\]/g, "");
+  if (HOST_KEYS.has(key)) return scrubHostname(value);
+  if (SELECTOR_KEY.test(key)) return stripSelectorAttributes(value);
   if (value.startsWith("/")) return scrubNamesFromUrl(value);
-  return value.replace(URL_IN_TEXT, (url) => scrubNamesFromUrl(url));
+  return scrubUrlsInText(value);
 }
 
 function scrubSpanData(data: unknown): unknown {
@@ -185,10 +198,16 @@ export function initSentry() {
       const filtered = config.beforeSend(event);
       if (filtered === null) return null;
       const processed = processQueryEvent(filtered, hint);
+      // `browserTracingIntegration` names the scope's transaction after the
+      // raw path on every pageload and navigation, so an error event carries
+      // it in `transaction` as well as in `request.url`.
       return processed === null
         ? null
-        : filterSentryEventUrl(
-            filterSentryEventIdentity(processed, allowNamesFor(hint)),
+        : filterSentryTransactionContent(
+            filterSentryEventUrl(
+              filterSentryEventIdentity(processed, allowNamesFor(hint)),
+              hint,
+            ),
             hint,
           );
     },
@@ -201,6 +220,10 @@ export function initSentry() {
         hint,
       ),
     beforeBreadcrumb: (breadcrumb) => filterSentryBreadcrumb(breadcrumb),
+    // Replay recordings' rrweb events cannot be edited as they are recorded;
+    // the page URL in their Meta events is scrubbed on the way out.
+    transport: (options) =>
+      withRecordingFilter(Sentry.makeFetchTransport(options)),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
     // at the first moment the privacy level allows recording — never while
     // `pending`, never on `/results/<token>`. Starting it at init and stopping

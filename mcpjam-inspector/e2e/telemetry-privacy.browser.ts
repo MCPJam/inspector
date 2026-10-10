@@ -196,8 +196,11 @@ async function intercept(page: Page): Promise<Captured> {
   return captured;
 }
 
-/** Drive the page the way a person would, plus the noisy parts. */
-async function exercise(page: Page) {
+/**
+ * Drive the page the way a person would, plus the noisy parts. `namedPage`
+ * ends on a page whose path is a server's name before the error.
+ */
+async function exercise(page: Page, { namedPage = true } = {}) {
   await page.waitForFunction(() => (window as any).__harness?.ready === true);
   // Let the recorder take its full snapshot.
   await page.waitForTimeout(1_500);
@@ -210,6 +213,14 @@ async function exercise(page: Page) {
     harness.identifyWithNames();
     harness.capture();
   });
+  // A named page: Sentry names the transaction, which error events carry,
+  // and the replay's Meta event after the raw path.
+  if (namedPage) {
+    await page.evaluate(
+      (path) => (window as any).__harness.goTo(path),
+      `/servers/${SYNTHETIC_PII.serverName}`,
+    );
+  }
   await page.waitForTimeout(1_000);
   await page.evaluate(() => (window as any).__harness.fail());
 }
@@ -362,7 +373,7 @@ test.describe("telemetry privacy in the browser", () => {
   }) => {
     const captured = await intercept(page);
     await page.goto("/?privacy=masked");
-    await exercise(page);
+    await exercise(page, { namedPage: false });
     await collect(page, captured);
     const before = snapshotEvents(captured).length;
     const path = `${CREDENTIAL_PATH_PREFIXES[0]}${HARNESS_RESULT_TOKEN}`;

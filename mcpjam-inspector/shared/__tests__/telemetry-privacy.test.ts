@@ -8,8 +8,10 @@ import {
   maskReplayAttribute,
   maskReplayText,
   mostRestrictivePolicy,
-  scrubNamesFromUrl,
   maskReplayStyle,
+  scrubHostname,
+  scrubNamesFromUrl,
+  scrubUrlsInText,
 } from "../telemetry-privacy";
 import { scrubSensitiveUrl } from "../credential-url";
 
@@ -193,6 +195,61 @@ describe("maskReplayStyle", () => {
   });
 });
 
+describe("scrubNamesFromUrl query strings", () => {
+  it("redacts credential values whatever their shape", () => {
+    const uuid = "123e4567-e89b-12d3-a456-426614174000";
+    expect(
+      scrubNamesFromUrl(
+        `https://app.mcpjam.com/oauth/callback?code=${uuid}&state=0123456789abcdef0123456789abcdef&iss=https%3A%2F%2Facme.example`,
+      ),
+    ).toBe(
+      "https://app.mcpjam.com/oauth/callback?code=[redacted]&state=[redacted]&iss=[name]",
+    );
+    expect(scrubNamesFromUrl(`/artifacts/x?t=${uuid}&token=${uuid}`)).toBe(
+      "/[name]/[name]?t=[redacted]&token=[redacted]",
+    );
+  });
+
+  it("masks a key the app does not use, which can be the name itself", () => {
+    expect(
+      scrubNamesFromUrl("https://app.mcpjam.com/servers?zelda@example.com"),
+    ).toBe("https://app.mcpjam.com/servers?[key]=[name]");
+    expect(scrubNamesFromUrl("/servers?tab=tools&acme=1")).toBe(
+      "/servers?tab=[name]&[key]=1",
+    );
+  });
+
+  it("is idempotent", () => {
+    const once = scrubNamesFromUrl(
+      "/oauth/callback?code=abc&zelda=1&session=kd7a8f9g0h1j2k3l4m5n6p7q8r",
+    );
+    expect(once).toBe(
+      "/oauth/callback?code=[redacted]&[key]=1&session=kd7a8f9g0h1j2k3l4m5n6p7q8r",
+    );
+    expect(scrubNamesFromUrl(once)).toBe(once);
+  });
+});
+
+describe("scrubUrlsInText and scrubHostname", () => {
+  it("scrubs every absolute URL inside text", () => {
+    expect(
+      scrubUrlsInText(
+        "GET https://cdn.acme.example/avatars/zelda.png then https://app.mcpjam.com/servers/acme",
+      ),
+    ).toBe(
+      "GET https://[host]/[name]/[name] then https://app.mcpjam.com/servers/[name]",
+    );
+  });
+
+  it("keeps MCPJam's hosts and PostHog's markers, and hides the rest", () => {
+    expect(scrubHostname("app.mcpjam.com")).toBe("app.mcpjam.com");
+    expect(scrubHostname("localhost:6274")).toBe("localhost:6274");
+    expect(scrubHostname("$direct")).toBe("$direct");
+    expect(scrubHostname("mcp.acme.example")).toBe("[host]");
+    expect(scrubHostname("not a host")).toBe("[host]");
+  });
+});
+
 describe("scrubNamesFromUrl", () => {
   it("keeps route words, ids and the credential sanitizer's placeholder", () => {
     expect(
@@ -239,7 +296,7 @@ describe("scrubNamesFromUrl hosts", () => {
 
   it("is idempotent once a host is replaced", () => {
     const once = scrubNamesFromUrl("https://acme.example/servers/zelda?x=1");
-    expect(once).toBe("https://[host]/servers/[name]?x=1");
+    expect(once).toBe("https://[host]/servers/[name]?[key]=1");
     expect(scrubNamesFromUrl(once)).toBe(once);
   });
 });

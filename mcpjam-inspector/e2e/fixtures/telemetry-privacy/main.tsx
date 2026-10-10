@@ -106,6 +106,7 @@ function Harness() {
           type="button"
           className="harness-button"
           data-testid="harness-button"
+          aria-label={`Open invoices for ${SYNTHETIC_PII.name}`}
         >
           Open invoices for {SYNTHETIC_PII.name}
         </button>

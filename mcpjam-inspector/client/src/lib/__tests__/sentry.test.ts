@@ -592,6 +592,29 @@ describe("content at the outbound boundary", () => {
       ).request.url,
     ).toBe("https://app.mcpjam.com/servers/[name]");
 
+    // The raw path in `transaction` (set by browserTracingIntegration on
+    // every navigation) and the Referer header are scrubbed too.
+    const withPath = config.beforeSend(
+      {
+        transaction: "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/acme-billing",
+        request: {
+          url: "https://app.mcpjam.com/servers/acme",
+          headers: {
+            Referer: "https://app.mcpjam.com/servers/globex",
+            "User-Agent": "test",
+          },
+        },
+      },
+      hint,
+    );
+    expect(withPath.transaction).toBe(
+      "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/[name]",
+    );
+    expect(withPath.request.headers).toEqual({
+      Referer: "https://app.mcpjam.com/servers/[name]",
+      "User-Agent": "test",
+    });
+
     // Captured and sent at full: untouched.
     const fullHint = {};
     for (const fn of hooks.preprocessEvent ?? []) fn({}, fullHint);
@@ -601,6 +624,9 @@ describe("content at the outbound boundary", () => {
         fullHint,
       ).request.url,
     ).toBe("https://app.mcpjam.com/servers/acme");
+    expect(
+      config.beforeSend({ transaction: "/servers/acme" }, fullHint).transaction,
+    ).toBe("/servers/acme");
     getClient.mockReset();
   });
 });

@@ -24,7 +24,12 @@ vi.mock("../../utils/request-logger.js", async (importOriginal) => {
   };
 });
 
-import relayRoutes, { flushRelayStats, relayBodyLimit } from "../relay.js";
+import relayRoutes, {
+  flushRelayStats,
+  RELAY_MAX_PAYLOAD_CHECKS,
+  RELAY_MAX_POLICY_WAITS,
+  relayBodyLimit,
+} from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { setTelemetryPolicyQueryForTests } from "../../services/telemetry-privacy-policy.js";
 import {
@@ -349,10 +354,14 @@ function forwarded(callIndex = 0): {
   json: any;
 } {
   const [input, init] = vi.mocked(fetch).mock.calls[callIndex];
-  const text =
-    typeof init?.body === "string"
-      ? init.body
-      : new TextDecoder().decode(init?.body as never);
+  let text = "";
+  if (typeof init?.body === "string") text = init.body;
+  else if (init?.body) {
+    const bytes = Buffer.from(init.body as Uint8Array);
+    text = (
+      bytes[0] === 0x1f && bytes[1] === 0x8b ? gunzipSync(bytes) : bytes
+    ).toString("utf8");
+  }
   return {
     url: new URL(String(input)),
     headers: new Headers(init?.headers),
@@ -550,6 +559,97 @@ describe("relay privacy gate", () => {
     expect(event.properties.distinct_id).toBe("user_1");
   });
 
+  it("scrubs URLs, hosts and names from every property of a restricted event, $set_once included", async () => {
+    const serverUrl = `https://app.mcpjam.com/servers/${SYNTHETIC_PII.serverName}`;
+    await post(
+      "/tlm/e/",
+      batch([
+        {
+          event: "$web_vitals",
+          $set_once: {
+            $initial_current_url: serverUrl,
+            $initial_referring_domain: "mail.acme-synthetic.example",
+            $initial_pathname: `/servers/${SYNTHETIC_PII.serverName}`,
+          },
+          properties: {
+            token: POSTHOG_PROJECT_KEY,
+            distinct_id: "user_1",
+            project_name: SYNTHETIC_PII.projectName,
+            serverName: SYNTHETIC_PII.serverName,
+            invitee_email: SYNTHETIC_PII.email,
+            $external_click_url: SYNTHETIC_PII.imageUrl,
+            $referring_domain: "mail.acme-synthetic.example",
+            $session_entry_referring_domain: "$direct",
+            $host: "app.mcpjam.com",
+            $heatmap_data: {
+              [serverUrl]: [{ x: 1, y: 2 }],
+              "https://app.mcpjam.com/servers/other-server": [{ x: 3, y: 4 }],
+            },
+            $web_vitals_LCP_event: { $current_url: serverUrl, value: 1200 },
+            $exception_list: [
+              {
+                value: `Failed to load ${SYNTHETIC_PII.imageUrl}`,
+                stacktrace: {
+                  frames: [
+                    {
+                      filename: "https://app.mcpjam.com/assets/index-Bx7k2.js",
+                      lineno: 10,
+                    },
+                  ],
+                },
+              },
+            ],
+            failed_request: { url: SYNTHETIC_PII.imageUrl, status: 404 },
+            $set_once: { $initial_current_url: serverUrl },
+          },
+        },
+      ]),
+    );
+    const [event] = forwarded().json.batch;
+    expect(findSyntheticPii(JSON.stringify(event))).toEqual([]);
+    expect(event.$set_once).toEqual({
+      $initial_current_url: "https://app.mcpjam.com/servers/[name]",
+      $initial_referring_domain: "[host]",
+      $initial_pathname: "/servers/[name]",
+    });
+    const { properties } = event;
+    expect(properties).toMatchObject({
+      project_name: "[name]",
+      serverName: "[name]",
+      invitee_email: "[name]",
+      $external_click_url: "https://[host]/[name]/[name]",
+      $referring_domain: "[host]",
+      $session_entry_referring_domain: "$direct",
+      $host: "app.mcpjam.com",
+      $heatmap_data: {
+        "https://app.mcpjam.com/servers/[name]": [
+          { x: 1, y: 2 },
+          { x: 3, y: 4 },
+        ],
+      },
+      $web_vitals_LCP_event: {
+        $current_url: "https://app.mcpjam.com/servers/[name]",
+        value: 1200,
+      },
+      failed_request: { url: "https://[host]/[name]/[name]", status: 404 },
+      $set_once: {
+        $initial_current_url: "https://app.mcpjam.com/servers/[name]",
+      },
+    });
+    expect(properties.$exception_list[0]).toEqual({
+      value: "Failed to load https://[host]/[name]/[name]",
+      // Code locations stay, so error tracking can resolve the trace.
+      stacktrace: {
+        frames: [
+          {
+            filename: "https://app.mcpjam.com/assets/index-Bx7k2.js",
+            lineno: 10,
+          },
+        ],
+      },
+    });
+  });
+
   it("redacts credential URLs in restricted events with the shared credential sanitizer", async () => {
     const events = CREDENTIAL_PATH_PREFIXES.map((prefix) => ({
       event: "$pageview",
@@ -692,6 +792,135 @@ describe("relay privacy gate", () => {
     });
   });
 
+  it("scrubs URLs out of stylesheets, CSS rules and declarations, and drops fonts", async () => {
+    const customerIcon = "https://mcp.acme-synthetic.example/icons/zelda.svg";
+    await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(undefined, [
+          {
+            type: 2,
+            timestamp: 1,
+            data: {
+              node: {
+                type: 0,
+                id: 1,
+                childNodes: [
+                  {
+                    type: 2,
+                    id: 2,
+                    tagName: "style",
+                    attributes: {},
+                    childNodes: [
+                      {
+                        type: 3,
+                        id: 3,
+                        textContent: `.icon { mask-image: url(${customerIcon}); } [data-state="open"] { color: red }`,
+                      },
+                    ],
+                  },
+                  {
+                    type: 2,
+                    id: 4,
+                    tagName: "link",
+                    attributes: {
+                      rel: "stylesheet",
+                      _cssText: `@import "${customerIcon}"; .a { background: url('${customerIcon}') }`,
+                    },
+                    childNodes: [],
+                  },
+                ],
+              },
+            },
+          },
+          {
+            type: 3,
+            timestamp: 2,
+            data: {
+              source: 8,
+              id: 2,
+              adds: [
+                { rule: `.b { background: url("${customerIcon}") }`, index: 0 },
+              ],
+              removes: [{ index: 3 }],
+            },
+          },
+          {
+            type: 3,
+            timestamp: 3,
+            data: {
+              source: 13,
+              id: 2,
+              index: [0],
+              set: {
+                property: "--label",
+                value: `"${SYNTHETIC_PII.name}"`,
+                priority: "",
+              },
+            },
+          },
+          {
+            type: 3,
+            timestamp: 4,
+            data: {
+              source: 15,
+              id: 1,
+              styleIds: [7],
+              styles: [
+                {
+                  styleId: 7,
+                  rules: [
+                    { rule: `.c { cursor: url(${customerIcon}), auto }` },
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            type: 3,
+            timestamp: 5,
+            data: {
+              source: 10,
+              family: "Acme Synthetic Sans",
+              fontSource: customerIcon,
+              buffer: false,
+            },
+          },
+        ]),
+      ]),
+    );
+    const data = forwarded().json.batch[0].properties.$snapshot_data as any[];
+    expect(findSyntheticPii(decodedText(data))).toEqual([]);
+    const [style, link] = data[0].data.node.childNodes;
+    expect(style.childNodes[0].textContent).toBe(
+      '.icon { mask-image: url("https://[host]/[name]/[name]"); } [data-state="open"] { color: red }',
+    );
+    expect(link.attributes._cssText).toBe(
+      '@import "https://[host]/[name]/[name]"; .a { background: url("https://[host]/[name]/[name]") }',
+    );
+    expect(data[1].data).toEqual({
+      source: 8,
+      id: 2,
+      adds: [
+        {
+          rule: '.b { background: url("https://[host]/[name]/[name]") }',
+          index: 0,
+        },
+      ],
+      removes: [{ index: 3 }],
+    });
+    expect(data[2].data.set).toEqual({
+      property: "--label",
+      value: `"${"*".repeat(5)} ${"*".repeat(19)}"`,
+      priority: "",
+    });
+    expect(data[3].data.styles[0].rules[0].rule).toBe(
+      '.c { cursor: url("https://[host]/[name]/[name]"), auto }',
+    );
+    // The font event is gone.
+    expect(data).toHaveLength(4);
+  });
+
   it("decodes, masks and re-encodes posthog-js compressed snapshots and mutations", async () => {
     const [meta, full, mutation] = replayEvents() as any[];
     const compressed = [
@@ -714,7 +943,7 @@ describe("relay privacy gate", () => {
 
     expect(response.status).toBe(200);
     const sent = forwarded();
-    expect(sent.url.searchParams.has("compression")).toBe(false);
+    expect(sent.url.searchParams.get("compression")).toBe("gzip-js");
     const data = sent.json.batch[0].properties.$snapshot_data;
     // Still compressed the way posthog-js compresses, so the player reads it.
     expect(data[1].cv).toBe("2024-10");
@@ -826,6 +1055,62 @@ describe("relay privacy gate", () => {
     });
     expect(calls).toHaveLength(0);
     expect(findSyntheticPii(forwarded().text)).toEqual([]);
+  });
+
+  // Starts `count` stamped requests one after another, each once the one
+  // before has finished reading and is waiting on the backend.
+  async function waitingOnBackend(count: number) {
+    const releases: Array<() => void> = [];
+    setTelemetryPolicyQueryForTests(
+      () =>
+        new Promise((resolve) => {
+          releases.push(() => resolve(FULL));
+        }),
+    );
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const responses: Array<Promise<Response>> = [];
+    for (let i = 0; i < count; i++) {
+      responses.push(
+        post("/tlm/e/", batch([identifyEvent(stamp([`org_wait_${i}`]))]), auth),
+      );
+      // Quickly: a lookup unanswered for 2s times out and stops waiting.
+      await vi.waitFor(() => expect(releases).toHaveLength(i + 1), {
+        interval: 1,
+      });
+    }
+    // Backend answers arrive spread out, so each is released in turn.
+    return async () => {
+      const statuses: number[] = [];
+      for (let i = 0; i < count; i++) {
+        releases[i]();
+        statuses.push((await responses[i]).status);
+      }
+      return statuses;
+    };
+  }
+
+  it("holds no admission slot while the backend answers", async () => {
+    const answerInTurn = await waitingOnBackend(RELAY_MAX_PAYLOAD_CHECKS + 4);
+
+    // Every admission slot is free while those wait on the backend.
+    const anonymous = await post("/tlm/e/", batch([identifyEvent(undefined)]));
+    expect(anonymous.status).toBe(200);
+
+    expect(new Set(await answerInTurn())).toEqual(new Set([200]));
+  });
+
+  it("answers 503 once the policy lookups waiting fill their budget", async () => {
+    const answerInTurn = await waitingOnBackend(RELAY_MAX_POLICY_WAITS);
+
+    const refused = await post(
+      "/tlm/e/",
+      batch([identifyEvent(stamp(["org_one_more"]))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+    expect(new Set(await answerInTurn())).toEqual(new Set([200]));
   });
 
   it("never logs payloads, credentials, names or emails", async () => {

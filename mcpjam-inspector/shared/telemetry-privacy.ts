@@ -190,6 +190,54 @@ export const IDENTIFYING_PERSON_PROPERTIES: readonly string[] = [
   "$name",
 ];
 
+/**
+ * Person properties (`$set`, `$set_once`) without the fields that name a
+ * human. Anything that is not an object is returned as it is.
+ */
+export function withoutIdentifyingProperties(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const out = { ...(value as Record<string, unknown>) };
+  for (const key of IDENTIFYING_PERSON_PROPERTIES) delete out[key];
+  return out;
+}
+
+/** posthog-js config keys that carry request headers, the relay bearer. */
+export const POSTHOG_HEADER_CONFIG_KEYS = ["request_headers", "xhr_headers"];
+
+/**
+ * posthog-js records its whole config into a replay as a `$posthog_config`
+ * custom event, `request_headers` — the relay bearer — included. Snapshot
+ * data with those keys removed; anything that is not an event list is
+ * returned as it is.
+ */
+export function stripPostHogConfigHeaders(snapshotData: unknown): unknown {
+  if (!Array.isArray(snapshotData)) return snapshotData;
+  return snapshotData.map((entry) => {
+    const event = entry as {
+      type?: unknown;
+      data?: { tag?: unknown; payload?: { config?: unknown } };
+    };
+    if (
+      event?.type !== 5 ||
+      event.data?.tag !== "$posthog_config" ||
+      typeof event.data.payload?.config !== "object" ||
+      event.data.payload.config === null
+    ) {
+      return entry;
+    }
+    const config = {
+      ...(event.data.payload.config as Record<string, unknown>),
+    };
+    for (const key of POSTHOG_HEADER_CONFIG_KEYS) delete config[key];
+    return {
+      ...event,
+      data: { ...event.data, payload: { ...event.data.payload, config } },
+    };
+  });
+}
+
 // ── Replay structures a restricted recording keeps ─────────────────────
 
 /**
@@ -441,10 +489,129 @@ function scrubSegment(segment: string): string {
   return NAME_PLACEHOLDER;
 }
 
+const KEY_PLACEHOLDER = "[key]";
+
+/**
+ * Query keys whose value is a credential, whatever it looks like: an OAuth
+ * `code` or `state` can be a UUID or hex, which `isIdLike` would keep.
+ */
+const CREDENTIAL_QUERY_KEYS = new Set([
+  "code",
+  "state",
+  "token",
+  "t",
+  "_token",
+  "access_token",
+  "id_token",
+  "refresh_token",
+  "key",
+  "api_key",
+  "apikey",
+  "secret",
+  "client_secret",
+  "password",
+  "sig",
+  "signature",
+  "auth",
+  "authorization",
+  "code_verifier",
+  "code_challenge",
+  "ticket",
+  "otp",
+  "nonce",
+  "jwt",
+]);
+
+/**
+ * Query keys the app's own URLs use. Any other key is masked too: a key can
+ * be the name itself (`?zelda@example.com`).
+ */
+const KNOWN_QUERY_KEYS = new Set([
+  "tab",
+  "view",
+  "page",
+  "limit",
+  "cursor",
+  "before",
+  "after",
+  "sort",
+  "order",
+  "filter",
+  "status",
+  "plan",
+  "interval",
+  "surface",
+  "flow",
+  "mode",
+  "step",
+  "project",
+  "projectId",
+  "organizationId",
+  "org",
+  "session",
+  "sessionId",
+  "chatSessionId",
+  "tabId",
+  "sel",
+  "compose",
+  "host",
+  "v",
+  "ver",
+  "version",
+  "ip",
+  "compression",
+  "_",
+  "error",
+  "error_description",
+  "redirect_uri",
+  "resource",
+  "code_challenge_method",
+  "iss",
+  "browser",
+  "wire",
+  "codec",
+  "sharp",
+  "installation_id",
+  "accessVersion",
+  "distinct_id",
+  "q",
+  "search",
+  "privacy",
+  "server",
+  "run",
+  "case",
+  "suite",
+  "persona",
+  "iteration",
+  "checks",
+  "compare",
+  "compareTo",
+  "insights",
+  "replay",
+  "importJob",
+  "fromCommit",
+  "fromEvalServer",
+  "cwd",
+  "dir",
+  "_t",
+]);
+
+function scrubQueryParam(key: string, value: string): string {
+  if (CREDENTIAL_QUERY_KEYS.has(key)) {
+    return `${encodeURIComponent(key)}=${REDACTED_PLACEHOLDER}`;
+  }
+  const name = KNOWN_QUERY_KEYS.has(key)
+    ? encodeURIComponent(key)
+    : KEY_PLACEHOLDER;
+  return `${name}=${isIdLike(value) ? encodeURIComponent(value) : NAME_PLACEHOLDER}`;
+}
+
 /**
  * Replace every name-like part of a URL — server names, project slugs, host
- * names, free-form query values — with a placeholder, keeping route words,
- * ids, and MCPJam's own hosts (`isAppHost`). The fragment and any userinfo
+ * names, free-form query values, query keys the app does not use — with a
+ * placeholder, keeping route words, ids, and MCPJam's own hosts
+ * (`isAppHost`). Credential query values (`code`, `state`, `token`, …) are
+ * always redacted, whatever their shape. The fragment and any userinfo
  * are dropped (they can hold anything, OAuth responses included). Credential
  * path segments go first, through the credential-URL sanitizer
  * (`scrubSensitiveUrl`), because a share token looks like an id. A value
@@ -470,12 +637,7 @@ export function scrubNamesFromUrl(input: string): string {
       .map((segment) => scrubSegment(decodeURIComponent(segment)))
       .join("/");
     const query = [...url.searchParams]
-      .map(
-        ([key, param]) =>
-          `${encodeURIComponent(key)}=${
-            isIdLike(param) ? encodeURIComponent(param) : NAME_PLACEHOLDER
-          }`,
-      )
+      .map(([key, param]) => scrubQueryParam(key, param))
       .join("&");
     const origin = !isAbsolute
       ? ""
@@ -487,6 +649,28 @@ export function scrubNamesFromUrl(input: string): string {
     return `${origin}${path}${query ? `?${query}` : ""}`;
   } catch {
     return NAME_PLACEHOLDER;
+  }
+}
+
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s"'<>]+/g;
+
+/** Text with every absolute http(s) URL in it `scrubNamesFromUrl`ed. */
+export function scrubUrlsInText(text: string): string {
+  return text.replace(URL_IN_TEXT, (url) => scrubNamesFromUrl(url));
+}
+
+/**
+ * A host name (with or without a port): kept when it is MCPJam's own
+ * (`isAppHost`), `[host]` otherwise. PostHog's `$direct` and other `$`
+ * markers are kept.
+ */
+export function scrubHostname(host: string): string {
+  if (host === "" || host.startsWith("$")) return host;
+  try {
+    const { hostname } = new URL(`https://${host}/`);
+    return isAppHost(hostname) ? host : HOST_PLACEHOLDER;
+  } catch {
+    return HOST_PLACEHOLDER;
   }
 }
 
@@ -544,4 +728,40 @@ export function maskReplayStyle(style: string): string {
   );
   const rest = scrubbed.replace(CSS_URL_OR_STRING, "");
   return /url\(|["'\\]/i.test(rest) ? MASKED_ATTRIBUTE_VALUE : scrubbed;
+}
+
+// A `url(` the tokens above cannot read: replaced whole, up to its `)`.
+const CSS_TOKENS_OR_BAD_URL = new RegExp(
+  `${CSS_URL_OR_STRING.source}|url\\([^)]*\\)?`,
+  "gi",
+);
+// A quoted string in a stylesheet that is a URL (`@import "…"`).
+const ABSOLUTE_URL_STRING = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|data:)/i;
+
+/**
+ * CSS text — a stylesheet, a `<style>` element's text, a rule — with the URLs
+ * in it scrubbed: every `url(...)` argument, and every quoted string that is
+ * a URL (`@import "…"`). Unlike an inline style its other strings stay: a
+ * stylesheet's selectors and font names are the app's, and masking them would
+ * break the selectors that style the replay. A `url(` that cannot be read is
+ * replaced whole.
+ */
+export function scrubCssUrls(css: string): string {
+  if (!/url\(|["']/i.test(css)) return css;
+  return css.replace(
+    CSS_TOKENS_OR_BAD_URL,
+    (token: string, urlArgument: string | undefined) => {
+      if (urlArgument !== undefined) {
+        const url = scrubUntrustedUrl(cssTokenValue(urlArgument));
+        return `url(${JSON.stringify(url)})`;
+      }
+      if (/^url\(/i.test(token)) {
+        return `url(${JSON.stringify(NAME_PLACEHOLDER)})`;
+      }
+      const value = cssTokenValue(token);
+      return ABSOLUTE_URL_STRING.test(value)
+        ? JSON.stringify(scrubUntrustedUrl(value))
+        : token;
+    },
+  );
 }
