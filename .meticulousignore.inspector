@@ -1,0 +1,29 @@
+# Meticulous source-coverage exclusions for the "inspector" project. Same syntax
+# as .gitignore. Everything here is JS/TS that never ships in the Inspector's
+# browser bundle. Do not add the client, shared/, chat-ui, widget-react,
+# design-system, evaluators or the browser sdk/src entries: the client imports them.
+
+# Other frontend app
+soundcheck/**
+
+# Inspector server, Electron main/preload, launchers, tooling and tests
+mcpjam-inspector/server/**
+mcpjam-inspector/src/**
+mcpjam-inspector/bin/**
+mcpjam-inspector/lib/**
+mcpjam-inspector/scripts/**
+mcpjam-inspector/tools/**
+mcpjam-inspector/e2e/**
+mcpjam-inspector/test-servers/**
+
+# Non-browser workspaces and repo tooling
+cli/**
+mcp/**
+slack-app/**
+discord-app/**
+surface-core/**
+vitest/**
+preview-router/**
+examples/**
+scripts/**
+.github/**

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "meticulous-cli": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-cli/SKILL.md",
+      "computedHash": "323c08018a87714a46cbc105804aceaa1e9b6e6be9712b97841de5863f457d5c"
+    },
+    "meticulous-cli-update": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-cli-update/SKILL.md",
+      "computedHash": "540fdf8075c53ecde59daaa28afad89d978d2e3f6fe5372022a5d9260b68a272"
+    },
+    "meticulous-fix": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-fix/SKILL.md",
+      "computedHash": "e5811e3a11825cdd81542ac28463be20c15c8f3e8368893410d2394ea34925d3"
+    },
+    "meticulous-increase-coverage": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-increase-coverage/SKILL.md",
+      "computedHash": "726efd4c6f48cefdf6d6a849d6cd082f4036047a757b54a90079602a3fa7069a"
+    },
+    "meticulous-iterative-dev": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-iterative-dev/SKILL.md",
+      "computedHash": "47cac8590447d4682bad371bb2cfee88b002a991c04bdf6c3a88015fc4ace554"
+    },
+    "meticulous-review": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-review/SKILL.md",
+      "computedHash": "0ca391981c99860fa3a96bb361d958e1649fd6b16fb74a9905b73157ba485c7f"
+    },
+    "meticulous-simulate-and-diff": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-simulate-and-diff/SKILL.md",
+      "computedHash": "30ba64fb25a8a93f82152f1763e2af1a3869b11044b0e2832b629674a05aa00b"
+    },
+    "meticulous-test": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-test/SKILL.md",
+      "computedHash": "5965d7b7c6641f9de304cdadf61714004eb5c93e9bc7bc220107b700dde678b6"
+    },
+    "meticulous-use-session-data": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-use-session-data/SKILL.md",
+      "computedHash": "03cc8157e47a9f270792612afcb9e3a27ec527a6a43301daf3447ddbc9f010f2"
+    },
+    "meticulous-zero-diff-task": {
+      "source": "alwaysmeticulous/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meticulous-zero-diff-task/SKILL.md",
+      "computedHash": "e5da0cbe21e386a893f0c6dda666c07485757b2e24aaebc74fedd5193b526a0f"
+    }
+  }
+}
