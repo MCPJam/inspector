@@ -34,6 +34,7 @@ const ROOT_ALLOWLIST = new Set([
   "DESIGN.md",
   "LICENSE",
   "README.md",
+  "REVIEW.md",
   "SECURITY.md",
   "package-lock.json",
   "package.json",

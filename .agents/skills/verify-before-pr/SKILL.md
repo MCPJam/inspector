@@ -62,11 +62,13 @@ Internal-only changes (tests, CI, refactors with no behavior change) do not.
 
 ## 5. Before pushing
 
+- `npm run slop:check` passes: no rule in `scripts/slop/rules.mjs` may go up.
 - Every behavior change has a test in a `__tests__/` directory next to the source.
 - No `console.*` in `server/`; use `logger` (see `mcpjam-inspector/AGENTS.md`).
 - No literal color values; use role tokens (see `DESIGN.md`).
 - Commit messages follow Conventional Commits: `fix(client): ...`, `feat(server): ...`.
 - UI change: attach a screenshot to the PR (see the `run-inspector` skill).
+- The PR body fills in every section of `.github/pull_request_template.md`.
 
 ## When a check fails and you did not touch that area
 
