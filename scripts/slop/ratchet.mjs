@@ -17,6 +17,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 function git(args) {
@@ -99,7 +100,8 @@ function report({ deltas, increases }, waived) {
   return failing.length > 0 && !waived ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const base = resolveBase(process.argv.slice(2));
   const waived = process.env.SLOP_WAIVER === "true";
   process.exitCode = report(compare(base), waived);

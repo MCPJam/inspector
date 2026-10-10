@@ -8,6 +8,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 /** `mcpjam-inspector/server/...` → `mcpjam-inspector/server`; `sdk/...` → `sdk`. */
@@ -73,7 +74,8 @@ function printTable({ fileCount, totals, packages }) {
   console.log(["TOTAL".padEnd(width), ...total].join("  "));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = measure();
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(result, null, 2));
