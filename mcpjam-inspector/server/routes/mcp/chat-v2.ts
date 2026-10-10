@@ -83,6 +83,7 @@ import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
   harnessUnavailableHttpStatus,
+  runsHarness,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -1343,8 +1344,37 @@ chatV2.post("/", async (c) => {
       resolvedExecution.harness &&
         harnessUsesExternalAccount(resolvedExecution.harness),
     );
+    // …OR a brokered harness on the ORGANIZATION'S own key (its saved
+    // selection names an org connection on the harness's own vendor). It runs
+    // the REAL runtime on a lease minted for that connection, so it takes the
+    // harness path — never the org-BYOK branch below, which would run the
+    // emulated engine under the harness's name. Same predicate as
+    // `streamWebChatTurn` and the cloud-skill gate (`runsHarness`).
+    const isOrgKeyHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+      !isExternalAccountHarnessTurn &&
+      routingSelection?.source === "org" &&
+      runsHarness({
+        harness: resolvedExecution.harness,
+        model: {
+          id: String(modelDefinition.id),
+          provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
+        },
+        selection: routingSelection,
+      }),
+    );
+    // A scope step-up RESUME never runs the harness: the free path hands it
+    // to the emulated engine on MCPJam's `/stream`. On an org-key harness turn
+    // that would spend MCPJam's credits — past an org that requires its own
+    // keys — so the resume takes the org-BYOK branch below (`/stream/org`), on
+    // the organization's key, exactly as it did before org-key harness turns.
+    const orgKeyHarnessStepUpResume =
+      isOrgKeyHarnessTurn && Boolean(scopeStepUpResumeRequest);
     const usesMcpjamFreePath =
-      isMcpJamProvidedModel || isExternalAccountHarnessTurn;
+      isMcpJamProvidedModel ||
+      isExternalAccountHarnessTurn ||
+      (isOrgKeyHarnessTurn && !orgKeyHarnessStepUpResume);
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
     // allowlist. A guest MCPJam-model request still gets its bearer minted
@@ -1359,7 +1389,11 @@ chatV2.post("/", async (c) => {
       // `undefined` and 503-ing on "Unable to authenticate with MCPJam
       // servers" before the harness ever started, on a host the preflight had
       // just called ready.
-      if (mcpJamAuthHeader || !usesMcpjamFreePath) return mcpJamAuthHeader;
+      // Never for an org-key turn: an organization's key is never spent on a
+      // guest's behalf.
+      if (mcpJamAuthHeader || !usesMcpjamFreePath || isOrgKeyHarnessTurn) {
+        return mcpJamAuthHeader;
+      }
       try {
         mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -1571,6 +1605,9 @@ chatV2.post("/", async (c) => {
           provider: modelDefinition.provider,
           hosted: modelDefinition.hosted,
         },
+        // The saved selection: an org connection on the harness's own vendor
+        // runs the real runtime on the organization's key.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
         // should: it asks whether this HOST carries the runtime's sentinel, a
@@ -2521,6 +2558,11 @@ chatV2.post("/", async (c) => {
           taskCreatedBridge?.attachStreamWriter(writer);
           emitBrowserReadiness(writer);
         },
+        // The org selection the harness's lease is minted for, typed. Only on
+        // an org-key harness turn.
+        ...(isOrgKeyHarnessTurn && routingSelection?.source === "org"
+          ? { modelSelection: routingSelection }
+          : {}),
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
@@ -2580,7 +2622,10 @@ chatV2.post("/", async (c) => {
                 // turn spent none of it.
                 modelSource: isExternalAccountHarnessTurn
                   ? "external-account"
-                  : "mcpjam",
+                  : isOrgKeyHarnessTurn
+                    ? // The organization's own key paid: the org's spend.
+                      "byok"
+                    : "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
                 ...(!isScenarioSession && body.rewind

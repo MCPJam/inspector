@@ -98,6 +98,68 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
     : undefined;
 }
 
+/**
+ * The organization provider connections each BROKERED harness can run on: its
+ * own vendor's native API, on the organization's key. Claude Code speaks
+ * Anthropic Messages and Codex speaks OpenAI Responses, so a turn whose saved
+ * selection names an org Anthropic (resp. OpenAI) connection runs on that
+ * key through MCPJam's model proxy. Cursor authenticates with the customer's
+ * own Cursor account and runs on no org connection.
+ *
+ * This is the preflight's answer from non-secret metadata; the backend still
+ * resolves the connection id authoritatively at lease start and refuses a
+ * mismatch (`provider_mismatch`).
+ */
+export const HARNESS_ORG_PROVIDER_KEYS = {
+  "claude-code": ["anthropic"],
+  codex: ["openai"],
+  cursor: [],
+} as const satisfies Record<Harness, readonly string[]>;
+
+/** Whether `harnessId` can run on an org connection to `providerKey`. */
+export function harnessRunsOnOrgProvider(
+  harnessId: string,
+  providerKey: string | undefined,
+): boolean {
+  if (!providerKey) return false;
+  const keys: readonly string[] = Object.prototype.hasOwnProperty.call(
+    HARNESS_ORG_PROVIDER_KEYS,
+    harnessId,
+  )
+    ? HARNESS_ORG_PROVIDER_KEYS[harnessId as Harness]
+    : [];
+  return keys.includes(providerKey);
+}
+
+/**
+ * Which upstream a harness runtime is configured for, as the backend resolved
+ * it at lease start. Non-secret. The Gateway profile keeps the Gateway's
+ * Claude model spellings and effort workarounds; a native profile talks to the
+ * vendor's own API with native model ids.
+ */
+export type HarnessUpstreamProfile =
+  "gateway" | "anthropic-native" | "openai-native";
+
+const ORG_PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+};
+
+/** The refusal copy for an org connection the harness cannot run on. */
+export function harnessOrgProviderUnsupportedReason(harnessId: string): string {
+  const name = harnessDisplayName(harnessId);
+  const keys: readonly string[] = Object.prototype.hasOwnProperty.call(
+    HARNESS_ORG_PROVIDER_KEYS,
+    harnessId,
+  )
+    ? HARNESS_ORG_PROVIDER_KEYS[harnessId as Harness]
+    : [];
+  const vendors = keys.map((key) => ORG_PROVIDER_LABELS[key] ?? key);
+  return vendors.length > 0
+    ? `the ${name} harness runs MCPJam-provided models or your organization's ${vendors.join(" or ")} key`
+    : `the ${name} harness does not run on an organization's provider key`;
+}
+
 /** Human-facing runtime names (same values as the registry's `displayName`). */
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   "claude-code": "Claude Code",

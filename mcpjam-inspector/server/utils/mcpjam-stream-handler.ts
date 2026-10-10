@@ -25,7 +25,7 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
@@ -900,6 +900,13 @@ export interface MCPJamHandlerOptions {
    * selection's saved effort.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved model selection, typed. Read by `runHarnessTurn`: a
+   * `source: 'org'` selection runs the harness on the organization's own
+   * provider key (its canonical id is the turn's model, its connection is
+   * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
+   */
+  modelSelection?: ModelSelection;
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset

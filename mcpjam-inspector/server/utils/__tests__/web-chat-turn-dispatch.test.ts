@@ -49,6 +49,15 @@ vi.mock("../mcp-tool-result-model-output.js", () => ({
   convertToMcpjamModelMessages: vi.fn(async () => []),
 }));
 
+// A scope step-up resume is built from the live MCP session; a stand-in
+// resume is all dispatch needs to see.
+vi.mock("../hosted-scope-step-up-continuation.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../hosted-scope-step-up-continuation.js")
+  >()),
+  buildHostedScopeStepUpResume: vi.fn(() => ({ kind: "scope-step-up-resume" })),
+}));
+
 vi.mock("../harness/harness-proxy-strategy.js", () => ({
   resolveWebAuthorizedHarnessStrategy: vi.fn(() => ({
     plane: "web-authorized",
@@ -329,6 +338,83 @@ describe("streamWebChatTurn model dispatch", () => {
         args({ id: "openai/gpt-5-nano", provider: "openai" }, null) as never,
       );
       expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("a harness on the organization's own key", () => {
+    const orgSel = (modelId: string) => ({
+      modelId,
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+      fallback: { provider: "none", model: "none" } as const,
+    });
+
+    it("an org Anthropic row on Claude Code runs the REAL harness, with its selection", async () => {
+      const selection = orgSel("anthropic/claude-sonnet-4.5");
+      await streamWebChatTurn(
+        args(
+          { id: "claude-sonnet-4-5", provider: "anthropic", hosted: false },
+          "claude-code",
+          { routingSelection: selection },
+        ) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.harness).toBe("claude-code");
+      expect(opts.modelSelection).toEqual(selection);
+    });
+
+    it("an org row on another vendor is refused, never emulated", async () => {
+      await expect(
+        streamWebChatTurn(
+          args(
+            { id: "gpt-5", provider: "openai", hosted: false },
+            "claude-code",
+            { routingSelection: orgSel("openai/gpt-5") },
+          ) as never,
+        ),
+      ).rejects.toThrow(/organization's Anthropic key/);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    });
+
+    it("a scope step-up resume of an org-key harness turn runs on the org's key, never MCPJam's /stream", async () => {
+      const turn = args(
+        { id: "claude-sonnet-4-5", provider: "anthropic", hosted: false },
+        "claude-code",
+        { routingSelection: orgSel("anthropic/claude-sonnet-4.5") },
+      ) as any;
+      turn.persist.chatSessionId = "chat-1";
+      turn.runtime.scopeStepUp = {
+        bearer: "Bearer t",
+        authPrincipal: "user_1",
+        resumeRequest: { toolCallId: "call_1" },
+      };
+      await streamWebChatTurn(turn);
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+      expect(
+        (handlers.hostedOrg.mock.calls[0] as unknown[] | undefined)?.[0],
+      ).toMatchObject({ scopeStepUpResume: { kind: "scope-step-up-resume" } });
+    });
+
+    it("a hosted harness turn carries no selection to the harness", async () => {
+      await streamWebChatTurn(
+        args({
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+        }) as never,
+      );
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.harness).toBe("claude-code");
+      expect("modelSelection" in opts).toBe(false);
     });
   });
 

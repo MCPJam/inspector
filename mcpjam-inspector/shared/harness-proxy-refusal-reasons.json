@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "Every reason the harness model proxy stamps on x-mcpjam-proxy-refusal, with",
+    "the status it answers its own refusals with. Mirrored by the Inspector",
+    "(shared/harness-proxy-refusal-reasons.json); pinned in convex/lib/mirrors.json.",
+    "retry: the x-should-retry the proxy sends. class: how the Inspector's eval",
+    "infra classifier reads the refusal (null: not an infrastructure failure, the",
+    "trial keeps counting)."
+  ],
+  "status": 409,
+  "reasons": {
+    "spend_budget_reached": { "retry": false, "class": null },
+    "spending_limit_reached": { "retry": false, "class": null },
+    "spend_admission": { "retry": false, "class": null },
+    "pricing_unavailable": { "retry": false, "class": null },
+    "gateway_not_configured": { "retry": false, "class": null },
+    "lease_budget_exhausted": { "retry": false, "class": null },
+    "lease_max_calls": { "retry": false, "class": null },
+    "lease_daily_harness_spend": { "retry": false, "class": null },
+    "lease_daily_harness_calls": { "retry": false, "class": null },
+    "no_billable_usage": { "retry": true, "class": null },
+    "proxy_error": { "retry": true, "class": null },
+    "org_keys_required": { "retry": false, "class": "configuration" },
+    "ai_key_policy_unavailable": { "retry": false, "class": "configuration" },
+    "byok_credential_rejected": { "retry": false, "class": "auth" },
+    "byok_credential_unavailable": { "retry": false, "class": "configuration" },
+    "byok_connection_changed": { "retry": false, "class": "configuration" },
+    "transport_request_too_large": { "retry": false, "class": null },
+    "transport_response_too_large": { "retry": false, "class": null },
+    "upstream_timeout": { "retry": false, "class": "provider_unavailable" },
+    "upstream_interrupted": { "retry": false, "class": "provider_unavailable" },
+    "upstream_unreachable": { "retry": true, "class": "provider_unavailable" },
+    "upstream_redirect": { "retry": false, "class": "configuration" }
+  }
+}

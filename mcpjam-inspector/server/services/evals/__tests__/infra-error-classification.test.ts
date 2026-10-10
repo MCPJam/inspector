@@ -539,6 +539,80 @@ describe("classifyEvalInfraError — the harness model proxy's own refusals", ()
   });
 });
 
+describe("classifyEvalInfraError — organization-key refusals", () => {
+  it("a refusal reason classifies by the shared vocabulary, configuration kept apart from an outage", () => {
+    const byReason = (code: string) =>
+      classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "byok_hosted",
+        code,
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      });
+    expect(byReason("org_keys_required")).toEqual({
+      class: "configuration",
+      layer: "platform",
+      retryable: false,
+      code: "org_keys_required",
+      httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+    });
+    expect(byReason("byok_credential_rejected")).toMatchObject({
+      class: "auth",
+      layer: "model",
+      retryable: false,
+    });
+    expect(byReason("byok_credential_unavailable")).toMatchObject({
+      class: "configuration",
+      layer: "model",
+    });
+    expect(byReason("byok_connection_changed")).toMatchObject({
+      class: "configuration",
+    });
+    // Retryable as the proxy says: a timeout may have run on the provider.
+    expect(byReason("upstream_timeout")).toMatchObject({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: false,
+    });
+    expect(byReason("upstream_unreachable")).toMatchObject({
+      class: "provider_unavailable",
+      retryable: true,
+    });
+    // Spend, lease caps and a transport limit are not infrastructure.
+    for (const code of [
+      "spend_budget_reached",
+      "lease_max_calls",
+      "transport_request_too_large",
+      "transport_response_too_large",
+    ]) {
+      expect(byReason(code)).toBeUndefined();
+    }
+  });
+
+  it("a customer-controlled endpoint still never classifies", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "customer_hosted",
+        code: "byok_credential_rejected",
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("a lease start refused for the org's key or provider is configuration, whatever its status", () => {
+    for (const [code, httpStatus] of [
+      ["org_keys_required", 403],
+      ["byok_credential_unavailable", 409],
+      ["byok_connection_changed", 409],
+      ["provider_mismatch", 400],
+    ] as const) {
+      expect(
+        classifyEvalInfraError({ source: "platform_setup", code, httpStatus }),
+      ).toMatchObject({ class: "configuration", retryable: false, code });
+    }
+  });
+});
+
 describe("resolveIterationInfraError", () => {
   // Unstamped, as the stream handler and the local driver produce it: the
   // runner stamps the endpoint the iteration called.

@@ -47,6 +47,7 @@ import {
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
+import { turnModelSelectionOf } from "./assistant-turn-selection.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -684,6 +685,7 @@ export async function runAssistantTurn(
   // pre-flight.
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
+  const turnSelection = turnModelSelectionOf(opts.extraBodyFields);
   if (harnessRequested) {
     // Venue-aware: a local target runs the local arm (app-server for Codex),
     // and this backstop must judge the adapter that will actually run.
@@ -702,6 +704,7 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      ...(turnSelection ? { selection: turnSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -733,6 +736,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
+    handlerOptions.modelSelection = turnSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness

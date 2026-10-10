@@ -513,6 +513,42 @@ describe("ModelsPill — harness × model support", () => {
   });
 });
 
+describe("ModelsPill — harness × whose key", () => {
+  const ORG_ANTHROPIC = {
+    id: "claude-sonnet-4-5",
+    name: "Org Sonnet",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_a" },
+  };
+  // The SAME canonical model as a hosted row, but through the org's
+  // OpenRouter connection: Claude Code runs only the org's Anthropic key.
+  const ORG_OPENROUTER = {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Sonnet via OpenRouter",
+    provider: "openrouter",
+    hosted: false,
+    orgProvider: { providerKey: "openrouter", id: "orgprov_r" },
+  };
+
+  it("an org Anthropic row is pickable on Claude Code; another vendor's connection is locked with the reason", async () => {
+    mockModels.availableModels = [ORG_ANTHROPIC, ORG_OPENROUTER];
+    const user = userEvent.setup();
+    renderPill(
+      { includeClientDefaults: true, explicitTargets: [] },
+      { harnessTargets: [{ harnessId: "claude-code" }] },
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(option("Org Sonnet")).not.toHaveAttribute("aria-disabled", "true");
+    const openrouter = option("Sonnet via OpenRouter");
+    expect(openrouter).toHaveAttribute("aria-disabled", "true");
+    await user.hover(openrouter);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "your organization's Anthropic key",
+    );
+  });
+});
+
 describe("ModelsPill — reasoning effort", () => {
   const GPT5 = {
     id: "openai/gpt-5",

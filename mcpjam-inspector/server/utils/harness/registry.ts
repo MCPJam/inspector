@@ -35,9 +35,11 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
+  HARNESS_ORG_PROVIDER_KEYS,
   harnessModelSupport,
   harnessPinnedVersion,
   type HarnessModelSupportVerdict,
+  type HarnessUpstreamProfile,
 } from "@/shared/harness-model-support";
 import {
   HARNESS_MCP_DELIVERY,
@@ -403,8 +405,13 @@ type HarnessRuntimeAdapterBase = {
    *  static `builtinTools` ToolSet. */
   listBuiltinTools(): HarnessBuiltinToolInfo[];
   /** Map a host model id to the harness's native model id/alias, if it needs
-   *  one. Undefined ⇒ let the harness use its default. */
-  toNativeModel?(modelId: string): string | undefined;
+   *  one. Undefined ⇒ let the harness use its default. With a native upstream
+   *  (the organization's own key) the leased native id is what the runtime
+   *  must put on the wire. */
+  toNativeModel?(
+    modelId: string,
+    upstream?: HarnessCreateArgs["upstream"],
+  ): string | undefined;
   /** The runtime CLI version this adapter pins (`HARNESS_PINNED_VERSIONS`),
    *  or undefined when the adapter does not pin one (Cursor). The model-support
    *  evidence is evaluated against it. */
@@ -494,12 +501,33 @@ export type HarnessCreateArgs = {
    * silently dropped.
    */
   sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
+  /**
+   * The upstream the turn's model lease was minted for, as the backend
+   * resolved it (non-secret). Absent ⇒ the Gateway profile, today's shape.
+   *
+   * A native profile (the organization's own Anthropic or OpenAI key) talks
+   * to the vendor's API: no Gateway model spellings, no Gateway effort
+   * workarounds, and every model the runtime picks for itself pinned to the
+   * leased NATIVE id — the lease admits exactly that model, so a background
+   * call on another one would be refused mid-turn.
+   */
+  upstream?: {
+    profile: HarnessUpstreamProfile;
+    /** The native model id the lease admits (`claude-sonnet-4-5`, `gpt-5`). */
+    nativeModelId: string;
+  };
 };
 
-/** Brokered model access: MCPJam supplies the credential, so the adapter needs
- *  nothing from the customer's own secrets. */
+/** Brokered model access: MCPJam supplies the credential — its own lease on
+ *  the Gateway, or a lease on the organization's own key — so the adapter
+ *  needs nothing from the customer's own secrets. */
 type BrokeredModelAccessArm = {
   modelAccess: "broker";
+  /**
+   * The organization provider connections this harness can run on, on the
+   * org's own key (`HARNESS_ORG_PROVIDER_KEYS`, shared with the pickers).
+   */
+  orgProviderKeys: readonly string[];
   externalAccountCredentialEnv?: never;
   externalAccountBrokerBinding?: never;
 };
@@ -508,6 +536,7 @@ type BrokeredModelAccessArm = {
  *  CUSTOMER's credential, so it must SAY which one. */
 type ExternalAccountModelAccessArm = {
   modelAccess: "external-account";
+  orgProviderKeys?: never;
   /**
    * The environment variable names this runtime needs from the project's
    * secrets, e.g. `["CURSOR_API_KEY"]` (which is exactly what
@@ -821,9 +850,12 @@ function memoizedBuiltinTools(
 function claudeCodeTurnEnv(
   permissionMode: HarnessV1PermissionMode | undefined,
   modelId: string,
+  upstream?: HarnessCreateArgs["upstream"],
 ): Record<string, string> {
   return {
-    ...claudeCodeModelPins(modelId),
+    ...(upstream?.profile === "anthropic-native"
+      ? claudeCodeNativeModelPins(upstream.nativeModelId)
+      : claudeCodeModelPins(modelId)),
     ...(permissionMode === "allow-all"
       ? {}
       : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
@@ -864,6 +896,31 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
   return pins;
 }
 
+/**
+ * The native-profile pins: on the organization's own Anthropic key, EVERY
+ * model Claude Code reaches for on its own — each family alias (plan mode's
+ * `sonnet`, background work's and the `Explore` subagent's `haiku`), the small
+ * fast model and a subagent's model — resolves to the leased NATIVE id, and
+ * the bridge's Gateway model overrides are switched off
+ * (`MCPJAM_HARNESS_UPSTREAM_PROFILE`).
+ *
+ * Unlike the Gateway pins the chosen family's alias is pinned too: with no
+ * Gateway override in between, the CLI would otherwise put its own default
+ * (often a dated snapshot) on the wire, which an org lease's exact allowlist
+ * refuses. The backend rewrites every body to the admitted model regardless;
+ * these pins are what keep the CLI's own calls inside the lease.
+ */
+function claudeCodeNativeModelPins(native: string): Record<string, string> {
+  return {
+    MCPJAM_HARNESS_UPSTREAM_PROFILE: "anthropic-native",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: native,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: native,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: native,
+    ANTHROPIC_SMALL_FAST_MODEL: native,
+    CLAUDE_CODE_SUBAGENT_MODEL: native,
+  };
+}
+
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
@@ -876,6 +933,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
   // outside the VM, and the model proxy meters the spend.
   modelAccess: "broker",
+  // …or runs it on the organization's own Anthropic key.
+  orgProviderKeys: HARNESS_ORG_PROVIDER_KEYS["claude-code"],
   defaultPermissionMode: "allow-all",
   // WS3: the CLI pauses on a tool-approval-request for side-effecting tools;
   // the turn suspends and resumes with the user's decision (see
@@ -930,7 +989,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCodeHarness()),
-  toNativeModel: toClaudeCodeModel,
+  toNativeModel: (modelId, upstream) =>
+    upstream?.profile === "anthropic-native"
+      ? // `haiku` stays the alias (the CLI refuses the native Haiku id as a
+        // main model) and is pinned to the leased id by the turn env; any
+        // other family runs the leased native id itself, dated or not.
+        toClaudeCodeModel(modelId) === "haiku"
+        ? "haiku"
+        : upstream.nativeModelId
+      : toClaudeCodeModel(modelId),
   // Which models the pinned CLI runs is the evidence table's call, at the
   // pinned version: haiku/sonnet/opus supported, other Anthropic ids unknown,
   // everything else unsupported.
@@ -940,7 +1007,36 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
-  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
+  createHarness({
+    modelId,
+    auth,
+    mcpJson,
+    reasoningEffort,
+    permissionMode,
+    upstream,
+  }) {
+    // On the organization's own Anthropic key the runtime talks to Anthropic
+    // natively: the CLI's default thinking and effort behaviour stand (the
+    // disabled-thinking pin and the "unset" effort below are Gateway
+    // workarounds), and every self-chosen model is pinned to the leased one.
+    // A requested effort is applied the same way on either profile, so
+    // changing whose key pays never changes the effort a turn runs at.
+    if (upstream?.profile === "anthropic-native") {
+      return createHostedClaudeCodeHarness({
+        mcpServers: mcpJson.mcpServers,
+        auth,
+        ...(reasoningEffort
+          ? {
+              effort: reasoningEffort,
+              thinking: { type: "adaptive" as const },
+              env: {
+                ...claudeCodeTurnEnv(permissionMode, modelId, upstream),
+                CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
+              },
+            }
+          : { env: claudeCodeTurnEnv(permissionMode, modelId, upstream) }),
+      });
+    }
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's
@@ -1026,8 +1122,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
-  // Anthropic one.
+  // Anthropic one — or on the organization's own OpenAI key.
   modelAccess: "broker",
+  orgProviderKeys: HARNESS_ORG_PROVIDER_KEYS.codex,
   // Hosted: `never` + `danger-full-access`, the disposable box being the
   // boundary. Locally the bridge refuses `allow-all` without an explicit
   // workspace-write sandbox policy, so it never becomes full access there.
@@ -1080,7 +1177,10 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  toNativeModel: toCodexModel,
+  toNativeModel: (modelId, upstream) =>
+    upstream?.profile === "openai-native"
+      ? upstream.nativeModelId
+      : toCodexModel(modelId),
   // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
   // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
   // default model (or run without tools), so the preflight rejects it.
@@ -1094,8 +1194,14 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort }) {
-    const nativeModel = toCodexModel(modelId);
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream }) {
+    // On the organization's own OpenAI key the leased native id is the model
+    // (the custom provider still points at MCPJam's proxy, with a placeholder
+    // credential); otherwise the gpt-5 slug of the canonical id.
+    const nativeModel =
+      upstream?.profile === "openai-native"
+        ? upstream.nativeModelId
+        : toCodexModel(modelId);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as

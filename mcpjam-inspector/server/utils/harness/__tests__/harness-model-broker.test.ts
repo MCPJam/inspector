@@ -5,6 +5,9 @@ import {
   revokeHarnessModelBroker,
   reserveHarnessBox,
   renewHarnessBoxReservation,
+  orgLeaseUpstreamFrom,
+  ORG_BINDING_UNCONFIRMED,
+  readHarnessLeaseRefusal,
 } from "../harness-model-broker";
 import { buildBrokerDummyAuth } from "../registry";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
@@ -400,5 +403,250 @@ describe("harness box reservation", () => {
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_1",
     });
+  });
+});
+
+describe("org-key leases", () => {
+  const orgSelection = {
+    source: "org" as const,
+    modelId: "anthropic/claude-sonnet-4.5",
+    connectionRef: { kind: "orgProvider" as const, id: "conn_1" },
+  };
+  const orgStartResponse = {
+    ok: true,
+    runId: "run_org",
+    expiresAt: 123,
+    protocol: "anthropic",
+    proxyBaseUrl: "https://proxy/anthropic",
+    delivery: "e2b-network-transform",
+    credentialSource: "org",
+    upstreamProfile: "anthropic-native",
+    upstreamModelId: "claude-sonnet-4-5",
+    credentialRevision: "0123456789abcdef",
+  };
+
+  it("carries the org selection and the prepared revision, and returns the confirmed binding", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json(orgStartResponse);
+    });
+    const result = await startHarnessModelBroker({
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
+      harnessId: "claude-code",
+      modelId: orgSelection.modelId,
+      modelSelection: orgSelection as never,
+      expectedCredentialRevision: "0123456789abcdef",
+      bearer: "t",
+    });
+    expect(seenBody.modelSelection).toEqual(orgSelection);
+    expect(seenBody.expectedCredentialRevision).toBe("0123456789abcdef");
+    expect(result).toMatchObject({
+      ok: true,
+      orgUpstream: {
+        credentialSource: "org",
+        profile: "anthropic-native",
+        nativeModelId: "claude-sonnet-4-5",
+        credentialRevision: "0123456789abcdef",
+      },
+    });
+    // Still never a key or a lease in the result.
+    expect(JSON.stringify(result)).not.toMatch(/lease|jti|apiKey/i);
+  });
+
+  it("a hosted start's body is unchanged: no selection, no revision", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ...orgStartResponse,
+        credentialSource: undefined,
+      });
+    });
+    const result = await startHarnessModelBroker({
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      modelSelection: {
+        source: "hosted",
+        modelId: "anthropic/claude-haiku-4.5",
+      } as never,
+      expectedCredentialRevision: "ignored",
+      bearer: "t",
+    });
+    expect(seenBody).toEqual({
+      projectId: "p1",
+      computerId: "c1",
+      harnessId: "claude-code",
+      harnessRuntimeVersion: HARNESS_PINNED_VERSIONS["claude-code"],
+      modelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(result.ok && "orgUpstream" in result).toBe(false);
+  });
+
+  it("revokes and fails when an org start comes back without confirming the binding (an older backend)", async () => {
+    const calls: Array<{ url: string; body: any }> = [];
+    mockFetch((url, init) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      if (url.endsWith("/start")) {
+        // Minted on MCPJam's key: no credentialSource in the echo.
+        const {
+          credentialSource,
+          upstreamProfile,
+          upstreamModelId,
+          credentialRevision,
+          ...hosted
+        } = orgStartResponse;
+        return Response.json(hosted);
+      }
+      return Response.json({ ok: true });
+    });
+    const result = await startHarnessModelBroker({
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
+      harnessId: "claude-code",
+      modelId: orgSelection.modelId,
+      modelSelection: orgSelection as never,
+      bearer: "t",
+    });
+    expect(result).toMatchObject({ ok: false, code: ORG_BINDING_UNCONFIRMED });
+    const revoke = calls.find((c) => c.url.endsWith("/revoke"));
+    expect(revoke?.body).toMatchObject({ runId: "run_org" });
+  });
+
+  it("the loopback start carries the selection and applies the same guard", async () => {
+    const calls: Array<{ url: string; body: any }> = [];
+    mockFetch((url, init) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      if (url.endsWith("/revoke")) return Response.json({ ok: true });
+      return Response.json({
+        ok: true,
+        runId: "run_lb",
+        expiresAt: 1,
+        protocol: "openai",
+        proxyBaseUrl: "https://proxy/openai",
+        delivery: "inspector-loopback-gateway",
+        lease: "lease-token",
+      });
+    });
+    const result = await startLoopbackModelBroker({
+      projectId: "p1",
+      harnessId: "codex",
+      modelId: "openai/gpt-5",
+      modelSelection: {
+        source: "org",
+        modelId: "openai/gpt-5",
+        connectionRef: { kind: "orgProvider", id: "conn_2" },
+      } as never,
+      machineId: "m1",
+      keyId: "k1",
+      bearer: "t",
+    });
+    expect(calls[0]!.body.modelSelection).toMatchObject({
+      source: "org",
+      connectionRef: { id: "conn_2" },
+    });
+    expect(result).toMatchObject({ ok: false, code: ORG_BINDING_UNCONFIRMED });
+    expect(calls.some((c) => c.url.endsWith("/revoke"))).toBe(true);
+  });
+
+  it("reserve sends the org selection and returns the revision it prepared", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        expiresAt: 5,
+        credentialRevision: "fedcba9876543210",
+      });
+    });
+    const result = await reserveHarnessBox({
+      box: { kind: "sandbox", sandboxRowId: "sbxrow_1" },
+      harnessId: "claude-code",
+      modelId: orgSelection.modelId,
+      modelSelection: orgSelection as never,
+      runId: "run_1",
+      bearer: "t",
+    });
+    expect(seenBody.modelSelection).toEqual(orgSelection);
+    expect(result).toMatchObject({
+      ok: true,
+      credentialRevision: "fedcba9876543210",
+    });
+  });
+});
+
+describe("orgLeaseUpstreamFrom", () => {
+  it("accepts only a complete org echo", () => {
+    expect(
+      orgLeaseUpstreamFrom({
+        credentialSource: "org",
+        upstreamProfile: "openai-native",
+        upstreamModelId: "gpt-5",
+        credentialRevision: "abc",
+      }),
+    ).toEqual({
+      credentialSource: "org",
+      profile: "openai-native",
+      nativeModelId: "gpt-5",
+      credentialRevision: "abc",
+    });
+    const complete = {
+      credentialSource: "org",
+      upstreamProfile: "anthropic-native",
+      upstreamModelId: "claude-sonnet-4-5",
+      credentialRevision: "a",
+    };
+    for (const partial of [
+      null,
+      {},
+      { credentialSource: "platform" },
+      { ...complete, upstreamProfile: "gateway" },
+      { ...complete, credentialRevision: undefined },
+      { ...complete, credentialRevision: "" },
+      { ...complete, upstreamModelId: undefined },
+      // A Gateway spelling is not a native id.
+      { ...complete, upstreamModelId: "anthropic/claude-sonnet-4.5" },
+    ]) {
+      expect(orgLeaseUpstreamFrom(partial)).toBeNull();
+    }
+  });
+});
+
+describe("readHarnessLeaseRefusal", () => {
+  it("POSTs the run id and returns the proxy's recorded refusal", async () => {
+    let seenUrl = "";
+    let seenBody: any = {};
+    mockFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        refusal: { reason: "byok_credential_rejected", at: 123 },
+      });
+    });
+    await expect(
+      readHarnessLeaseRefusal({ runId: "run_1", bearer: "t" }),
+    ).resolves.toEqual({ reason: "byok_credential_rejected", at: 123 });
+    expect(seenUrl).toBe(
+      "https://convex.example.com/web/harness/model-broker/refusal",
+    );
+    expect(seenBody).toEqual({ runId: "run_1" });
+  });
+
+  it("is undefined when nothing was refused, the endpoint fails, or the network does", async () => {
+    mockFetch(() => Response.json({ ok: true }));
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
+    mockFetch(() => Response.json({ ok: false }, { status: 404 }));
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
+    mockFetch(() => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
   });
 });

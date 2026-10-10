@@ -1,7 +1,8 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
+import { getDefaultModel } from "@/components/chat-v2/shared/model-helpers";
 
 /**
  * Local Claude Code execution, as the TRANSPORT sees it.
@@ -492,5 +493,46 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     // resolution. A BYOK model never routed away in the first place.
     await renderWithHarness(grantedController(), { projectId: "proj-1" });
     expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
+  });
+});
+
+describe("useChatSession — a harness client with no model it can run", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    mockState.chatOnData = null;
+    mockState.transportOptions = [];
+    mockState.chatStatus = "ready";
+    mockState.messages = [];
+    // The real fallback: the first listed row, `undefined` for an empty list.
+    vi.mocked(getDefaultModel).mockImplementation(
+      (models: unknown[]) => models[0] as never,
+    );
+  });
+  afterEach(() => {
+    vi.mocked(getDefaultModel).mockImplementation(() => byokModel as never);
+  });
+
+  it("does not crash: it shows a disabled stand-in and refuses to send", async () => {
+    // The only row is a key on this machine, which a brokered harness never
+    // runs: the picker list is empty.
+    const { result } = await renderWithHarness(undefined, undefined, {
+      harnessModelTarget: { harnessId: "claude-code" },
+    });
+    const session = result.current as unknown as {
+      availableModels: unknown[];
+      selectedModel: {
+        id: string;
+        disabled?: boolean;
+        disabledReason?: string;
+      };
+      submitBlocked: boolean;
+    };
+    expect(session.availableModels).toEqual([]);
+    expect(session.selectedModel).toMatchObject({
+      disabled: true,
+      disabledReason: expect.stringContaining("harness"),
+    });
+    expect(session.submitBlocked).toBe(true);
   });
 });

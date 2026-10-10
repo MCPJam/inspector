@@ -118,6 +118,7 @@ import {
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
+  runsHarness,
 } from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
@@ -1255,15 +1256,43 @@ export async function streamWebChatTurn(
   // stay separate values.
   const isExternalAccountHarnessTurn =
     !!persist.harness && harnessUsesExternalAccount(persist.harness);
-  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
+  // …OR a brokered harness on the ORGANIZATION'S own key: its saved selection
+  // names an org connection whose provider the harness runs on. Such a turn
+  // runs the REAL runtime (the lease is minted for that connection), so it
+  // takes the harness path, never the org-BYOK branch below — which would run
+  // the emulated engine under the harness's name.
+  const isOrgKeyHarnessTurn =
+    !!persist.harness &&
+    !isExternalAccountHarnessTurn &&
+    prepare.routingSelection?.source === "org" &&
+    runsHarness({
+      harness: persist.harness,
+      model: {
+        id: String(prepare.modelDefinition.id),
+        provider: prepare.modelDefinition.provider,
+        hosted: prepare.modelDefinition.hosted,
+      },
+      selection: prepare.routingSelection,
+    });
+  // A scope step-up RESUME never runs the harness: the free path hands it to
+  // the emulated engine on MCPJam's `/stream`. On an org-key harness turn that
+  // would spend MCPJam's credits — past an org that requires its own keys —
+  // so the resume takes the org path below (`/stream/org`) instead, on the
+  // organization's key, exactly as it did before org-key harness turns.
+  const orgKeyHarnessStepUpResume = isOrgKeyHarnessTurn && !!scopeStepUpResume;
+  const usesMcpjamFreePath =
+    isMCPJam ||
+    isExternalAccountHarnessTurn ||
+    (isOrgKeyHarnessTurn && !orgKeyHarnessStepUpResume);
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
   // over a turn the harness never touched. The route pre-flight refuses a
   // non-MCPJam model on a brokered harness already; this refuses the same
   // thing here, with the same sentence, for any caller that reaches this
-  // helper without one.
-  if (persist.harness && !usesMcpjamFreePath) {
+  // helper without one. (An org-key harness turn's step-up resume is the one
+  // exception, above: it is the emulated engine on any path.)
+  if (persist.harness && !usesMcpjamFreePath && !orgKeyHarnessStepUpResume) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1272,6 +1301,9 @@ export async function streamWebChatTurn(
         hosted: prepare.modelDefinition.hosted,
       },
       purpose: harnessModelPurposeForSourceType(persist.sourceType),
+      ...(prepare.routingSelection
+        ? { selection: prepare.routingSelection }
+        : {}),
     });
     throw new WebRouteError(
       503,
@@ -1685,9 +1717,15 @@ export async function streamWebChatTurn(
   // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
   // which this turn does not have. See `chatModelSourceValidator` in the
   // backend for the two surfaces that read it that way.
+  // A harness turn on the organization's own key is the org's spend, never
+  // MCPJam's: `'byok'`, exactly like an org-BYOK chat turn.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
+    isExternalAccountHarnessTurn
+      ? "external-account"
+      : isOrgKeyHarnessTurn
+        ? "byok"
+        : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1767,6 +1805,11 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // The org selection the harness's lease is minted for (its canonical id
+    // and connection). Only on an org-key harness turn.
+    ...(isOrgKeyHarnessTurn && prepare.routingSelection?.source === "org"
+      ? { modelSelection: prepare.routingSelection }
+      : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),
