@@ -30,30 +30,65 @@ function resolveBase(argv) {
  * `git diff --numstat -z --no-renames` output: one `added\tdeleted\tpath`
  * record per NUL. Without `-z`, git quotes and escapes unusual paths, which
  * would hide them from `isMeasuredFile`.
+ *
+ * A source file git reports as binary ("-" counts, for example under a `-diff`
+ * attribute) goes in `uncounted`, for `measureDiff` to count from its patch.
  */
 export function parseNumstat(output) {
   const files = [];
+  const uncounted = [];
   for (const record of output.split("\0")) {
     // A path may itself contain tabs: only the first two separate fields.
     const [added, deleted, ...rest] = record.split("\t");
     const path = rest.join("\t");
-    // Binary files report "-" for both counts.
-    if (!path || added === "-" || !isMeasuredFile(path)) continue;
-    files.push({ path, lines: Number(added) + Number(deleted) });
+    if (!path || !isMeasuredFile(path)) continue;
+    if (added === "-") uncounted.push(path);
+    else files.push({ path, lines: Number(added) + Number(deleted) });
+  }
+  return { files, uncounted };
+}
+
+/** Changed lines in a `git diff -U0` patch, counted only inside hunks. */
+export function countPatchLines(patch) {
+  let inHunk = false;
+  let lines = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (line.startsWith("diff --git")) inHunk = false;
+    else if (inHunk && (line.startsWith("+") || line.startsWith("-")))
+      lines += 1;
+  }
+  return lines;
+}
+
+function git(args) {
+  return execFileSync("git", args, {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+}
+
+export function measureDiff(base) {
+  const { files, uncounted } = parseNumstat(
+    git(["diff", "--numstat", "-z", "--no-renames", base, "HEAD"])
+  );
+  // `--text` makes the patch show what numstat would not count.
+  for (const path of uncounted) {
+    const patch = git([
+      "diff",
+      "--text",
+      "-U0",
+      "--no-renames",
+      base,
+      "HEAD",
+      "--",
+      path,
+    ]);
+    files.push({ path, lines: countPatchLines(patch) });
   }
   files.sort((a, b) => b.lines - a.lines);
   const total = files.reduce((sum, file) => sum + file.lines, 0);
   return { total, files };
-}
-
-export function measureDiff(base) {
-  return parseNumstat(
-    execFileSync(
-      "git",
-      ["diff", "--numstat", "-z", "--no-renames", base, "HEAD"],
-      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }
-    )
-  );
 }
 
 export function verdict(total, labels) {
