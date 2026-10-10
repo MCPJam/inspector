@@ -150,9 +150,9 @@ const REMEDIATION_BY_CODE: Readonly<Record<string, AiRefusalRemediation>> = {
   provider_auth_failed: "fix_org_credentials",
   provider_unavailable: "retry_later",
   credential_missing: "add_org_provider",
-  capability_missing: "choose_org_model",
-  capability_unknown: "choose_org_model",
-  invalid_model: "choose_org_model",
+  capability_missing: "configure_org_model_role",
+  capability_unknown: "configure_org_model_role",
+  invalid_model: "configure_org_model_role",
 };
 
 /**

@@ -7,6 +7,7 @@ import {
   notAnalyzedReason,
   orgKeysRefusalCodeFromError,
   orgKeysRefusalCodeOf,
+  orgKeysRefusalSentence,
   ORG_KEYS_REFUSAL_CODES,
 } from "../org-keys-refusal";
 
@@ -79,6 +80,44 @@ describe("org-keys refusal helpers", () => {
     );
     expect(notAnalyzedReason("org_keys_required")).toMatch(/^Not analyzed: /);
     expect(notAnalyzedReason("something_new")).toMatch(/^Not analyzed: /);
+  });
+});
+
+describe("orgKeysRefusalSentence", () => {
+  it("reads the backend's reason out of a stream error envelope (Ask MCPJam)", () => {
+    expect(
+      orgKeysRefusalSentence(
+        JSON.stringify({
+          ok: false,
+          code: "org_runtime_unsupported",
+          error:
+            "Ask MCPJam can't run on this organization's providers yet, so it is unavailable while the organization requires its own keys.",
+          isRetryable: false,
+          remediation: "unsupported",
+        }),
+      ),
+    ).toBe(
+      "Ask MCPJam can't run on this organization's providers yet, so it is unavailable while the organization requires its own keys.",
+    );
+  });
+
+  it("falls back to the plain copy when the envelope only echoes the code", () => {
+    expect(
+      orgKeysRefusalSentence(
+        '{"ok":false,"code":"org_keys_required","error":"org_keys_required"}',
+      ),
+    ).toMatch(/requires its own provider keys/);
+    expect(orgKeysRefusalSentence("org_runtime_unsupported: nope")).toMatch(
+      /can't run on the organization's providers yet/,
+    );
+  });
+
+  it("leaves anything else to the caller", () => {
+    expect(
+      orgKeysRefusalSentence('{"code":"agent_turn_limit"}'),
+    ).toBeUndefined();
+    expect(orgKeysRefusalSentence("boom")).toBeUndefined();
+    expect(orgKeysRefusalSentence(undefined)).toBeUndefined();
   });
 });
 

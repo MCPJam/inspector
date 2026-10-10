@@ -84,7 +84,10 @@ import {
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
+  orgRequiresOwnKeys,
   resolveOrgModelConfig,
+  type ResolveOrgModelConfigAuth,
+  type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
 import {
@@ -2406,6 +2409,31 @@ export async function fetchRunPinnedSkillsWithRetry(
  */
 
 /**
+ * The organization config a run carries when the request brings its own model
+ * keys. Those keys never consult the organization, so its AI-key policy is
+ * read anyway: while the organization requires its own keys, the run carries
+ * the resolved config (which withholds every key), and the runner refuses
+ * personal, local and hosted selections with `org_keys_required` instead of
+ * running them on the request's keys. Off the policy the request's keys run
+ * exactly as before, with no org config. A failed read is logged and leaves
+ * the request as it was, like the keyless path's.
+ */
+export async function orgPolicyConfigForClientKeys(
+  target: ResolveOrgModelConfigTarget,
+  auth: ResolveOrgModelConfigAuth,
+): Promise<ResolvedOrgModelConfig | undefined> {
+  try {
+    const config = await resolveOrgModelConfig(target, auth);
+    return orgRequiresOwnKeys(config) ? config : undefined;
+  } catch (error) {
+    logger.warn("[evals] Failed to read the org AI-key policy", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+/**
  * Whether a keyed launch that failed the server preflight was already started
  * by an earlier attempt with the same key.
  *
@@ -3125,6 +3153,18 @@ export async function prepareEvalRun(
       : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgConfigTarget) {
+    // The request's own keys: still bound by the organization's policy.
+    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+      orgConfigTarget,
+      {
+        bearerToken: convexAuthToken,
+        scenarioId,
+        accessVersion,
+        serverIds: resolvedServerIds,
+      },
+    );
+  }
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {
       try {
@@ -3777,6 +3817,18 @@ export async function prepareSingleCaseExecution(
   const orgModelConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : undefined;
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgModelConfigTarget) {
+    // The request's own keys: still bound by the organization's policy.
+    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+      orgModelConfigTarget,
+      {
+        bearerToken: convexAuthToken,
+        scenarioId,
+        accessVersion,
+        serverIds: resolvedServerIds,
+      },
+    );
+  }
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&

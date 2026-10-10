@@ -1210,7 +1210,7 @@ describe("ModelSelector — organization requires its own keys", () => {
     expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
   });
 
-  it("tells a member to ask an organization admin, keeping a saved model visible", async () => {
+  it("tells a member to ask an organization admin, warning about a saved model only on the trigger", async () => {
     const user = userEvent.setup();
 
     render(
@@ -1222,24 +1222,32 @@ describe("ModelSelector — organization requires its own keys", () => {
       />,
     );
 
-    await user.click(screen.getByTestId("model-selector-trigger"));
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveAccessibleName(
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+    expect(
+      screen.getByTestId("model-selector-trigger-org-keys-warning"),
+    ).toBeInTheDocument();
+
+    await user.click(trigger);
     expect(
       await screen.findByText("Ask an organization admin to add one."),
     ).toBeVisible();
     expect(
-      screen.getByRole("option", { name: /Claude Haiku 4.5/ }),
-    ).toHaveAttribute("data-disabled", "true");
+      screen.queryByRole("option", { name: /Claude Haiku 4.5/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Add a provider" }),
     ).not.toBeInTheDocument();
   });
 
-  it("lists organization models without the free/providers split", async () => {
+  it("lists organization models only: no free/providers split and no saved hosted row", async () => {
     const user = userEvent.setup();
 
     render(
       <ModelSelector
-        currentModel={orgModel}
+        currentModel={savedHosted}
         availableModels={[orgModel, savedHosted]}
         onModelChange={() => {}}
         requireOrgKeys
@@ -1250,9 +1258,30 @@ describe("ModelSelector — organization requires its own keys", () => {
     expect(
       await screen.findByRole("option", { name: /Claude Sonnet 4.5/ }),
     ).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    // One provider heading: the hosted row no longer adds a second one.
+    expect(screen.getAllByText("Anthropic")).toHaveLength(1);
     expect(screen.queryByText("Your providers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Free models")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("model-selector-org-keys-empty"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows an allowed organization model on the trigger as usual", () => {
+    render(
+      <ModelSelector
+        currentModel={orgModel}
+        availableModels={[orgModel]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.queryByTestId("model-selector-trigger-org-keys-warning"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-selector-trigger")).toHaveTextContent(
+      "Claude Sonnet 4.5",
+    );
   });
 });

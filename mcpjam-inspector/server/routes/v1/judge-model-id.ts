@@ -11,16 +11,16 @@
  * Stripping the prefix loses nothing for a HOSTED judge: `mcpjam/` states the
  * hosted rail, and a bare catalog id already means that rail. Judges are no
  * longer hosted-only — an organization selection (BYOK judge) is a valid
- * judge, and when the organization requires its own provider keys the
- * platform default judge runs on its Smart model — but an org judge is named
- * by its selection, whose id carries no `mcpjam/` prefix, so this rewrite
- * never touches one ({@link canonicalJudgeModelIdForSelection}). Which judge
- * selections are admitted (org yes; local and stored-legacy no; a picked
- * hosted judge not under the org-key policy) is the backend's decision, not
- * this helper's. This is NOT a general model-id rewrite and must not become
- * one: an eval TARGET's prefix chooses between hosted and BYOK, and how a
- * hosted run routes a `mcpjam/` target is a separate question from what a
- * judge stores.
+ * judge, and when the organization requires its own provider keys it is the
+ * only one (there is no default judge then: one must be chosen) — but an org
+ * judge is named by its selection, whose id carries no `mcpjam/` prefix, so
+ * this rewrite never touches one ({@link canonicalJudgeModelIdForSelection}).
+ * Which judge selections are admitted (org yes; local and stored-legacy no; a
+ * picked hosted judge not under the org-key policy) is the backend's
+ * decision, not this helper's. This is NOT a general model-id rewrite and
+ * must not become one: an eval TARGET's prefix chooses between hosted and
+ * BYOK, and how a hosted run routes a `mcpjam/` target is a separate question
+ * from what a judge stores.
  *
  * Rewritten ONLY when what follows the prefix is, exactly, a hosted catalog
  * id. Anything else is returned trimmed but otherwise as sent, so the backend

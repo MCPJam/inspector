@@ -17,7 +17,10 @@
  * auth-shaped one. The status mirrors the backend's: 403 for
  * `org_keys_required` / `ai_scope_unresolved`, 422 for the rest.
  *
- * Only the CONFIGURATION refusals are translated. The two transient ones
+ * Translated: the CONFIGURATION refusals, the reused model-resolution codes a
+ * launch preflight can lead with (`invalid_model`, `capability_missing`,
+ * `capability_unknown`), and any launch refusal that carries its `problems`
+ * list whatever its primary code. The two transient ones
  * (`ai_policy_unavailable`, `provider_unavailable`) are left to the ordinary
  * error path, which treats them as the retryable failures they are.
  */
@@ -25,8 +28,10 @@ import { ConvexError } from "convex/values";
 import { describeAsSlug, orgPolicySlugForCode } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import {
+  AI_RETRYABLE_REFUSAL_CODES,
   aiRefusalRemediation,
   isAiConfigurationRefusalCode,
+  isRecognizedAiRefusalCode,
 } from "../../shared/ai-execution-refusal.js";
 import { ModelResolutionRefusalError } from "./model-resolution-local.js";
 
@@ -35,9 +40,25 @@ const FORBIDDEN_CODES: ReadonlySet<string> = new Set([
   "ai_scope_unresolved",
 ]);
 
+/**
+ * Catalog slugs for the reused codes, which predate the policy and have no
+ * `org/*` slug of their own. The backend pairs the model codes with
+ * `configure_org_model_role`.
+ */
+const SLUG_BY_REUSED_CODE: Readonly<Record<string, string>> = {
+  credential_missing: "org/credential_missing",
+  capability_missing: "org/model_unconfigured",
+  capability_unknown: "org/model_unconfigured",
+  invalid_model: "org/model_unconfigured",
+};
+
 /** The catalog slug for a configuration refusal code. */
 function slugForCode(code: string): string {
-  return orgPolicySlugForCode(code) ?? "org/credential_missing";
+  return (
+    orgPolicySlugForCode(code) ??
+    SLUG_BY_REUSED_CODE[code] ??
+    "org/keys_required"
+  );
 }
 
 /**
@@ -87,13 +108,19 @@ export function asAiRefusalRouteError(error: unknown): WebRouteError | null {
   }
   if (error instanceof ConvexError) {
     const data = error.data as
-      { code?: unknown; message?: unknown } | undefined | null;
+      | { code?: unknown; message?: unknown; problems?: unknown }
+      | undefined
+      | null;
     if (
       data &&
       typeof data === "object" &&
       !Array.isArray(data) &&
       typeof data.code === "string" &&
-      isAiConfigurationRefusalCode(data.code)
+      !AI_RETRYABLE_REFUSAL_CODES.has(data.code.trim().toLowerCase()) &&
+      // A launch preflight's refusal lists every unavailable dependency in
+      // `problems`, and its primary code can be a reused one
+      // (`invalid_model`, …): still the organization's configuration.
+      (Array.isArray(data.problems) || isRecognizedAiRefusalCode(data.code))
     ) {
       const message =
         typeof data.message === "string" && data.message.trim()

@@ -270,7 +270,7 @@ export function OrganizationModelRolesCard({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-1">
                 <h2 className="text-sm font-medium text-muted-foreground">
-                  Model roles
+                  Default model roles
                 </h2>
                 <p className="text-xs text-muted-foreground">
                   The organization model each kind of AI work runs on.{" "}

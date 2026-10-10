@@ -79,7 +79,7 @@ const BACKEND_CODE_TABLE: Readonly<Record<string, Row>> = {
   // The organization AI-key policy ("Use your keys for all AI features",
   // `shared/ai-execution-refusal.ts`). Explicit rows, so a configuration
   // refusal is never read by status: a 403 `org_keys_required` is not a
-  // credential wall and a 422 is not a request this trial broke. Permanent
+  // credential wall and a 422 is not a request this iteration broke. Permanent
   // until the organization's configuration changes, so never retried — and
   // never `account_limit`: no purchase lifts any of them.
   org_keys_required: { class: "configuration", layer: MODEL, retryable: false },

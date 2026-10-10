@@ -114,7 +114,9 @@ import {
  * target, judge or persona would run on an MCPJam-provided model (or whose
  * role has no organization model) — `org_keys_required`,
  * `org_model_unconfigured`, `org_runtime_unsupported`, `credential_missing`,
- * … The launch route carries that code in `details.code`, and the v1 envelope
+ * or a launch preflight led by a reused model code (`invalid_model`,
+ * `capability_missing`, `capability_unknown`) … The launch route carries that
+ * code in `details.code`, and the v1 envelope
  * may flatten the wire code onto `FORBIDDEN`, exactly like billing above.
  * Read by the wire code it would be 3, telling CI to rotate a credential that
  * works. It is a configuration of the request — choose a model from an
@@ -312,8 +314,9 @@ function isBillingShapedDetail(details: unknown): boolean {
  * The organization AI-key policy's configuration refusals — permanent until
  * someone changes the organization's AI configuration or the request's model
  * selection. Mirrors `AI_CONFIGURATION_REFUSAL_CODES` in the inspector's
- * `shared/ai-execution-refusal.ts`. See "Organization AI-key policy refusals
- * → 2" above.
+ * `shared/ai-execution-refusal.ts`, plus the reused model codes a launch
+ * preflight can lead with, which the backend classifies as configuration too.
+ * See "Organization AI-key policy refusals → 2" above.
  */
 const AI_CONFIGURATION_SHAPED_DETAIL_CODES = new Set([
   "org_keys_required",
@@ -322,6 +325,9 @@ const AI_CONFIGURATION_SHAPED_DETAIL_CODES = new Set([
   "ai_scope_unresolved",
   "provider_auth_failed",
   "credential_missing",
+  "invalid_model",
+  "capability_missing",
+  "capability_unknown",
 ]);
 
 /** The policy's transient refusals: infrastructure, never a credential. */

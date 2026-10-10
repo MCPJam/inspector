@@ -159,16 +159,25 @@ export function ErrorBox({
         data-refusal-code={orgKeysCode}
         className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
       >
-        <div className="flex items-start gap-3">
+        {/* The actions wrap under the text once both no longer fit on one
+            line (a narrow chat pane), so the text keeps a readable width
+            instead of shrinking to a word per line. */}
+        <div
+          className="flex flex-wrap items-start gap-3"
+          data-testid="chat-error-org-keys-layout"
+        >
           <CircleAlert className="h-6 w-6 flex-shrink-0 text-warning" />
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 grow basis-64">
             <p className="text-sm font-medium leading-6">{described.title}</p>
             <p className="text-sm leading-6 opacity-90">{described.body}</p>
             {memberCanAskAdmin ? (
               <p className="text-xs leading-5 opacity-90">{ASK_ORG_ADMIN}.</p>
             ) : null}
           </div>
-          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+          <div
+            className="ml-auto flex flex-wrap items-center gap-2"
+            data-testid="chat-error-org-keys-actions"
+          >
             {described.remediation === "choose_org_model" &&
             canOpenProvidersTab ? (
               <Button

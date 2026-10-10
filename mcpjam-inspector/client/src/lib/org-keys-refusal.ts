@@ -127,6 +127,35 @@ export function orgKeysRefusalCodeInText(
 }
 
 /**
+ * The sentence to show for an org-key refusal carried by a raw error message
+ * (a stream error's `{ ok: false, code, error }` envelope, or a
+ * `"<code>: …"` line): the backend's own reason when the envelope carries
+ * one, else the plain-language copy for `audience`. `undefined` when the
+ * message is not an org-key refusal, so a caller falls through to its own
+ * handling instead of printing the raw envelope.
+ */
+export function orgKeysRefusalSentence(
+  message: string | null | undefined,
+  audience: AiRefusalAudience = "member",
+): string | undefined {
+  const code = orgKeysRefusalCodeFromError(message);
+  if (!code || !message) return undefined;
+  const trimmed = message.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const reason = (JSON.parse(trimmed) as { error?: unknown })?.error;
+      // A reason, not the code echoed back as the error field.
+      if (typeof reason === "string" && /\s/.test(reason.trim())) {
+        return reason.trim();
+      }
+    } catch {
+      // Not JSON; fall through to the copy.
+    }
+  }
+  return describeAiRefusal(code, audience).body;
+}
+
+/**
  * The one next step a refusal's remediation calls for, worded for whoever
  * reads it: `admin` may open Organization → AI providers, `member` asks an
  * admin.

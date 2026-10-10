@@ -332,11 +332,19 @@ describe("OrganizationModelsSection", () => {
       ).toBeInTheDocument();
     });
 
-    it.each([
-      [
-        "production (redacted)",
+    it("shows an error in place of the AI keys settings when the query fails", () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      aiConfigState.throws = new Error(
         "[CONVEX Q(aiExecutionAdmission:getOrganizationAiConfig)] [Request ID: 5eb87f6c9d3ef8d5] Server Error\n  Called by client",
-      ],
+      );
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(screen.getAllByTestId("org-ai-config-error")).toHaveLength(2);
+      expect(screen.queryByTestId("org-ai-keys-card")).not.toBeInTheDocument();
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+
+    it.each([
       [
         "dev",
         "[CONVEX Q(aiExecutionAdmission:getOrganizationAiConfig)] [Request ID: abc] Could not find public function for 'aiExecutionAdmission:getOrganizationAiConfig'",

@@ -47,6 +47,8 @@ describe("resolveOrgModelConfig", () => {
         const auth = new Headers(init?.headers).get("authorization");
         return Response.json({
           ok: true,
+          // Only an answer that withholds keys is cached.
+          aiKeyPolicy: { requireOrgKeys: true },
           providers: [
             {
               providerKey: "anthropic",
@@ -325,6 +327,53 @@ describe("the organization AI-key policy on the resolve responses", () => {
     expect(
       buildLlmRuntimeConfigFromOrgConfig(config).customProviders[0]?.apiKey,
     ).toBeUndefined();
+  });
+
+  it("re-reads an answer that hands out keys instead of caching it", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    let requireOrgKeys = false;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json(
+          requireOrgKeys
+            ? {
+                ok: true,
+                aiKeyPolicy: { requireOrgKeys: true },
+                providers: [
+                  {
+                    providerKey: "openai",
+                    exportDenied: true,
+                    exportDeniedCode: "org_keys_required",
+                  },
+                ],
+              }
+            : {
+                ok: true,
+                aiKeyPolicy: { requireOrgKeys: false },
+                providers: [{ providerKey: "openai", apiKey: "sk-test" }],
+              },
+        ),
+      );
+    const target = { projectId: "project_org_keys_policy_flip" };
+    const auth = { bearerToken: "user-policy-flip" };
+
+    const before = await resolveOrgModelConfig(target, auth);
+    expect(buildModelApiKeysFromOrgConfig(before)).toEqual({
+      openai: "sk-test",
+    });
+
+    // An admin turns the policy on: the very next resolve sees it.
+    requireOrgKeys = true;
+    const after = await resolveOrgModelConfig(target, auth);
+    expect(orgRequiresOwnKeys(after)).toBe(true);
+    expect(buildModelApiKeysFromOrgConfig(after)).toEqual({});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The withholding answer is cached (a stale one fails closed).
+    await resolveOrgModelConfig(target, auth);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("reads a response without the policy as off", async () => {

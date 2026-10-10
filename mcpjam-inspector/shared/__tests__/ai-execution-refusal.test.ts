@@ -127,6 +127,13 @@ describe("aiRefusalRemediation", () => {
     );
     expect(aiRefusalRemediation("provider_unavailable")).toBe("retry_later");
     expect(aiRefusalRemediation("credential_missing")).toBe("add_org_provider");
+    for (const code of [
+      "capability_missing",
+      "capability_unknown",
+      "invalid_model",
+    ]) {
+      expect(aiRefusalRemediation(code)).toBe("configure_org_model_role");
+    }
     expect(aiRefusalRemediation("something_else")).toBe("contact_support");
     expect(aiRefusalRemediation(undefined)).toBe("contact_support");
   });

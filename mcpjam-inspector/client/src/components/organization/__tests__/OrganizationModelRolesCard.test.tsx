@@ -128,10 +128,10 @@ describe("OrganizationModelRolesCard", () => {
     expect(screen.queryByTestId("org-ai-role-fast")).not.toBeInTheDocument();
     await openAdvanced(user);
 
-    expect(screen.getByText("Model roles")).toBeInTheDocument();
+    expect(screen.getByText("Default model roles")).toBeInTheDocument();
     for (const [role, features] of [
       ["fast", "Typed decisions, titles, classification"],
-      ["smart", "Grading, analysis, generation, simulated users"],
+      ["smart", "Analysis, generation, simulated users"],
       ["embedding", "Session map, clustering"],
       ["transcription", "Voice input"],
     ] as const) {

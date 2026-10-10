@@ -2936,8 +2936,9 @@ export function useChatSession(
     isInitialized: isPersistedModelInitialized,
   } = usePersistedModel();
   // The saved lead and compare picks. When the organization's AI key policy
-  // no longer offers one, the composition keeps it as a disabled row, so the
-  // saved choice stays visible instead of silently switching to another model.
+  // no longer offers one, the composition keeps it as a disallowed row, so the
+  // saved choice stays selected (the picker warns on its trigger) instead of
+  // silently switching to another model.
   const savedModelIdsSignature = [selectedModelId ?? "", ...selectedModelIds]
     .filter(Boolean)
     .join("\u0001");

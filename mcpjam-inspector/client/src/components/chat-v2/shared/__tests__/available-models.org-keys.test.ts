@@ -8,11 +8,13 @@ import {
   AI_SCOPE_UNRESOLVED_REASON,
   composeAvailableModels,
   isJudgeEligibleModel,
+  isOrgKeysDisallowedRow,
   judgeModelOptions,
   JUDGE_INELIGIBLE_REASON,
-  ORG_DEFAULT_JUDGE_LABEL,
   ORG_KEYS_MODEL_REASON,
   ORG_POLICY_LOADING_REASON,
+  orgKeysDisallowedNotice,
+  savedModelRow,
 } from "../available-models";
 import {
   buildAvailableModelsFromOrgConfig,
@@ -192,6 +194,23 @@ describe("composeAvailableModels under the policy", () => {
     expect(models.filter((model) => model.disabled)).toHaveLength(1);
   });
 
+  it("names a saved hosted id from the hosted catalog when the composition has no row for it", () => {
+    // Under the policy the composition's own hosted catalog is not loaded
+    // into the list; the snapshot still names the model.
+    const models = compose(policyConfig([anthropic]), {
+      hostedCatalog: [],
+      savedModelIds: ["anthropic/claude-haiku-4.5"],
+    });
+    const saved = models.find(
+      (model) => String(model.id) === "anthropic/claude-haiku-4.5",
+    );
+    expect(saved?.name).toBe("Claude Haiku 4.5");
+    expect(isOrgKeysDisallowedRow(saved)).toBe(true);
+    expect(orgKeysDisallowedNotice(saved!)).toBe(
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+  });
+
   it("keeps an unknown saved id as a synthetic disabled row even when nothing else is offered", () => {
     expect(compose(policyConfig([]), { savedModelIds: ["acme/old"] })).toEqual([
       {
@@ -283,19 +302,39 @@ describe("judge rows with organization providers", () => {
     ]);
   });
 
-  it("offers only org rows under the policy, with the default on the org's Smart model", () => {
-    const { models } = judgeModelOptions([orgRow, routerRow], {
+  it("offers only org rows under the policy, with no default judge", () => {
+    const { models, current } = judgeModelOptions([orgRow, routerRow], {
       currentModelId: "",
       managedDefaultModelId: "anthropic/claude-haiku-4.5",
       requireOrgKeys: true,
     });
-    expect(models.map((model) => model.name)).toEqual([
-      "Claude Sonnet 4.5",
-      ORG_DEFAULT_JUDGE_LABEL,
+    expect(models.map((model) => model.name)).toEqual(["Claude Sonnet 4.5"]);
+    expect(current).toBeUndefined();
+  });
+
+  it("reads the managed default's id as no judge under the policy", () => {
+    const { models, current, currentIneligible } = judgeModelOptions([orgRow], {
+      currentModelId: "anthropic/claude-haiku-4.5",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+      requireOrgKeys: true,
+    });
+    expect(models).toEqual([orgRow]);
+    expect(current).toBeUndefined();
+    expect(currentIneligible).toBe(false);
+  });
+
+  it("keeps the managed default row off the policy", () => {
+    const { models } = judgeModelOptions([orgRow], {
+      currentModelId: "",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(models.map((model) => String(model.id))).toEqual([
+      "claude-sonnet-4-5",
+      "anthropic/claude-haiku-4.5",
     ]);
   });
 
-  it("shows a saved hosted judge as no longer allowed under the policy", () => {
+  it("shows a saved hosted judge only as the current value under the policy, never as a row", () => {
     const { models, currentIneligible, current } = judgeModelOptions(
       [orgRow, { ...hostedHaiku, id: "openai/gpt-5-mini", name: "GPT-5 mini" }],
       {
@@ -310,7 +349,19 @@ describe("judge rows with organization providers", () => {
       disabled: true,
       disabledReason: ORG_KEYS_MODEL_REASON,
     });
-    expect(models.at(-1)).toBe(current);
+    expect(isOrgKeysDisallowedRow(current)).toBe(true);
+    expect(models).toEqual([orgRow]);
+  });
+
+  it("names a saved hosted judge from the hosted catalog, not its raw id", () => {
+    // The org-only list has no row for it at all.
+    const { current } = judgeModelOptions([orgRow], {
+      currentModelId: "anthropic/claude-haiku-4.5",
+      managedDefaultModelId: "openai/gpt-5-mini",
+      requireOrgKeys: true,
+    });
+    expect(current?.name).toBe("Claude Haiku 4.5");
+    expect(savedModelRow("acme/unknown").name).toBe("acme/unknown");
   });
 
   it("keeps the old reason for an ineligible judge off the policy", () => {

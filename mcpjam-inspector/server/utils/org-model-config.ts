@@ -190,6 +190,12 @@ export const ORG_MODEL_CONFIG_BEARER_PATH = "/v1/org-model-config/resolve";
 // ---------------------------------------------------------------------------
 // In-process cache — avoids one 15 s HTTP call per eval test case.
 // TTL is intentionally short so key rotations propagate within a minute.
+//
+// Only an answer that withholds keys is cached (the organization requires its
+// own keys, or a provider's key was export-denied). An answer that hands this
+// process keys is re-read every time: cached, it would keep running on them
+// for up to a minute after an admin turned "Use your keys for all AI
+// features" on. A stale withholding answer only fails closed.
 // ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 60_000;
@@ -398,7 +404,10 @@ export async function resolveOrgModelConfig(
       providers,
       ...(aiKeyPolicy ? { aiKeyPolicy } : {}),
     };
-    if (!githubExecutionPolicy()) {
+    const withholdsKeys =
+      orgRequiresOwnKeys(result) ||
+      providers.some((provider) => provider.exportDenied === true);
+    if (!githubExecutionPolicy() && withholdsKeys) {
       resolveCache.set(cacheKey, {
         result,
         expiresAt: Date.now() + CACHE_TTL_MS,

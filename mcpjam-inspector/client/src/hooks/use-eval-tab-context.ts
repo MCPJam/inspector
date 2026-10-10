@@ -29,7 +29,9 @@ export function useEvalTabContext({
   const scopedProject = findProjectByAnyId(appState.projects, scopedProjectId);
   // Still returned to callers; the models hook re-derives it internally.
   const organizationId = scopedProject?.organizationId ?? null;
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, requireOrgKeys } = useAvailableModels({
+    projectId,
+  });
   const { members, canManageMembers } = useProjectMembers({
     isAuthenticated,
     projectId,
@@ -110,5 +112,7 @@ export function useEvalTabContext({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    /** The organization requires its own provider keys for AI features. */
+    requireOrgKeys,
   };
 }

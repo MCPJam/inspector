@@ -13,6 +13,7 @@ import type {
   AiFeatureGroupId,
   AiFeatureGroupReadiness,
   AiOperationId,
+  AiOperationReadiness,
   AiReadinessStatus,
   OrgAiModelRole,
   OrgAiModelRoleCheckOutcome,
@@ -118,6 +119,80 @@ export function statusGuidance(
   }
 }
 
+/** Where an admin picks the organization's model for each role. */
+export const MODEL_ROLES_SECTION = "Default model roles";
+
+/**
+ * What to do about a feature that is not ready. An unavailable feature whose
+ * blockers are role models, while an eligible provider exists, is fixed by
+ * choosing those models in {@link MODEL_ROLES_SECTION}; adding a provider is
+ * the fix only when there is no eligible one. Every other status reads as
+ * {@link statusGuidance}.
+ */
+export function featureGuidance(
+  feature: AiFeatureGroupReadiness,
+  context: {
+    operations: readonly AiOperationReadiness[];
+    /** The backend's eligible connections; absent on an older backend. */
+    eligibleConnectionIds?: readonly string[];
+    canManage: boolean;
+  },
+): string | null {
+  if (feature.status === "ready") return null;
+  if (
+    feature.status === "unconfigured" &&
+    (context.eligibleConnectionIds?.length ?? 0) > 0
+  ) {
+    const roles = [
+      ...new Set(
+        (feature.blockedBy ?? []).flatMap((id) => {
+          const role = context.operations.find(
+            (operation) => operation.operation === id,
+          )?.role;
+          return role && ORG_AI_ROLE_PRESENTATION[role] ? [role] : [];
+        }),
+      ),
+    ];
+    if (roles.length > 0) {
+      const names = roles.map((role) => ORG_AI_ROLE_PRESENTATION[role].label);
+      const list =
+        names.length === 1
+          ? names[0]
+          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+      const noun = names.length === 1 ? "model" : "models";
+      return context.canManage
+        ? `Choose the organization's ${list} ${noun} in ${MODEL_ROLES_SECTION}.`
+        : `Ask an organization admin to choose the organization's ${list} ${noun}.`;
+    }
+  }
+  return statusGuidance(feature.status, context.canManage);
+}
+
+/** The operation a feature group is named after. */
+const FEATURE_OWN_OPERATION: Partial<Record<AiFeatureGroupId, AiOperationId>> =
+  {
+    chat: "chat",
+    harness: "harness_runtime",
+    transcription: "speech_transcription",
+    ask_mcpjam: "agent_chat",
+  };
+
+/**
+ * The operations a feature's "Blocked by" line names. Empty when the only
+ * blocker is the feature itself ("Ask MCPJam" blocked by Ask MCPJam): the
+ * status and its guidance already say everything that line would.
+ */
+export function listedBlockers(
+  feature: AiFeatureGroupReadiness,
+): AiOperationId[] {
+  if (feature.status === "ready") return [];
+  const blockedBy = feature.blockedBy ?? [];
+  return blockedBy.length === 1 &&
+    blockedBy[0] === FEATURE_OWN_OPERATION[feature.id]
+    ? []
+    : blockedBy;
+}
+
 const OPERATION_LABELS: Record<AiOperationId, string> = {
   chat: "chat",
   eval_target: "the eval target model",
@@ -177,7 +252,7 @@ export const ORG_AI_ROLE_PRESENTATION: Record<
   },
   smart: {
     label: "Smart",
-    features: "Grading, analysis, generation, simulated users",
+    features: "Analysis, generation, simulated users",
   },
   embedding: { label: "Embedding", features: "Session map, clustering" },
   transcription: { label: "Transcription", features: "Voice input" },

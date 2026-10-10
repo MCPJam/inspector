@@ -113,7 +113,8 @@ function makeConfig(
               degradedBy: [],
             }))),
       operations: [
-        { operation: "judge", status: "unconfigured", role: "smart" },
+        { operation: "judge", status: "unconfigured" },
+        { operation: "text_generation", status: "unconfigured", role: "smart" },
         { operation: "embedding", status: "unconfigured", role: "embedding" },
       ],
       eligibleConnectionIds: overrides.eligibleConnectionIds ?? ["conn_1"],
@@ -248,15 +249,64 @@ describe("OrganizationOrgKeysPolicyCard", () => {
   });
 
   it("names the operation that blocks a feature and what an admin can do", () => {
-    hookState.config = makeConfig({ requireOrgKeys: true });
+    hookState.config = makeConfig({
+      requireOrgKeys: true,
+      eligibleConnectionIds: [],
+    });
     render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
 
+    // No eligible provider: adding one is the fix.
     const evals = screen.getByTestId("org-ai-feature-evals");
     expect(
       within(evals).getByText("Add or configure an organization provider."),
     ).toBeInTheDocument();
+    expect(within(evals).getByText("Blocked by grading")).toBeInTheDocument();
+  });
+
+  it("points at Default model roles when a provider exists and a role model is the fix", () => {
+    hookState.config = makeConfig({
+      requireOrgKeys: true,
+      features: [
+        {
+          id: "generation",
+          label: "Generation",
+          status: "unconfigured",
+          blockedBy: ["text_generation"],
+          degradedBy: [],
+        },
+      ],
+    });
+    render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+
+    const generation = screen.getByTestId("org-ai-feature-generation");
     expect(
-      within(evals).getByText("Blocked by grading (Smart model)"),
+      within(generation).getByText(
+        "Choose the organization's Smart model in Default model roles.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(generation).queryByText(/Add or configure/),
+    ).not.toBeInTheDocument();
+    expect(
+      within(generation).getByText("Blocked by text generation (Smart model)"),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing more when the only blocker is the feature itself", () => {
+    hookState.config = makeConfig({ requireOrgKeys: true });
+    render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+
+    for (const id of ["ask_mcpjam", "harness", "transcription"]) {
+      expect(
+        within(screen.getByTestId(`org-ai-feature-${id}`)).queryByText(
+          /Blocked by/,
+        ),
+      ).not.toBeInTheDocument();
+    }
+    expect(
+      within(screen.getByTestId("org-ai-feature-ask_mcpjam")).getByText(
+        "This feature can't run on organization providers yet.",
+      ),
     ).toBeInTheDocument();
   });
 

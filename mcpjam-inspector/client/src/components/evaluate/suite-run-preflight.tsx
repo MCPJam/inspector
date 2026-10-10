@@ -50,8 +50,9 @@ export type RunPreflight = {
   /**
    * While the organization requires its own provider keys: each required AI
    * dependency that cannot run on its providers (an MCPJam-provided or
-   * personal target model, a hosted judge). The run cannot start; the backend
-   * refuses the same launch. Absent when there are none.
+   * personal target model, a hosted judge, a judge nobody chose). The run
+   * cannot start; the backend refuses the same launch. Absent when there are
+   * none.
    */
   orgKeyProblems?: string[];
 };
@@ -84,8 +85,9 @@ type PreflightOrgConfig = {
 };
 
 /**
- * The judge a launch requires: `default` grades on the platform default (on
- * the organization's keys, its Smart model); `explicit` names a saved model.
+ * The judge a launch requires: `default` grades on the platform default (none
+ * while the organization requires its own keys: a judge must be chosen);
+ * `explicit` names a saved model.
  */
 export type PreflightJudge =
   | { kind: "default" }
@@ -96,6 +98,10 @@ export type PreflightJudge =
     };
 
 const CHOOSE_ORG_MODEL = "Choose a model from an organization provider.";
+
+/** The backend's reason for a required judge nobody chose, under the policy. */
+export const CHOOSE_ORG_JUDGE_MODEL =
+  "Choose a judge model from an organization provider.";
 
 function eligibleConnection(
   orgConfig: PreflightOrgConfig,
@@ -156,14 +162,8 @@ function orgKeyJudgeProblem(
   orgConfig: PreflightOrgConfig,
   judge: PreflightJudge,
 ): string | null {
-  if (judge.kind === "default") {
-    const status = orgConfig.aiReadiness?.operations.find(
-      (operation) => operation.operation === "judge",
-    )?.status;
-    return status === "unconfigured"
-      ? "The judge uses the organization's Smart model, and none is configured. An organization admin can set one in Organization → AI providers."
-      : null;
-  }
+  // No default judge runs on the organization's keys: a person picks one.
+  if (judge.kind === "default") return CHOOSE_ORG_JUDGE_MODEL;
   return orgKeyModelProblem(
     orgConfig,
     {

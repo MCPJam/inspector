@@ -1,12 +1,145 @@
 import { describe, expect, it } from "vitest";
+import type { AiFeatureGroupReadiness } from "@/hooks/useOrgAiConfig";
 import {
   buildOrgRoleSelection,
   degradationSentence,
+  featureGuidance,
+  listedBlockers,
   orderedFeatures,
   orgProviderLabel,
   roleModelIds,
   selectionModelLabel,
 } from "../org-ai-config-presentation";
+
+function feature(
+  overrides: Partial<AiFeatureGroupReadiness> &
+    Pick<AiFeatureGroupReadiness, "id">,
+): AiFeatureGroupReadiness {
+  return {
+    label: overrides.id,
+    status: "unconfigured",
+    blockedBy: [],
+    degradedBy: [],
+    ...overrides,
+  };
+}
+
+describe("featureGuidance", () => {
+  const operations = [
+    {
+      operation: "text_analysis" as const,
+      status: "unconfigured" as const,
+      role: "smart" as const,
+    },
+    {
+      operation: "typed_decision" as const,
+      status: "unconfigured" as const,
+      role: "fast" as const,
+    },
+  ];
+
+  it("points at Default model roles when a provider exists and a role model is missing", () => {
+    const insights = feature({ id: "insights", blockedBy: ["text_analysis"] });
+    expect(
+      featureGuidance(insights, {
+        operations,
+        eligibleConnectionIds: ["conn_1"],
+        canManage: true,
+      }),
+    ).toBe("Choose the organization's Smart model in Default model roles.");
+    expect(
+      featureGuidance(insights, {
+        operations,
+        eligibleConnectionIds: ["conn_1"],
+        canManage: false,
+      }),
+    ).toBe(
+      "Ask an organization admin to choose the organization's Smart model.",
+    );
+  });
+
+  it("names every missing role once", () => {
+    expect(
+      featureGuidance(
+        feature({
+          id: "insights",
+          blockedBy: ["typed_decision", "text_analysis"],
+        }),
+        { operations, eligibleConnectionIds: ["conn_1"], canManage: true },
+      ),
+    ).toBe(
+      "Choose the organization's Fast and Smart models in Default model roles.",
+    );
+  });
+
+  it("asks for a provider only when there is no eligible one", () => {
+    const insights = feature({ id: "insights", blockedBy: ["text_analysis"] });
+    for (const eligibleConnectionIds of [[], undefined]) {
+      expect(
+        featureGuidance(insights, {
+          operations,
+          eligibleConnectionIds,
+          canManage: true,
+        }),
+      ).toBe("Add or configure an organization provider.");
+    }
+  });
+
+  it("keeps the status guidance for everything else", () => {
+    expect(
+      featureGuidance(feature({ id: "ask_mcpjam", status: "unsupported" }), {
+        operations,
+        eligibleConnectionIds: ["conn_1"],
+        canManage: true,
+      }),
+    ).toBe("This feature can't run on organization providers yet.");
+    expect(
+      featureGuidance(feature({ id: "chat", status: "ready" }), {
+        operations,
+        canManage: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("listedBlockers", () => {
+  it("drops a blocker that is only the feature itself", () => {
+    expect(
+      listedBlockers(
+        feature({
+          id: "ask_mcpjam",
+          status: "unsupported",
+          blockedBy: ["agent_chat"],
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      listedBlockers(
+        feature({
+          id: "harness",
+          status: "unsupported",
+          blockedBy: ["harness_runtime"],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps blockers that say something", () => {
+    expect(
+      listedBlockers(feature({ id: "evals", blockedBy: ["judge"] })),
+    ).toEqual(["judge"]);
+    expect(
+      listedBlockers(
+        feature({ id: "chat", blockedBy: ["chat", "text_analysis"] }),
+      ),
+    ).toEqual(["chat", "text_analysis"]);
+    expect(
+      listedBlockers(
+        feature({ id: "evals", status: "ready", blockedBy: ["judge"] }),
+      ),
+    ).toEqual([]);
+  });
+});
 
 describe("roleModelIds", () => {
   it("prefixes the provider and keeps the provider's own id as native", () => {

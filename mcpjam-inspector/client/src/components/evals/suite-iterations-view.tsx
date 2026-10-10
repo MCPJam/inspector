@@ -475,6 +475,7 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId: _deletingRunId,
   availableModels,
+  requireOrgKeys = false,
   route,
   userMap,
   projectId = null,
@@ -567,6 +568,8 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -3195,6 +3198,7 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
                   judgeAccessory={
                     <JudgeGatePanel
                       suiteId={suite._id}

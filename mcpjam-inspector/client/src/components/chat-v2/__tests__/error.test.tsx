@@ -258,6 +258,55 @@ describe("ErrorBox organization AI-key refusals", () => {
     unregister();
   });
 
+  it("shows Ask MCPJam's org_runtime_unsupported with no model to choose and no retry", () => {
+    const unregister = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    render(
+      <ErrorBox
+        message="Ask MCPJam can't run on this organization's providers yet."
+        code="org_runtime_unsupported"
+        isRetryable={false}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "org_runtime_unsupported",
+    );
+    expect(
+      screen.getByText("Unavailable with organization keys"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Choose an organization model" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    // Nothing to ask an admin for: the feature itself can't run.
+    expect(screen.queryByText(/ask an organization admin/i)).toBeNull();
+    unregister();
+  });
+
+  it("lets the actions wrap under the text instead of squeezing it", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        code="org_keys_required"
+        onManageOrgProviders={vi.fn()}
+        onResetChat={vi.fn()}
+      />,
+    );
+
+    // A narrow pane wraps the action row onto its own line; a fixed-width
+    // row would leave the text one word wide.
+    expect(screen.getByTestId("chat-error-org-keys-layout")).toHaveClass(
+      "flex-wrap",
+    );
+    expect(screen.getByTestId("chat-error-org-keys-actions")).not.toHaveClass(
+      "flex-shrink-0",
+    );
+  });
+
   it("offers a retry only for the transient refusals", () => {
     const onRetry = vi.fn();
     render(

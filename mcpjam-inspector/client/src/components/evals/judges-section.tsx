@@ -70,8 +70,8 @@ interface JudgesSectionProps {
   bareAutoGradeAriaLabel?: string;
   /**
    * The organization requires its own provider keys for AI features: the
-   * judge picker offers only organization models (the default judge grades
-   * on the organization's Smart model), and the copy stops promising
+   * judge picker offers only organization models and no default (a judge
+   * must be chosen before the suite can grade), and the copy stops promising
    * MCPJam credits for the model tokens.
    */
   requireOrgKeys?: boolean;

@@ -17,10 +17,11 @@ import {
   ORG_AI_ROLE_PRESENTATION,
   STATUS_TONE_CLASSES,
   degradationSentence,
+  featureGuidance,
   featureLabel,
+  listedBlockers,
   operationLabel,
   orderedFeatures,
-  statusGuidance,
   statusPresentation,
 } from "./org-ai-config-presentation";
 
@@ -139,6 +140,7 @@ export function OrganizationOrgKeysPolicyCard({
             <FeatureCoverage
               features={config.readiness.features}
               operations={config.readiness.operations ?? []}
+              eligibleConnectionIds={config.readiness.eligibleConnectionIds}
               canManage={canManage}
             />
           </>
@@ -151,10 +153,12 @@ export function OrganizationOrgKeysPolicyCard({
 function FeatureCoverage({
   features,
   operations,
+  eligibleConnectionIds,
   canManage,
 }: {
   features: AiFeatureGroupReadiness[];
   operations: AiOperationReadiness[];
+  eligibleConnectionIds?: string[];
   canManage: boolean;
 }) {
   if (features.length === 0) return null;
@@ -174,14 +178,15 @@ function FeatureCoverage({
       <ul className="space-y-1">
         {orderedFeatures(features).map((feature) => {
           const { label, tone } = statusPresentation(feature.status);
-          const guidance =
-            feature.status === "ready"
-              ? null
-              : statusGuidance(feature.status, canManage);
-          // A blocked feature lists what blocks it; what would merely narrow
-          // it is noise until it runs at all.
-          const blockedBy =
-            feature.status === "ready" ? [] : (feature.blockedBy ?? []);
+          const guidance = featureGuidance(feature, {
+            operations,
+            eligibleConnectionIds,
+            canManage,
+          });
+          // A blocked feature lists what blocks it (unless that is only the
+          // feature itself); what would merely narrow it is noise until it
+          // runs at all.
+          const blockedBy = listedBlockers(feature);
           const degradedBy =
             feature.status === "ready" ? (feature.degradedBy ?? []) : [];
           return (

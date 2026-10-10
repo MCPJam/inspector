@@ -37,8 +37,9 @@ export function useAvailableModels(options?: {
   projectId?: string | null;
   /**
    * Model ids the surface has saved. While the organization requires its own
-   * keys, one it no longer offers stays in the list, disabled ("Choose a
-   * model from an organization provider."), instead of vanishing.
+   * keys, one it no longer offers stays in the list as an
+   * `orgKeysDisallowedRow` instead of vanishing, so the surface keeps it
+   * selected; pickers show it only on the trigger, as a warning.
    */
   savedModelIds?: readonly (string | null | undefined)[];
 }): {

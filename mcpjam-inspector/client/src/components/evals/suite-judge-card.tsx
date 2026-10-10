@@ -40,6 +40,7 @@ export function SuiteJudgeCard({
   groundednessEvidence,
   criteria = [],
   goalJudgeOff = false,
+  requireOrgKeys = false,
 }: {
   slot: JudgeSlot;
   judgeConfig: EvalJudgeConfig | undefined;
@@ -53,6 +54,8 @@ export function SuiteJudgeCard({
   criteria?: readonly EvalJudgeRubricCriterion[];
   /** Rubric checks only: they ride the goal judge, so its Off pauses them. */
   goalJudgeOff?: boolean;
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
 }) {
   if (slot === "rubricChecks") {
     return (
@@ -81,6 +84,7 @@ export function SuiteJudgeCard({
       judgesCapabilities={judgesCapabilities}
       judgeAccessory={judgeAccessory}
       rubricEditor={rubricEditor}
+      requireOrgKeys={requireOrgKeys}
     />
   );
 }
@@ -92,6 +96,7 @@ function GoalCompletionJudgeCard({
   judgesCapabilities,
   judgeAccessory,
   rubricEditor,
+  requireOrgKeys,
 }: {
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
@@ -99,6 +104,7 @@ function GoalCompletionJudgeCard({
   judgesCapabilities?: SuiteCapabilities["judges"];
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
+  requireOrgKeys: boolean;
 }) {
   const template = judgesCapabilities?.goalCompletion.template;
   return (
@@ -118,6 +124,7 @@ function GoalCompletionJudgeCard({
         value={judgeConfig}
         availableModels={availableModels}
         onChange={onJudgeConfigChange}
+        requireOrgKeys={requireOrgKeys}
       />
       {judgeAccessory}
       {rubricEditor ? (

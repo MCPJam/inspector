@@ -3,6 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import {
+  CHOOSE_ORG_JUDGE_MODEL,
   connectOutcome,
   hasBlockingPreflight,
   preflightJudgeOf,
@@ -725,7 +726,26 @@ describe("runPreflight while the organization requires its own keys", () => {
     expect(hasBlockingPreflight(preflight)).toBe(true);
   });
 
-  it("lets an eligible org model and the default judge through", () => {
+  it("lets an eligible org model and an org judge through", () => {
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
+      orgConfig: policy,
+      judge: {
+        kind: "explicit",
+        modelId: "anthropic/claude-sonnet-4.5",
+        selection: {
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+        },
+      },
+    });
+    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(hasBlockingPreflight(preflight)).toBe(false);
+  });
+
+  it("blocks a required judge nobody chose: there is no default judge on the organization's keys", () => {
     const preflight = runPreflight({
       serverRefs: [],
       servers: {},
@@ -733,29 +753,23 @@ describe("runPreflight while the organization requires its own keys", () => {
       orgConfig: policy,
       judge: { kind: "default" },
     });
-    expect(preflight.orgKeyProblems).toBeUndefined();
-    expect(hasBlockingPreflight(preflight)).toBe(false);
+    expect(preflight.orgKeyProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
+    expect(CHOOSE_ORG_JUDGE_MODEL).toBe(
+      "Choose a judge model from an organization provider.",
+    );
+    expect(hasBlockingPreflight(preflight)).toBe(true);
   });
 
-  it("names a default judge the organization has no Smart model for", () => {
+  it("leaves the default judge alone with the policy off", () => {
     const preflight = runPreflight({
       serverRefs: [],
       servers: {},
       models: [],
-      orgConfig: {
-        ...policy,
-        aiReadiness: {
-          requireOrgKeys: true,
-          features: [],
-          operations: [{ operation: "judge", status: "unconfigured" }],
-          eligibleConnectionIds: ["conn_anthropic"],
-        },
-      },
+      orgConfig: { ...policy, aiKeyPolicy: { requireOrgKeys: false } },
       judge: { kind: "default" },
     });
-    expect(preflight.orgKeyProblems).toEqual([
-      "The judge uses the organization's Smart model, and none is configured. An organization admin can set one in Organization → AI providers.",
-    ]);
+    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(hasBlockingPreflight(preflight)).toBe(false);
   });
 
   it("reads the suite's judge only when grading is required", () => {
@@ -843,9 +857,8 @@ describe("Setup Run — the backend's AI key policy refusal", () => {
               {
                 dependency: "judge",
                 label: "The judge",
-                code: "org_model_unconfigured",
-                reason:
-                  "The judge uses the organization's Smart model, and none is configured.",
+                code: "org_keys_required",
+                reason: "Choose a judge model from an organization provider.",
               },
             ],
           }),
@@ -860,7 +873,7 @@ describe("Setup Run — the backend's AI key policy refusal", () => {
       "Model: anthropic/claude-haiku-4.5 is not a model from an organization provider.",
     );
     expect(list).toHaveTextContent(
-      "Judge: The judge uses the organization's Smart model, and none is configured.",
+      "Judge: Choose a judge model from an organization provider.",
     );
   });
 });

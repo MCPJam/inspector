@@ -16,6 +16,7 @@ import {
 import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
+  compactModelLabel,
   isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "./model-helpers";
@@ -301,13 +302,6 @@ export const JUDGE_INELIGIBLE_REASON =
   "Not eligible as a judge. Judges run on MCPJam models with verified zero data retention, or on an organization provider. Pick another model to change it.";
 
 /**
- * The managed default judge's label while the organization requires its own
- * keys: the backend then grades it on the organization's Smart model, not on
- * the hosted model the default names.
- */
-export const ORG_DEFAULT_JUDGE_LABEL = "Default (organization Smart model)";
-
-/**
  * Whether a picker row can be offered as an eval judge:
  *  - an ORG row (the BYOK judge) whose connection the backend runs AI
  *    requests on directly — `buildAvailableModelsFromOrgConfig` stamps those
@@ -345,22 +339,78 @@ function syntheticModelRow(modelId: string): ModelDefinition {
 }
 
 /**
+ * The row a saved model id names when the rows on offer may not list it:
+ * `pool`'s (hosted first), else the hosted catalog's, so a trigger keeps the
+ * model's display name; a synthetic row carrying the id only when neither
+ * lists it.
+ */
+export function savedModelRow(
+  modelId: string,
+  pool: readonly ModelDefinition[] = [],
+): ModelDefinition {
+  return (
+    pool.find(
+      (model) =>
+        String(model.id) === modelId && isMCPJamProvidedModelMenuItem(model),
+    ) ??
+    pool.find((model) => String(model.id) === modelId) ??
+    hostedModelDefinitionsFromSnapshot().find(
+      (model) => String(model.id) === modelId,
+    ) ??
+    syntheticModelRow(modelId)
+  );
+}
+
+/**
+ * A saved model the organization's AI key policy no longer allows (a hosted
+ * or personal-key model saved before the organization required its own
+ * keys). Pickers never list it: it shows only on the trigger, as
+ * {@link orgKeysDisallowedNotice}, so the saved choice is never silently
+ * switched to another model.
+ */
+export function orgKeysDisallowedRow(row: ModelDefinition): ModelDefinition {
+  const { warningReason: _warning, ...rest } = row;
+  return { ...rest, disabled: true, disabledReason: ORG_KEYS_MODEL_REASON };
+}
+
+/** Whether `model` is a {@link orgKeysDisallowedRow}. */
+export function isOrgKeysDisallowedRow(
+  model: ModelDefinition | null | undefined,
+): boolean {
+  return (
+    !!model &&
+    String(model.id) !== "" &&
+    model.disabled === true &&
+    model.disabledReason === ORG_KEYS_MODEL_REASON
+  );
+}
+
+/** "Claude Haiku 4.5 isn't allowed here. Choose an organization model." */
+export function orgKeysDisallowedNotice(model: ModelDefinition): string {
+  const name = compactModelLabel(model.name) || String(model.id);
+  return `${name} isn't allowed here. Choose an organization model.`;
+}
+
+/**
  * The rows a judge picker offers (`purpose: "judge"`): judge-eligible rows
  * ({@link isJudgeEligibleModel}), one per row identity, plus
  *  - the managed default, always selectable (picking it clears the override),
- *    even before the catalog loads. While the organization requires its own
- *    keys it is labeled {@link ORG_DEFAULT_JUDGE_LABEL}: the backend grades it
- *    on the organization's Smart model;
+ *    even before the catalog loads;
  *  - the current value when it is not an eligible row (a personal-key id
- *    saved before org judges existed, a model the catalog no longer admits,
- *    a hosted judge saved before the organization required its own keys),
+ *    saved before org judges existed, a model the catalog no longer admits),
  *    appended disabled so the saved choice stays visible without being
  *    offered again. `currentIneligible` says so.
  *
  * While the organization requires its own keys (`requireOrgKeys`), only org
- * rows are offered. `current` is the row the current value resolves to (by
- * its saved selection when given, so an org judge stored under its canonical
- * id finds its bare-id row).
+ * rows are offered and there is no managed default: a judge must be chosen
+ * from an organization provider, so an unset judge (or the managed default's
+ * id) resolves to no `current`. A saved judge the policy no longer allows is
+ * `current` as an {@link orgKeysDisallowedRow} and is not listed: it shows
+ * only on the trigger.
+ *
+ * `current` is the row the current value resolves to (by its saved selection
+ * when given, so an org judge stored under its canonical id finds its bare-id
+ * row).
  */
 export function judgeModelOptions(
   models: readonly ModelDefinition[],
@@ -395,24 +445,31 @@ export function judgeModelOptions(
     rows.push(model);
   }
   const { currentModelId, managedDefaultModelId } = args;
-  if (!rows.some((row) => String(row.id) === managedDefaultModelId)) {
-    const listed = requireOrgKeys
-      ? undefined
-      : models.find(
-          (model) =>
-            String(model.id) === managedDefaultModelId &&
-            isMCPJamProvidedModelMenuItem(model),
-        );
+  if (
+    !requireOrgKeys &&
+    !rows.some((row) => String(row.id) === managedDefaultModelId)
+  ) {
+    const listed = models.find(
+      (model) =>
+        String(model.id) === managedDefaultModelId &&
+        isMCPJamProvidedModelMenuItem(model),
+    );
     const row = listed ?? syntheticModelRow(managedDefaultModelId);
     rows.push({
       ...row,
-      ...(requireOrgKeys ? { name: ORG_DEFAULT_JUDGE_LABEL } : {}),
       hosted: true,
       disabled: false,
       disabledReason: undefined,
     });
   }
-  if (!currentModelId) {
+  // Under the policy the managed default's id names no judge (unless an org
+  // selection saved under the same canonical id says otherwise).
+  if (
+    !currentModelId ||
+    (requireOrgKeys &&
+      currentModelId === managedDefaultModelId &&
+      args.currentSelection?.source !== "org")
+  ) {
     return { models: rows, currentIneligible: false };
   }
   const current = args.currentSelection
@@ -429,18 +486,18 @@ export function judgeModelOptions(
   if (current) {
     return { models: rows, currentIneligible: false, current };
   }
-  const listed =
-    models.find(
-      (model) =>
-        String(model.id) === currentModelId &&
-        isMCPJamProvidedModelMenuItem(model)
-    ) ?? models.find((model) => String(model.id) === currentModelId);
+  const saved = savedModelRow(currentModelId, models);
+  if (requireOrgKeys) {
+    return {
+      models: rows,
+      currentIneligible: true,
+      current: orgKeysDisallowedRow(saved),
+    };
+  }
   const ineligible: ModelDefinition = {
-    ...(listed ?? syntheticModelRow(currentModelId)),
+    ...saved,
     disabled: true,
-    disabledReason: requireOrgKeys
-      ? ORG_KEYS_MODEL_REASON
-      : JUDGE_INELIGIBLE_REASON,
+    disabledReason: JUDGE_INELIGIBLE_REASON,
   };
   rows.push(ineligible);
   return { models: rows, currentIneligible: true, current: ineligible };
@@ -507,9 +564,10 @@ type ComposeAvailableModelsParams = {
   hostedCatalog?: ModelDefinition[];
   /**
    * Model ids the surface has SAVED (the chat's lead and compare picks). When
-   * the organization's policy no longer offers one, it is kept in the list,
-   * disabled with {@link ORG_KEYS_MODEL_REASON}, instead of vanishing — so a
-   * surface never silently switches a saved choice to another model.
+   * the organization's policy no longer offers one, it is kept in the list as
+   * an {@link orgKeysDisallowedRow} instead of vanishing — so a surface never
+   * silently switches a saved choice to another model. Pickers show it only
+   * on the trigger, never as a row.
    */
   savedModelIds?: readonly (string | null | undefined)[];
 };
@@ -526,10 +584,10 @@ function lockEveryRow(
 }
 
 /**
- * Keep each saved id the offered list no longer contains, as a disabled row
- * with {@link ORG_KEYS_MODEL_REASON}. The row is the one the unrestricted
- * list has for that id (hosted first), else a synthetic one; `unrestricted`
- * is computed only when a saved id is actually missing.
+ * Keep each saved id the offered list no longer contains, as an
+ * {@link orgKeysDisallowedRow}. The row is the one the unrestricted list has
+ * for that id (hosted first), else the hosted catalog's, else a synthetic
+ * one; `unrestricted` is computed only when a saved id is actually missing.
  */
 export function withSavedSelectionLocks(
   offered: ModelDefinition[],
@@ -547,20 +605,7 @@ export function withSavedSelectionLocks(
   const pool = unrestricted();
   return [
     ...offered,
-    ...missing.map((id) => {
-      const listed =
-        pool.find(
-          (model) =>
-            String(model.id) === id && isMCPJamProvidedModelMenuItem(model),
-        ) ?? pool.find((model) => String(model.id) === id);
-      const { warningReason: _warning, ...row } =
-        listed ?? syntheticModelRow(id);
-      return {
-        ...row,
-        disabled: true,
-        disabledReason: ORG_KEYS_MODEL_REASON,
-      };
-    }),
+    ...missing.map((id) => orgKeysDisallowedRow(savedModelRow(id, pool))),
   ];
 }
 

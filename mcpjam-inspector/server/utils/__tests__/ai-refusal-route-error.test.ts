@@ -51,6 +51,73 @@ describe("asAiRefusalRouteError", () => {
     expect(error?.normalized?.slug).toBe(slug);
   });
 
+  it("answers a launch refusal led by invalid_model with 422, keeping every problem", () => {
+    // `assertLaunchPreflight`: the primary code is the first problem's when
+    // none of the policy codes is present.
+    const launch = new ConvexError({
+      code: "invalid_model",
+      message:
+        "This organization requires its own provider keys for AI features, and this launch has 2 dependencies that can't run on them: …",
+      problems: [
+        {
+          dependency: "target",
+          label: "gpt-5-mini",
+          code: "invalid_model",
+          reason: "gpt-5-mini: not served by its connection.",
+        },
+        {
+          dependency: "judge",
+          label: "The judge",
+          code: "capability_unknown",
+          reason: "The judge: support unknown.",
+        },
+      ],
+    });
+    const error = asAiRefusalRouteError(launch);
+    expect(error?.status).toBe(422);
+    expect(error?.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(error?.details).toMatchObject({
+      code: "invalid_model",
+      remediation: "configure_org_model_role",
+      problems: [
+        expect.objectContaining({ code: "invalid_model" }),
+        expect.objectContaining({ code: "capability_unknown" }),
+      ],
+    });
+    expect(error?.normalized?.slug).toBe("org/model_unconfigured");
+    expect(originOf(error?.normalized)).toBe("user_config");
+  });
+
+  it.each(["capability_missing", "capability_unknown", "invalid_model"])(
+    "answers a bare %s launch refusal with 422",
+    (code) => {
+      const error = asAiRefusalRouteError(
+        new ConvexError({ code, message: "Refused." }),
+      );
+      expect(error?.status).toBe(422);
+      expect(error?.details?.code).toBe(code);
+    },
+  );
+
+  it("answers a launch refusal with an unfamiliar code when it lists problems", () => {
+    const error = asAiRefusalRouteError(
+      new ConvexError({
+        code: "some_future_code",
+        message: "Refused.",
+        problems: [
+          { dependency: "persona", label: "x", code: "x", reason: "x" },
+        ],
+      }),
+    );
+    expect(error?.status).toBe(422);
+    expect(error?.details).toMatchObject({
+      code: "some_future_code",
+      remediation: "contact_support",
+      problems: [expect.objectContaining({ dependency: "persona" })],
+    });
+    expect(error?.normalized?.slug).toBe("org/keys_required");
+  });
+
   it("answers a typed resolver refusal", () => {
     const error = asAiRefusalRouteError(
       new ModelResolutionRefusalError([
@@ -68,6 +135,15 @@ describe("asAiRefusalRouteError", () => {
     expect(
       asAiRefusalRouteError(
         new ConvexError({ code: "ai_policy_unavailable", message: "x" }),
+      ),
+    ).toBeNull();
+    expect(
+      asAiRefusalRouteError(
+        new ConvexError({
+          code: "provider_unavailable",
+          message: "x",
+          problems: [],
+        }),
       ),
     ).toBeNull();
     expect(

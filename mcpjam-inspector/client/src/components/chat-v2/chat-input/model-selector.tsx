@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { ArrowUpRight, Check, ChevronRight, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronRight,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
@@ -40,7 +46,9 @@ import {
 import {
   applyWorkloadCapabilityLocks,
   catalogFreshnessLabel,
+  isOrgKeysDisallowedRow,
   NOT_VERIFIED_TAG,
+  orgKeysDisallowedNotice,
   retiringTag,
   sortModelsNewestFirst,
   type ModelWorkload,
@@ -105,6 +113,10 @@ interface ModelSelectorProps {
    * dropped, and when no organization model can be picked the menu says how
    * to get one — "Add a provider" for whoever may open the org's AI providers
    * (`onManageOrgProviders`), "Ask an organization admin" for everyone else.
+   *
+   * A saved model the policy no longer allows (`isOrgKeysDisallowedRow`) is
+   * never listed, with or without this flag: it shows only on the trigger,
+   * as a warning.
    */
   requireOrgKeys?: boolean;
   platformPaidFallback?: boolean;
@@ -304,6 +316,29 @@ const groupHasMatch = (group: ModelGroup, search: string): boolean =>
   group.models.some(
     (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
+
+/**
+ * A custom trigger's label for a saved model the organization's AI key policy
+ * no longer allows (`isOrgKeysDisallowedRow`): a warning naming the model,
+ * which the menu itself never lists.
+ */
+export function OrgKeysDisallowedTriggerLabel({
+  model,
+}: {
+  model: ModelDefinition;
+}) {
+  const notice = orgKeysDisallowedNotice(model);
+  return (
+    <span
+      className="flex min-w-0 flex-1 items-center gap-1.5"
+      title={notice}
+      data-testid="model-trigger-org-keys-warning"
+    >
+      <TriangleAlert className="size-3.5 shrink-0 text-warning" aria-hidden />
+      <span className="min-w-0 truncate">{notice}</span>
+    </span>
+  );
+}
 
 function SelectionCheck({ checked }: { checked: boolean }) {
   return (
@@ -511,21 +546,31 @@ export function ModelSelector({
       : [currentModel];
 
   // Rows are identified by `modelRowKey`, not the raw id: one id can be
-  // listed by the hosted catalog and again under an org connection.
+  // listed by the hosted catalog and again under an org connection. A saved
+  // model the organization's policy no longer allows is not a row at all.
   const lockedRowHighlightId =
     hoveredLockedModelId ??
-    (!multiModelEnabled && currentModel.disabled
+    (!multiModelEnabled &&
+    currentModel.disabled &&
+    !isOrgKeysDisallowedRow(currentModel)
       ? modelRowKey(currentModel)
       : null);
 
+  // The rows on offer. A saved model the organization's AI key policy no
+  // longer allows is kept by the composition only so the surface never
+  // switches it silently; it shows on the trigger, never in the menu.
+  const listedModels = useMemo(
+    () => availableModels.filter((model) => !isOrgKeysDisallowedRow(model)),
+    [availableModels],
+  );
   // Rows as displayed: the surface's capability needs applied, newest first
   // within each provider (grouping keeps this order).
   const displayModels = useMemo(
     () =>
       sortModelsNewestFirst(
-        applyWorkloadCapabilityLocks(availableModels, workload),
+        applyWorkloadCapabilityLocks(listedModels, workload),
       ),
-    [availableModels, workload],
+    [listedModels, workload],
   );
   // Freshness of the hosted catalog, from the rows MCPJam provides.
   const catalogFreshness = useMemo(
@@ -594,7 +639,7 @@ export function ModelSelector({
     enableMultiModel &&
     !!onSelectedModelsChange &&
     !!onMultiModelEnabledChange &&
-    availableModels.length > 1;
+    listedModels.length > 1;
   // Single mode shows the model the chat actually runs. The compare line-up
   // can lead with another model (it is kept across a reload while the single
   // chat re-seeds from the client), and labelling the button with it made a
@@ -615,6 +660,12 @@ export function ModelSelector({
   const triggerLabel = isComparingModels
     ? `${compactModelLabel(leadModel.name)} +${triggerEntries.length - 1}`
     : compactModelLabel(leadModel.name);
+  // The single-model trigger names a saved model the policy no longer allows
+  // as a warning, with the fix.
+  const disallowedNotice =
+    !isComparingModels && isOrgKeysDisallowedRow(leadModel)
+      ? orgKeysDisallowedNotice(leadModel)
+      : undefined;
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
@@ -983,6 +1034,7 @@ export function ModelSelector({
                       : "max-w-[180px] gap-1",
                   )}
                   data-testid="model-selector-trigger"
+                  aria-label={disallowedNotice}
                 >
                   {isComparingModels ? (
                     <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
@@ -1015,10 +1067,18 @@ export function ModelSelector({
                     </span>
                   ) : (
                     <>
-                      <ProviderLogo
-                        provider={leadModel.provider}
-                        customProviderName={leadModel.customProviderName}
-                      />
+                      {disallowedNotice ? (
+                        <TriangleAlert
+                          className="size-3.5 shrink-0 text-warning"
+                          aria-hidden
+                          data-testid="model-selector-trigger-org-keys-warning"
+                        />
+                      ) : (
+                        <ProviderLogo
+                          provider={leadModel.provider}
+                          customProviderName={leadModel.customProviderName}
+                        />
+                      )}
                       <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
                         {triggerLabel}
                       </span>
@@ -1047,9 +1107,10 @@ export function ModelSelector({
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {multiModelEnabled && selectedModelsData.length > 1
-              ? "Models"
-              : "Model"}
+            {disallowedNotice ??
+              (multiModelEnabled && selectedModelsData.length > 1
+                ? "Models"
+                : "Model")}
           </TooltipContent>
         </Tooltip>
 
@@ -1158,8 +1219,9 @@ export function ModelSelector({
               const offerEmptyConfigured =
                 !!onManageOrgProviders && modelSections.configured.length === 0;
               // Under the organization's key policy nothing MCPJam-provided is
-              // offered (a saved one stays, locked), so there is no split to
-              // tab between, and no pickable row means the menu explains why.
+              // offered (a saved one shows only on the trigger), so there is no
+              // split to tab between, and no pickable row means the menu
+              // explains why.
               const showOrgKeysEmpty =
                 requireOrgKeys &&
                 !isSearching &&

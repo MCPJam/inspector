@@ -168,6 +168,12 @@ export function GoalCompletionCard({
   // one, so on such a deployment the card sends the model id alone (as
   // `JudgesSection` does) and offers no effort.
   const saveSelections = useModelSelectionsSupported();
+  // While the organization requires its own keys there is no default judge:
+  // grading waits for a judge chosen from an organization provider.
+  const judgeUnset =
+    requireOrgKeys &&
+    selectedSelection?.source !== "org" &&
+    (!selectedModelId || selectedModelId === DEFAULT_JUDGE_MODEL);
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the
@@ -347,7 +353,7 @@ export function GoalCompletionCard({
               // `inFlight` (pending OR requested) blocks the gap between the click
               // and the run doc flipping to `pending`, so a double-click can't spend
               // a second judge call.
-              disabled={!completedRun || inFlight}
+              disabled={!completedRun || inFlight || judgeUnset}
             >
               {inFlight ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

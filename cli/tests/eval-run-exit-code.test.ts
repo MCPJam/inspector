@@ -99,6 +99,11 @@ test("classifyLaunchErrorExitCode — an organization AI-key policy refusal read
     "ai_scope_unresolved",
     "provider_auth_failed",
     "credential_missing",
+    // A launch preflight led by a reused model code: still the
+    // organization's configuration, never a retry.
+    "invalid_model",
+    "capability_missing",
+    "capability_unknown",
   ]) {
     assert.equal(
       classifyLaunchErrorExitCode("FORBIDDEN", { code: detailCode }),
