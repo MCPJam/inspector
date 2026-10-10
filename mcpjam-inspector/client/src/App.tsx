@@ -1,3 +1,5 @@
+import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
+import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
@@ -3404,6 +3406,8 @@ export default function App() {
     // first authoritative membership response are ready below.
     if (
       !isAuthLoading &&
+      !isWorkOsLoading &&
+      (!projectTransitionRecovery.store.getState().marker || !!workOsUser) &&
       isAuthenticated &&
       !callbackReturnConsumedRef.current
     ) {
@@ -3417,7 +3421,12 @@ export default function App() {
       const apiKeysReturnPath = readApiKeysSignInReturnPath();
       // Consumed (read AND cleared) whether or not it wins: a path left in
       // storage would outlive this sign-in and hijack the next one.
-      const appReturnPath = consumeAppSignInReturnPath();
+      const transition = projectTransitionRecovery.store.getState().marker;
+      const appReturnPath =
+        consumeAppSignInReturnPath() ??
+        (transition && projectTransitionRecovery.isValid(transition)
+          ? transition.path
+          : null);
       clearScenarioSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
@@ -3442,7 +3451,22 @@ export default function App() {
       );
       const projectReturnIntent =
         createProjectSignInReturnRecoveryIntent(restoredPath);
+      const specialReturn =
+        scenarioReturnPath ??
+        billingReturnPath ??
+        cliReturnPath ??
+        apiKeysReturnPath;
+      const recoverToHome =
+        !specialReturn &&
+        transition?.path === restoredPath &&
+        projectTransitionRecovery.isValid(transition);
+      if (!recoverToHome) projectTransitionRecovery.clear();
       if (projectReturnIntent) {
+        projectReturnIntent.fallback = specialReturn
+          ? "preserve"
+          : recoverToHome
+            ? "home"
+            : "none";
         setPendingProjectReturnRecovery(projectReturnIntent);
         return;
       }
@@ -5895,13 +5919,24 @@ export default function App() {
   }, [shouldRouteToFirstRunHome]);
 
   const authoritativeMembershipProjectIds =
-    isUserReady && !isLoadingRemoteProjects
+    isAuthenticated &&
+    !isAuthLoading &&
+    !isWorkOsLoading &&
+    isUserReady &&
+    !isLoadingRemoteProjects
       ? allMembershipProjectIds
       : undefined;
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
       : (allMembershipProjects?.[0]?._id ?? null);
+  const projectTransitionPending = useProjectTransitionRecovery({
+    actor: actorKey ? `${workOsUser ? "workos" : "guest"}:${actorKey}` : null,
+    ready: isAuthenticated && !isAuthLoading && !isWorkOsLoading && isUserReady,
+    routeReady: projectRouteState.status === "ready",
+    membershipProjectIds: authoritativeMembershipProjectIds,
+    fallbackProjectId: fallbackProjectIdForStaleReturn,
+  });
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
@@ -5912,11 +5947,13 @@ export default function App() {
   // before the only navigation so a bad destination can never loop.
   useLayoutEffect(() => {
     if (
+      !isOAuthCallback ||
       projectReturnRecoveryDecision.kind === "none" ||
       projectReturnRecoveryDecision.kind === "wait"
     ) {
       return;
     }
+    projectTransitionRecovery.clear();
     setPendingProjectReturnRecovery(null);
     setCallbackCompleted(true);
     setCallbackRecoveryExpired(false);
@@ -5931,7 +5968,7 @@ export default function App() {
       trackStaleProjectReturnRecovered("switched");
     }
     navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-  }, [projectReturnRecoveryDecision]);
+  }, [projectReturnRecoveryDecision, isOAuthCallback]);
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -6346,6 +6383,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
+    projectTransitionPending,
     projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
