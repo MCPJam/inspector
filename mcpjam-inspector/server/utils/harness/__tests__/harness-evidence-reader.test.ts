@@ -6,7 +6,7 @@
  * complete is indistinguishable from a turn with fewer tool calls, and that is
  * the one confusion the whole protocol is built to avoid.
  */
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   readTurnEvidence,
   type EvidenceReadTransport,
@@ -16,6 +16,8 @@ const scope = { iterationId: "iter_1", turnId: "turn_1" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 function page(
@@ -231,14 +233,21 @@ describe("row parsing", () => {
 });
 
 describe("payloads the backend spilled to storage", () => {
+  // The reader only fetches from the deployment it is configured against, so
+  // every URL here has to look like one the backend would actually hand back.
+  const STORE = "https://convex.example.test";
   const spilledRow = {
     ...settledRow,
     requestId: "spilled",
     argumentsJson: null,
-    argumentsUrl: "https://storage.example/args",
+    argumentsUrl: `${STORE}/args`,
     responseJson: null,
-    responseUrl: "https://storage.example/response",
+    responseUrl: `${STORE}/response`,
   };
+
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", STORE);
+  });
 
   test("fetches a spilled payload and hands the merge an inline one", async () => {
     // The merge never learns a payload was spilled: it reads `argumentsJson`
@@ -303,7 +312,7 @@ describe("payloads the backend spilled to storage", () => {
     const fetchMock = vi.fn(async () => new Response("from-storage"));
     vi.stubGlobal("fetch", fetchMock);
     const transport: EvidenceReadTransport = async () =>
-      page([{ ...settledRow, argumentsUrl: "https://storage.example/args" }]);
+      page([{ ...settledRow, argumentsUrl: `${STORE}/args` }]);
 
     const result = await readTurnEvidence({ ...scope, transport });
 
@@ -332,5 +341,133 @@ describe("payloads the backend spilled to storage", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(result.rows[0].payloadsReadable).toBe(true);
+  });
+
+  test("a SETTLED row with no payload and no URL is unreadable, not empty", async () => {
+    // Inline JSON and spill URL are written by one backend in one mutation,
+    // so neither being present means version skew or a truncated write. Read
+    // as an empty response it would grade as a call that succeeded and
+    // returned nothing — a false record rather than a missing one.
+    const fetchMock = vi.fn(async () => new Response("x"));
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () =>
+      page([{ ...settledRow, responseJson: null }]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.rows[0].payloadsReadable).toBe(false);
+  });
+
+  test("refuses a URL that is not the configured deployment", async () => {
+    // The URL arrives over an authenticated channel, so this is defence in
+    // depth — but it is still a server-side fetch of a URL that came over the
+    // wire, and the reader should not be the thing that follows it anywhere.
+    const fetchMock = vi.fn(async () => new Response("secret"));
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () =>
+      page([
+        {
+          ...spilledRow,
+          argumentsUrl: "http://169.254.169.254/latest/meta-data/",
+          responseUrl: "https://convex.example.test.evil.test/response",
+        },
+      ]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    // Neither the link-local address nor the origin that merely PREFIXES the
+    // trusted one is fetched, and the row degrades instead.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.rows[0].payloadsReadable).toBe(false);
+  });
+
+  test("refuses to follow a redirect away from the checked origin", async () => {
+    const fetchMock = vi.fn(async () => new Response('{"q":"x"}'));
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () => page([spilledRow]);
+
+    await readTurnEvidence({ ...scope, transport });
+
+    // The origin was checked on the URL in hand; a 302 would move the fetch
+    // somewhere that check never saw.
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: "error" });
+  });
+
+  test("a payload whose DECLARED size is over the cap is refused", async () => {
+    // A fresh Response per call, deliberately: one shared Response fails the
+    // second read on an already-consumed body, which would make this test
+    // pass with no cap in place at all.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("x".repeat(1024), {
+            headers: { "content-length": String(64 * 1024 * 1024) },
+          }),
+      ),
+    );
+    const transport: EvidenceReadTransport = async () => page([spilledRow]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(result.rows[0].payloadsReadable).toBe(false);
+    expect(result.rows[0].argumentsJson).toBeNull();
+  });
+
+  test("a payload that runs over the cap mid-stream is cancelled, not buffered", async () => {
+    // The case a content-length check cannot catch: a chunked body that only
+    // reveals its size as it arrives. `response.text()` would decode all of it
+    // before anything could object, so the stream has to be abandoned in
+    // flight — and abandoning it is the assertion.
+    const chunk = new Uint8Array(2 * 1024 * 1024);
+    let cancelled = false;
+    const makeResponse = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => makeResponse()),
+    );
+    const transport: EvidenceReadTransport = async () => page([spilledRow]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(cancelled).toBe(true);
+    expect(result.rows[0].payloadsReadable).toBe(false);
+  });
+
+  test("stops resolving once the whole pass runs out of time", async () => {
+    // Resolution is sequential, so the per-fetch timeout multiplies across a
+    // high-fan-out turn: only a shared deadline keeps the pass inside the
+    // iteration watchdog it is blocking.
+    const realNow = Date.now;
+    let clock = realNow.call(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const fetchMock = vi.fn(async () => {
+      clock += 30_000; // each fetch burns half the budget
+      return new Response('{"q":"x"}');
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const rows = Array.from({ length: 8 }, (_, i) => ({
+      ...spilledRow,
+      requestId: `spilled-${i}`,
+    }));
+    const transport: EvidenceReadTransport = async () => page(rows);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    // It gave up well short of 16 fetches, and every row it could not resolve
+    // is reported unreadable rather than silently empty.
+    expect(fetchMock.mock.calls.length).toBeLessThan(8);
+    expect(result.rows.some((r) => r.payloadsReadable === false)).toBe(true);
   });
 });
