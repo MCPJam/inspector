@@ -101,11 +101,14 @@ npm install --legacy-peer-deps
 npm run dev -w @mcpjam/inspector                       # open the printed access link
 npm run test -w @mcpjam/inspector -- <path>            # targeted Vitest run
 npm run typecheck && npm run typecheck:client -w @mcpjam/inspector
-npx prettier --write <files>
 ```
 
+The repo is not Prettier-clean: format only the lines you change, never whole
+files or the tree.
+
 Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
-`run-inspector`, `ui-change`, `server-change`, `fix-ci`. `REVIEW.md` lists
+`run-inspector`, `ui-change`, `server-change`, `fix-ci`,
+`investigate-production`. `REVIEW.md` lists
 what reviewers check.
 
 ## Design

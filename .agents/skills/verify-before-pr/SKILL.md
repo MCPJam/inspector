@@ -34,9 +34,15 @@ the whole inspector suite (~14k tests) is rarely worth it locally.
 
 ## 3. Format
 
+The repo is not Prettier-clean. Running `prettier --write` on a whole file,
+or the tree, produces large unrelated diffs. Format only the lines you
+changed, and revert any formatting churn before committing:
+
 ```bash
-npx prettier --write $(git diff --name-only origin/main...HEAD)
+git diff origin/main...HEAD --stat   # a file with far more changed lines than you wrote is churn
 ```
+
+New files you created can be formatted in full.
 
 ## 4. Changeset
 
