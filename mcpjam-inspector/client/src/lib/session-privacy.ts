@@ -441,12 +441,21 @@ export const SENTRY_REPLAY_OPTIONS = {
     "formaction",
     "poster",
   ],
-  // rrweb never passes `href` or `src` through attribute masking — it
-  // rewrites them to absolute URLs instead — so elements whose job is a URL
-  // are blocked: kept as sized boxes, their URL and content dropped. Their
-  // text is masked at every level anyway, and Sentry's DOM events cannot be
-  // edited per level, so this applies at `full` too.
-  block: ["a[href]", "area[href]", "iframe", "source", "track"],
+  // rrweb never passes `href`, `src` or `style` through attribute masking —
+  // it rewrites their URLs to absolute ones instead — so elements whose job
+  // is a URL, or whose inline style holds one (an MCP server's icon drawn as
+  // a CSS mask), are blocked: kept as sized boxes, their URL and content
+  // dropped. Their text is masked at every level anyway, and Sentry's DOM
+  // events cannot be edited per level, so this applies at `full` too.
+  block: [
+    "a[href]",
+    "area[href]",
+    "iframe",
+    "source",
+    "track",
+    '[style*="url(" i]',
+    '[style*="image-set(" i]',
+  ],
   networkDetailAllowUrls: [] as string[],
   networkCaptureBodies: false,
   beforeAddRecordingEvent: filterSentryReplayFrame,

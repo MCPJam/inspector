@@ -408,6 +408,30 @@ describe("usePostHogIdentify", () => {
       );
     });
 
+    it("clears names again when the same actor turns id-only after a full grant", () => {
+      mockState.identity = "id_only";
+      const { rerender } = renderHook(identify);
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
+
+      // A membership reload grants names, then enterprise privacy turns on.
+      mockState.identity = "full";
+      rerender();
+      expect(mockState.posthog.identify).toHaveBeenLastCalledWith(
+        "user_123",
+        expect.objectContaining({ email: "user@example.com" }),
+      );
+      mockState.identity = "id_only";
+      rerender();
+      rerender();
+
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(2);
+      expect(
+        mockState.posthog.identify.mock.invocationCallOrder.at(-1),
+      ).toBeLessThan(
+        mockState.posthog.unsetPersonProperties.mock.invocationCallOrder[1],
+      );
+    });
+
     it("leaves guests alone: they carry no identity to clear", () => {
       mockState.auth.user = null;
       mockState.convexAuth.isAuthenticated = false;

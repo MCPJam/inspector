@@ -688,6 +688,76 @@ describe("posthog relay proxy", () => {
       }
     });
 
+    it("inflates a small request's compressed replay past the floor only under a large slot", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const large = gzipSync(largeReplayBatch(2 * 1024 * 1024));
+      // A small body whose one compressed snapshot inflates past the floor.
+      const snapshot = fullSnapshot(" ".repeat(3 * 1024 * 1024));
+      const small = JSON.stringify([
+        {
+          event: "$snapshot",
+          properties: {
+            token: POSTHOG_PROJECT_KEY,
+            $snapshot_data: [
+              {
+                ...snapshot,
+                cv: "2024-10",
+                data: gzipSync(JSON.stringify(snapshot.data)).toString(
+                  "latin1",
+                ),
+              },
+            ],
+          },
+        },
+      ]);
+      expect(small.length).toBeLessThan(64 * 1024);
+      zlibControl.hold = true;
+      const pending = Array.from(
+        { length: RELAY_MAX_LARGE_PAYLOAD_CHECKS },
+        () => app.request("/tlm/s/", sized(large)),
+      );
+      await vi.waitFor(() =>
+        expect(zlibControl.held).toHaveLength(RELAY_MAX_LARGE_PAYLOAD_CHECKS),
+      );
+      zlibControl.hold = false;
+
+      const refused = await app.request("/tlm/s/", sized(small));
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+      for (const run of zlibControl.held.splice(0)) run();
+      for (const response of await Promise.all(pending)) {
+        expect(response.status).toBe(200);
+      }
+      const admitted = await app.request("/tlm/s/", sized(small));
+      expect(admitted.status).toBe(200);
+    });
+
+    it("counts GET captures against the same admission slots", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const body = gzipSync(eventBatch());
+      const get = `/tlm/e/?data=${dataParam(eventBatch())}&compression=base64`;
+      zlibControl.hold = true;
+
+      const pending = Array.from({ length: RELAY_MAX_PAYLOAD_CHECKS }, () =>
+        app.request("/tlm/i/v0/e/", sized(body)),
+      );
+      await vi.waitFor(() =>
+        expect(zlibControl.held).toHaveLength(RELAY_MAX_PAYLOAD_CHECKS),
+      );
+
+      const refused = await app.request(get);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+      zlibControl.hold = false;
+      for (const run of zlibControl.held.splice(0)) run();
+      await Promise.all(pending);
+      expect((await app.request(get)).status).toBe(200);
+    });
+
     it("classifies a replay batch by its inflated size, not its compressed size", async () => {
       vi.mocked(fetch).mockResolvedValue(upstreamResponse());
       const app = createTestApp();

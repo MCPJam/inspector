@@ -264,9 +264,9 @@ export const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
 export const MASKED_ATTRIBUTE_VALUE = "***";
 
 export function maskReplayAttribute(name: string, value: string): string {
-  return MASKED_REPLAY_KEPT_ATTRIBUTES.has(name.toLowerCase())
-    ? value
-    : MASKED_ATTRIBUTE_VALUE;
+  const key = name.toLowerCase();
+  if (!MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return MASKED_ATTRIBUTE_VALUE;
+  return key === "style" ? scrubStyleUrls(value) : value;
 }
 
 /** Text masked the way rrweb masks it: every visible character a `*`. */
@@ -500,4 +500,46 @@ export function scrubUntrustedUrl(value: unknown): string {
   const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
   if (!isAbsolute && !value.startsWith("/")) return NAME_PLACEHOLDER;
   return scrubNamesFromUrl(value);
+}
+
+// ── Inline styles ──────────────────────────────────────────────────────
+
+// A `url(...)`, its argument quoted or bare, or a quoted string: CSS's own
+// tokens, closely enough to find every URL a style can hold.
+const CSS_URL_OR_STRING =
+  /url\(\s*("(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|(?:[^"'()\s\\]|\\[\s\S])*)\s*\)|"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'/gi;
+// A quoted string that could be a URL or a file name (`image-set("a.png")`)
+// rather than a font family.
+const URL_LIKE_STRING = /[/:.]/;
+
+function cssTokenValue(token: string): string {
+  const quoted = token.startsWith('"') || token.startsWith("'");
+  return (quoted ? token.slice(1, -1) : token).replace(/\\([\s\S])/g, "$1");
+}
+
+/**
+ * An inline `style` value with the URLs in it scrubbed. A masked replay keeps
+ * `style` for layout, but a style can name the customer's host and files: an
+ * MCP server's icon drawn as a CSS mask, an avatar as a background. Every
+ * `url(...)` argument, and every quoted string that could be a URL
+ * (`image-set("…")`), is `scrubUntrustedUrl`ed. A value with an unparsed
+ * `url(`, quote or escape left over is masked whole.
+ */
+export function scrubStyleUrls(style: string): string {
+  if (!/url\(|["'\\]/i.test(style)) return style;
+  const scrubbed = style.replace(
+    CSS_URL_OR_STRING,
+    (token: string, urlArgument: string | undefined) => {
+      if (urlArgument !== undefined) {
+        const url = scrubUntrustedUrl(cssTokenValue(urlArgument));
+        return `url(${JSON.stringify(url)})`;
+      }
+      const value = cssTokenValue(token);
+      return URL_LIKE_STRING.test(value)
+        ? JSON.stringify(scrubUntrustedUrl(value))
+        : token;
+    },
+  );
+  const rest = scrubbed.replace(CSS_URL_OR_STRING, "");
+  return /url\(|["'\\]/i.test(rest) ? MASKED_ATTRIBUTE_VALUE : scrubbed;
 }

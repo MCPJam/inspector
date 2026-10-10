@@ -459,6 +459,11 @@ describe("filterSentryReplayFrame", () => {
     expect(SENTRY_REPLAY_OPTIONS.beforeAddRecordingEvent).toBe(
       filterSentryReplayFrame,
     );
+    // Sentry's rrweb skips attribute masking for `style`: an element whose
+    // inline style names a URL is blocked instead.
+    expect(SENTRY_REPLAY_OPTIONS.block).toEqual(
+      expect.arrayContaining(['[style*="url(" i]', '[style*="image-set(" i]']),
+    );
   });
 });
 

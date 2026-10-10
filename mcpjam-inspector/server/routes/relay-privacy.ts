@@ -12,6 +12,7 @@ import {
   maskReplayText,
   mostRestrictivePolicy,
   scrubNamesFromUrl,
+  scrubStyleUrls,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryPolicy,
@@ -226,6 +227,38 @@ export function stripSnapshotCredentials(snapshotData: unknown): unknown {
 export interface RestrictionBudget {
   /** Bytes the replay's inner compressed fields may still inflate to. */
   inflatedBytesLeft: number;
+  /**
+   * Called when a field would inflate past `inflatedBytesLeft`: raises it to
+   * the large-payload allowance, once, by taking a large admission slot.
+   * Throws `RelayBusyError` when none is free; does nothing for a request
+   * that already holds one.
+   */
+  widen?: () => void;
+}
+
+/** The relay has no room to inflate this replay now; the client retries. */
+export class RelayBusyError extends Error {
+  constructor() {
+    super("relay busy");
+    this.name = "RelayBusyError";
+  }
+}
+
+// A gzip member is at least a 10-byte header and an 8-byte trailer.
+const GZIP_MIN_BYTES = 18;
+
+/**
+ * The inflated size a gzip member declares in its trailer (ISIZE). Inflation
+ * is held to exactly this size, so a member that declares less than it holds
+ * (or more than one member) fails to inflate.
+ */
+export function gzipDeclaredBytes(bytes: Uint8Array): number | null {
+  if (bytes.length < GZIP_MIN_BYTES) return null;
+  return Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ).readUInt32LE(bytes.length - 4);
 }
 
 /**
@@ -313,13 +346,21 @@ async function decompressField(
     throw new UnsupportedReplayError("compressed field is not a string");
   }
   const bytes = Buffer.from(value, "latin1");
-  if (ctx.budget.inflatedBytesLeft <= 0) {
+  const declared = gzipDeclaredBytes(bytes);
+  if (declared === null) {
+    throw new UnsupportedReplayError("compressed field is not gzip");
+  }
+  // Checked before inflating, against what the request was admitted for: a
+  // request admitted as small widens to the large allowance (taking a large
+  // admission slot) or waits.
+  if (declared > ctx.budget.inflatedBytesLeft) ctx.budget.widen?.();
+  if (declared > ctx.budget.inflatedBytesLeft) {
     throw new UnsupportedReplayError("replay inflates past its budget");
   }
   let inflated: Buffer;
   try {
     inflated = await gunzipAsync(bytes, {
-      maxOutputLength: ctx.budget.inflatedBytesLeft,
+      maxOutputLength: Math.max(1, declared),
     });
   } catch {
     throw new UnsupportedReplayError("compressed field does not inflate");
@@ -373,13 +414,15 @@ function maskAttributeValue(name: string, value: unknown): unknown {
   if (key === "style" && isRecord(value)) {
     const style: Json = {};
     for (const [property, entry] of Object.entries(value)) {
-      if (
-        entry === false ||
-        typeof entry === "string" ||
-        (Array.isArray(entry) &&
-          entry.every((part) => typeof part === "string"))
-      ) {
+      if (entry === false) {
         style[property] = entry;
+      } else if (typeof entry === "string") {
+        style[property] = scrubStyleUrls(entry);
+      } else if (
+        Array.isArray(entry) &&
+        entry.every((part) => typeof part === "string")
+      ) {
+        style[property] = entry.map((part) => scrubStyleUrls(part));
       }
     }
     return style;
@@ -387,6 +430,7 @@ function maskAttributeValue(name: string, value: unknown): unknown {
   if (typeof value !== "string") {
     throw new UnsupportedReplayError("unknown attribute value");
   }
+  if (key === "style") return scrubStyleUrls(value);
   if (MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return value;
   return value === "" ? "" : MASKED_ATTRIBUTE_VALUE;
 }

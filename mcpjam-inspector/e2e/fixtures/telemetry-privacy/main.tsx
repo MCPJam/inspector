@@ -73,6 +73,19 @@ function Harness() {
           width={32}
           height={32}
         />
+        {/* An MCP server's icon the way ExtensionIcon draws it: a CSS mask
+            whose URL is on the customer's host. */}
+        <span
+          className="harness-icon"
+          style={{
+            display: "inline-block",
+            width: 20,
+            height: 20,
+            backgroundColor: "currentColor",
+            maskImage: `url(${JSON.stringify(SYNTHETIC_PII.iconUrl)})`,
+            WebkitMaskImage: `url(${JSON.stringify(SYNTHETIC_PII.iconUrl)})`,
+          }}
+        />
         <input
           className="harness-input"
           data-testid="pii-input"

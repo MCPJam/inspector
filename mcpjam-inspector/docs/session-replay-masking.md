@@ -151,7 +151,7 @@ masked-only extras are applied frame by frame (see below).
 | `maskAllInputs: true`                                 | Every input masked                                              |
 | `blockSelector`                                       | `img, picture, video, audio, canvas, svg image, iframe, object, embed` replaced by placeholders |
 | `captureCanvas: { recordCanvas: false }`              | No canvas frames                                                |
-| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. |
+| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. A kept `style` has its `url(...)` and URL-like strings scrubbed (`scrubStyleUrls`). |
 | `recordHeaders: false`, `recordBody: false`           | No network headers or bodies. A client `false` overrides the project's remote setting. |
 | `maskCapturedNetworkRequestFn`                        | posthog-js sends the recorded page URL and every network request through this. Names are scrubbed and headers and bodies dropped. |
 | `captureJsonLd: false`, `recordCrossOriginIframes: false` | Off                                                          |
@@ -189,10 +189,12 @@ fragment and userinfo are dropped. For example,
 - `maskAllText`, `maskAllInputs` and `blockAllMedia` are `true`.
 - `maskAttributes` masks `title`, `placeholder`, `aria-label`,
   `aria-description`, `alt`, `action`, `formaction` and `poster`.
-- `block` covers `a[href]`, `area[href]`, `iframe`, `source` and `track`.
-  rrweb never passes `href` or `src` through attribute masking (it rewrites
-  them to absolute URLs), so the elements whose job is a URL are kept as sized
-  boxes instead. The telemetry browser test caught this.
+- `block` covers `a[href]`, `area[href]`, `iframe`, `source`, `track`, and
+  any element whose inline `style` holds a `url(` or `image-set(`. Sentry's
+  rrweb never passes `href`, `src` or `style` through attribute masking (it
+  rewrites their URLs to absolute ones), so the elements whose job is a URL,
+  or whose style names one (an MCP server's icon drawn as a CSS mask), are
+  kept as sized boxes instead. The telemetry browser test caught this.
 - `networkDetailAllowUrls: []` and `networkCaptureBodies: false`: no request or
   response detail for any URL.
 
@@ -361,7 +363,8 @@ gate every capture request — event batches, replay batches and GET ingestion:
    and attributes. Their `$snapshot_data` is rebuilt from an explicit
    allowlist of rrweb structures: posthog-js's compressed fields
    (`cv: "2024-10"`) are inflated, masked and re-compressed; text, inputs and
-   non-layout attributes are masked; media and embeds are blocked; console,
+   non-layout attributes are masked, and URLs in kept `style` values
+   scrubbed; media and embeds are blocked; console,
    network and canvas recordings are dropped. An unknown or undecodable
    structure is refused with a non-retryable `400 unsupported_replay_payload`,
    never forwarded unchanged.
@@ -370,7 +373,11 @@ gate every capture request — event batches, replay batches and GET ingestion:
    client forwarding headers never reach PostHog. PostHog logs, which carry
    console output that cannot be attributed or masked, are refused.
 
-It reuses the relay's size, decompression, concurrency and rate limits. The
+It reuses the relay's size, decompression, concurrency and rate limits. GET
+captures take an admission slot like any other, and compressed replay fields
+count toward the request's admission: a request admitted as small inflates
+them only to the floor, and past it takes a large-payload slot or gets a
+`503`, which posthog-js retries. The
 aggregate `relay.stats` line counts `privacyMasked`, `privacyRejected` and
 `privacyUnresolved` requests; nothing logs payloads, credentials, names or
 emails.

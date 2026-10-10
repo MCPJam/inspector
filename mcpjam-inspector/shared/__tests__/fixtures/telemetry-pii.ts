@@ -23,6 +23,7 @@ export const SYNTHETIC_PII = {
   networkUrl: "/api/customers/quixote-billing-project",
   networkBody: '{"customer":"zelda.quixote@acme-synthetic.example"}',
   imageUrl: "https://cdn.acme-synthetic.example/avatars/zelda.png",
+  iconUrl: "https://mcp.acme-synthetic.example/icons/quixote-billing.svg",
 } as const;
 
 /** The strings no restricted payload may contain, in any encoding. */
@@ -40,6 +41,7 @@ export const SYNTHETIC_PII_NEEDLES: readonly string[] = [
   SYNTHETIC_PII.consoleMessage,
   SYNTHETIC_PII.networkBody,
   SYNTHETIC_PII.imageUrl,
+  SYNTHETIC_PII.iconUrl,
   "acme-synthetic",
 ];
 

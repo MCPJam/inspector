@@ -17,7 +17,10 @@ import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js"
 import {
   applyEventPolicy,
   decideEventPolicies,
+  gzipDeclaredBytes,
   isRestricted,
+  RelayBusyError,
+  type RestrictionBudget,
   UnsupportedReplayError,
 } from "./relay-privacy.js";
 
@@ -543,7 +546,9 @@ const SCAN_MAX_DEPTH = 4096;
 // Capture payloads are admitted once their bodies have arrived: a limited
 // number are inflated and read at a time, and fewer still of those whose text
 // exceeds the floor. Past either limit the relay answers 503, and posthog-js
-// retries later.
+// retries later. A restricted replay's compressed fields count too: a request
+// admitted as small may inflate them to the floor, and past that only under a
+// large admission slot.
 export const RELAY_MAX_PAYLOAD_CHECKS = 16;
 export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
 let payloadChecks = 0;
@@ -583,21 +588,6 @@ function capturePayloadCap(subpath: string): number {
 
 function isGzip(bytes: Uint8Array): boolean {
   return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-}
-
-// A gzip member is at least a 10-byte header and an 8-byte trailer.
-const GZIP_MIN_BYTES = 18;
-
-// The inflated size a gzip body declares in its trailer (ISIZE). Inflation
-// is held to exactly this size, so a body that declares less than it holds
-// (or holds more than one member) fails to inflate.
-function gzipDeclaredBytes(bytes: Uint8Array): number | null {
-  if (bytes.length < GZIP_MIN_BYTES) return null;
-  return Buffer.from(
-    bytes.buffer,
-    bytes.byteOffset,
-    bytes.byteLength,
-  ).readUInt32LE(bytes.length - 4);
 }
 
 function inflateBudget(compressedBytes: number, cap: number): number {
@@ -1314,18 +1304,17 @@ function bearerToken(header: string | undefined): string | null {
 
 // Decides each event's policy, rewrites the events and serializes them.
 async function gateCapturePayload(
-  subpath: string,
   url: URL,
   method: string,
   payload: CapturePayload,
   token: string | null,
+  budget: RestrictionBudget,
 ): Promise<CaptureOutcome> {
   const decision = await decideEventPolicies(
     payload.events,
     token,
     resolveTelemetryPolicy,
   );
-  const budget = { inflatedBytesLeft: capturePayloadCap(subpath) };
   const events: Record<string, unknown>[] = [];
   try {
     for (let i = 0; i < payload.events.length; i++) {
@@ -1341,6 +1330,7 @@ async function gateCapturePayload(
     if (error instanceof UnsupportedReplayError) {
       return { kind: "unsupported_replay" };
     }
+    if (error instanceof RelayBusyError) return { kind: "busy" };
     throw error;
   }
   const serialized = await serializeCapture({ ...payload, events });
@@ -1377,33 +1367,19 @@ async function processCapture(
       : ("other" as const);
   };
 
-  if (method === "GET" || method === "HEAD") {
-    let payload: CapturePayload;
-    try {
-      const parsed = parseDataParam(url.searchParams.get("data") ?? "");
-      collectPayloadTokens(parsed, payloadTokens);
-      payload = captureShapeOf(parsed);
-    } catch {
-      return { kind: "unreadable" };
-    }
-    const checked = pinned(payload);
-    if (typeof checked === "string") return { kind: checked };
-    return await gateCapturePayload(subpath, url, method, checked, token);
-  }
-
+  const isGet = method === "GET" || method === "HEAD";
+  const cap = capturePayloadCap(subpath);
   const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
   let textBytes = bytes.length;
-  if (isGzip(bytes)) {
+  if (!isGet && isGzip(bytes)) {
     const declared = gzipDeclaredBytes(bytes);
-    if (
-      declared === null ||
-      declared > inflateBudget(bytes.length, capturePayloadCap(subpath))
-    ) {
+    if (declared === null || declared > inflateBudget(bytes.length, cap)) {
       return { kind: "unreadable" };
     }
     textBytes = declared;
   }
-  const large = textBytes > INFLATE_FLOOR_BYTES;
+  // A GET's `data` is bounded by the URL, so it is admitted as small.
+  const large = !isGet && textBytes > INFLATE_FLOOR_BYTES;
   if (
     payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
     (large && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS)
@@ -1411,23 +1387,42 @@ async function processCapture(
     return { kind: "busy" };
   }
   payloadChecks++;
-  if (large) largePayloadChecks++;
+  let holdsLarge = large;
+  if (holdsLarge) largePayloadChecks++;
+  const budget: RestrictionBudget = {
+    inflatedBytesLeft: holdsLarge ? cap : INFLATE_FLOOR_BYTES,
+    widen: () => {
+      if (holdsLarge) return;
+      if (largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
+        throw new RelayBusyError();
+      }
+      largePayloadChecks++;
+      holdsLarge = true;
+      budget.inflatedBytesLeft += cap - INFLATE_FLOOR_BYTES;
+    },
+  };
   try {
     let payload: CapturePayload;
     try {
-      payload = await readCaptureJson(
-        await decodeCaptureBody(bytes, textBytes),
-        payloadTokens,
-      );
+      if (isGet) {
+        const parsed = parseDataParam(url.searchParams.get("data") ?? "");
+        collectPayloadTokens(parsed, payloadTokens);
+        payload = captureShapeOf(parsed);
+      } else {
+        payload = await readCaptureJson(
+          await decodeCaptureBody(bytes, textBytes),
+          payloadTokens,
+        );
+      }
     } catch {
       return { kind: "unreadable" };
     }
     const checked = pinned(payload);
     if (typeof checked === "string") return { kind: checked };
-    return await gateCapturePayload(subpath, url, method, checked, token);
+    return await gateCapturePayload(url, method, checked, token, budget);
   } finally {
     payloadChecks--;
-    if (large) largePayloadChecks--;
+    if (holdsLarge) largePayloadChecks--;
   }
 }
 

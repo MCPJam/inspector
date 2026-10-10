@@ -627,6 +627,71 @@ describe("relay privacy gate", () => {
     );
   });
 
+  it("scrubs URLs out of kept style attributes and style mutations", async () => {
+    const iconStyle = `width: 20px; mask-image: url("${SYNTHETIC_PII.imageUrl}")`;
+    await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(undefined, [
+          {
+            type: 2,
+            timestamp: 1,
+            data: {
+              node: {
+                type: 2,
+                id: 1,
+                tagName: "span",
+                attributes: { class: "icon", style: iconStyle },
+                childNodes: [],
+              },
+            },
+          },
+          {
+            type: 3,
+            timestamp: 2,
+            data: {
+              source: 0,
+              texts: [],
+              removes: [],
+              adds: [],
+              attributes: [
+                { id: 1, attributes: { style: iconStyle } },
+                {
+                  id: 1,
+                  attributes: {
+                    style: {
+                      "background-image": `url(${SYNTHETIC_PII.imageUrl})`,
+                      "mask-image": [
+                        `url("${SYNTHETIC_PII.imageUrl}")`,
+                        "important",
+                      ],
+                      width: "20px",
+                      color: false,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ]),
+      ]),
+    );
+    const data = forwarded().json.batch[0].properties.$snapshot_data as any[];
+    expect(findSyntheticPii(decodedText(data))).toEqual([]);
+    expect(data[0].data.node.attributes).toEqual({
+      class: "icon",
+      style: 'width: 20px; mask-image: url("https://[host]/[name]/[name]")',
+    });
+    const [plain, diff] = data[1].data.attributes;
+    expect(plain.attributes.style).toBe(data[0].data.node.attributes.style);
+    expect(diff.attributes.style).toEqual({
+      "background-image": 'url("https://[host]/[name]/[name]")',
+      "mask-image": ['url("https://[host]/[name]/[name]")', "important"],
+      width: "20px",
+      color: false,
+    });
+  });
+
   it("decodes, masks and re-encodes posthog-js compressed snapshots and mutations", async () => {
     const [meta, full, mutation] = replayEvents() as any[];
     const compressed = [

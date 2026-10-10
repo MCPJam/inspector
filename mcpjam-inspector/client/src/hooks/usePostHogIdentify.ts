@@ -108,6 +108,9 @@ export function usePostHogIdentify() {
     }
 
     posthog.identify(actorKey, personProperties);
+    // Names just sent: a later id-only answer for this actor (enterprise
+    // privacy turned on mid-session) must clear them again.
+    if (identity === "full") identityUnsetForActorRef.current = null;
     if (
       isAuthedActor &&
       identity === "id_only" &&

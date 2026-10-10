@@ -190,9 +190,9 @@ async function intercept(page: Page): Promise<Captured> {
   await page.route(`**${SYNTHETIC_PII.networkUrl}`, (route) =>
     route.fulfill({ json: { customer: SYNTHETIC_PII.email } }),
   );
-  await page.route(SYNTHETIC_PII.imageUrl, (route) =>
-    route.fulfill({ status: 404, body: "" }),
-  );
+  for (const url of [SYNTHETIC_PII.imageUrl, SYNTHETIC_PII.iconUrl]) {
+    await page.route(url, (route) => route.fulfill({ status: 404, body: "" }));
+  }
   return captured;
 }
 
