@@ -4,6 +4,8 @@ import type {
   ProbeMcpServerConfig,
   ProbeMcpServerResult,
 } from "./server-probe.js";
+import { lintToolCatalog } from "./tool-lints.js";
+import type { ToolLintFinding } from "./tool-lints.js";
 
 export interface ServerDoctorError {
   code: string;
@@ -12,7 +14,7 @@ export interface ServerDoctorError {
 }
 
 export interface ServerDoctorCheck {
-  status: "ok" | "error" | "skipped";
+  status: "ok" | "warn" | "error" | "skipped";
   detail: string;
 }
 
@@ -27,6 +29,7 @@ export interface ServerDoctorChecks {
   initialization: ServerDoctorCheck;
   capabilities: ServerDoctorCheck;
   tools: ServerDoctorCheck;
+  toolHygiene: ServerDoctorCheck;
   resources: ServerDoctorCheck;
   resourceTemplates: ServerDoctorCheck;
   prompts: ServerDoctorCheck;
@@ -53,6 +56,7 @@ export interface ServerDoctorResult<TTarget = unknown> {
   capabilities: unknown | null;
   tools: unknown[];
   toolsMetadata: Record<string, unknown>;
+  toolLints: ToolLintFinding[];
   resources: unknown[];
   resourceTemplates: unknown[];
   prompts: unknown[];
@@ -66,6 +70,7 @@ export interface ConnectedServerDoctorState {
   capabilities: unknown | null;
   tools: unknown[];
   toolsMetadata: Record<string, unknown>;
+  toolLints: ToolLintFinding[];
   resources: unknown[];
   resourceTemplates: unknown[];
   prompts: unknown[];
@@ -75,6 +80,7 @@ export interface ConnectedServerDoctorState {
     | "initialization"
     | "capabilities"
     | "tools"
+    | "toolHygiene"
     | "resources"
     | "resourceTemplates"
     | "prompts"
@@ -161,6 +167,7 @@ export function createServerDoctorResult<TTarget>(
     capabilities: null,
     tools: [],
     toolsMetadata: {},
+    toolLints: [],
     resources: [],
     resourceTemplates: [],
     prompts: [],
@@ -171,6 +178,7 @@ export function createServerDoctorResult<TTarget>(
       initialization: skippedCheck("Initialization info was not collected."),
       capabilities: skippedCheck("Capabilities were not collected."),
       tools: skippedCheck("Tools were not collected."),
+      toolHygiene: skippedCheck("Tool hygiene lints did not run."),
       resources: skippedCheck("Resources were not collected."),
       resourceTemplates: skippedCheck("Resource templates were not collected."),
       prompts: skippedCheck("Prompts were not collected."),
@@ -193,6 +201,7 @@ export function applyConnectedServerDoctorState<TTarget>(
   result.capabilities = collected.capabilities;
   result.tools = collected.tools;
   result.toolsMetadata = collected.toolsMetadata;
+  result.toolLints = collected.toolLints;
   result.resources = collected.resources;
   result.resourceTemplates = collected.resourceTemplates;
   result.prompts = collected.prompts;
@@ -200,6 +209,7 @@ export function applyConnectedServerDoctorState<TTarget>(
   result.checks.initialization = collected.checks.initialization;
   result.checks.capabilities = collected.checks.capabilities;
   result.checks.tools = collected.checks.tools;
+  result.checks.toolHygiene = collected.checks.toolHygiene;
   result.checks.resources = collected.checks.resources;
   result.checks.resourceTemplates = collected.checks.resourceTemplates;
   result.checks.prompts = collected.checks.prompts;
@@ -221,11 +231,16 @@ export function buildConnectedServerDoctorState(
     input.skillsResult.error,
   ].filter((error): error is ServerDoctorError => Boolean(error));
 
+  const toolLints = input.toolsResult.error
+    ? []
+    : lintToolCatalog(input.toolsResult.tools);
+
   return {
     initInfo: input.initInfo,
     capabilities: input.capabilities,
     tools: input.toolsResult.tools,
     toolsMetadata: input.toolsResult.toolsMetadata,
+    toolLints,
     resources: input.resourcesResult.resources,
     resourceTemplates: input.resourceTemplatesResult.resourceTemplates,
     prompts: input.promptsResult.prompts,
@@ -240,6 +255,7 @@ export function buildConnectedServerDoctorState(
         ? okCheck("Server capabilities captured.")
         : errorCheck("Server connected but did not advertise capabilities."),
       tools: input.toolsResult.check,
+      toolHygiene: summarizeToolHygieneCheck(input.toolsResult, toolLints),
       resources: input.resourcesResult.check,
       resourceTemplates: input.resourceTemplatesResult.check,
       prompts: input.promptsResult.check,
@@ -402,8 +418,37 @@ export function deriveDoctorStatus<TTarget>(
     : "ready";
 }
 
+export function summarizeToolHygieneCheck(
+  toolsResult: DoctorToolsCollectionResult,
+  toolLints: ToolLintFinding[]
+): ServerDoctorCheck {
+  if (toolsResult.error) {
+    return skippedCheck(
+      "Tool hygiene lints skipped because tools could not be listed."
+    );
+  }
+  if (toolsResult.tools.length === 0) {
+    return skippedCheck("No tools to lint.");
+  }
+  if (toolLints.length === 0) {
+    const count = toolsResult.tools.length;
+    return okCheck(
+      `No hygiene warnings across ${count} tool${count === 1 ? "" : "s"}.`
+    );
+  }
+  return warnCheck(
+    `${toolLints.length} hygiene warning${
+      toolLints.length === 1 ? "" : "s"
+    } (advisory; does not affect readiness). See toolLints for details.`
+  );
+}
+
 export function okCheck(detail: string): ServerDoctorCheck {
   return { status: "ok", detail };
+}
+
+export function warnCheck(detail: string): ServerDoctorCheck {
+  return { status: "warn", detail };
 }
 
 export function errorCheck(detail: string): ServerDoctorCheck {
