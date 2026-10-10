@@ -370,3 +370,59 @@ jobs:
             mcpjam-inspector/test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  telemetry-privacy:
+    runs-on: ubuntu-latest
+    name: Telemetry Privacy (browser)
+    # Telemetry ON, unlike the smoke job above: the app's real PostHog and
+    # Sentry setup, with both transports intercepted in the browser and every
+    # outbound payload decoded. Nothing reaches a vendor. Proves a private
+    # context sends masked, useful recordings and no seeded personal data.
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+
+    steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Run telemetry privacy browser test
+        run: npm run test:e2e:telemetry-privacy -w @mcpjam/inspector
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: telemetry-privacy-report
+          path: mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

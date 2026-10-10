@@ -112,6 +112,7 @@
     "pretest:watch": "npm run build -w @mcpjam/evaluators",
     "pretest:coverage": "npm run build -w @mcpjam/evaluators",
     "test:swarm-reporting:smoke": "playwright test --config playwright.swarm-reporting.config.ts",
+    "test:e2e:telemetry-privacy": "playwright test --config playwright.telemetry-privacy.config.ts",
     "dev:processes": "run-script-os",
     "dev:processes:default": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
