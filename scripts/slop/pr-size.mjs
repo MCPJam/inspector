@@ -26,15 +26,15 @@ function resolveBase(argv) {
   }).trim();
 }
 
-export function measureDiff(base) {
-  const numstat = execFileSync(
-    "git",
-    ["diff", "--numstat", "--no-renames", base, "HEAD"],
-    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }
-  );
+/**
+ * `git diff --numstat -z --no-renames` output: one `added\tdeleted\tpath`
+ * record per NUL. Without `-z`, git quotes and escapes unusual paths, which
+ * would hide them from `isMeasuredFile`.
+ */
+export function parseNumstat(output) {
   const files = [];
-  for (const line of numstat.split("\n")) {
-    const [added, deleted, path] = line.split("\t");
+  for (const record of output.split("\0")) {
+    const [added, deleted, path] = record.split("\t");
     // Binary files report "-" for both counts.
     if (!path || added === "-" || !isMeasuredFile(path)) continue;
     files.push({ path, lines: Number(added) + Number(deleted) });
@@ -42,6 +42,16 @@ export function measureDiff(base) {
   files.sort((a, b) => b.lines - a.lines);
   const total = files.reduce((sum, file) => sum + file.lines, 0);
   return { total, files };
+}
+
+export function measureDiff(base) {
+  return parseNumstat(
+    execFileSync(
+      "git",
+      ["diff", "--numstat", "-z", "--no-renames", base, "HEAD"],
+      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }
+    )
+  );
 }
 
 export function verdict(total, labels) {

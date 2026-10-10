@@ -181,7 +181,20 @@ describe("ratchet", () => {
 });
 
 describe("pr-size verdict", async () => {
-  const { verdict, LARGE, LIMIT } = await import("./pr-size.mjs");
+  const { verdict, parseNumstat, LARGE, LIMIT } = await import("./pr-size.mjs");
+
+  it("counts NUL-delimited paths, including non-ASCII ones", () => {
+    const output = [
+      "10\t2\tsdk/src/caf\u00e9.ts",
+      "5\t0\tsdk/src/a.test.ts",
+      "-\t-\tdocs/logo.png",
+      "3\t3\tmcpjam-inspector/client/src/App.tsx",
+      "",
+    ].join("\0");
+    const { total, files } = parseNumstat(output);
+    assert.equal(total, 18);
+    assert.equal(files[0].path, "sdk/src/caf\u00e9.ts");
+  });
 
   it("is ok within budget", () => {
     assert.equal(verdict(LARGE, []), "ok");
