@@ -2364,6 +2364,14 @@ export async function runHarnessTurn(
           ...(orgSelection ? { modelSelection: orgSelection } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
+        // A preparation the turn will not run on is torn down before it
+        // fails or prepares again; a stop that fails is logged, not fatal.
+        const discardPreparation = (prepared: PreparedLocalHarnessTurn) =>
+          prepared.teardown().catch((error) =>
+            logger.warn("[harness] local preparation teardown failed", {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
         let preparation = await prepareLocal(localSessionId!);
         if (!preparation.ok) {
           throw new Error(
@@ -2375,7 +2383,7 @@ export async function runHarnessTurn(
           // The loopback start refuses (and revokes) a lease that does not
           // confirm the org binding; this is the turn's own backstop.
           if (!preparation.prepared.orgUpstream) {
-            await preparation.prepared.teardown().catch(() => {});
+            await discardPreparation(preparation.prepared);
             throw new Error(
               "The model broker did not confirm a lease on the organization's key; the turn was not started.",
             );
@@ -2396,7 +2404,7 @@ export async function runHarnessTurn(
               preparation.prepared.orgUpstream.credentialRevision,
             )
           ) {
-            await preparation.prepared.teardown().catch(() => {});
+            await discardPreparation(preparation.prepared);
             if (isApprovalResume) {
               throw new Error(
                 "The organization's provider key was replaced while the approval was waiting; the pending action will not run. Start a new turn.",
@@ -2426,7 +2434,7 @@ export async function runHarnessTurn(
               );
             }
             if (!preparation.prepared.orgUpstream) {
-              await preparation.prepared.teardown().catch(() => {});
+              await discardPreparation(preparation.prepared);
               throw new Error(
                 "The model broker did not confirm a lease on the organization's key; the turn was not started.",
               );

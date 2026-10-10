@@ -14,69 +14,21 @@
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
-import {
-  harnessPinnedVersion,
-  type HarnessUpstreamProfile,
-} from "@/shared/harness-model-support";
+import { harnessPinnedVersion } from "@/shared/harness-model-support";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  orgLeaseUpstreamFrom,
+  orgSelectionField,
+  orgBindingUnconfirmed,
+  type HarnessOrgLeaseUpstream,
+} from "./harness-org-lease.js";
 
-/**
- * The non-secret facts a start response echoes for a lease on the
- * ORGANIZATION'S own provider key — read from what the backend's ledger
- * recorded, so they say what was actually minted rather than what was asked
- * for. `credentialRevision` is a short one-way hash: equal ⇒ the same key.
- */
-export type HarnessOrgLeaseUpstream = {
-  credentialSource: "org";
-  profile: Exclude<HarnessUpstreamProfile, "gateway">;
-  /** The exact native model id the lease admits (`claude-sonnet-4-5`). */
-  nativeModelId: string;
-  credentialRevision: string;
-};
-
-/**
- * The org selection a broker request carries, or nothing. Only a `source:
- * 'org'` selection travels: a hosted request's body stays byte-identical to
- * what an older backend expects.
- */
-function orgSelectionField(selection: ModelSelection | null | undefined): {
-  modelSelection?: ModelSelection;
-} {
-  return selection?.source === "org" ? { modelSelection: selection } : {};
-}
-
-/** The org facts of a start response, or null when absent or incomplete. */
-export function orgLeaseUpstreamFrom(
-  payload: unknown,
-): HarnessOrgLeaseUpstream | null {
-  const p = payload as Record<string, unknown> | null;
-  if (
-    p?.credentialSource !== "org" ||
-    (p.upstreamProfile !== "anthropic-native" &&
-      p.upstreamProfile !== "openai-native") ||
-    typeof p.credentialRevision !== "string" ||
-    p.credentialRevision.length === 0 ||
-    typeof p.upstreamModelId !== "string" ||
-    p.upstreamModelId.length === 0 ||
-    p.upstreamModelId.includes("/")
-  ) {
-    return null;
-  }
-  return {
-    credentialSource: "org",
-    profile: p.upstreamProfile,
-    nativeModelId: p.upstreamModelId,
-    credentialRevision: p.credentialRevision,
-  };
-}
-
-/**
- * Error code for a start that was ASKED for an org-key lease and came back
- * without confirming one — an older backend that ignored the selection and
- * minted a lease on MCPJam's key. The lease is revoked and the turn fails
- * before the runtime starts: an org binding is never assumed.
- */
-export const ORG_BINDING_UNCONFIRMED = "org_binding_unconfirmed";
+export {
+  ORG_BINDING_UNCONFIRMED,
+  orgLeaseUpstreamFrom,
+  readHarnessLeaseRefusal,
+  type HarnessOrgLeaseUpstream,
+} from "./harness-org-lease.js";
 
 /**
  * The harness runtime CLI version the lease is for — the adapter's pinned
@@ -330,14 +282,8 @@ export async function startHarnessModelBroker(args: {
         ? { projectId: args.box.projectId }
         : {}),
       bearer: args.bearer,
-    }).catch(() => {});
-    return {
-      ok: false,
-      status: 502,
-      error:
-        "The model broker did not confirm a lease on the organization's key; the turn was not started.",
-      code: ORG_BINDING_UNCONFIRMED,
-    };
+    });
+    return orgBindingUnconfirmed();
   }
   if (!validShape) {
     return {
@@ -555,14 +501,8 @@ export async function startLoopbackModelBroker(args: {
     await revokeHarnessModelBroker({
       runId: payload.runId,
       bearer: args.bearer,
-    }).catch(() => {});
-    return {
-      ok: false,
-      status: 502,
-      error:
-        "The model broker did not confirm a lease on the organization's key; the turn was not started.",
-      code: ORG_BINDING_UNCONFIRMED,
-    };
+    });
+    return orgBindingUnconfirmed();
   }
   if (!validShape) {
     return {
@@ -590,54 +530,6 @@ export async function startLoopbackModelBroker(args: {
       ? { orgUpstream }
       : {}),
   };
-}
-
-/**
- * The model proxy's own most recent refusal on the caller's leases for
- * `runId` — its `x-mcpjam-proxy-refusal` reason, which the backend records on
- * the lease — or undefined. The runtime in the sandbox surfaces only the
- * refusal's status, so a failed turn reads the reason back here to classify
- * what failed. Never throws: an unreachable endpoint leaves the failure
- * unclassified, the safe direction.
- */
-export async function readHarnessLeaseRefusal(args: {
-  runId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{ reason: string; at: number } | undefined> {
-  try {
-    const url = new URL(
-      "/web/harness/model-broker/refusal",
-      getConvexHttpUrl(),
-    ).toString();
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({ runId: args.runId }),
-      signal: args.signal
-        ? AbortSignal.any([args.signal, AbortSignal.timeout(5_000)])
-        : AbortSignal.timeout(5_000),
-    });
-    const payload: any = await response.json().catch(() => null);
-    const refusal = payload?.refusal;
-    if (
-      !response.ok ||
-      payload?.ok !== true ||
-      typeof refusal?.reason !== "string" ||
-      typeof refusal?.at !== "number"
-    ) {
-      return undefined;
-    }
-    return { reason: refusal.reason, at: refusal.at };
-  } catch (err) {
-    logger.warn("[harness-model-broker] refusal lookup failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  }
 }
 
 /**

@@ -41,11 +41,12 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
-  validateModelSelection,
-  type ModelReasoningEffort,
-  type ModelSelection,
-} from "@mcpjam/sdk/browser";
+  selectionCacheKey,
+  selectionForModel,
+  selectionHostedFlag,
+} from "./harness-admission-selection.js";
 import {
   checkHarnessRuntimeAvailable,
   selectionReasoningEffort,
@@ -85,25 +86,6 @@ export interface EvalHarnessCase {
    * organization connection's.
    */
   selection?: unknown;
-}
-
-/** A saved selection, validated, or undefined. Never trusts the shape. */
-function validSelection(value: unknown): ModelSelection | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const validated = validateModelSelection(value);
-  return validated.ok ? validated.selection : undefined;
-}
-
-/**
- * The picker's own-provider stamp a case's selection implies, the same rule
- * `withSelectionRouting` applies to a live turn: any non-hosted selection is
- * `hosted: false`; no selection leaves today's hosted-list check in charge.
- */
-function selectionHostedFlag(selection: ModelSelection | undefined): {
-  hosted?: boolean;
-} {
-  if (!selection) return {};
-  return selection.source === "hosted" ? {} : { hosted: false };
 }
 
 /** The effort a case's own model entry asks for: explicit, else its selection. */
@@ -316,11 +298,10 @@ export function checkEvalHarnessStaticAdmission(args: {
 
   // The host's saved selection, when it is for the pinned model: an org
   // connection on the harness's own vendor runs on the organization's key.
-  const hostSelection = validSelection(hostConfig.modelSelection);
-  const pinnedSelection =
-    hostSelection && hostModelId && hostSelection.modelId === hostModelId
-      ? hostSelection
-      : undefined;
+  const pinnedSelection = selectionForModel(
+    hostConfig.modelSelection,
+    hostModelId,
+  );
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
@@ -430,16 +411,11 @@ export function checkEvalHarnessAdmission(args: {
   for (const test of modelCases) {
     const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
     // The case's own saved selection, only when it is for the case's model.
-    const caseSelection = validSelection(test.selection);
-    const selection =
-      caseSelection && caseSelection.modelId === String(test.model).trim()
-        ? caseSelection
-        : undefined;
-    const connection =
-      selection?.connectionRef?.kind === "orgProvider"
-        ? selection.connectionRef.id
-        : "";
-    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}::${selection?.source ?? ""}:${connection}`;
+    const selection = selectionForModel(
+      test.selection,
+      String(test.model).trim(),
+    );
+    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}::${selectionCacheKey(selection)}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({

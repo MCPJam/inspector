@@ -211,6 +211,7 @@ import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
+import { logger } from "../../logger.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -991,6 +992,31 @@ describe("runHarnessTurn local continuity", () => {
       expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
       expect(harnessState.teardown).toHaveBeenCalled();
       expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
+    it("a teardown that fails is logged; the turn still reports the key change", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      harnessState.teardown.mockRejectedValueOnce(new Error("stop failed"));
+      const warn = vi.spyOn(logger, "warn");
+      const events: Array<{ message: string }> = [];
+      const options = orgOptions();
+      await runHarnessTurn(
+        {
+          ...options,
+          harnessExecutionTarget: {
+            ...options.harnessExecutionTarget,
+            localSessionId: "local-session",
+          },
+          onEngineError: (event: { message: string }) => events.push(event),
+        } as any,
+        "none",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[harness] local preparation teardown failed",
+        { error: "stop failed" },
+      );
       expect(events.at(-1)?.message).toMatch(/replaced during this run/);
     });
 

@@ -526,10 +526,9 @@ describe("runAssistantTurn", () => {
             provider: "openai",
             name: "GPT-5",
           } as ModelDefinition,
-          modelSelection: {
-            ...ORG_ANTHROPIC,
-            modelId: "openai/gpt-5",
-          } as any,
+          extraBodyFields: {
+            modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
+          },
         }),
       ).rejects.toThrow(/organization's Anthropic key/);
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
