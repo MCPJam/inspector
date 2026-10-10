@@ -9,7 +9,17 @@ import { shouldQueryProjectId, useProjectServers } from "@/hooks/useProjects";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useHostList } from "@/hooks/useClients";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import {
+  loadedOrgModelConfig,
+  useHostedOrgModelConfig,
+} from "@/hooks/use-hosted-org-model-config";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
+import {
+  isOrgConnectionEligible,
+  orgKeysRequired,
+} from "@/components/chat-v2/shared/org-ai-policy";
+import { MANAGED_DEFAULT_JUDGE_MODEL } from "@/components/shared/session-quality/judge-config";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -37,6 +47,14 @@ export type RunPreflight = {
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /** Org provider keys a run model needs that the org has not enabled. */
   disabledProviders: string[];
+  /**
+   * While the organization requires its own provider keys: each required AI
+   * dependency that cannot run on its providers (an MCPJam-provided or
+   * personal target model, a hosted judge, a judge nobody chose). The run
+   * cannot start; the backend refuses the same launch. Absent when there are
+   * none.
+   */
+  orgKeyProblems?: string[];
 };
 
 export type RunPreflightState = RunPreflight & {
@@ -45,16 +63,133 @@ export type RunPreflightState = RunPreflight & {
   manageModels?: () => void;
 };
 
+type PreflightModel = {
+  model: string;
+  provider: string;
+  /** The saved selection beside a case model, when it has one. */
+  selection?: PreflightSelection | null;
+};
+
+type PreflightSelection = {
+  source?: string;
+  connectionRef?: { kind?: string; id?: string } | null;
+};
+
+type PreflightOrgConfig = {
+  providers: Array<
+    Pick<OrgModelProvider, "providerKey" | "enabled"> &
+      Partial<Pick<OrgModelProvider, "id" | "hasSecret" | "runtimeLocation">>
+  >;
+  aiKeyPolicy?: OrgVisibleConfig["aiKeyPolicy"];
+  aiReadiness?: OrgVisibleConfig["aiReadiness"];
+};
+
+/**
+ * The judge a launch requires: `default` grades on the platform default (none
+ * while the organization requires its own keys: a judge must be chosen);
+ * `explicit` names a saved model.
+ */
+export type PreflightJudge =
+  | { kind: "default" }
+  | {
+      kind: "explicit";
+      modelId: string;
+      selection?: PreflightSelection | null;
+    };
+
+const CHOOSE_ORG_MODEL = "Choose a model from an organization provider.";
+
+/** The backend's reason for a required judge nobody chose, under the policy. */
+export const CHOOSE_ORG_JUDGE_MODEL =
+  "Choose a judge model from an organization provider.";
+
+function eligibleConnection(
+  orgConfig: PreflightOrgConfig,
+  predicate: (provider: PreflightOrgConfig["providers"][number]) => boolean,
+): boolean {
+  return orgConfig.providers.some(
+    (provider) =>
+      predicate(provider) &&
+      isOrgConnectionEligible(
+        {
+          hasSecret: true,
+          ...provider,
+        },
+        orgConfig,
+      ),
+  );
+}
+
+/**
+ * Whether a saved model can run while the organization requires its own
+ * keys: an org selection on an eligible connection, or (for a legacy id) a
+ * provider the organization serves on an eligible connection. Hosted and
+ * personal-key models never can.
+ */
+function orgKeyModelProblem(
+  orgConfig: PreflightOrgConfig,
+  model: PreflightModel,
+  label: string,
+): string | null {
+  const source = model.selection?.source;
+  if (source === "org") {
+    const id = model.selection?.connectionRef?.id;
+    return eligibleConnection(orgConfig, (provider) =>
+      id ? provider.id === id : provider.providerKey === model.provider,
+    )
+      ? null
+      : `${label} uses an organization provider connection that can't run it while the organization requires its own keys. ${CHOOSE_ORG_MODEL}`;
+  }
+  if (
+    source === "hosted" ||
+    (!source && isMCPJamProvidedModel(model.model, model.provider))
+  ) {
+    return `${label} is an MCPJam-provided model, which this organization doesn't allow. ${CHOOSE_ORG_MODEL}`;
+  }
+  if (
+    !source &&
+    eligibleConnection(
+      orgConfig,
+      (provider) => provider.providerKey === model.provider,
+    )
+  ) {
+    return null;
+  }
+  return `${label} runs on a personal or local key, which this organization doesn't allow. ${CHOOSE_ORG_MODEL}`;
+}
+
+function orgKeyJudgeProblem(
+  orgConfig: PreflightOrgConfig,
+  judge: PreflightJudge,
+): string | null {
+  // No default judge runs on the organization's keys: a person picks one.
+  if (judge.kind === "default") return CHOOSE_ORG_JUDGE_MODEL;
+  return orgKeyModelProblem(
+    orgConfig,
+    {
+      model: judge.modelId,
+      provider:
+        classifyModelIdProvider(judge.modelId)?.provider ??
+        judge.modelId.split("/")[0] ??
+        "",
+      selection: judge.selection ?? { source: "hosted" },
+    },
+    "The judge",
+  );
+}
+
 /** What a run would fail on, judged only from what the browser already knows. */
 export function runPreflight(input: {
   serverRefs: readonly string[];
   servers: Readonly<Record<string, { connectionStatus?: string }>>;
   /** Absent while loading or outside a project: nothing reads as removed. */
   projectServers?: readonly { _id: string; name: string }[];
-  models: readonly { model: string; provider: string }[];
+  models: readonly PreflightModel[];
   availableModelIds?: readonly string[];
   /** Absent while loading: no provider reads as disabled. */
-  orgConfig?: { providers: { providerKey: string; enabled: boolean }[] };
+  orgConfig?: PreflightOrgConfig;
+  /** The suite's judge, when grading is required for this launch. */
+  judge?: PreflightJudge;
   refused?: readonly string[];
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /**
@@ -78,6 +213,36 @@ export function runPreflight(input: {
     if (!known && input.knownOnly) continue;
     const gone = !known && input.projectServers !== undefined;
     (gone ? removed : disconnected).push(ref);
+  }
+  const orgConfig = input.orgConfig;
+  if (orgConfig && orgKeysRequired(orgConfig)) {
+    // Under the policy the organization's own connections are the only
+    // source; "is the provider enabled" is subsumed by the problems below.
+    const problems = new Set<string>();
+    for (const model of input.models) {
+      if (
+        !model.provider ||
+        model.provider === "none" ||
+        isRuntimeChosenModelSentinel(model.model)
+      )
+        continue;
+      const problem = orgKeyModelProblem(orgConfig, model, model.model);
+      if (problem) problems.add(problem);
+    }
+    const judgeProblem = input.judge
+      ? orgKeyJudgeProblem(orgConfig, input.judge)
+      : null;
+    if (judgeProblem) problems.add(judgeProblem);
+    return {
+      disconnected,
+      removed,
+      refused: [...(input.refused ?? [])],
+      ...(input.refusalByEnvironment
+        ? { refusalByEnvironment: input.refusalByEnvironment }
+        : {}),
+      disabledProviders: [],
+      ...(problems.size > 0 ? { orgKeyProblems: [...problems] } : {}),
+    };
   }
   const disabledProviders = new Set<string>();
   for (const { model, provider } of input.orgConfig ? input.models : []) {
@@ -133,7 +298,7 @@ export function preflightTargets({
   targets?: readonly PreflightTarget[];
   /** The servers those cells run on, when the sheet picks them (a group). */
   serverRefs?: readonly string[];
-}): { serverRefs: string[]; models: { model: string; provider: string }[] } {
+}): { serverRefs: string[]; models: PreflightModel[] } {
   const environmentIds = suite.environmentIds ?? [];
   // Without planned cells, a suite without environments keeps its own launch:
   // an SDK suite's servers and models are what its CI ran, a legacy suite's
@@ -328,7 +493,9 @@ export function useSuiteRunPreflight({
     projectServers,
     knownOnly: Boolean(planned ?? suite.environmentIds?.length),
     availableModelIds: availableModels.map((model) => String(model.id)),
-    orgConfig,
+    // Pending reads as loading: nothing is judged before the policy is known.
+    orgConfig: loadedOrgModelConfig(orgConfig),
+    judge: preflightJudgeOf(suite),
   });
   return {
     ...preflight,
@@ -405,7 +572,36 @@ export function connectOutcome(
 }
 
 export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
-  return Boolean(preflight?.removed.length || preflight?.refused.length);
+  return Boolean(
+    preflight?.removed.length ||
+    preflight?.refused.length ||
+    preflight?.orgKeyProblems?.length,
+  );
+}
+
+/**
+ * The judge a launch of this suite requires, as the backend's launch
+ * preflight reads it: only when grading is on and automatic or gating.
+ */
+export function preflightJudgeOf(
+  suite: Pick<EvalSuite, "judgeConfig">,
+): PreflightJudge | undefined {
+  const goal = suite.judgeConfig?.goalCompletion;
+  if (goal?.enabled === false) return undefined;
+  const required =
+    goal?.autoRun === true ||
+    goal?.role === "gating" ||
+    goal?.role === "required";
+  if (!required) return undefined;
+  const modelId = goal?.judgeModel?.trim();
+  const selection = goal?.judgeSelection as PreflightSelection | undefined;
+  if (selection?.source === "org" && modelId) {
+    return { kind: "explicit", modelId, selection };
+  }
+  if (!modelId || modelId === MANAGED_DEFAULT_JUDGE_MODEL) {
+    return { kind: "default" };
+  }
+  return { kind: "explicit", modelId, selection: selection ?? null };
 }
 
 export function RunPreflightNotices({
@@ -430,11 +626,13 @@ export function RunPreflightNotices({
   } | null>(null);
   const { disconnected, removed, refused, disabledProviders, serverName } =
     preflight;
+  const orgKeyProblems = preflight.orgKeyProblems ?? [];
   if (
     !disconnected.length &&
     !removed.length &&
     !refused.length &&
-    !disabledProviders.length
+    !disabledProviders.length &&
+    !orgKeyProblems.length
   )
     return null;
   const openServers = (
@@ -468,6 +666,29 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
+      {orgKeyProblems.length > 0 && (
+        <div className="space-y-1" data-testid="preflight-org-key-problems">
+          {orgKeyProblems.map((message) => (
+            <p key={`org-keys:${message}`} className="text-destructive">
+              {message}
+            </p>
+          ))}
+          {preflight.manageModels ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={disabled}
+              onClick={preflight.manageModels}
+            >
+              Manage AI providers
+            </Button>
+          ) : (
+            <p className="text-muted-foreground">
+              Ask an organization admin if no organization model fits.
+            </p>
+          )}
+        </div>
+      )}
       {refused.map((message) => (
         <p key={`refused:${message}`} className="text-destructive">
           {message}{" "}

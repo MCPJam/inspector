@@ -20,9 +20,26 @@ export function ByokCreditsPage() {
           MCPJam features still use credits
         </h2>
         <p>
-          BYOK does not add MCPJam credits or cover usage of Evals, Swarm, User
-          Testing, or Insights. You need MCPJam credits separately for those
-          features, even when you have configured your own API key.
+          Unless your organization requires its own keys for all AI features
+          (see below), BYOK does not add MCPJam credits or cover usage of Evals,
+          Swarm, User Testing, or Insights. You need MCPJam credits separately
+          for those features, even when you have configured your own API key.
+        </p>
+      </section>
+      <section className="space-y-2" aria-labelledby="org-keys-billing">
+        <h2 id="org-keys-billing" className="text-lg font-medium">
+          When your organization uses its keys for all AI features
+        </h2>
+        <p>
+          An organization that turns on “Use your keys for all AI features” runs
+          every AI feature on its own providers, including chat, Evals, judges,
+          Swarm, User Testing, and Insights. MCPJam-provided models are disabled
+          for it. Model tokens are billed by the organization’s providers, not
+          paid with MCPJam credits.
+        </p>
+        <p>
+          MCPJam’s fixed product fees and usage limits still apply, so features
+          that charge a fixed fee still use credits for that fee.
         </p>
       </section>
       <section className="space-y-2">

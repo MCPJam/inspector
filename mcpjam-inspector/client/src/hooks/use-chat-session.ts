@@ -117,6 +117,10 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
+import {
+  isOrgPolicyLockReason,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
 import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
@@ -979,6 +983,20 @@ export type HiddenEnvironmentOffReason =
 function inferModelProviderFromId(modelId: string): ModelProvider {
   return providerForModelId(modelId) ?? "ollama";
 }
+
+/**
+ * The selection when the list offers nothing at all (the organization
+ * requires its own keys and has no eligible provider). The picker shows its
+ * own empty state; this only keeps every reader of `selectedModel` defined.
+ */
+export const NO_ORG_MODEL_PLACEHOLDER: ModelDefinition = Object.freeze({
+  id: "",
+  name: "No model available",
+  provider: "custom",
+  hosted: false,
+  disabled: true,
+  disabledReason: ORG_KEYS_MODEL_REASON,
+}) as ModelDefinition;
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
   // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
@@ -2907,6 +2925,29 @@ export function useChatSession(
     pendingHydration.resolve?.();
   }, []);
 
+  // Model selection with persistence
+  const {
+    selectedModelId,
+    setSelectedModelId,
+    selectedModelIds,
+    setSelectedModelIds: persistSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
+    isInitialized: isPersistedModelInitialized,
+  } = usePersistedModel();
+  // The saved lead and compare picks. When the organization's AI key policy
+  // no longer offers one, the composition keeps it as a disallowed row, so the
+  // saved choice stays selected (the picker warns on its trigger) instead of
+  // silently switching to another model.
+  const savedModelIdsSignature = [selectedModelId ?? "", ...selectedModelIds]
+    .filter(Boolean)
+    .join("\u0001");
+  const savedModelIds = useMemo(
+    () =>
+      savedModelIdsSignature ? savedModelIdsSignature.split("\u0001") : [],
+    [savedModelIdsSignature],
+  );
+
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
@@ -2927,6 +2968,7 @@ export function useChatSession(
         outOfCredits,
         freeTierOnly,
         hostedCatalog,
+        savedModelIds,
       }),
     [
       hasToken,
@@ -2940,6 +2982,7 @@ export function useChatSession(
       outOfCredits,
       freeTierOnly,
       hostedCatalog,
+      savedModelIds,
     ],
   );
   // A harness client offers only what its runtime can run; see
@@ -2958,16 +3001,6 @@ export function useChatSession(
     [composedModels, harnessId, harnessRuntimeVersion],
   );
 
-  // Model selection with persistence
-  const {
-    selectedModelId,
-    setSelectedModelId,
-    selectedModelIds,
-    setSelectedModelIds: persistSelectedModelIds,
-    multiModelEnabled,
-    setMultiModelEnabled,
-    isInitialized: isPersistedModelInitialized,
-  } = usePersistedModel();
   // Which provider the lead id was picked under. The id alone is ambiguous —
   // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
   // re-picking the SAME id under a different provider (OpenRouter's
@@ -3009,7 +3042,11 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all: the organization requires its own keys and
+      // has no eligible provider yet. A disabled placeholder, never
+      // `undefined` (INSPECTOR-CLIENT-222); sending is blocked below.
+      NO_ORG_MODEL_PLACEHOLDER;
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -3029,10 +3066,14 @@ export function useChatSession(
         (model) =>
           // Keep an out-of-credits model selected so the existing send →
           // limit-error → out-of-credits modal still fires. The gray-out
-          // must not silently switch the user off it. Other locks (guest,
-          // ollama-no-tools) stay unselectable.
+          // must not silently switch the user off it. The organization's
+          // AI key policy (a saved model it no longer allows, its settings
+          // still loading, a project no organization owns) never switches
+          // a saved choice either. Other locks (guest, ollama-no-tools)
+          // stay unselectable.
           !model.disabled ||
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON,
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
+          isOrgPolicyLockReason(model.disabledReason),
       );
 
     if (initialModelId) {
@@ -3141,14 +3182,21 @@ export function useChatSession(
   const isSelectedModelResolved = useMemo(() => {
     if (initialModelId) return true;
     if (isPersistedModelInitialized === false) return false;
+    // The organization's AI settings are still loading: the list is a locked
+    // placeholder, and its default must not be written back as a choice.
+    if (hostedOrgModelConfig?.pending) return false;
+    // Nothing to offer at all: the placeholder is not a choice either.
+    if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
       (model) => String(model.id) === selectedModelId,
     );
   }, [
     availableModels,
+    hostedOrgModelConfig?.pending,
     initialModelId,
     isPersistedModelInitialized,
+    selectedModel,
     selectedModelId,
   ]);
 
@@ -6038,7 +6086,11 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    // No model to send to: the organization's AI settings are still loading,
+    // or it requires its own keys and offers none yet.
+    hostedOrgModelConfig?.pending === true ||
+    selectedModel === NO_ORG_MODEL_PLACEHOLDER;
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was

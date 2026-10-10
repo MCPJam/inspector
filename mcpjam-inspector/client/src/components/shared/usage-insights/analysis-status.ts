@@ -1,4 +1,11 @@
 import type { InsightsAnalysisSummary } from "@/hooks/useUsageInsights";
+import {
+  isOrgKeysRefusalCode,
+  isRetryableOrgKeysRefusal,
+  notAnalyzedReason,
+  ORG_KEYS_REFUSAL_CODES,
+  VISITOR_ANALYSIS_UNAVAILABLE,
+} from "@/lib/org-keys-refusal";
 
 /**
  * What an empty insights view says about itself.
@@ -40,7 +47,28 @@ const FAILURE_COPY: Record<string, string> = {
   missing_api_key: "No model key is configured for analysis.",
   no_billing_subject: "This study has no owner to bill the analysis to.",
   empty_transcript: "The session has no messages to analyze.",
+  // The organization's AI key policy (or its own provider) refused the
+  // analysis. Configuration, not a failure of the analysis: "Not analyzed".
+  ...Object.fromEntries(
+    [...ORG_KEYS_REFUSAL_CODES, "org_model_unavailable"].map((code) => [
+      code,
+      notAnalyzedReason(code),
+    ]),
+  ),
 };
+
+/**
+ * Org-key refusals that lift on their own (the policy could not be read, the
+ * org's provider is temporarily failing) still offer Analyze now; the rest
+ * are permanent until the organization's configuration changes.
+ */
+function offersRetry(reason: string): boolean {
+  return isRetryableOrgKeysRefusal(reason);
+}
+
+function isOrgKeysAnalysisRefusal(reason: string): boolean {
+  return isOrgKeysRefusalCode(reason) || reason === "org_model_unavailable";
+}
 
 function defaultClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], {
@@ -56,7 +84,14 @@ function sessions(n: number): string {
 export function analysisStatus(
   summary: InsightsAnalysisSummary | null | undefined,
   now: number,
-  options: { formatTime?: (ms: number) => string } = {},
+  options: {
+    formatTime?: (ms: number) => string;
+    /**
+     * A share-link visitor: an analysis the organization's AI configuration
+     * stopped reads as unavailable, with no organization details.
+     */
+    visitor?: boolean;
+  } = {},
 ): AnalysisStatus | null {
   if (!summary) return null;
   const clock = options.formatTime ?? defaultClock;
@@ -142,11 +177,21 @@ export function analysisStatus(
     const [reason] =
       Object.entries(summary.failures).sort((a, b) => b[1] - a[1])[0] ?? [];
     const known = reason ? FAILURE_COPY[reason] : undefined;
+    const refused = reason ? isOrgKeysAnalysisRefusal(reason) : false;
+    if (refused && options.visitor) {
+      return {
+        kind: "failed",
+        title: "Not analyzed",
+        body: VISITOR_ANALYSIS_UNAVAILABLE,
+      };
+    }
     return {
       kind: "failed",
-      title: "Analysis failed",
+      title: refused ? "Not analyzed" : "Analysis failed",
       body: known ?? "Something went wrong analyzing these sessions.",
-      ...(known ? {} : { action: "analyze_now" as const }),
+      ...(!known || (reason && offersRetry(reason))
+        ? { action: "analyze_now" as const }
+        : {}),
     };
   }
 

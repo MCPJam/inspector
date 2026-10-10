@@ -88,6 +88,49 @@ test("classifyLaunchErrorExitCode — a billing failure disguised as FORBIDDEN s
   }
 });
 
+test("classifyLaunchErrorExitCode — an organization AI-key policy refusal reads as configuration (2), never auth (3)", () => {
+  // The org requires its own provider keys and the launch named an
+  // MCPJam-provided model (or a role with no org model). The credential is
+  // fine; the request's model selection is the thing to change.
+  for (const detailCode of [
+    "org_keys_required",
+    "org_model_unconfigured",
+    "org_runtime_unsupported",
+    "ai_scope_unresolved",
+    "provider_auth_failed",
+    "credential_missing",
+    // A launch preflight led by a reused model code: still the
+    // organization's configuration, never a retry.
+    "invalid_model",
+    "capability_missing",
+    "capability_unknown",
+  ]) {
+    assert.equal(
+      classifyLaunchErrorExitCode("FORBIDDEN", { code: detailCode }),
+      2,
+      detailCode,
+    );
+    assert.equal(
+      classifyLaunchErrorExitCode("FEATURE_NOT_SUPPORTED", { code: detailCode }),
+      2,
+      detailCode,
+    );
+    // A route that passed the code through as the wire code itself.
+    assert.equal(classifyLaunchErrorExitCode(detailCode), 2, detailCode);
+  }
+});
+
+test("classifyLaunchErrorExitCode — the policy's transient refusals are infrastructure (4)", () => {
+  for (const detailCode of ["ai_policy_unavailable", "provider_unavailable"]) {
+    assert.equal(
+      classifyLaunchErrorExitCode("FORBIDDEN", { code: detailCode }),
+      4,
+      detailCode,
+    );
+    assert.equal(classifyLaunchErrorExitCode(detailCode), 4, detailCode);
+  }
+});
+
 test("classifyLaunchErrorExitCode — a real FORBIDDEN with no billing detail stays auth-shaped (3)", () => {
   assert.equal(classifyLaunchErrorExitCode("FORBIDDEN"), 3);
   assert.equal(classifyLaunchErrorExitCode("FORBIDDEN", { code: "OTHER_REASON" }), 3);

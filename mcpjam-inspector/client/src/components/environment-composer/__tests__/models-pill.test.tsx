@@ -8,6 +8,7 @@ import {
 import type { ModelSelection } from "../environment-stack";
 
 const mockModels = vi.hoisted(() => ({
+  requireOrgKeys: false,
   availableModels: [
     {
       id: "google/gemini-2.5-flash",
@@ -29,6 +30,7 @@ const mockModels = vi.hoisted(() => ({
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: mockModels.availableModels,
+    requireOrgKeys: mockModels.requireOrgKeys,
   }),
 }));
 
@@ -48,6 +50,7 @@ const DEFAULT_MODELS = [...mockModels.availableModels];
 
 beforeEach(() => {
   mockModels.availableModels = [...DEFAULT_MODELS];
+  mockModels.requireOrgKeys = false;
 });
 
 /** A model row in the open picker (cmdk option; `aria-checked` in multi). */
@@ -224,6 +227,48 @@ describe("ModelsPill", () => {
     await user.click(stale);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
+      explicitTargets: [],
+    });
+  });
+
+  it("warns on the trigger about a picked model the organization's policy no longer allows", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [
+      {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+        hosted: false,
+        orgProvider: { providerKey: "anthropic", id: "conn_1" },
+      },
+    ];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
+    });
+    const trigger = screen.getByRole("button", { name: "Models" });
+    expect(trigger).toHaveAttribute(
+      "title",
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+    expect(trigger).toHaveTextContent("Claude Haiku 4.5");
+    expect(
+      screen.getByTestId("models-pill-org-keys-warning"),
+    ).toBeInTheDocument();
+
+    await user.click(trigger);
+    // Removable by its catalog name, never offered as a model row.
+    const stale = option("Claude Haiku 4.5");
+    expect(stale).toHaveTextContent(
+      "Not allowed here. Choose an organization model.",
+    );
+    expect(
+      screen.queryByRole("option", { name: /anthropic\/claude-haiku-4\.5/ }),
+    ).not.toBeInTheDocument();
+    await user.click(stale);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: false,
       explicitTargets: [],
     });
   });

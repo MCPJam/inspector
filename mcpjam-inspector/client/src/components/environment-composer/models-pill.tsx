@@ -21,14 +21,18 @@
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { useMemo } from "react";
-import { ChevronDown, Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   ModelSelector,
   type ModelSelectorExtraOption,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
-import type { ModelWorkload } from "@/components/chat-v2/shared/available-models";
+import {
+  orgKeysDisallowedNotice,
+  savedModelRow,
+  type ModelWorkload,
+} from "@/components/chat-v2/shared/available-models";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
@@ -112,9 +116,8 @@ export function ModelsPill({
    */
   workload?: ModelWorkload;
 }) {
-  const { availableModels, modelSelectionsSupported } = useAvailableModels({
-    projectId,
-  });
+  const { availableModels, modelSelectionsSupported, requireOrgKeys } =
+    useAvailableModels({ projectId });
   const harnessLockReasons = useMemo(() => {
     const byId = new Map<string, string>();
     if (!harnessTargets || harnessTargets.length === 0) return byId;
@@ -159,11 +162,20 @@ export function ModelsPill({
   const staleExplicit = [
     ...new Set(pickedRows.filter(({ row }) => !row).map(({ id }) => id)),
   ];
+  // While the organization requires its own keys, a picked model the list no
+  // longer offers is one the policy does not allow: named from the hosted
+  // catalog, and the trigger warns about it.
+  const disallowedNotice =
+    requireOrgKeys && staleExplicit.length > 0
+      ? orgKeysDisallowedNotice(savedModelRow(staleExplicit[0]!))
+      : undefined;
   const includeDefaults = value.includeClientDefaults;
   const nameForId = (id: string): string => {
     const row = pickedRows.find((picked) => picked.id === id)?.row;
     const listed =
-      row ?? availableModels.find((model) => String(model.id) === id);
+      row ??
+      availableModels.find((model) => String(model.id) === id) ??
+      (requireOrgKeys ? savedModelRow(id) : undefined);
     return (
       (listed && compactModelLabel(listed.name)) || compactModelLabel(id) || id
     );
@@ -304,11 +316,14 @@ export function ModelsPill({
       onSelect: () => toggleDefaults(!includeDefaults),
       ...(testId ? { testId: `${testId}-client-defaults` } : {}),
     },
-    // A picked id the catalog no longer lists stays removable.
+    // A picked id the catalog no longer lists (or the organization's policy
+    // no longer allows) stays removable.
     ...staleExplicit.map((id): ModelSelectorExtraOption => ({
       id: `stale:${id}`,
-      label: id,
-      description: "No longer in the catalog",
+      label: requireOrgKeys ? nameForId(id) : id,
+      description: requireOrgKeys
+        ? "Not allowed here. Choose an organization model."
+        : "No longer in the catalog",
       checked: true,
       onSelect: () => removeModelId(id),
     })),
@@ -323,8 +338,16 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
       >
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : null}
         <span className="min-w-0 flex-1 break-words">
           {[
             ...(includeDefaults
@@ -348,6 +371,7 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className={cn(
           "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
           "outline-none transition-colors",
@@ -357,7 +381,15 @@ export function ModelsPill({
           disabled && "cursor-not-allowed opacity-60",
         )}
       >
-        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : (
+          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {triggerLabel}
         </span>
@@ -451,6 +483,7 @@ export function ModelsPill({
       disabled={disabled}
       analyticsLocation="environment_composer"
       workload={workload}
+      requireOrgKeys={requireOrgKeys}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}

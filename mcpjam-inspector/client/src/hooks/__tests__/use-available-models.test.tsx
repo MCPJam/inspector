@@ -30,6 +30,9 @@ const PROJECT_VISIBLE_CONFIG = {
 };
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
+const projectConfigState: { current: unknown } = {
+  current: PROJECT_VISIBLE_CONFIG,
+};
 
 // Soft reads (billing, credits, quota, notifications) go through useQueries;
 // withUseQueries answers them from this mock's useQuery.
@@ -40,7 +43,7 @@ vi.mock("convex/react", async () =>
     queryCalls.push({ name, args });
     if (args === "skip") return undefined;
     if (name === "organizationModelProviders:getVisibleConfigForProject") {
-      return PROJECT_VISIBLE_CONFIG;
+      return projectConfigState.current;
     }
     // Org-wide fallback query intentionally returns nothing — the
     // project-scoped result must be sufficient on its own.
@@ -110,6 +113,7 @@ import { useAvailableModels } from "../use-available-models";
 describe("useAvailableModels", () => {
   beforeEach(() => {
     queryCalls.length = 0;
+    projectConfigState.current = PROJECT_VISIBLE_CONFIG;
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: false,
       availableModels: [],
@@ -200,5 +204,51 @@ describe("useAvailableModels", () => {
     expect(
       result.current.availableModels.map((m) => String(m.id))
     ).toContain("amazon.nova-micro-v1:0");
+  });
+
+  it("offers only eligible org models while the organization requires its own keys", () => {
+    projectConfigState.current = {
+      providers: [
+        { id: "conn_anthropic", providerKey: "anthropic", enabled: true, hasSecret: true },
+        {
+          id: "conn_router",
+          providerKey: "openrouter",
+          enabled: true,
+          hasSecret: true,
+          selectedModels: ["openai/gpt-4o"],
+        },
+      ],
+      aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+      aiReadiness: {
+        requireOrgKeys: true,
+        features: [],
+        operations: [],
+        eligibleConnectionIds: ["conn_anthropic"],
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useAvailableModels({ savedModelIds: ["anthropic/claude-haiku-4.5"] }),
+    );
+
+    expect(result.current.requireOrgKeys).toBe(true);
+    const offered = result.current.availableModels.filter((m) => !m.disabled);
+    expect(offered.length).toBeGreaterThan(0);
+    expect(offered.every((m) => m.orgProvider?.id === "conn_anthropic")).toBe(
+      true,
+    );
+    expect(
+      result.current.availableModels.find(
+        (m) => String(m.id) === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Choose a model from an organization provider.",
+    });
+  });
+
+  it("reports no policy for an organization that has not turned it on", () => {
+    const { result } = renderHook(() => useAvailableModels());
+    expect(result.current.requireOrgKeys).toBe(false);
   });
 });

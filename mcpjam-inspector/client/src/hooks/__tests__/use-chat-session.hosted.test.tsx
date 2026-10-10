@@ -3,12 +3,22 @@ import { useState } from "react";
 import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { generateId } from "ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
-import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
+import {
+  buildAvailableModels,
+  buildAvailableModelsFromOrgConfig,
+} from "@/components/chat-v2/shared/model-helpers";
 import { toast } from "sonner";
 
 const mockState = vi.hoisted(() => ({
@@ -783,6 +793,121 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
     expect(result.current.isMcpJamModel).toBe(false);
     expect(result.current.traceViewsSupported).toBe(true);
+    unmount();
+  });
+
+  it("keeps a saved hosted model selected, locked, once the org requires its own keys", async () => {
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    // The real builder drops hosted rows under the policy; this mock stands
+    // in for it (the unrestricted lookup still sees the hosted rows).
+    const original = vi
+      .mocked(buildAvailableModelsFromOrgConfig)
+      .getMockImplementation();
+    vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+      (config?: { aiKeyPolicy?: { requireOrgKeys: boolean } }) =>
+        config?.aiKeyPolicy?.requireOrgKeys
+          ? [{ ...orgOpenAiModel, hosted: false }]
+          : [orgOpenAiModel, allowedHostedModel, allowedOpenAiModel, guestModel],
+    );
+    onTestFinished(() => {
+      vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+        original!,
+      );
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            { id: "conn_openai", providerKey: "openai", enabled: true, hasSecret: true },
+          ],
+          aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(String(result.current.selectedModel.id)).toBe(
+        "anthropic/claude-haiku-4.5",
+      );
+    });
+    expect(result.current.selectedModel).toMatchObject({
+      disabled: true,
+      disabledReason: "Choose a model from an organization provider.",
+    });
+    expect(
+      result.current.availableModels.some(
+        (model) => model.hosted === true && !model.disabled,
+      ),
+    ).toBe(false);
+    unmount();
+  });
+
+  it("blocks sending with no organization model at all instead of crashing", async () => {
+    mockState.selectedModelId = "";
+    const original = vi
+      .mocked(buildAvailableModelsFromOrgConfig)
+      .getMockImplementation();
+    vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(() => []);
+    onTestFinished(() => {
+      vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+        original!,
+      );
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [],
+          aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels).toEqual([]);
+    });
+    expect(result.current.selectedModel).toMatchObject({
+      name: "No model available",
+      disabled: true,
+    });
+    expect(result.current.submitBlocked).toBe(true);
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it("locks every row and blocks sending while the org's AI settings load", async () => {
+    mockState.selectedModelId = "";
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: { providers: [], pending: true },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.length).toBeGreaterThan(0);
+    });
+    expect(result.current.availableModels.every((model) => model.disabled)).toBe(
+      true,
+    );
+    expect(result.current.submitBlocked).toBe(true);
+    expect(result.current.isSelectedModelResolved).toBe(false);
     unmount();
   });
 

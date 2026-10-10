@@ -16,6 +16,12 @@ export interface OrgModelProvider {
   displayName?: string;
   selectedModels?: string[];
   hasSecret: boolean;
+  /**
+   * Where the connection runs (`cloud`: MCPJam calls the provider; `local`:
+   * an Inspector does). Absent from older backends; Ollama and custom
+   * connections then default to `local`, every other provider to `cloud`.
+   */
+  runtimeLocation?: "cloud" | "local";
 }
 
 export interface OrgModelConfigResult {

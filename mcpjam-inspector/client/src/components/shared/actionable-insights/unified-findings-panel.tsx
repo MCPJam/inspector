@@ -21,6 +21,10 @@ import {
 } from "./findings-carousel";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
+import {
+  notAnalyzedLine,
+  VISITOR_ANALYSIS_UNAVAILABLE,
+} from "@/lib/org-keys-refusal";
 
 export type UnifiedFindingsMode = "deterministic" | "ai";
 export type FindingsAnalysisAction = {
@@ -40,7 +44,14 @@ export type UnifiedFindingsPanelProps = {
   observationCoverage: InsightsObservationCoverage | null;
   mode: UnifiedFindingsMode;
   analyze: FindingsAnalysisAction;
-  analysisFailure?: { errorCode?: string } | null;
+  /**
+   * The AI analysis that did not produce findings: a failed enrich job, or an
+   * automatic analysis that was skipped (`skipped`, e.g. the organization
+   * requires its own keys and has no model for analysis).
+   */
+  analysisFailure?: { errorCode?: string; skipped?: boolean } | null;
+  /** A share-link visitor: no organization configuration details. */
+  visitor?: boolean;
   /**
    * The FREE deterministic build.
    *
@@ -118,6 +129,33 @@ const ANALYSIS_FAILURE_DETAIL: Record<string, string> = {
   spend_budget_reached: "The analysis spend limit was reached.",
 };
 
+/**
+ * An analysis the organization's AI key policy kept from running: the
+ * automatic findings skip (`org_model_unavailable`) or a refusal code on a
+ * failed analysis. A sentence of its own — "Not analyzed", never "did not
+ * complete": nothing broke, and nothing resumes until an admin configures a
+ * model.
+ */
+
+/** The line a stopped analysis reads as, for a member or a visitor. */
+export function analysisFailureLine(
+  failure: { errorCode?: string; skipped?: boolean },
+  options: { visitor?: boolean } = {},
+): string {
+  const code = failure.errorCode?.trim().toLowerCase();
+  const notAnalyzed = notAnalyzedLine(code);
+  if (notAnalyzed) {
+    // A share-link visitor learns that analysis is unavailable, never why the
+    // organization's configuration stopped it.
+    return options.visitor ? VISITOR_ANALYSIS_UNAVAILABLE : notAnalyzed;
+  }
+  if (failure.skipped) return "AI analysis was not run for this run.";
+  const detail = code ? ANALYSIS_FAILURE_DETAIL[code] : undefined;
+  return detail
+    ? `AI analysis did not complete. ${detail}`
+    : "AI analysis did not complete.";
+}
+
 export function UnifiedFindingsPanel({
   runPending = false,
   analysis,
@@ -129,6 +167,7 @@ export function UnifiedFindingsPanel({
   mode,
   analyze,
   analysisFailure,
+  visitor = false,
   build,
   backendUnavailableNote,
   scopeControl,
@@ -232,13 +271,9 @@ export function UnifiedFindingsPanel({
         <p
           className="mb-4 text-xs text-muted-foreground"
           data-testid="unified-findings-analysis-failed"
-          title={analysisFailure.errorCode}
+          title={visitor ? undefined : analysisFailure.errorCode}
         >
-          AI analysis did not complete.
-          {analysisFailure.errorCode &&
-          ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]
-            ? ` ${ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]}`
-            : null}
+          {analysisFailureLine(analysisFailure, { visitor })}
         </p>
       ) : null}
 

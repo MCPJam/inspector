@@ -415,3 +415,103 @@ describe("JudgesSection — reasoning effort", () => {
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
   });
 });
+
+describe("JudgesSection — organization requires its own keys", () => {
+  it("does not promise MCPJam credits for grading", () => {
+    render(
+      <JudgesSection
+        chrome="bare"
+        value={{ goalCompletion: { enabled: true, autoRun: true } }}
+        availableModels={[]}
+        onChange={vi.fn()}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.getByText(/Runs on your organization’s AI providers\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Uses credits/)).toBeNull();
+  });
+
+  it("keeps the credits note otherwise", () => {
+    renderBare({ goalCompletion: { enabled: true, autoRun: true } });
+    expect(screen.getByText(/Uses credits\./)).toBeInTheDocument();
+  });
+
+  const orgSonnet: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
+    judgeEligible: true,
+  };
+
+  function renderOrgPicker(judgeModel?: string) {
+    const onChange = vi.fn();
+    render(
+      <JudgesSection
+        chrome="panel"
+        value={{
+          goalCompletion: {
+            enabled: true,
+            autoRun: true,
+            ...(judgeModel ? { judgeModel } : {}),
+          },
+        }}
+        availableModels={[orgSonnet]}
+        onChange={onChange}
+        saveModelSelections
+        requireOrgKeys
+      />,
+    );
+    return { onChange };
+  }
+
+  it("asks for a judge model and lists organization models only, with no default row", async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderOrgPicker();
+    const trigger = screen.getByRole("button", { name: "Judge model" });
+    expect(trigger).toHaveTextContent("Choose a judge model");
+
+    await user.click(trigger);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(
+      screen.queryByText(/Default \(organization Smart model\)/),
+    ).toBeNull();
+    expect(screen.queryByText("Free models")).toBeNull();
+    expect(screen.queryByText("Your providers")).toBeNull();
+
+    await user.click(
+      screen.getByRole("option", { name: /Claude Sonnet 4\.5/ }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      goalCompletion: expect.objectContaining({
+        judgeSelection: expect.objectContaining({ source: "org" }),
+      }),
+    });
+  });
+
+  it("reads the managed default as no judge", () => {
+    renderOrgPicker(MANAGED_DEFAULT_JUDGE_MODEL);
+    expect(
+      screen.getByRole("button", { name: "Judge model" }),
+    ).toHaveTextContent("Choose a judge model");
+  });
+
+  it("warns about a saved hosted judge on the trigger only, by its catalog name", async () => {
+    const user = userEvent.setup();
+    renderOrgPicker("anthropic/claude-haiku-4.5");
+    const trigger = screen.getByRole("button", { name: "Judge model" });
+    expect(trigger).toHaveTextContent(
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+    expect(trigger).not.toHaveTextContent("anthropic/claude-haiku-4.5");
+
+    await user.click(trigger);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(
+      screen.queryByRole("option", { name: /Claude Haiku 4\.5/ }),
+    ).toBeNull();
+  });
+});

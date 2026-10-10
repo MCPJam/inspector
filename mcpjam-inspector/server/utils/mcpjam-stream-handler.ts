@@ -36,6 +36,7 @@ import {
   describeAsSlug,
   describeError,
   isNormalizedError,
+  orgPolicySlugForCode,
   readModelOutputImage,
   type NormalizedError,
 } from "@mcpjam/sdk";
@@ -691,14 +692,61 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/** The backend route an org-key-policy refusal arrived on. */
+const ORG_STREAM_PATH = "/stream/org";
+
+/**
+ * Where a stream failure came from, for the codes whose meaning depends on the
+ * route: `credential_missing` is the org connection's refusal only on
+ * `/stream/org`.
+ */
+export type BackendStreamFailureContext = {
+  /** The backend path the request was sent to (`/stream`, `/stream/org`). */
+  endpointPath?: string;
+};
+
+/**
+ * The catalog slug for an organization AI-key policy refusal ("Use your keys
+ * for all AI features"), or `undefined` when `code` is not one.
+ *
+ * Each policy code has its own `org/*` slug, whose catalog origin is the
+ * policy's verdict: a configuration refusal is `user_config` (the
+ * organization's own settings — never an outage, never an account limit, never
+ * paged), `provider_unavailable` is `ambiguous`, and only
+ * `ai_policy_unavailable` — the backend failing closed on its own policy read —
+ * is `mcpjam`. Read by status alone they would be badly wrong: a 403
+ * `org_keys_required` would become "the provider rejected the key", and a 503
+ * `provider_unavailable` an MCPJam outage.
+ *
+ * `credential_missing` is the org connection's refusal (deleted, disabled, no
+ * key) only when it arrives on `/stream/org`; elsewhere the code is left to
+ * the ordinary rules.
+ */
+function orgPolicyRefusalSlug(
+  code: string | undefined,
+  context: BackendStreamFailureContext | undefined,
+): string | undefined {
+  const slug = orgPolicySlugForCode(code);
+  if (slug) return slug;
+  if (code === "credential_missing" && context?.endpointPath === ORG_STREAM_PATH)
+    return "org/credential_missing";
+  return undefined;
+}
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // The organization's AI-key policy refused the request. Before every status
+  // rule below: see {@link orgPolicyRefusalSlug}.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   // Before the status branches: a body that names MCPJam settles ownership no
   // matter which upstream status was mirrored onto it. The slug still comes
@@ -764,10 +812,17 @@ export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // A mid-stream policy refusal (the org's provider rejecting its key, or
+  // throttling) carries the UPSTREAM status, which read alone would blame the
+  // user's key or page us. Its code settles it.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   if (code === "platform_free_budget_exhausted")
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
@@ -2062,6 +2117,40 @@ export function isAgentRefusalCode(code: string | undefined): boolean {
 }
 
 /**
+ * The organization AI-key policy's refusals that are the backend working as
+ * designed: the organization's own configuration said no (it requires its own
+ * keys, has no model for the role, its connection is gone or its key was
+ * rejected) or its own provider is throttling. Recognized as expected
+ * refusals at EVERY status — they arrive as 403, 422 and 503, not only as the
+ * 200 spend-precheck shape — so none of them is captured as an MCPJam fault.
+ *
+ * Kept OUT of {@link USER_OWNED_DENIAL_CODES} on purpose: that set mirrors the
+ * account-limit vocabulary (`isAccountLimit`, pinned by a parity test), and an
+ * organization that requires its own keys has not hit an account limit —
+ * buying credits lifts none of these, and a whole-run "account limit" stop
+ * would give the wrong advice.
+ *
+ * `ai_policy_unavailable` is deliberately ABSENT: it is the backend failing
+ * closed on its own policy read, which is ours and should be counted.
+ */
+const AI_POLICY_RECOGNIZED_DENIAL_CODES: ReadonlySet<string> = new Set([
+  "org_keys_required",
+  "org_model_unconfigured",
+  "org_runtime_unsupported",
+  "ai_scope_unresolved",
+  "provider_auth_failed",
+  "provider_unavailable",
+  "credential_missing",
+]);
+
+/** See {@link AI_POLICY_RECOGNIZED_DENIAL_CODES}. */
+export function isAiPolicyRecognizedDenialCode(
+  code: string | undefined,
+): boolean {
+  return AI_POLICY_RECOGNIZED_DENIAL_CODES.has(code ?? "");
+}
+
+/**
  * Parse the `errorText` of a mid-stream `{type:"error"}` chunk.
  *
  * SEPARATE from {@link parseEngineErrorBody} because the two shapes differ.
@@ -2322,6 +2411,9 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The backend path this stream came from, so an error chunk's code can be
+  // read per route (`credential_missing` on `/stream/org`).
+  dispatchPath?: string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2677,6 +2769,7 @@ async function processStream(
             parsed.statusCode,
             errorText,
             parsed.code,
+            dispatchPath !== undefined ? { endpointPath: dispatchPath } : undefined,
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -3934,6 +4027,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       res.status,
       errorText,
       parsed.code,
+      { endpointPath: dispatchPath },
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3943,8 +4037,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     // happen to carry a code would silence exactly the failures worth paging
     // on. Only the codes below are user-owned refusals from a backend that is
     // working correctly, so only they skip the boundary.
+    //
+    // The organization AI-key policy's refusals are recognized at any status
+    // (they arrive as 403/422/503): the org's own configuration, or its own
+    // provider, said no — see {@link AI_POLICY_RECOGNIZED_DENIAL_CODES}.
     const isRecognizedDenial =
-      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+      (isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "")) ||
+      isAiPolicyRecognizedDenialCode(parsed.code);
     // Through the reporter, not a bare capture call: reportRouteFailure runs
     // the same maybeCaptureOriginError decision (source becomes the identical
     // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
@@ -4051,6 +4150,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onLiveTextDelta,
     abortSignal,
     onToolCall,
+    dispatchPath,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(

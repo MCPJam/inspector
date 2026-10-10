@@ -82,9 +82,13 @@ import {
   type EvalCaseBatchItem,
 } from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
+import { isServiceCredentialUnavailableError } from "../../services/service-credential.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
+  orgRequiresOwnKeys,
   resolveOrgModelConfig,
+  type ResolveOrgModelConfigAuth,
+  type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
 import {
@@ -2406,6 +2410,43 @@ export async function fetchRunPinnedSkillsWithRetry(
  */
 
 /**
+ * The organization config a run carries when the request brings its own model
+ * keys. Those keys never consult the organization, so its AI-key policy is
+ * read anyway: while the organization requires its own keys, the run carries
+ * the resolved config (which withholds every key), and the runner refuses
+ * personal, local and hosted selections with `org_keys_required` instead of
+ * running them on the request's keys. Off the policy the request's keys run
+ * exactly as before, with no org config.
+ *
+ * A build that cannot reach the organization's config at all (no backend URL,
+ * no credential or bearer, a backend without the route) has no policy to read
+ * and runs as before. A read that FAILS fails closed: the run is refused as
+ * retryable `ai_policy_unavailable` rather than spending the request's keys
+ * on data whose policy is unknown.
+ */
+export async function orgPolicyConfigForClientKeys(
+  target: ResolveOrgModelConfigTarget,
+  auth: ResolveOrgModelConfigAuth,
+): Promise<ResolvedOrgModelConfig | undefined> {
+  if (!process.env.CONVEX_HTTP_URL) return undefined;
+  try {
+    const config = await resolveOrgModelConfig(target, auth);
+    return orgRequiresOwnKeys(config) ? config : undefined;
+  } catch (error) {
+    if (isServiceCredentialUnavailableError(error)) return undefined;
+    logger.warn("[evals] Failed to read the org AI-key policy", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new WebRouteError(
+      503,
+      ErrorCode.SERVER_UNREACHABLE,
+      "The organization's AI key policy could not be read, so this run can't start on its own keys yet. Try again.",
+      { code: "ai_policy_unavailable", isRetryable: true },
+    );
+  }
+}
+
+/**
  * Whether a keyed launch that failed the server preflight was already started
  * by an earlier attempt with the same key.
  *
@@ -3125,6 +3166,27 @@ export async function prepareEvalRun(
       : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgConfigTarget) {
+    // The request's own keys: still bound by the organization's policy. An
+    // unreadable policy refuses the run, which is already created here, so
+    // its pending iterations are failed before the refusal goes out.
+    try {
+      resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+        orgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          scenarioId,
+          accessVersion,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {
       try {
@@ -3777,6 +3839,18 @@ export async function prepareSingleCaseExecution(
   const orgModelConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : undefined;
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgModelConfigTarget) {
+    // The request's own keys: still bound by the organization's policy.
+    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+      orgModelConfigTarget,
+      {
+        bearerToken: convexAuthToken,
+        scenarioId,
+        accessVersion,
+        serverIds: resolvedServerIds,
+      },
+    );
+  }
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&

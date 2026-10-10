@@ -521,6 +521,79 @@ function classifyByMessageHttp(message: string): string | undefined {
 }
 
 /**
+ * The organization AI-key policy's refusal codes ("Use your keys for all AI
+ * features"), each with its catalog slug. Mirrors `AI_EXECUTION_REFUSAL_CODES`
+ * in the inspector's `shared/ai-execution-refusal.ts`.
+ */
+const ORG_POLICY_SLUG_BY_CODE: Readonly<Record<string, string>> = {
+  org_keys_required: "org/keys_required",
+  org_model_unconfigured: "org/model_unconfigured",
+  org_runtime_unsupported: "org/runtime_unsupported",
+  ai_scope_unresolved: "org/scope_unresolved",
+  ai_policy_unavailable: "org/policy_unavailable",
+  provider_auth_failed: "org/provider_auth_failed",
+  provider_unavailable: "org/provider_unavailable",
+};
+
+/**
+ * The catalog slug for an organization AI-key policy refusal code, or
+ * `undefined` when `code` is not one. Case-insensitive.
+ */
+export function orgPolicySlugForCode(
+  code: string | null | undefined,
+): string | undefined {
+  if (typeof code !== "string") return undefined;
+  return ORG_POLICY_SLUG_BY_CODE[code.trim().toLowerCase()];
+}
+
+/**
+ * Codes distinctive enough to read out of free text: nothing but the policy
+ * spells them.
+ */
+const DISTINCT_ORG_POLICY_CODE_IN_TEXT =
+  /\b(org_keys_required|org_model_unconfigured|org_runtime_unsupported|ai_scope_unresolved|ai_policy_unavailable)\b/i;
+
+/**
+ * The two generic-sounding codes are read from text only where the text says
+ * it is a code: a JSON `"code"` field, the engine's `(code` / `(code, HTTP n)`
+ * suffix, or a `code:` lead. An MCP server's own prose saying "provider
+ * unavailable" must not become the org's provider refusing.
+ */
+const GENERIC_ORG_POLICY_CODE_IN_TEXT =
+  /"code"\s*:\s*"(provider_auth_failed|provider_unavailable)"|\((provider_auth_failed|provider_unavailable)\b|(?:^|[\s—-])(provider_auth_failed|provider_unavailable):/i;
+
+function orgPolicyRefusal(
+  error: unknown,
+  message: string,
+): { slug: string; rawCode: string } | undefined {
+  if (error && typeof error === "object") {
+    const record = error as {
+      code?: unknown;
+      data?: { code?: unknown };
+      body?: { code?: unknown };
+      failureCode?: unknown;
+    };
+    for (const candidate of [
+      record.data?.code,
+      record.body?.code,
+      record.code,
+      record.failureCode,
+    ]) {
+      if (typeof candidate !== "string") continue;
+      const slug = orgPolicySlugForCode(candidate);
+      if (slug) return { slug, rawCode: candidate.trim().toLowerCase() };
+    }
+  }
+  const textMatch =
+    DISTINCT_ORG_POLICY_CODE_IN_TEXT.exec(message) ??
+    GENERIC_ORG_POLICY_CODE_IN_TEXT.exec(message);
+  const code = textMatch?.slice(1).find((group) => group !== undefined);
+  if (!code) return undefined;
+  const slug = orgPolicySlugForCode(code);
+  return slug ? { slug, rawCode: code.toLowerCase() } : undefined;
+}
+
+/**
  * Resolve a slug for the given error, walking the priority list. Returns
  * `internal/unknown` slug if nothing matches.
  */
@@ -536,6 +609,11 @@ function resolveSlug(error: unknown): {
   const platformCode = record?.data?.code ?? record?.code;
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
+  // The organization AI-key policy's refusals, ahead of the status branches:
+  // they arrive as 403/422/503, which read by status alone would become "your
+  // MCP server rejected the token" or an outage.
+  const orgPolicy = orgPolicyRefusal(error, message);
+  if (orgPolicy) return orgPolicy;
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.

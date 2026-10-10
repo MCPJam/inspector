@@ -24,6 +24,7 @@ import {
   isEntityNotFound,
 } from "../internal-backend.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { isOrgKeyPolicyRefusalCode } from "../../../shared/ai-execution-refusal.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
@@ -176,6 +177,7 @@ export async function requestManagedObservations(
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {
         error?: unknown;
+        code?: unknown;
       } | null;
       const detail = backendFailureText({
         source: "readiness-observations",
@@ -183,6 +185,19 @@ export async function requestManagedObservations(
         detail: body?.error,
         fallback: `HTTP ${response.status}`,
       });
+      // The organization requires its own provider keys and cannot serve this
+      // pass: a configuration state ("Not analyzed"), not a provider outage.
+      // Read off the code, never the prose.
+      if (
+        typeof body?.code === "string" &&
+        isOrgKeyPolicyRefusalCode(body.code)
+      ) {
+        return {
+          status: "provider-failed",
+          reason: "ai_unavailable",
+          detail: `the organization's AI configuration could not run the observation pass (${body.code.trim().toLowerCase()}): ${detail}`,
+        };
+      }
       return {
         status: "provider-failed",
         reason: "provider_error",

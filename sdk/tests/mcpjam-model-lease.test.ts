@@ -1124,6 +1124,60 @@ describe("refusal detail and classification", () => {
     ).toBe("auth");
   });
 
+  it("reads the organization AI-key policy as policy, never as bad credentials", async () => {
+    // The broker refuses a lease start with 403 `org_keys_required`: the key
+    // works, the organization requires its own provider keys.
+    const direct = await refusal(
+      {
+        ok: false,
+        code: "org_keys_required",
+        error:
+          "This organization requires its own provider keys for AI features.",
+        remediation: "choose_org_model",
+      },
+      403
+    );
+    expect(direct.status).toBe(403);
+    expect(classifyMcpjamLeaseError(direct)).toBe("policy");
+    // The v1 envelope files it under FORBIDDEN; the nested code decides.
+    const nested = await refusal(
+      {
+        code: "FORBIDDEN",
+        message: "Refused.",
+        details: { code: "org_model_unconfigured" },
+      },
+      403
+    );
+    expect(classifyMcpjamLeaseError(nested)).toBe("policy");
+    for (const code of [
+      "org_runtime_unsupported",
+      "ai_scope_unresolved",
+      "provider_auth_failed",
+    ]) {
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 409 })
+        )
+      ).toBe("policy");
+    }
+  });
+
+  it("reads the policy's transient refusals as unavailable", () => {
+    for (const code of ["ai_policy_unavailable", "provider_unavailable"]) {
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 503 })
+        )
+      ).toBe("unavailable");
+      // Even when the proxy answers it on its 409 refusal rail.
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 409 })
+        )
+      ).toBe("unavailable");
+    }
+  });
+
   it("tells a throttle and an outage apart from both", async () => {
     expect(
       classifyMcpjamLeaseError(

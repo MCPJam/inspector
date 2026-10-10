@@ -872,6 +872,57 @@ describe("analysis states and provenance", () => {
   });
 });
 
+describe("analysis the organization's AI key policy stopped", () => {
+  it("reads the automatic findings skip as Not analyzed", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "org_model_unavailable", skipped: true },
+    });
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed").textContent,
+    ).toBe(
+      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    );
+  });
+
+  it.each([
+    [
+      "org_keys_required",
+      /^Not analyzed: this organization requires its own provider keys/,
+    ],
+    [
+      "provider_auth_failed",
+      /^Not analyzed: the organization's provider rejected its API key/,
+    ],
+    ["credential_missing", /^Not analyzed: /],
+  ])("names %s without 'did not complete'", (errorCode, line) => {
+    renderPanel({ analysisFailure: { errorCode } });
+    const note = screen.getByTestId("unified-findings-analysis-failed");
+    expect(note.textContent).toMatch(line);
+    expect(note.textContent).not.toMatch(/did not complete/);
+  });
+
+  it("tells a share-link visitor only that analysis is unavailable", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "org_model_unavailable", skipped: true },
+      visitor: true,
+    });
+    const note = screen.getByTestId("unified-findings-analysis-failed");
+    expect(note.textContent).toBe(
+      "This organization's analysis is unavailable.",
+    );
+    expect(note).not.toHaveAttribute("title");
+  });
+
+  it("words another skip neutrally", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "auto_limit_reached", skipped: true },
+    });
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed").textContent,
+    ).toBe("AI analysis was not run for this run.");
+  });
+});
+
 describe("automatic analysis failure note", () => {
   it("explains analyzer version changes", () => {
     renderPanel({ analysisFailure: { errorCode: "superseded" } });

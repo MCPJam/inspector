@@ -1,6 +1,11 @@
 import { DEFAULTS } from "../evals/constants";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
+import {
+  aiLaunchProblemsOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
+import { AiLaunchProblemsList } from "@/components/shared/ai-launch-problems-list";
 import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -215,10 +220,16 @@ export function SuiteRunReviewContent({
   );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The backend's launch refusal under the org's AI key policy lists every
+  // dependency that can't run on the organization's providers.
+  const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
   const [connecting, setConnecting] = useState(false);
   // A failed start's reason is about that setup; a different one gets a
   // fresh try.
-  useEffect(() => setError(null), [iterations, selected, matrix?.signature]);
+  useEffect(() => {
+    setError(null);
+    setLaunchProblems([]);
+  }, [iterations, selected, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -261,6 +272,7 @@ export function SuiteRunReviewContent({
     lock.current = true;
     setStarting(true);
     setError(null);
+    setLaunchProblems([]);
     try {
       await onStart(
         matrix
@@ -277,8 +289,12 @@ export function SuiteRunReviewContent({
     } catch (failure) {
       // A ConvexError keeps its reason in `data`; its message is the raw
       // "[CONVEX M(…)] Server Error".
+      const problems = aiLaunchProblemsOf(failure);
+      setLaunchProblems(problems);
       setError(
-        convexErrMessage(failure, "Could not start this run. Try again."),
+        problems.length > 0
+          ? "This organization requires its own provider keys for AI features, and this run has dependencies that can't run on them:"
+          : convexErrMessage(failure, "Could not start this run. Try again."),
       );
     } finally {
       lock.current = false;
@@ -438,9 +454,12 @@ export function SuiteRunReviewContent({
             </p>
           </div>
           {(error || (!starting && disabledReason)) && (
-            <p role="alert" className="text-xs text-destructive">
-              {error ?? disabledReason}
-            </p>
+            <div role="alert" className="text-xs text-destructive">
+              <p>{error ?? disabledReason}</p>
+              {error ? (
+                <AiLaunchProblemsList problems={launchProblems} />
+              ) : null}
+            </div>
           )}
           <Button
             className="w-full"

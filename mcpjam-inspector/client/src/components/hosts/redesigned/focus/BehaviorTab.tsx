@@ -38,7 +38,12 @@ import {
 import { useHarnessCapabilities } from "@/hooks/useHarnessCapabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  orgKeysDisallowedRow,
+  savedModelRow,
+} from "@/components/chat-v2/shared/available-models";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
@@ -205,8 +210,11 @@ export function BehaviorTab({
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
-  const { availableModels: catalogModels, modelSelectionsSupported } =
-    useAvailableModels();
+  const {
+    availableModels: catalogModels,
+    modelSelectionsSupported,
+    requireOrgKeys,
+  } = useAvailableModels();
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
   const availableModels = useMemo(
@@ -231,6 +239,15 @@ export function BehaviorTab({
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = resolvedModelRow;
     if (match) return match;
+    // A saved model the organization's AI key policy no longer allows: the
+    // trigger warns, by its catalog name, and the menu offers org models.
+    if (
+      requireOrgKeys &&
+      draft.modelId &&
+      !isRuntimeChosenModelSentinel(draft.modelId)
+    ) {
+      return orgKeysDisallowedRow(savedModelRow(draft.modelId));
+    }
     // Stale or org-revoked id (or an empty/still-loading draft): keep the
     // raw id visible in the trigger instead of silently coercing to an
     // available model. Empty provider → ProviderLogo renders no icon.
@@ -239,7 +256,7 @@ export function BehaviorTab({
       name: draft.modelId || "Select model",
       provider: "" as ModelDefinition["provider"],
     };
-  }, [resolvedModelRow, draft.modelId]);
+  }, [resolvedModelRow, draft.modelId, requireOrgKeys]);
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
@@ -365,6 +382,7 @@ export function BehaviorTab({
               <ModelSelector
                 currentModel={currentModel}
                 availableModels={availableModels}
+                requireOrgKeys={requireOrgKeys}
                 onModelChange={(model) => {
                   // Always written with the id: a selection left over from
                   // the previous model would disagree with it. Only where the

@@ -123,6 +123,7 @@ import type { EffectiveCapabilitySet } from "../services/environments/effective-
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -1508,6 +1509,10 @@ export async function streamWebChatTurn(
     // Cloud-only providers skip the /stream/org/resolve round-trip — the
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
+    // A refusal by the organization's AI-key policy (a local-runtime
+    // connection when the org requires its own keys, a connection that is
+    // gone) is answered as the refusal it is, never as an outage and never by
+    // falling back to another rail.
     const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
       ? await resolveOrgProviderRuntime(
           persist.projectId,
@@ -1535,7 +1540,9 @@ export async function streamWebChatTurn(
                 }
               : {}),
           },
-        )
+        ).catch((error: unknown) => {
+          throw asAiRefusalRouteError(error) ?? error;
+        })
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(

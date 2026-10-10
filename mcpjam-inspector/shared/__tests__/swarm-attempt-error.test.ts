@@ -917,3 +917,69 @@ describe("one verdict on a hold", () => {
     }
   });
 });
+
+describe("humanizeSwarmAttemptError — the organization AI-key policy", () => {
+  const POLICY_REFUSAL =
+    'swarm-agent https://deployment.convex.site/journey-execution/persona-next-turn failed (403): {"ok":false,"code":"org_keys_required","error":"org_keys_required","isRetryable":false,"remediation":"choose_org_model"}';
+
+  it("reads the backend's envelope as a configuration refusal in plain words", () => {
+    const info = humanizeSwarmAttemptError(POLICY_REFUSAL);
+    expect(info.code).toBe("org_keys_required");
+    expect(info.httpStatus).toBe(403);
+    expect(info.isRetryable).toBe(false);
+    expect(info.message).toContain(
+      "This organization requires its own provider keys for AI features.",
+    );
+    expect(info.message).not.toMatch(/https?:|convex/);
+  });
+
+  it("reads the code off the stored row and off the engine's detail suffix", () => {
+    expect(
+      humanizeSwarmAttemptError("anything", "org_model_unconfigured"),
+    ).toMatchObject({
+      code: "org_model_unconfigured",
+      isRetryable: false,
+    });
+    expect(
+      humanizeSwarmAttemptError(
+        "The org provider rejected the key. (provider_auth_failed, HTTP 422)",
+      ),
+    ).toMatchObject({
+      code: "provider_auth_failed",
+      httpStatus: 422,
+      isRetryable: false,
+    });
+  });
+
+  it("keeps the policy's transient refusals retryable", () => {
+    expect(
+      humanizeSwarmAttemptError(
+        'Backend stream error: 503 {"ok":false,"code":"provider_unavailable","error":"x","isRetryable":true}',
+      ),
+    ).toMatchObject({ code: "provider_unavailable", isRetryable: true });
+  });
+
+  it("is idempotent on its own output", () => {
+    const once = humanizeSwarmAttemptError(POLICY_REFUSAL);
+    expect(humanizeSwarmAttemptError(once.message).message).toBe(once.message);
+  });
+
+  it("is never an account limit", () => {
+    for (const code of [
+      "org_keys_required",
+      "org_model_unconfigured",
+      "org_runtime_unsupported",
+      "ai_scope_unresolved",
+      "ai_policy_unavailable",
+      "provider_auth_failed",
+      "provider_unavailable",
+    ]) {
+      const info = humanizeSwarmAttemptError(
+        `{"ok":false,"code":"${code}","error":"Refused."}`,
+      );
+      expect(isAccountLimit(info.message, info.code)).toBe(false);
+      expect(accountLimitCode(POLICY_REFUSAL.replace("org_keys_required", code), code)).toBeUndefined();
+      expect(info.canTopUp).toBeUndefined();
+    }
+  });
+});

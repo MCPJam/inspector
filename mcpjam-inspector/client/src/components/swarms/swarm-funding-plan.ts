@@ -176,6 +176,10 @@ function ineligibilityClause(
       return "the judge is set to a model MCPJam doesn't host";
     case "judge_model_not_included":
       return "the judge model isn't included in them";
+    // Run-wide: every model the run uses must come from the organization's
+    // own providers, which sponsored conversations never cover.
+    case "org_keys_required":
+      return "this organization requires its own provider keys";
     default:
       return null;
   }

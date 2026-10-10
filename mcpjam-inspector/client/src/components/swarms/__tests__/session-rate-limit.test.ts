@@ -317,3 +317,44 @@ describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
     );
   });
 });
+
+describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
+  it("cards org_keys_required as configuration, never a credential or credit failure", () => {
+    const error = describeSwarmAttemptFailure(
+      "This organization requires its own provider keys for AI features.",
+      "org_keys_required",
+      "Anthropic",
+    );
+    expect(error).toMatchObject({
+      slug: "swarm/ai_refused",
+      title: "Organization provider required",
+      severity: "warning",
+      rawCode: "org_keys_required",
+      nextSteps: ["Choose a model from an organization provider."],
+    });
+    expect(error.oneLine).not.toMatch(/credit|top up/i);
+  });
+
+  it("reads the code out of the raw message when the row has none", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        "provider_auth_failed: 401 from the provider",
+        null,
+        "OpenAI",
+      ),
+    ).toMatchObject({
+      slug: "swarm/ai_refused",
+      rawCode: "provider_auth_failed",
+      nextSteps: ["Ask an organization admin to update the provider's API key."],
+    });
+  });
+
+  it("offers another run for a transient refusal", () => {
+    expect(
+      describeSwarmAttemptFailure("busy", "provider_unavailable", "OpenAI"),
+    ).toMatchObject({
+      severity: "info",
+      nextSteps: ["Run the session again in a moment."],
+    });
+  });
+});

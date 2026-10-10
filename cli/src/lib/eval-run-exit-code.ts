@@ -108,6 +108,23 @@ import {
  * BEFORE the auth-shaped set, so a disguised billing failure still reads as
  * 4, never 3.
  *
+ * ## Organization AI-key policy refusals → 2, not 3
+ *
+ * An organization that requires its own provider keys refuses a launch whose
+ * target, judge or persona would run on an MCPJam-provided model (or whose
+ * role has no organization model) — `org_keys_required`,
+ * `org_model_unconfigured`, `org_runtime_unsupported`, `credential_missing`,
+ * or a launch preflight led by a reused model code (`invalid_model`,
+ * `capability_missing`, `capability_unknown`) … The launch route carries that
+ * code in `details.code`, and the v1 envelope
+ * may flatten the wire code onto `FORBIDDEN`, exactly like billing above.
+ * Read by the wire code it would be 3, telling CI to rotate a credential that
+ * works. It is a configuration of the request — choose a model from an
+ * organization provider — so it maps to 2, the same "the request itself was
+ * invalid" reading as `VALIDATION_ERROR`. Checked BEFORE the auth-shaped set.
+ * The policy's two transient refusals (`ai_policy_unavailable`,
+ * `provider_unavailable`) are infrastructure, so they stay 4.
+ *
  * ## `status: "failed"` → 5, not 4
  *
  * From the CLI's vantage point, "setup failed before evaluation" and
@@ -294,13 +311,63 @@ function isBillingShapedDetail(details: unknown): boolean {
 }
 
 /**
+ * The organization AI-key policy's configuration refusals — permanent until
+ * someone changes the organization's AI configuration or the request's model
+ * selection. Mirrors `AI_CONFIGURATION_REFUSAL_CODES` in the inspector's
+ * `shared/ai-execution-refusal.ts`, plus the reused model codes a launch
+ * preflight can lead with, which the backend classifies as configuration too.
+ * See "Organization AI-key policy refusals → 2" above.
+ */
+const AI_CONFIGURATION_SHAPED_DETAIL_CODES = new Set([
+  "org_keys_required",
+  "org_model_unconfigured",
+  "org_runtime_unsupported",
+  "ai_scope_unresolved",
+  "provider_auth_failed",
+  "credential_missing",
+  "invalid_model",
+  "capability_missing",
+  "capability_unknown",
+]);
+
+/** The policy's transient refusals: infrastructure, never a credential. */
+const AI_TRANSIENT_DETAIL_CODES = new Set([
+  "ai_policy_unavailable",
+  "provider_unavailable",
+]);
+
+/** `details.code`, or the wire code itself when the route passed it through. */
+function aiRefusalCodeOf(
+  code: string | undefined,
+  details: unknown
+): string | undefined {
+  const inner =
+    details && typeof details === "object"
+      ? (details as { code?: unknown }).code
+      : undefined;
+  for (const candidate of [inner, code]) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim().toLowerCase();
+    if (
+      AI_CONFIGURATION_SHAPED_DETAIL_CODES.has(normalized) ||
+      AI_TRANSIENT_DETAIL_CODES.has(normalized)
+    ) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Classify a launch-phase thrown platform error (a `CliError` whose
  * `exitCode` was not already 2 — see the eval.ts call site). `details` is
  * the wire error's `details` object, when it carried one; pass it through
  * even though most codes ignore it — it is what lets a billing failure
  * disguised as `FORBIDDEN` (see {@link BILLING_SHAPED_DETAIL_CODES}) still
  * read as 4, not 3, the same way the literal lowercase
- * `billing_limit_reached` code already does. Auth-shaped codes are
+ * `billing_limit_reached` code already does, and an organization AI-key
+ * policy refusal disguised as `FORBIDDEN` read as 2 (configuration), never 3
+ * (see {@link AI_CONFIGURATION_SHAPED_DETAIL_CODES}). Auth-shaped codes are
  * prerequisite to fixing anything else (3); invalid-shaped codes mean the
  * request itself was malformed, not infrastructure (2); everything else —
  * network, timeout, rate limit, an unrecognized code, and
@@ -312,6 +379,10 @@ export function classifyLaunchErrorExitCode(
   details?: unknown
 ): 2 | 3 | 4 {
   if (isBillingShapedDetail(details)) return 4;
+  const aiRefusal = aiRefusalCodeOf(code, details);
+  if (aiRefusal !== undefined) {
+    return AI_CONFIGURATION_SHAPED_DETAIL_CODES.has(aiRefusal) ? 2 : 4;
+  }
   if (code !== undefined && AUTH_SHAPED_CODES.has(code)) return 3;
   if (code !== undefined && INVALID_SHAPED_CODES.has(code)) return 2;
   return 4;

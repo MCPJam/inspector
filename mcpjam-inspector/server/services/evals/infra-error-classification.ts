@@ -76,6 +76,53 @@ const BACKEND_CODE_TABLE: Readonly<Record<string, Row>> = {
   },
   invalid_model: { class: "configuration", layer: MODEL, retryable: false },
   model_retired: { class: "configuration", layer: MODEL, retryable: false },
+  // The organization AI-key policy ("Use your keys for all AI features",
+  // `shared/ai-execution-refusal.ts`). Explicit rows, so a configuration
+  // refusal is never read by status: a 403 `org_keys_required` is not a
+  // credential wall and a 422 is not a request this iteration broke. Permanent
+  // until the organization's configuration changes, so never retried — and
+  // never `account_limit`: no purchase lifts any of them.
+  org_keys_required: { class: "configuration", layer: MODEL, retryable: false },
+  org_model_unconfigured: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  org_runtime_unsupported: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  ai_scope_unresolved: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  provider_auth_failed: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  // The org connection the selection names is gone or has no key
+  // (`/stream/org`).
+  credential_missing: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  // The policy's two transient refusals: the org's provider is throttling or
+  // failing, or the backend could not read the policy and failed closed
+  // before any model ran (our platform).
+  provider_unavailable: {
+    class: "provider_unavailable",
+    layer: MODEL,
+    retryable: true,
+  },
+  ai_policy_unavailable: {
+    class: "provider_unavailable",
+    layer: "platform",
+    retryable: true,
+  },
 };
 
 /** An upstream status read as a provider failure, or `undefined`. */

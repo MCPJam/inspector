@@ -59,6 +59,7 @@ import {
   describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
 } from "@/lib/mcpjam-limit";
+import { orgKeysRefusalSentence } from "@/lib/org-keys-refusal";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -529,6 +530,10 @@ export function McpjamAgentThread({
                     credits, and the credits copy would be wrong twice over.
                     The raw body is the last resort — it reads as a crash. */}
                 {describeAgentRefusalMessage(session.error.message) ??
+                  // The organization requires its own keys, which Ask MCPJam
+                  // can't run on yet (`org_runtime_unsupported`): the
+                  // backend's sentence, never its JSON envelope.
+                  orgKeysRefusalSentence(session.error.message) ??
                   describeMCPJamLimitMessage(session.error.message) ??
                   session.error.message ??
                   "Something went wrong."}

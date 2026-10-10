@@ -4,8 +4,14 @@ import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
 import {
   ModelSelector,
+  OrgKeysDisallowedTriggerLabel,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  isOrgKeysDisallowedRow,
+  orgKeysDisallowedRow,
+  savedModelRow,
+} from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -18,6 +24,7 @@ import {
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -413,7 +420,9 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, requireOrgKeys } = useAvailableModels({
+    projectId,
+  });
   return (
     <EvalModelChoices
       {...{
@@ -425,6 +434,7 @@ function EvalModelPicker({
         defaultModelId,
         availableModels,
         harness,
+        requireOrgKeys,
       }}
     />
   );
@@ -440,6 +450,7 @@ export function EvalModelChoices({
   availableModels: catalogModels,
   harness,
   effortEditable = true,
+  requireOrgKeys = false,
 }: {
   /**
    * Offer each model's reasoning efforts in the model menus. Off where the
@@ -447,6 +458,11 @@ export function EvalModelChoices({
    * strings).
    */
   effortEditable?: boolean;
+  /**
+   * The organization requires its own provider keys for AI features: a saved
+   * model the list no longer offers shows on its trigger as not allowed.
+   */
+  requireOrgKeys?: boolean;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -467,19 +483,25 @@ export function EvalModelChoices({
     [catalogModels, harness],
   );
   const selectionsSupported = useModelSelectionsSupported();
-  const resolveModel = (id: string): ModelDefinition =>
-    availableModels.find((model) => String(model.id) === id) ?? {
-      id,
-      name: compactModelLabel(id),
-      provider: "unknown",
-    };
+  const resolveModel = (id: string, saved = true): ModelDefinition =>
+    availableModels.find((model) => String(model.id) === id) ??
+    (requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
+      ? orgKeysDisallowedRow(savedModelRow(id, availableModels))
+      : {
+          id,
+          name: compactModelLabel(id),
+          provider: "unknown",
+        });
   const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
       ? [
           {
             key: "default",
-            model: resolveModel(defaultModelId ?? "Client default"),
+            model: resolveModel(
+              defaultModelId ?? "Client default",
+              defaultModelId !== undefined,
+            ),
             inherited: true,
             target: undefined as ModelTarget | undefined,
           },
@@ -612,6 +634,7 @@ export function EvalModelChoices({
               currentModel={model}
               availableModels={availableModels}
               disabled={disabled}
+              requireOrgKeys={requireOrgKeys}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -648,20 +671,26 @@ export function EvalModelChoices({
                   disabled={disabled}
                   className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
                 >
-                  <ProviderLogo
-                    provider={model.provider}
-                    customProviderName={model.customProviderName}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 break-words">
-                    {compactModelLabel(model.name)}
-                    {effort ? (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        {reasoningEffortLabel(effort)}
+                  {isOrgKeysDisallowedRow(model) ? (
+                    <OrgKeysDisallowedTriggerLabel model={model} />
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={model.provider}
+                        customProviderName={model.customProviderName}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 break-words">
+                        {compactModelLabel(model.name)}
+                        {effort ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {reasoningEffortLabel(effort)}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
+                    </>
+                  )}
                   <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </Button>
               }
@@ -692,6 +721,7 @@ export function EvalModelChoices({
         }}
         availableModels={availableModels.filter(addable)}
         disabled={disabled}
+        requireOrgKeys={requireOrgKeys}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>

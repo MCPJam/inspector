@@ -41,6 +41,34 @@ afterEach(() => {
 });
 
 describe("launchJourneyRun", () => {
+  it("keeps the AI key policy's launch problems from a top-level body", async () => {
+    const problems = [
+      {
+        dependency: "judge",
+        label: "The judge",
+        code: "org_keys_required",
+        reason: "The judge is not a model from an organization provider.",
+      },
+    ];
+    authFetchMock.mockResolvedValue(
+      jsonResponse(403, {
+        code: "org_keys_required",
+        message: "This organization requires its own provider keys…",
+        problems,
+      }),
+    );
+
+    const error = await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-org",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(LaunchJourneyRunError);
+    expect((error as LaunchJourneyRunError).code).toBe("org_keys_required");
+    expect((error as LaunchJourneyRunError).details).toEqual({ problems });
+  });
+
   it("POSTs to the swarm REST route with projectId + launchKey and returns the runId on 202", async () => {
     authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-1" }));
 

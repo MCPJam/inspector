@@ -77,6 +77,9 @@ export const SUITE_FILE_RUN_ERROR_CODES = [
   "CREDENTIALS_MISSING",
   "CREDENTIALS_REJECTED",
   "BILLING_REFUSED",
+  // The organization requires its own provider keys (or its AI configuration
+  // cannot serve the model), so an MCPJam-provided model was refused.
+  "AI_POLICY_REFUSED",
   "PLATFORM_UNAVAILABLE",
   "SETUP_TIMEOUT",
   "SETUP_FAILED",

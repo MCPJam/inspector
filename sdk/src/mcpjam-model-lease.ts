@@ -84,6 +84,11 @@ export class McpjamLeaseError extends Error {
  *   - `billing`: the organization cannot spend right now — credits, the free
  *     allowance, a spend budget, a locked wallet. Not a credential problem, and
  *     retrying does not help.
+ *   - `policy`: the organization's AI-key policy refused it — the org requires
+ *     its own provider keys, so an MCPJam-provided model cannot run, or the
+ *     org's own configuration cannot serve the request. The credential is
+ *     fine; only a configuration change (choosing an organization model)
+ *     helps, so this is never `auth` and never retried.
  *   - `auth`: the credentials were missing or rejected, or are not entitled to
  *     this project — including a 403 that carries NO billing detail.
  *   - `rateLimited`: a throttle that clears by waiting.
@@ -92,7 +97,7 @@ export class McpjamLeaseError extends Error {
  *   - `other`: anything else, e.g. a request the API refused as malformed.
  */
 export type McpjamLeaseRefusalKind =
-  "billing" | "auth" | "rateLimited" | "unavailable" | "other";
+  "billing" | "policy" | "auth" | "rateLimited" | "unavailable" | "other";
 
 /**
  * The account-limit codes MCPJam's spend gates refuse with — the same
@@ -101,6 +106,24 @@ export type McpjamLeaseRefusalKind =
  */
 const BILLING_REFUSAL_CODE =
   /^(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|organization_spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|spending_admission_invalid|insufficient_credits)$/i;
+
+/**
+ * The organization AI-key policy's configuration refusals ("Use your keys for
+ * all AI features"). The lease endpoint refuses a start with 403
+ * `org_keys_required`; the model proxy refuses a request with 409
+ * `{ ok: false, code }` (and `x-mcpjam-proxy-refusal: <code>`). Mirrors
+ * `AI_CONFIGURATION_REFUSAL_CODES` in the inspector's
+ * `shared/ai-execution-refusal.ts`.
+ */
+const AI_POLICY_REFUSAL_CODE =
+  /^(?:org_keys_required|org_model_unconfigured|org_runtime_unsupported|ai_scope_unresolved|provider_auth_failed|credential_missing)$/i;
+
+/**
+ * The policy's two transient refusals: the policy could not be read (the
+ * backend fails closed) or the org's provider is throttling or failing.
+ */
+const AI_POLICY_TRANSIENT_CODE =
+  /^(?:ai_policy_unavailable|provider_unavailable)$/i;
 
 const AUTH_REFUSAL_CODE =
   /^(?:unauthorized|oauth_required|invalid_api_key|auth_unavailable|account_suspended)$/i;
@@ -123,13 +146,20 @@ function refusalCodes(error: McpjamLeaseError): string[] {
  * wins wherever it appears, because an auth-shaped envelope (`FORBIDDEN`,
  * 403) wrapping a free-tier or spend refusal is still a billing refusal, and
  * reporting it as bad credentials would send someone to rotate a key that
- * works.
+ * works. The organization AI-key policy's codes are read the same way, for
+ * the same reason.
  */
 export function classifyMcpjamLeaseError(
   error: McpjamLeaseError
 ): McpjamLeaseRefusalKind {
   const codes = refusalCodes(error);
   if (codes.some((code) => BILLING_REFUSAL_CODE.test(code))) return "billing";
+  // Before the status: the policy refuses with 403 (and the proxy with 409),
+  // and read as `auth` it would send someone to rotate a key that works.
+  if (codes.some((code) => AI_POLICY_REFUSAL_CODE.test(code))) return "policy";
+  if (codes.some((code) => AI_POLICY_TRANSIENT_CODE.test(code))) {
+    return "unavailable";
+  }
   if (
     error.status === 401 ||
     error.status === 403 ||

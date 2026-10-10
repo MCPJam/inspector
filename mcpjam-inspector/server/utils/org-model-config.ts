@@ -34,6 +34,14 @@ import {
   INSPECTOR_SERVICE_TOKEN_HEADER,
   ServiceCredentialUnavailableError,
 } from "../services/service-credential.js";
+import {
+  isAiConfigurationRefusalCode,
+  isOrgKeyPolicyRefusalCode,
+} from "../../shared/ai-execution-refusal.js";
+import {
+  ModelResolutionRefusalError,
+  type ModelRefusalCode,
+} from "./model-resolution-local.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,11 +55,86 @@ export type ResolvedProviderConfig = {
   modelIds?: string[];
   displayName?: string;
   selectedModels?: string[];
+  /**
+   * The backend withheld this provider's key: the organization requires its
+   * own provider keys, so org models run through `/stream/org` (cloud) and are
+   * never executed locally with an exported key. `apiKey` is then absent.
+   */
+  exportDenied?: boolean;
+  /** Why the key was withheld (`org_keys_required`). */
+  exportDeniedCode?: string;
+  /**
+   * Where the connection executes, when the backend reports it. A `local` row
+   * runs on this machine with an exported key, which the org-key policy
+   * forbids.
+   */
+  runtimeLocation?: "cloud" | "local";
+};
+
+/** The organization's AI-key policy, as the resolve response reports it. */
+export type OrgAiKeyPolicy = {
+  /** Every AI request must run on an approved organization provider. */
+  requireOrgKeys: boolean;
 };
 
 export type ResolvedOrgModelConfig = {
   providers: ResolvedProviderConfig[];
+  /**
+   * Absent on a backend that predates the policy, which reads as "off". When
+   * `requireOrgKeys` is set, hosted (MCPJam-provided) and local selections are
+   * refused `org_keys_required` and org models run only through
+   * `/stream/org`.
+   */
+  aiKeyPolicy?: OrgAiKeyPolicy;
 };
+
+/** Does this resolved org config say the org requires its own keys? */
+export function orgRequiresOwnKeys(
+  config: ResolvedOrgModelConfig | undefined | null,
+): boolean {
+  return config?.aiKeyPolicy?.requireOrgKeys === true;
+}
+
+/**
+ * Read one provider row off the resolve response. A row the backend marked
+ * `exportDenied` never carries a key into this process, whatever else the
+ * body says: the policy forbids local execution with an exported key, and
+ * dropping it here keeps every downstream consumer (`buildModelApiKeys…`,
+ * `buildLlmRuntimeConfig…`) honest without each re-checking the flag.
+ */
+function parseResolvedProvider(raw: unknown): ResolvedProviderConfig | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.providerKey !== "string" || row.providerKey.length === 0) {
+    return null;
+  }
+  const exportDenied = row.exportDenied === true;
+  const provider = { ...(row as ResolvedProviderConfig) };
+  if (row.runtimeLocation !== "cloud" && row.runtimeLocation !== "local") {
+    delete provider.runtimeLocation;
+  }
+  if (exportDenied) {
+    delete provider.apiKey;
+    provider.exportDenied = true;
+    if (typeof row.exportDeniedCode === "string" && row.exportDeniedCode) {
+      provider.exportDeniedCode = row.exportDeniedCode;
+    } else {
+      delete provider.exportDeniedCode;
+    }
+  } else {
+    delete provider.exportDenied;
+    delete provider.exportDeniedCode;
+  }
+  return provider;
+}
+
+function parseAiKeyPolicy(raw: unknown): OrgAiKeyPolicy | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return {
+    requireOrgKeys:
+      (raw as { requireOrgKeys?: unknown }).requireOrgKeys === true,
+  };
+}
 
 export type ResolveOrgModelConfigTarget =
   | { projectId: string }
@@ -107,6 +190,12 @@ export const ORG_MODEL_CONFIG_BEARER_PATH = "/v1/org-model-config/resolve";
 // ---------------------------------------------------------------------------
 // In-process cache — avoids one 15 s HTTP call per eval test case.
 // TTL is intentionally short so key rotations propagate within a minute.
+//
+// Only an answer that withholds keys is cached (the organization requires its
+// own keys, or a provider's key was export-denied). An answer that hands this
+// process keys is re-read every time: cached, it would keep running on them
+// for up to a minute after an admin turned "Use your keys for all AI
+// features" on. A stale withholding answer only fails closed.
 // ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 60_000;
@@ -260,7 +349,8 @@ export async function resolveOrgModelConfig(
     const data = (await response.json()) as {
       ok?: boolean;
       error?: string;
-      providers?: ResolvedProviderConfig[];
+      providers?: unknown;
+      aiKeyPolicy?: unknown;
     };
     if (!data?.ok) {
       throw new Error(
@@ -273,7 +363,10 @@ export async function resolveOrgModelConfig(
       );
     }
 
-    let providers = data.providers ?? [];
+    let providers = (Array.isArray(data.providers) ? data.providers : [])
+      .map(parseResolvedProvider)
+      .filter((provider): provider is ResolvedProviderConfig => !!provider);
+    const aiKeyPolicy = parseAiKeyPolicy(data.aiKeyPolicy);
     // Hosted mode: drop org-supplied Bedrock endpoints that point at
     // private/internal address space before they are cached and handed to
     // the AI SDK. Uses the DNS-aware guard so a public hostname resolving
@@ -307,8 +400,14 @@ export async function resolveOrgModelConfig(
       providers = safeProviders;
     }
 
-    const result: ResolvedOrgModelConfig = { providers };
-    if (!githubExecutionPolicy()) {
+    const result: ResolvedOrgModelConfig = {
+      providers,
+      ...(aiKeyPolicy ? { aiKeyPolicy } : {}),
+    };
+    const withholdsKeys =
+      orgRequiresOwnKeys(result) ||
+      providers.some((provider) => provider.exportDenied === true);
+    if (!githubExecutionPolicy() && withholdsKeys) {
       resolveCache.set(cacheKey, {
         result,
         expiresAt: Date.now() + CACHE_TTL_MS,
@@ -378,7 +477,9 @@ export function buildModelApiKeysFromOrgConfig(
 ): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const p of config.providers) {
-    if (!p.apiKey) continue;
+    // A withheld key is never used locally (the org requires its own keys:
+    // its models run through `/stream/org`).
+    if (!p.apiKey || p.exportDenied) continue;
     // The eval runner looks up keys by built-in provider name
     // (e.g. "openai", "anthropic"). Custom providers' API keys are
     // resolved separately through resolveProviderForModel's
@@ -687,6 +788,7 @@ export async function resolveOrgProviderRuntimeForTarget(
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       let message = `Org runtime resolution failed (${response.status})`;
+      let code: string | undefined;
       try {
         const parsed = JSON.parse(body);
         message = backendFailureText({
@@ -695,10 +797,13 @@ export async function resolveOrgProviderRuntimeForTarget(
           detail: parsed?.error,
           fallback: message,
         });
+        if (typeof parsed?.code === "string" && parsed.code.trim()) {
+          code = parsed.code.trim().toLowerCase();
+        }
       } catch {
         // ignore
       }
-      throw new Error(message);
+      throw orgRuntimeResolveFailure(response.status, message, code);
     }
 
     const data = (await response.json()) as {
@@ -771,6 +876,40 @@ export async function resolveOrgProviderRuntimeForTarget(
     });
   }
   return result;
+}
+
+/**
+ * The error a non-OK `/stream/org/resolve` throws.
+ *
+ * A configuration refusal from the organization's AI-key policy
+ * (`org_keys_required` when the org requires its own keys and the connection
+ * runs on a local runtime, `credential_missing`, …) becomes a typed
+ * {@link ModelResolutionRefusalError} carrying the backend's code: every
+ * caller already treats that as "refused before execution" (an eval
+ * iteration's `setup_failed`, a chat turn's refusal), never as an outage to
+ * retry or a reason to fall back to another rail. The policy's transient
+ * refusals (`ai_policy_unavailable`, `provider_unavailable`) stay ordinary
+ * errors with the code attached, so they remain retryable.
+ */
+export function orgRuntimeResolveFailure(
+  status: number,
+  message: string,
+  code: string | undefined,
+): Error {
+  if (code && isAiConfigurationRefusalCode(code)) {
+    return new ModelResolutionRefusalError([
+      {
+        code: code as ModelRefusalCode,
+        reason: message,
+        evidence: { httpStatus: status, route: "/stream/org/resolve" },
+      },
+    ]);
+  }
+  const error = new Error(message);
+  if (code && isOrgKeyPolicyRefusalCode(code)) {
+    return Object.assign(error, { code, status });
+  }
+  return error;
 }
 
 // ---------------------------------------------------------------------------

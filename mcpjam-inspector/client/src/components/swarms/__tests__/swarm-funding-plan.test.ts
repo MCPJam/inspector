@@ -359,6 +359,14 @@ describe("creditFundingExplanation", () => {
       ).toMatch(/the persona model isn't included in them/);
     });
 
+    it("names the organization's key policy as the cause", () => {
+      expect(
+        explain([{ targetId: "a", reason: "org_keys_required" }]),
+      ).toMatch(
+        /can't use sponsored conversations \(this organization requires its own provider keys\)/,
+      );
+    });
+
     // The backend names the saved SELECTION (not hosted), not where the judge
     // would run, so the copy says what the setting is.
     it("describes a judge on a model MCPJam does not host as a setting, not as where it runs", () => {

@@ -94,6 +94,21 @@ describe("classifyRetry — one fixture per class", () => {
     ["a 401", httpError(401), "terminal"],
     ["a 404", httpError(404), "terminal"],
     [
+      "an org that requires its own keys",
+      httpError(403, { code: "org_keys_required" }),
+      "terminal",
+    ],
+    [
+      "the org's provider rejecting its key, even on a 503",
+      httpError(503, { code: "provider_auth_failed" }),
+      "terminal",
+    ],
+    [
+      "the org's provider throttling (the policy's transient refusal)",
+      httpError(503, { code: "provider_unavailable" }),
+      "transient",
+    ],
+    [
       "a schema failure",
       new Error("response did not match the expected schema"),
       "terminal",

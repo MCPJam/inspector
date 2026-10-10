@@ -523,6 +523,105 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(current).toHaveTextContent("Not eligible");
   });
 
+  it("keeps Run judge disabled under the org key policy until an organization judge is chosen", () => {
+    // A saved hosted judge (not the default) is no more runnable than an
+    // unset one while the organization requires its own keys.
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+              },
+            },
+          },
+        })}
+        availableModels={[hosted]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
+  });
+
+  it("under the org key policy, runs a saved organization judge only while the picker still offers it", () => {
+    const orgJudgeRow: ModelDefinition = {
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      provider: "anthropic",
+      hosted: false,
+      orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
+      judgeEligible: true,
+    };
+    const run = makeRun({
+      configSnapshot: {
+        tests: [],
+        environment: { servers: [] },
+        judgeConfig: {
+          goalCompletion: {
+            enabled: true,
+            judgeModel: "anthropic/claude-sonnet-4.5",
+            judgeSelection: {
+              modelId: "anthropic/claude-sonnet-4.5",
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "orgprov_anthropic" },
+              nativeModelId: "claude-sonnet-4-5",
+              fallback: { provider: "none", model: "none" },
+            },
+          },
+        },
+      } as never,
+    });
+    const { unmount } = render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        run={run}
+        availableModels={[orgJudgeRow]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeEnabled();
+    unmount();
+    // The connection was removed: the saved judge is no longer offered.
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        run={run}
+        availableModels={[]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
+  });
+
+  it("keeps Retry disabled under the org key policy until an organization judge is chosen", () => {
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requireOrgKeys
+        failedGeneration
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+              },
+            },
+          },
+        })}
+        availableModels={[hosted]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Retry/i })).toBeDisabled();
+  });
+
   it("shows the suite judge's effort; running it unchanged sends no override", async () => {
     const judge: ModelDefinition = {
       id: "anthropic/claude-haiku-4.5",
@@ -612,4 +711,3 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     });
   });
 });
-
