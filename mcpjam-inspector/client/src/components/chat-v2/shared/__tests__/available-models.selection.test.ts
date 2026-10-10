@@ -418,6 +418,7 @@ describe("org Azure deployments", () => {
         nativeModelId: "prod-gpt51",
         orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
         hosted: false,
+        judgeEligible: true,
       },
       {
         id: "azure/eval.mini",
@@ -426,6 +427,7 @@ describe("org Azure deployments", () => {
         nativeModelId: "eval.mini",
         orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
         hosted: false,
+        judgeEligible: true,
       },
     ]);
   });
@@ -492,6 +494,7 @@ describe("org OpenAI-compatible providers with listed models", () => {
         provider: "moonshotai",
         orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
         hosted: false,
+        judgeEligible: true,
       },
       {
         id: "kimi-k2-0905-preview",
@@ -499,6 +502,7 @@ describe("org OpenAI-compatible providers with listed models", () => {
         provider: "moonshotai",
         orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
         hosted: false,
+        judgeEligible: true,
       },
     ]);
     expect(modelSelectionFromDefinition(rows[0], undefined, "chat")).toEqual({

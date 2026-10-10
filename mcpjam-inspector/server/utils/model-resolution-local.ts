@@ -19,7 +19,14 @@
  *  - `invalid_model` when a connection with a known model list does not serve
  *    the model;
  *  - the `fallback_prohibited` refusal shape for executors that walk a
- *    fallback.
+ *    fallback;
+ *  - `org_keys_required` when the organization requires its own provider keys
+ *    ("Use your keys for all AI features") and the selection would run on
+ *    another source: a hosted (MCPJam-provided) model, a key on this machine,
+ *    an OpenRouter connection (a shared gateway whose upstream account the org
+ *    has not verified) or an org connection that runs on a local runtime.
+ *    Refused here, before any request is built, so nothing reaches a
+ *    provider; the backend refuses the same selections on its own routes.
  *
  * TODO(P0-1): `harness_unsupported` / `harness_unknown` from the harness ×
  * model support evidence (`harnessModelSupport`, inspector PR #5559). That
@@ -54,7 +61,15 @@ export type ModelRefusalCode =
   | "credential_missing"
   | "free_tier_model_restricted"
   | "guest_model_not_allowed"
-  | "fallback_prohibited";
+  | "fallback_prohibited"
+  // The organization AI-key policy's configuration refusals
+  // (`shared/ai-execution-refusal.ts`). Permanent until the org's
+  // configuration or the selection changes: never retried, never paged.
+  | "org_keys_required"
+  | "org_model_unconfigured"
+  | "org_runtime_unsupported"
+  | "ai_scope_unresolved"
+  | "provider_auth_failed";
 
 export type ModelRefusal = {
   code: ModelRefusalCode;
@@ -106,6 +121,20 @@ export type LocalResolutionResult =
 /** Provider keys that run without an API key. */
 const KEYLESS_LOCAL_PROVIDERS = new Set(["ollama"]);
 
+/**
+ * The sentence a policy refusal carries. Kept in one place so the eval row,
+ * the chat error and the backend's own refusal read the same.
+ */
+export const ORG_KEYS_REQUIRED_REASON =
+  "This organization requires its own provider keys for AI features. Choose a model from an organization provider.";
+
+/**
+ * Org connections that are never eligible under the policy, whatever their
+ * key: OpenRouter is a shared gateway whose upstream account the organization
+ * has not verified.
+ */
+const POLICY_INELIGIBLE_ORG_PROVIDERS = new Set(["openrouter"]);
+
 export type ResolveLocalModelSelectionInput = {
   selection: ModelSelection;
   purpose: ModelSelectionPurpose;
@@ -132,9 +161,22 @@ export type ResolveLocalModelSelectionInput = {
   orgProviders?: ReadonlyArray<{
     providerKey: string;
     modelIds?: readonly string[];
+    /**
+     * Where the connection executes, when the resolved config says. A
+     * `local` row runs on this machine with an exported key, which the
+     * org-key policy forbids.
+     */
+    runtimeLocation?: "cloud" | "local";
   }>;
   /** Presence check for a local provider key. Never returns the key. */
   hasLocalKey: (providerKey: string) => boolean;
+  /**
+   * The organization requires its own provider keys for AI features
+   * (`aiKeyPolicy.requireOrgKeys` on the resolved org config). When set, only
+   * an `org` selection on a direct cloud connection resolves; everything else
+   * is refused `org_keys_required` before any request is built.
+   */
+  requireOrgKeys?: boolean;
 };
 
 /** Provider-native id a selection is executed with. */
@@ -165,6 +207,11 @@ export function resolveLocalModelSelection(
   const fallback = selection.fallback;
 
   if (selection.source === "hosted") {
+    if (input.requireOrgKeys) {
+      return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+        source: "hosted",
+      });
+    }
     return { ok: true, plan: { rail: "hosted", wireModelId, fallback } };
   }
 
@@ -191,10 +238,30 @@ export function resolveLocalModelSelection(
         evidence,
       );
     }
+    if (
+      input.requireOrgKeys &&
+      POLICY_INELIGIBLE_ORG_PROVIDERS.has(input.orgProviderKey)
+    ) {
+      return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+        ...evidence,
+        providerKey: input.orgProviderKey,
+      });
+    }
     if (input.orgProviders) {
       const provider = input.orgProviders.find(
         (row) => row.providerKey === input.orgProviderKey,
       );
+      if (
+        provider &&
+        input.requireOrgKeys &&
+        provider.runtimeLocation === "local"
+      ) {
+        return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+          ...evidence,
+          providerKey: input.orgProviderKey,
+          runtimeLocation: "local",
+        });
+      }
       if (!provider) {
         return refuse(
           "credential_missing",
@@ -230,6 +297,14 @@ export function resolveLocalModelSelection(
   }
 
   // source === "local"
+  if (input.requireOrgKeys) {
+    return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+      source: "local",
+      ...(connectionRef?.kind === "localProvider"
+        ? { providerKey: connectionRef.providerKey }
+        : {}),
+    });
+  }
   if (connectionRef?.kind !== "localProvider") {
     return refuse(
       "credential_missing",

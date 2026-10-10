@@ -84,6 +84,20 @@ const ROUTINE_CODES: ReadonlySet<string> = new Set([
   "billing_feature_not_included",
   "spend_budget_reached",
   "free_tier_model_restricted",
+  // The organization's own AI configuration ("Use your keys for all AI
+  // features"): it requires its own provider keys, has no model for the role,
+  // the feature has no org-credential adapter (Ask MCPJam is unsupported under
+  // the policy), the org's connection is gone, its key was rejected, or its
+  // own provider is throttling. The product working on the org's own account.
+  // `ai_policy_unavailable` is deliberately NOT here: it is the backend failing
+  // closed on its own policy read, which is ours.
+  "org_keys_required",
+  "org_model_unconfigured",
+  "org_runtime_unsupported",
+  "ai_scope_unresolved",
+  "provider_auth_failed",
+  "provider_unavailable",
+  "credential_missing",
 ]);
 
 /** Lane scopes that are one caller at their own share of the budget. */

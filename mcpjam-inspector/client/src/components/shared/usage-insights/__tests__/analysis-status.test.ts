@@ -282,3 +282,59 @@ describe("notRunNote", () => {
     expect(notRunNote(null)).toBeNull();
   });
 });
+
+describe("analysisStatus — organization AI-key refusals", () => {
+  it("reads a configuration refusal as Not analyzed, with no Analyze now", () => {
+    const status = analysisStatus(
+      summary({ failed: 2, failures: { org_model_unconfigured: 2 } }),
+      NOW,
+    );
+    expect(status).toEqual({
+      kind: "failed",
+      title: "Not analyzed",
+      body: "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    });
+  });
+
+  it.each([
+    "org_keys_required",
+    "org_runtime_unsupported",
+    "ai_scope_unresolved",
+    "provider_auth_failed",
+    "credential_missing",
+    "org_model_unavailable",
+  ])("never offers a retry for %s", (code) => {
+    const status = analysisStatus(
+      summary({ failed: 1, failures: { [code]: 1 } }),
+      NOW,
+    );
+    expect(status?.title).toBe("Not analyzed");
+    expect(status?.body).toMatch(/^Not analyzed: /);
+    expect(status?.action).toBeUndefined();
+  });
+
+  it.each(["ai_policy_unavailable", "provider_unavailable"])(
+    "keeps Analyze now for the transient %s",
+    (code) => {
+      expect(
+        analysisStatus(summary({ failed: 1, failures: { [code]: 1 } }), NOW),
+      ).toMatchObject({ title: "Not analyzed", action: "analyze_now" });
+    },
+  );
+});
+
+describe("analysisStatus — share-link visitors", () => {
+  it("says only that the organization's analysis is unavailable", () => {
+    expect(
+      analysisStatus(
+        summary({ failed: 1, failures: { org_model_unconfigured: 1 } }),
+        NOW,
+        { visitor: true },
+      ),
+    ).toEqual({
+      kind: "failed",
+      title: "Not analyzed",
+      body: "This organization's analysis is unavailable.",
+    });
+  });
+});

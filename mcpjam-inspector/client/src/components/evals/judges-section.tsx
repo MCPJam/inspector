@@ -11,6 +11,7 @@ import {
 import {
   findModelForStoredChoice,
   selectionBesideLegacyId,
+  storedModelChoice,
 } from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
@@ -67,7 +68,24 @@ interface JudgesSectionProps {
    */
   bareAutoGradeBlurb?: string;
   bareAutoGradeAriaLabel?: string;
+  /**
+   * The organization requires its own provider keys for AI features: the
+   * judge picker offers only organization models (the default judge grades
+   * on the organization's Smart model), and the copy stops promising
+   * MCPJam credits for the model tokens.
+   */
+  requireOrgKeys?: boolean;
 }
+
+/**
+ * What grading costs, as the judge blurbs say it. Judges run on MCPJam models
+ * (MCPJam credits) or on an organization provider; while the organization
+ * requires its own keys every judge runs on its providers, which bill the
+ * model tokens.
+ */
+export const JUDGE_CREDITS_COST_NOTE = "Uses credits.";
+export const JUDGE_ORG_PROVIDER_COST_NOTE =
+  "Runs on your organization’s AI providers.";
 
 /**
  * Drop a judge config that carries no information, keep one that does.
@@ -137,14 +155,33 @@ export function judgeModelPatch(
   }
   // The picked row when the picker hands it over; otherwise the row a stored
   // choice of this id resolves to (`findModelForStoredChoice`, which prefers
-  // the hosted row — judges run only on MCPJam-hosted models), never simply
-  // the first row that happens to share the id (an org row of the same id
-  // would save a non-hosted judge the backend refuses).
+  // the hosted row), never simply the first row that happens to share the id
+  // (an org row of the same id would save a different judge than the one
+  // meant).
   const row = !saveModelSelection
     ? undefined
     : typeof next !== "string"
       ? next
       : findModelForStoredChoice({ modelId: nextId }, availableModels, undefined);
+  // An organization row (the BYOK judge) is saved WITH its connection,
+  // under the selection's canonical id: its bare row id alone (`gpt-4o`)
+  // would read back as a hosted judge of that id.
+  if (row?.orgProvider && row.hosted !== true) {
+    const choice = storedModelChoice(row, undefined, "judge");
+    if (choice.selection) {
+      const keeps =
+        previousEffort !== undefined &&
+        reasoningEffortOptions(row, reasoningEffortRouteForRow(row)).includes(
+          previousEffort,
+        );
+      return {
+        judgeModel: choice.modelId,
+        judgeSelection: keeps
+          ? withReasoningEffort(choice.selection, previousEffort)
+          : choice.selection,
+      };
+    }
+  }
   const base = row ? selectionBesideLegacyId(row, "judge") : undefined;
   const keepsEffort =
     row !== undefined &&
@@ -168,10 +205,17 @@ export function JudgesSection({
   title = "LLM as Judge",
   description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
   chrome = "panel",
-  bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
+  bareAutoGradeBlurb,
   bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
   saveModelSelections,
+  requireOrgKeys = false,
 }: JudgesSectionProps) {
+  const costNote = requireOrgKeys
+    ? JUDGE_ORG_PROVIDER_COST_NOTE
+    : JUDGE_CREDITS_COST_NOTE;
+  const autoGradeBlurb =
+    bareAutoGradeBlurb ??
+    `Grade every run automatically against each case’s objective. ${costNote}`;
   // Explicit prop wins; otherwise ask the active project's deployment.
   const deploymentStoresSelections = useModelSelectionsSupported();
   const saveSelections = saveModelSelections ?? deploymentStoresSelections;
@@ -220,7 +264,7 @@ export function JudgesSection({
             // repeat the section header. In `panel` chrome there's no outer
             // label, so we keep the sub-heading + description.
             <p className="text-[12px] text-muted-foreground">
-              {bareAutoGradeBlurb}
+              {autoGradeBlurb}
             </p>
           ) : (
             <>
@@ -229,7 +273,7 @@ export function JudgesSection({
               </span>
               <p className="mt-0.5 text-[11px] text-muted-foreground/80">
                 Automatically grades the full recorded trace against each
-                case&apos;s objective. Uses credits.
+                case&apos;s objective. {costNote}
               </p>
             </>
           )}
@@ -264,6 +308,8 @@ export function JudgesSection({
               id="suite-goal-judge-model"
               className="w-[14rem]"
               value={judgeModel}
+              selection={gc?.judgeSelection}
+              requireOrgKeys={requireOrgKeys}
               availableModels={availableModels}
               managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
               onChange={(row) =>

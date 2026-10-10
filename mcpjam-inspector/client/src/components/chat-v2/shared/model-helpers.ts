@@ -9,6 +9,22 @@ import {
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import {
+  isOrgConnectionEligible,
+  orgKeysRequired,
+  type OrgAiKeyPolicyView,
+  type OrgAiReadinessView,
+} from "./org-ai-policy";
+// Policy helpers live in `./org-ai-policy` (tests that mock this module keep
+// them real); re-exported so importers of the model helpers find them here.
+export {
+  isOrgConnectionEligible,
+  orgConnectionRuntimeLocation,
+  orgKeysRequired,
+  type OrgAiKeyPolicyView,
+  type OrgAiReadinessStatus,
+  type OrgAiReadinessView,
+} from "./org-ai-policy";
 // Provider display name + title-casing live in the centralized provider
 // registry; imported for local use and re-exported so existing importers work.
 import {
@@ -118,9 +134,19 @@ const ORG_LISTED_MODEL_PROVIDERS: ReadonlySet<string> = new Set([
 
 /**
  * OrgVisibleConfig shape as returned by the org model config query.
+ *
+ * `aiKeyPolicy` / `aiReadiness` arrive even when `providers` is empty, so a
+ * picker never reads "no providers" as "hosted models are fine". `unresolved`
+ * is the project query's answer for a project no organization owns: no policy
+ * applies and no AI may run. `pending` is set by the client while the config
+ * is still loading (see `useHostedOrgModelConfig`).
  */
 export type OrgVisibleConfig = {
   providers: OrgModelProvider[];
+  aiKeyPolicy?: OrgAiKeyPolicyView;
+  aiReadiness?: OrgAiReadinessView;
+  unresolved?: boolean;
+  pending?: boolean;
 };
 
 /**
@@ -156,17 +182,38 @@ export function buildAvailableModelsFromOrgConfig(
   /** Hosted ("free") source; see `buildAvailableModels`. */
   hostedCatalog?: ModelDefinition[]
 ): ModelDefinition[] {
-  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
+  // While the org requires its own keys, MCPJam-provided models are disabled
+  // and only eligible org connections (direct, cloud runtime) are offered.
+  const requireOrgKeys = orgKeysRequired(orgConfig);
+  const hosted = requireOrgKeys
+    ? []
+    : hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
 
   if (!orgConfig?.providers) {
     // No org config loaded yet — return only MCPJam-provided (hosted) models
     return hosted;
   }
+  // Whether each connection may serve an AI request under the policy. Off the
+  // policy every enabled connection stays offered, and this only decides
+  // whether its rows can be a judge (the backend runs an org judge on the
+  // connection itself, so a local runtime or a shared gateway cannot be one).
+  const eligibleByProviderKey = new Map<string, boolean>();
+  for (const p of orgConfig.providers) {
+    if (!eligibleByProviderKey.get(p.providerKey)) {
+      eligibleByProviderKey.set(
+        p.providerKey,
+        isOrgConnectionEligible(p, orgConfig),
+      );
+    }
+  }
+  const providers = requireOrgKeys
+    ? orgConfig.providers.filter((p) => isOrgConnectionEligible(p, orgConfig))
+    : orgConfig.providers;
 
   // Determine which provider keys are available. Ollama is skipped — it never
   // belongs in the hosted model list.
   const availableProviderKeys = new Set<string>();
-  for (const p of orgConfig.providers) {
+  for (const p of providers) {
     if (!p.enabled) continue;
     if (p.providerKey === "ollama") continue;
     if (p.hasSecret) availableProviderKeys.add(p.providerKey);
@@ -184,7 +231,7 @@ export function buildAvailableModelsFromOrgConfig(
     ...(p.id ? { id: p.id } : {}),
   });
   const orgProviderByKey = new Map<string, OrgModelProvider>();
-  for (const p of orgConfig.providers) {
+  for (const p of providers) {
     if (p.enabled && !orgProviderByKey.has(p.providerKey)) {
       orgProviderByKey.set(p.providerKey, p);
     }
@@ -208,7 +255,7 @@ export function buildAvailableModelsFromOrgConfig(
   const models: ModelDefinition[] = [...orgKeyModels, ...azureDeployments];
 
   // OpenRouter: include selectedModels from org config
-  const openRouterConfig = orgConfig.providers.find(
+  const openRouterConfig = providers.find(
     (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret
   );
   if (
@@ -228,7 +275,7 @@ export function buildAvailableModelsFromOrgConfig(
   // Amazon Bedrock: include selectedModels from org config. Like OpenRouter,
   // the usable model set is org-specific (Bedrock model access is granted per
   // AWS account), so SUPPORTED_MODELS has no static bedrock entries.
-  const bedrockConfig = orgConfig.providers.find(
+  const bedrockConfig = providers.find(
     (p) => p.providerKey === "bedrock" && p.enabled && p.hasSecret
   );
   if (
@@ -249,7 +296,7 @@ export function buildAvailableModelsFromOrgConfig(
   // Ollama: include configured modelIds so org-managed Ollama providers appear
   // in the model picker (SUPPORTED_MODELS has no static ollama entries since
   // models are dynamic and org-specific).
-  for (const p of orgConfig.providers) {
+  for (const p of providers) {
     if (p.providerKey !== "ollama") continue;
     if (!p.enabled || !p.baseUrl || !p.modelIds || p.modelIds.length === 0)
       continue;
@@ -266,7 +313,7 @@ export function buildAvailableModelsFromOrgConfig(
   // OpenAI-compatible providers the backend reaches at a fixed base URL
   // (Moonshot, Z.ai, Qwen, MiniMax): no static list covers them, so the org
   // lists the model ids to offer, in the provider's own spelling.
-  for (const p of orgConfig.providers) {
+  for (const p of providers) {
     if (!ORG_LISTED_MODEL_PROVIDERS.has(p.providerKey)) continue;
     if (!p.enabled || !p.hasSecret) continue;
     const seen = new Set<string>();
@@ -284,7 +331,7 @@ export function buildAvailableModelsFromOrgConfig(
   }
 
   // Custom providers (providerKey starts with "custom:")
-  for (const p of orgConfig.providers) {
+  for (const p of providers) {
     if (!p.providerKey.startsWith("custom:")) continue;
     if (!p.enabled || !p.baseUrl || !p.modelIds || p.modelIds.length === 0)
       continue;
@@ -305,7 +352,19 @@ export function buildAvailableModelsFromOrgConfig(
     }
   }
 
-  return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
+  return [
+    ...hosted,
+    ...models.map((model) => ({
+      ...model,
+      hosted: false,
+      // An org row can grade as a judge (the BYOK judge) only when its
+      // connection is one the backend runs AI requests on directly.
+      ...(model.orgProvider &&
+      eligibleByProviderKey.get(model.orgProvider.providerKey) === true
+        ? { judgeEligible: true }
+        : {}),
+    })),
+  ];
 }
 
 /**

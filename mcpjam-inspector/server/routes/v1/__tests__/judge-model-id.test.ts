@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   canonicalJudgeModelId,
+  canonicalJudgeModelIdForSelection,
   judgeModelIdSchema,
 } from "../judge-model-id.js";
 import {
@@ -86,5 +87,26 @@ describe("judgeModelIdSchema", () => {
   it("refuses a blank id instead of storing one", () => {
     expect(judgeModelIdSchema.safeParse("   ").success).toBe(false);
     expect(judgeModelIdSchema.safeParse("").success).toBe(false);
+  });
+});
+
+describe("canonicalJudgeModelIdForSelection", () => {
+  it("normalizes a hosted judge, or a bare id with no selection", () => {
+    expect(canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`)).toBe(HAIKU);
+    expect(
+      canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`, {
+        source: "hosted",
+      }),
+    ).toBe(HAIKU);
+  });
+
+  it("never rewrites an organization (BYOK) judge — judges are not hosted-only", () => {
+    expect(
+      canonicalJudgeModelIdForSelection(` ${HAIKU} `, { source: "org" }),
+    ).toBe(HAIKU);
+    // Left as sent, so the selection mismatch check names the contradiction.
+    expect(
+      canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`, { source: "org" }),
+    ).toBe(`mcpjam/${HAIKU}`);
   });
 });

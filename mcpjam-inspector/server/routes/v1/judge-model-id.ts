@@ -8,11 +8,19 @@
  * `<vendor>/<model>`, so a judge named the documented way was refused on save
  * with "is not in MCPJam's hosted model catalog" (CONVEX-33X).
  *
- * Stripping the prefix loses nothing for a judge: judges only ever run on
- * MCPJam's hosted catalog, so `mcpjam/` states the one rail they already use.
- * This is NOT a general model-id rewrite and must not become one: an eval
- * TARGET's prefix chooses between hosted and BYOK, and how a hosted run
- * routes a `mcpjam/` target is a separate question from what a judge stores.
+ * Stripping the prefix loses nothing for a HOSTED judge: `mcpjam/` states the
+ * hosted rail, and a bare catalog id already means that rail. Judges are no
+ * longer hosted-only — an organization selection (BYOK judge) is a valid
+ * judge, and when the organization requires its own provider keys the
+ * platform default judge runs on its Smart model — but an org judge is named
+ * by its selection, whose id carries no `mcpjam/` prefix, so this rewrite
+ * never touches one ({@link canonicalJudgeModelIdForSelection}). Which judge
+ * selections are admitted (org yes; local and stored-legacy no; a picked
+ * hosted judge not under the org-key policy) is the backend's decision, not
+ * this helper's. This is NOT a general model-id rewrite and must not become
+ * one: an eval TARGET's prefix chooses between hosted and BYOK, and how a
+ * hosted run routes a `mcpjam/` target is a separate question from what a
+ * judge stores.
  *
  * Rewritten ONLY when what follows the prefix is, exactly, a hosted catalog
  * id. Anything else is returned trimmed but otherwise as sent, so the backend
@@ -45,6 +53,30 @@ export function canonicalJudgeModelId(model: string): string {
   const rest = trimmed.slice(HOSTED_PREFIX.length);
   return rest === rest.trim() && isHostedCatalogModel(rest) ? rest : trimmed;
 }
+
+/**
+ * The judge model id to store beside the selection it was sent with.
+ *
+ * Only a HOSTED judge (or a bare id with no selection) is normalized: an org
+ * selection's id is the org connection's model id and is forwarded exactly as
+ * sent, so it is never rewritten into a hosted catalog id or refused here. A
+ * `mcpjam/` id beside an org selection contradicts it, and the mismatch check
+ * that compares the two then says so in the caller's own words.
+ */
+export function canonicalJudgeModelIdForSelection(
+  model: string,
+  selection?: { source?: unknown } | null,
+): string {
+  if (selection && selection.source !== "hosted") return model.trim();
+  return canonicalJudgeModelId(model);
+}
+
+/**
+ * A judge model field that is checked (non-blank, trimmed) but NOT yet
+ * normalized: for a route that also takes the judge's selection, which decides
+ * whether the hosted rewrite applies ({@link canonicalJudgeModelIdForSelection}).
+ */
+export const judgeModelIdInputSchema = z.string().trim().min(1);
 
 /**
  * The one schema for a judge model field on `/api/v1`. Every route that writes

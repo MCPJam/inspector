@@ -1,6 +1,11 @@
 import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
+import {
+  isRetryableOrgKeysRefusal,
+  orgKeysRefusalCodeFromError,
+  orgKeysRefusalCodeOf,
+} from "@/lib/org-keys-refusal";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -482,6 +487,34 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           ? parsed.retryAfter
           : undefined;
 
+      // The organization's AI key policy refused (or its own provider did).
+      // Carried through with its code and nothing else layered on: no credit
+      // or limit reading, no connection humanizer. `ErrorBox` renders it.
+      const orgKeysCode = orgKeysRefusalCodeOf(code);
+      if (orgKeysCode) {
+        const remediation =
+          typeof parsed.remediation === "string"
+            ? parsed.remediation
+            : undefined;
+        return {
+          message,
+          code: orgKeysCode,
+          ...(details
+            ? { details }
+            : remediation
+              ? { details: JSON.stringify({ code: orgKeysCode, remediation }) }
+              : {}),
+          ...(typeof parsed.statusCode === "number"
+            ? { statusCode: parsed.statusCode }
+            : {}),
+          isRetryable:
+            typeof parsed.isRetryable === "boolean"
+              ? parsed.isRetryable
+              : isRetryableOrgKeysRefusal(orgKeysCode),
+          isMCPJamPlatformError: false,
+        };
+      }
+
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
           formatRetryAfter(parsed.retryAfter) ??
@@ -563,6 +596,22 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
 
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
+  }
+
+  // A worker's "<code>: <sentence>" refusal (the backend's
+  // `aiConfigurationRefusalCodeOf` reads the same shape).
+  const prefixedOrgKeysCode = orgKeysRefusalCodeFromError(errorString);
+  if (prefixedOrgKeysCode) {
+    const sentence = errorString
+      .trim()
+      .replace(/^[a-z_]+\s*:\s*/i, "")
+      .trim();
+    return {
+      message: sentence || errorString,
+      code: prefixedOrgKeysCode,
+      isRetryable: isRetryableOrgKeysRefusal(prefixedOrgKeysCode),
+      isMCPJamPlatformError: false,
+    };
   }
 
   const protocolPin = summarizeProtocolVersionPin(errorString);

@@ -26,6 +26,7 @@
 import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { notAnalyzedLine } from "@/lib/org-keys-refusal";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 import type {
   SwarmJourneyFindings,
@@ -230,9 +231,12 @@ export function SwarmFindingsTab({
       <p className="mb-3 text-sm text-muted-foreground">
         {journeyFindingsJob.status === "pending"
           ? "Reading session evidence…"
-          : journeyFindingsJob.status === "failed"
-          ? "Session analysis did not complete."
-          : "Session analysis was skipped."}
+          : // The organization's AI key policy kept it from running: "Not
+            // analyzed", never a failure, and never a retry it can't use.
+            (notAnalyzedLine(journeyFindingsJob.errorCode) ??
+            (journeyFindingsJob.status === "failed"
+              ? "Session analysis did not complete."
+              : "Session analysis was skipped."))}
       </p>
     );
 

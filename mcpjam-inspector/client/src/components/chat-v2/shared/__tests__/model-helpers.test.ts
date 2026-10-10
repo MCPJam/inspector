@@ -96,6 +96,7 @@ describe("org model helpers", () => {
       provider: "bedrock",
       hosted: false,
       orgProvider: { providerKey: "bedrock" },
+      judgeEligible: true,
     });
     expect(models).toContainEqual({
       id: "us.amazon.nova-pro-v1:0",
@@ -103,6 +104,7 @@ describe("org model helpers", () => {
       provider: "bedrock",
       hosted: false,
       orgProvider: { providerKey: "bedrock" },
+      judgeEligible: true,
     });
   });
 

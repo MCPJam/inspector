@@ -7,6 +7,8 @@ import { APICallError } from "ai";
 import { describe, expect, it } from "vitest";
 import {
   classifyInferenceError,
+  isTerminalRefusal,
+  orgPolicyRefusalMessage,
   refusalMessage,
 } from "../src/suite-file-run/inference.js";
 
@@ -176,5 +178,49 @@ describe("refusalMessage", () => {
     });
     expect(refusalMessage(error)).toBe("invalid x-api-key");
     expect(refusalMessage(new Error("plain"))).toBe("plain");
+  });
+});
+
+describe("classifyInferenceError — the organization AI-key policy", () => {
+  it("reads the proxy's 409 policy refusal as orgPolicy, not credentials", () => {
+    expect(
+      classifyInferenceError(
+        refused(409, {
+          ok: false,
+          code: "org_keys_required",
+          error:
+            "This organization requires its own provider keys for AI features.",
+        }),
+        "mcpjam"
+      )
+    ).toBe("orgPolicy");
+  });
+
+  it("reads a 403 policy refusal as orgPolicy, not credentials", () => {
+    expect(
+      classifyInferenceError(
+        refused(403, {
+          error: { code: "FORBIDDEN", details: { code: "org_keys_required" } },
+        }),
+        "mcpjam"
+      )
+    ).toBe("orgPolicy");
+  });
+
+  it("reads the policy's transient refusals as unavailable", () => {
+    expect(
+      classifyInferenceError(
+        refused(409, { ok: false, code: "provider_unavailable", error: "x" }),
+        "mcpjam"
+      )
+    ).toBe("unavailable");
+  });
+
+  it("stops the run, with a sentence that names the fix", () => {
+    expect(isTerminalRefusal("orgPolicy")).toBe(true);
+    const message = orgPolicyRefusalMessage("mcpjam/anthropic/claude-haiku-4.5");
+    expect(message).toMatch(/requires its own provider keys/);
+    expect(message).toMatch(/Choose a model from an organization provider/);
+    expect(message).not.toMatch(/credential|rotate/i);
   });
 });

@@ -7,6 +7,7 @@ import {
 import {
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
@@ -1098,5 +1099,95 @@ describe("an MCP server's HTTP error answer", () => {
     expect(
       describeError(makeError("Provider exploded", { statusCode: 500 })).slug,
     ).toBe("internal/unknown");
+  });
+});
+
+describe("organization AI-key policy refusals", () => {
+  const CASES: Array<[string, string]> = [
+    ["org_keys_required", "org/keys_required"],
+    ["org_model_unconfigured", "org/model_unconfigured"],
+    ["org_runtime_unsupported", "org/runtime_unsupported"],
+    ["ai_scope_unresolved", "org/scope_unresolved"],
+    ["ai_policy_unavailable", "org/policy_unavailable"],
+    ["provider_auth_failed", "org/provider_auth_failed"],
+    ["provider_unavailable", "org/provider_unavailable"],
+  ];
+
+  it.each(CASES)("maps the %s code field to %s", (code, slug) => {
+    // Ahead of the status branches: a 403 here is the org's policy, not an
+    // MCP server rejecting a token.
+    expect(describeError({ code, status: 403, message: "Forbidden" }).slug).toBe(
+      slug,
+    );
+    expect(describeError({ data: { code }, message: "x" }).slug).toBe(slug);
+    expect(describeError({ body: { code }, message: "x" }).slug).toBe(slug);
+    expect(orgPolicySlugForCode(code)).toBe(slug);
+    expect(orgPolicySlugForCode(code.toUpperCase())).toBe(slug);
+  });
+
+  it.each(CASES)("reads %s out of a JSON envelope in the message", (code, slug) => {
+    const result = describeError(
+      new Error(
+        `HTTP 403: {"ok":false,"code":"${code}","error":"Refused.","remediation":"choose_org_model"}`,
+      ),
+    );
+    expect(result.slug).toBe(slug);
+    expect(result.rawCode).toBe(code);
+  });
+
+  it("reads a distinctive code out of a stored refusal sentence", () => {
+    expect(
+      describeError(
+        "Model selection refused — org_keys_required: This organization requires its own provider keys for AI features.",
+      ).slug,
+    ).toBe("org/keys_required");
+  });
+
+  it("reads the generic-sounding codes only where the text says they are codes", () => {
+    expect(
+      describeError("The provider failed. (provider_unavailable, HTTP 503)")
+        .slug,
+    ).toBe("org/provider_unavailable");
+    expect(describeError("provider_auth_failed: key rejected").slug).toBe(
+      "org/provider_auth_failed",
+    );
+    // An MCP server's own prose is not the org's provider refusing.
+    expect(
+      describeError("upstream says provider_unavailable today").slug,
+    ).not.toBe("org/provider_unavailable");
+  });
+
+  it("does not map unrelated codes", () => {
+    expect(orgPolicySlugForCode("credential_missing")).toBeUndefined();
+    expect(orgPolicySlugForCode(undefined)).toBeUndefined();
+    expect(describeError({ code: "user_rate_limit", message: "x" }).slug).not.toMatch(
+      /^org\//,
+    );
+  });
+
+  it("never pages for a configuration refusal", () => {
+    for (const [code] of CASES) {
+      const origin = describeError({ code, message: "x" }).origin;
+      if (code === "ai_policy_unavailable") {
+        // Fail-closed read of the policy: the store is ours.
+        expect(origin).toBe("mcpjam");
+      } else if (code === "provider_unavailable") {
+        expect(origin).toBe("ambiguous");
+      } else {
+        expect(origin).toBe("user_config");
+      }
+    }
+  });
+
+  it("credit copy does not contradict an org that requires its own keys", () => {
+    for (const slug of [
+      "provider/mcpjam_limit",
+      "provider/mcpjam_limit_daily",
+      "provider/mcpjam_limit_monthly",
+      "provider/mcpjam_limit_insufficient",
+    ]) {
+      const steps = ERROR_CATALOG[slug]!.nextSteps.join(" ");
+      expect(steps).toMatch(/organization requires its own provider keys/);
+    }
   });
 });

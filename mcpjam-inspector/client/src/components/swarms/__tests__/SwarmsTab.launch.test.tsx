@@ -155,6 +155,44 @@ describe("SwarmsTab — Run journey launch", () => {
     );
   });
 
+  it("lists every dependency the organization's key policy refused", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        403,
+        "This organization requires its own provider keys for AI features…",
+        false,
+        "org_keys_required",
+        {
+          problems: [
+            {
+              dependency: "persona",
+              label: "The simulated user",
+              code: "org_model_unconfigured",
+              reason:
+                "The simulated user uses the organization's Smart model, and none is configured.",
+            },
+            {
+              dependency: "judge",
+              label: "The judge",
+              code: "org_keys_required",
+              reason:
+                "The judge is not a model from an organization provider. Choose a model from an organization provider.",
+            },
+          ],
+        },
+      )
+    );
+
+    fireEvent.click(selectPersonaAndRun());
+
+    const list = await screen.findByTestId("ai-launch-problems");
+    expect(list.querySelectorAll("li")).toHaveLength(2);
+    expect(list).toHaveTextContent(
+      "Simulated user: The simulated user uses the organization's Smart model, and none is configured."
+    );
+    expect(list).toHaveTextContent("Judge: The judge is not a model");
+  });
+
   /**
    * The limit dialog already carries this sentence plus the actions that clear
    * it. The inline banner under the goal would repeat it with nothing to act

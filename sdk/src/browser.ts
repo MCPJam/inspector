@@ -383,6 +383,7 @@ export {
   describeError,
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,

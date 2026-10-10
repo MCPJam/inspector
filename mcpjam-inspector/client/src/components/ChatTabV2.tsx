@@ -128,6 +128,7 @@ import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-av
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgKeysRequired } from "@/components/chat-v2/shared/org-ai-policy";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -2458,6 +2459,7 @@ export function ChatTabV2({
         : undefined,
     onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgKeysRequired(hostedOrgModelConfig),
   };
 
   // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
@@ -2582,6 +2584,7 @@ export function ChatTabV2({
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2869,6 +2872,7 @@ export function ChatTabV2({
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
                             <TopupGatedErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -3022,6 +3026,7 @@ export function ChatTabV2({
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}

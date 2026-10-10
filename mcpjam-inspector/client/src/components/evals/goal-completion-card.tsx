@@ -15,6 +15,7 @@ import {
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { JudgeModelPicker } from "./judge-model-picker";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import { judgeModelPatch } from "./judges-section";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
@@ -48,6 +49,11 @@ export interface GoalCompletionCardProps {
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
   /** Flush layout inside the run-detail split (no nested card chrome). */
   embedded?: boolean;
+  /**
+   * The organization requires its own provider keys for AI features: only
+   * organization models are offered as the judge.
+   */
+  requireOrgKeys?: boolean;
 }
 
 export function GoalCompletionCard({
@@ -62,6 +68,7 @@ export function GoalCompletionCard({
   onRun,
   currentSuiteJudgeConfig,
   embedded = false,
+  requireOrgKeys = false,
 }: GoalCompletionCardProps) {
   const completedRun = run.status === "completed";
 
@@ -112,8 +119,12 @@ export function GoalCompletionCard({
         initialModel,
       ) ?? (initialModel === suiteModel ? suiteSelection : undefined),
   );
-  const selectedRow = availableModels.find(
-    (model) => String(model.id) === selectedModelId,
+  // An organization judge is stored under its canonical id, so its row is
+  // found through the selection.
+  const selectedRow = findModelForStoredChoice(
+    { modelId: selectedModelId, selection: selectedSelection },
+    availableModels,
+    undefined,
   );
   // Backend default is `enabled: true` (see GOAL_COMPLETION_DEFAULTS in
   // convex/lib/judgeConfig.ts) — only an explicit `enabled: false` turns
@@ -289,6 +300,8 @@ export function GoalCompletionCard({
                 id="goal-judge-model"
                 className="w-full"
                 value={selectedModelId}
+                selection={selectedSelection}
+                requireOrgKeys={requireOrgKeys}
                 availableModels={availableModels}
                 managedDefaultModelId={DEFAULT_JUDGE_MODEL}
                 onChange={(row) => {
@@ -300,7 +313,8 @@ export function GoalCompletionCard({
                     saveSelections,
                     selectionReasoningEffort(selectedSelection),
                   );
-                  setSelectedModelId(String(row.id));
+                  // An organization row saves under its canonical id.
+                  setSelectedModelId(patch.judgeModel ?? String(row.id));
                   setSelectedSelection(fullSelection(patch.judgeSelection));
                 }}
                 disabled={inFlight}

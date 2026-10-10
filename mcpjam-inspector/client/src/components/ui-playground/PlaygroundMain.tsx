@@ -285,6 +285,7 @@ import {
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgKeysRequired } from "@/components/chat-v2/shared/org-ai-policy";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -6310,6 +6311,7 @@ export function PlaygroundMain({
       : undefined,
     voiceInputAuthHeaders: authHeaders,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgKeysRequired(hostedOrgModelConfig),
   };
 
   // Check if widget should take over the full container
@@ -6511,6 +6513,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6581,6 +6584,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6751,6 +6755,7 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                      onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
                       code={errorMessage.code}
@@ -7033,6 +7038,7 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                          onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
                           code={errorMessage.code}
@@ -7420,6 +7426,7 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                                  onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}
                                   code={errorMessage.code}

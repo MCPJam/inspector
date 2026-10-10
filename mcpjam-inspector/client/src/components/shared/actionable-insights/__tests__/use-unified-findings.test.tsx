@@ -777,6 +777,31 @@ describe("automatic analysis failures", () => {
     },
   );
 
+  it("surfaces an automatic analysis the org's key policy skipped", () => {
+    const envelope = structuredClone(ENVELOPE);
+    envelope.unifiedFindings!.job = {
+      jobId: "auto",
+      kind: "enrich",
+      // The SDK type predates `skipped`; the backend sends it.
+      status: "skipped" as "failed",
+      errorCode: "org_model_unavailable",
+      startedAt: 100,
+      updatedAt: 100,
+    };
+    envelope.unifiedFindings!.snapshot!.enrichment = null;
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.analysisFailure).toEqual({
+      errorCode: "org_model_unavailable",
+      skipped: true,
+    });
+  });
+
   it("says nothing about a green run whose analysis found nothing", () => {
     // An all-pass run is now analyzed like any other: every iteration gets a
     // report, and the reasoning half legitimately proposes no mechanism. That

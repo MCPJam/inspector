@@ -764,6 +764,59 @@ describe("eval-run judge request", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("forwards an organization (BYOK) judge selection as sent — never rewritten or refused", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const selection = {
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_anthropic_1" },
+      nativeModelId: "claude-sonnet-4-5",
+      fallback: { provider: "none", model: "none" },
+    };
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          model: "anthropic/claude-sonnet-4.5",
+          modelSelection: selection,
+        }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      {
+        suiteRunId: RUN,
+        runOverride: {
+          judgeModel: "anthropic/claude-sonnet-4.5",
+          judgeSelection: selection,
+        },
+      },
+    );
+
+    // A hosted `mcpjam/` spelling beside an org selection contradicts it: the
+    // mismatch is named in the caller's own words, not rewritten away.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const contradiction = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          model: "mcpjam/anthropic/claude-sonnet-4.5",
+          modelSelection: selection,
+        }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(contradiction.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("sends NO override when the caller stated none", async () => {
     // The mutation clears a previously persisted override when the arg is
     // absent, so re-grading without restating one returns to suite-config

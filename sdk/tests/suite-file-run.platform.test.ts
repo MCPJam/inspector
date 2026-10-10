@@ -275,6 +275,79 @@ describe("MCPJam-hosted inference", () => {
     expect(sent.some((entry) => entry.url.startsWith(PROXY))).toBe(false);
   });
 
+  it("refuses the organization's own-keys policy at mint as unsupported, never as credentials", async () => {
+    const sent = stubPlatform({
+      refuseMint: {
+        status: 403,
+        body: {
+          ok: false,
+          code: "org_keys_required",
+          error:
+            "This organization requires its own provider keys for AI features.",
+          remediation: "choose_org_model",
+        },
+      },
+    });
+    const error = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "mcpjam",
+        resolveMcpjam: async () => ({
+          baseUrl: PLATFORM,
+          projectId: "proj_123",
+          getAuth: async () => "tok",
+        }),
+      },
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(SuiteFileRunError);
+    expect(error).toMatchObject({
+      code: "AI_POLICY_REFUSED",
+      category: "unsupported",
+      phase: "setup",
+    });
+    expect((error as Error).message).toMatch(
+      /requires its own provider keys[\s\S]*Choose a model from an organization provider/
+    );
+    expect(fixture.calls.read_note).toBe(0);
+    expect(sent.some((entry) => entry.url.startsWith(PROXY))).toBe(false);
+  });
+
+  it("stops on the proxy's 409 policy refusal as orgPolicy", async () => {
+    stubPlatform({
+      refuseGeneration: {
+        status: 409,
+        body: {
+          ok: false,
+          code: "org_keys_required",
+          error:
+            "This organization requires its own provider keys for AI features.",
+        },
+      },
+    });
+    const result = await runSuiteFile(SUITE, {
+      servers: { notes: { config: { url: fixture.url } } },
+      inference: {
+        mode: "auto",
+        resolveMcpjam: async () => ({
+          baseUrl: PLATFORM,
+          projectId: "proj_123",
+          getAuth: async () => "tok_1",
+        }),
+      },
+    });
+    expect(result.termination).toBe("stopped");
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "AI_POLICY_REFUSED"
+    );
+    expect(result.issues.map((issue) => issue.code)).not.toContain(
+      "CREDENTIALS_REJECTED"
+    );
+    const [refused] = result.cases[0]!.iterations;
+    expect(refused!.status).toBe("failed");
+    expect(refused!.refusal).toBe("orgPolicy");
+    expect(refused!.error).toMatch(/requires its own provider keys/);
+  });
+
   it("refuses rejected platform credentials at mint as credentials", async () => {
     stubPlatform({
       refuseMint: {

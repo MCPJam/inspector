@@ -34,6 +34,64 @@ describe("classifyEvalInfraError — our backend's codes are an allowlist", () =
     },
   );
 
+  it.each([
+    ["org_keys_required", 403],
+    ["org_model_unconfigured", 422],
+    ["org_runtime_unsupported", 422],
+    ["ai_scope_unresolved", 403],
+    ["provider_auth_failed", 422],
+    ["credential_missing", 422],
+  ] as const)(
+    "the org-key policy's %s (HTTP %s) is configuration, never auth or an account limit",
+    (code, httpStatus) => {
+      expect(
+        classifyEvalInfraError({
+          source: "backend_model",
+          endpoint: "platform",
+          code,
+          httpStatus,
+        }),
+      ).toEqual({
+        class: "configuration",
+        layer: "model",
+        retryable: false,
+        code,
+        httpStatus,
+      });
+    },
+  );
+
+  it("the org-key policy's transient refusals are a retryable provider_unavailable", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "provider_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: true,
+      code: "provider_unavailable",
+      httpStatus: 503,
+    });
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "ai_policy_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "platform",
+      retryable: true,
+      code: "ai_policy_unavailable",
+      httpStatus: 503,
+    });
+  });
+
   it("files the gateway's upstream 429 as rate_limited, not as an account limit", () => {
     // `mcpjam_rate_limit` is ALSO on the account-limit list; asking that list
     // first would call a provider throttle a wallet problem.

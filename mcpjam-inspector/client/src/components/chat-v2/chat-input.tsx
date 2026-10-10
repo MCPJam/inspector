@@ -451,6 +451,12 @@ interface ChatInputProps {
    */
   onManageOrgProviders?: () => void;
   /**
+   * The organization requires its own provider keys for AI features; the
+   * model picker then offers only organization models and, when none can be
+   * picked, says how to get one.
+   */
+  requireOrgKeys?: boolean;
+  /**
    * Environment mode (Project Environments): the environment's resolved
    * servers, id-first from the preview. When present (even empty) this
    * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
@@ -552,6 +558,7 @@ export function ChatInput({
   scenarioAttachableServers,
   onAttachScenarioServer,
   onManageOrgProviders,
+  requireOrgKeys,
   environmentServers,
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
@@ -2256,6 +2263,7 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={

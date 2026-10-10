@@ -99,6 +99,14 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The organization requires its own provider keys for AI features: MCPJam
+   * models are not offered, so the "Free models" / "Your providers" split is
+   * dropped, and when no organization model can be picked the menu says how
+   * to get one — "Add a provider" for whoever may open the org's AI providers
+   * (`onManageOrgProviders`), "Ask an organization admin" for everyone else.
+   */
+  requireOrgKeys?: boolean;
   platformPaidFallback?: boolean;
   /**
    * What this surface runs the model for. Rows whose catalog observed a
@@ -366,6 +374,7 @@ export function ModelSelector({
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
   onManageOrgProviders,
+  requireOrgKeys = false,
   platformPaidFallback = false,
   workload,
   allowEmptySelection = false,
@@ -1148,7 +1157,15 @@ export function ModelSelector({
               // everyone who had none.
               const offerEmptyConfigured =
                 !!onManageOrgProviders && modelSections.configured.length === 0;
+              // Under the organization's key policy nothing MCPJam-provided is
+              // offered (a saved one stays, locked), so there is no split to
+              // tab between, and no pickable row means the menu explains why.
+              const showOrgKeysEmpty =
+                requireOrgKeys &&
+                !isSearching &&
+                !configuredModels.some((model) => !model.disabled);
               const showTabs =
+                !requireOrgKeys &&
                 !isSearching &&
                 modelSections.provided.length > 0 &&
                 (modelSections.configured.length > 0 || offerEmptyConfigured);
@@ -1187,7 +1204,9 @@ export function ModelSelector({
                     </div>
                   ) : null}
 
-                  {platformPaidFallback && providerTab === "provided" && (
+                  {platformPaidFallback &&
+                    !requireOrgKeys &&
+                    providerTab === "provided" && (
                     <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
                       Shared free allowance is unavailable. These models use your purchased credits.
                     </p>
@@ -1196,7 +1215,7 @@ export function ModelSelector({
                     {/* cmdk renders Empty whenever no rows are mounted, which
                         the empty providers tab below would otherwise inherit —
                         and "No matching models" reads as a failed search. */}
-                    {showConfiguredEmpty ? null : (
+                    {showConfiguredEmpty || showOrgKeysEmpty ? null : (
                       <CommandEmpty>No matching models.</CommandEmpty>
                     )}
 
@@ -1204,6 +1223,34 @@ export function ModelSelector({
                       <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
                         No provider keys yet.
                       </p>
+                    ) : null}
+
+                    {showOrgKeysEmpty ? (
+                      <div
+                        className="space-y-2 px-2.5 py-3"
+                        data-testid="model-selector-org-keys-empty"
+                      >
+                        <p className="text-[11px] text-muted-foreground">
+                          This organization requires its own provider keys for
+                          AI features, and none of its providers can run a
+                          model here yet.
+                        </p>
+                        {onManageOrgProviders ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={handleManageOrgProviders}
+                          >
+                            Add a provider
+                          </Button>
+                        ) : (
+                          <p className="text-[11px] font-medium text-foreground">
+                            Ask an organization admin to add one.
+                          </p>
+                        )}
+                      </div>
                     ) : null}
 
                     {extraOptions && extraOptions.length > 0 ? (
@@ -1281,7 +1328,7 @@ export function ModelSelector({
                     ) : null}
                   </CommandList>
 
-                  {showProvided && catalogFreshness ? (
+                  {showProvided && !requireOrgKeys && catalogFreshness ? (
                     <p
                       className="border-t px-3 py-1.5 text-[10px] text-muted-foreground"
                       data-testid="model-selector-catalog-freshness"
@@ -1294,6 +1341,7 @@ export function ModelSelector({
                       rows are a transient mix of both sections. */}
                   {onManageOrgProviders &&
                   !isSearching &&
+                  !showOrgKeysEmpty &&
                   (showConfigured || showConfiguredEmpty) ? (
                     <div className="border-t px-2 py-1.5">
                       <button

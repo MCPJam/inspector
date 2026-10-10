@@ -185,6 +185,16 @@ describe("what the broker's answers become", () => {
     expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
   });
 
+  it("keeps an ai_unavailable reason instead of rewriting it to provider_error", async () => {
+    const { result } = await runWith({
+      status: "provider-failed",
+      reason: "ai_unavailable",
+      detail: "the organization's AI configuration could not run the pass",
+    });
+    expect(result.llmObservations?.status).toBe("provider-failed");
+    expect(result.llmObservations?.reason).toBe("ai_unavailable");
+  });
+
   it("re-validates the envelope against the SDK's own catalogue", async () => {
     // The backend validated against ITS mirror of the schema. The two drift —
     // a backend deployed ahead of an SDK build is the ordinary case — and the

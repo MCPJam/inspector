@@ -432,6 +432,11 @@ function fromLeaseKind(
   switch (kind) {
     case "billing":
       return "billing";
+    // The organization's AI-key policy, never the credential: a 403 (lease)
+    // or 409 (proxy) carrying `org_keys_required` read as `credentials` would
+    // send someone to rotate a key that works.
+    case "policy":
+      return "orgPolicy";
     case "auth":
       return "credentials";
     case "rateLimited":
@@ -539,11 +544,26 @@ export function refusalMessage(error: unknown): string {
   return message.trim() === "" ? bounded : `${message}: ${bounded}`;
 }
 
-/** Credential and billing refusals stop the run; the others are transient. */
+/**
+ * Credential, billing and organization-policy refusals stop the run; the
+ * others are transient.
+ */
 export function isTerminalRefusal(
   refusal: SuiteFileRefusalAttribution
-): refusal is "credentials" | "billing" {
-  return refusal === "credentials" || refusal === "billing";
+): refusal is "credentials" | "billing" | "orgPolicy" {
+  return (
+    refusal === "credentials" ||
+    refusal === "billing" ||
+    refusal === "orgPolicy"
+  );
+}
+
+/**
+ * The sentence a run states for an organization-policy refusal: what was
+ * refused and the one change that fixes it.
+ */
+export function orgPolicyRefusalMessage(model: string): string {
+  return `This organization requires its own provider keys for AI features, so MCPJam refused the MCPJam-provided model ${model}. Choose a model from an organization provider (or run with your organization's provider key) and try again.`;
 }
 
 type LanguageModelFactory = (

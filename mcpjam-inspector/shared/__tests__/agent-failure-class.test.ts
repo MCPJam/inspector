@@ -36,6 +36,28 @@ describe("agentPageClass", () => {
       "an unknown job id",
       { source: "s", httpStatus: 404, code: "NOT_FOUND" },
     ],
+    // The organization's own AI configuration ("Use your keys for all AI
+    // features") saying no — Ask MCPJam is unsupported under the policy.
+    [
+      "an org that requires its own keys",
+      { source: "s", httpStatus: 403, code: "org_keys_required" },
+    ],
+    [
+      "a feature with no org-credential adapter",
+      { source: "s", httpStatus: 422, code: "org_runtime_unsupported" },
+    ],
+    [
+      "an org with no model for the role",
+      { source: "s", httpStatus: 422, code: "org_model_unconfigured" },
+    ],
+    [
+      "the org's provider rejecting its key",
+      { source: "s", httpStatus: 422, code: "provider_auth_failed" },
+    ],
+    [
+      "the org's provider throttling",
+      { source: "s", httpStatus: 503, code: "provider_unavailable" },
+    ],
   ])("is routine for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("routine");
   });
@@ -89,6 +111,10 @@ describe("agentPageClass", () => {
     [
       "an unlisted code on a 401",
       { source: "s", httpStatus: 401, code: "something_new" },
+    ],
+    [
+      "the backend failing closed on the org's AI policy",
+      { source: "s", httpStatus: 503, code: "ai_policy_unavailable" },
     ],
   ])("is an incident for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("incident");

@@ -179,3 +179,92 @@ describe("ErrorBox provider_not_allowlisted", () => {
     ).toHaveTextContent("Retrying or changing your API key won't help.");
   });
 });
+
+describe("ErrorBox organization AI-key refusals", () => {
+  beforeEach(() => {
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+  });
+
+  it("offers an admin Manage AI providers and never a top-up or retry", () => {
+    const onManageOrgProviders = vi.fn();
+    render(
+      <ErrorBox
+        message="This organization requires its own provider keys."
+        code="org_keys_required"
+        isRetryable={false}
+        canTopUp
+        onTopUp={vi.fn()}
+        onRetry={vi.fn()}
+        onManageOrgProviders={onManageOrgProviders}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "org_keys_required",
+    );
+    expect(
+      screen.getByText("Organization provider required"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /credits|retry/i })).toBeNull();
+  });
+
+  it("tells a member to ask an organization admin", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        code="provider_auth_failed"
+        onResetChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Manage AI providers" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Reset chat" })).toBeInTheDocument();
+  });
+
+  it("reads the code from the details envelope (credential_missing from /stream/org)", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        errorDetails={JSON.stringify({ code: "credential_missing" })}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "credential_missing",
+    );
+    expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+  });
+
+  it("opens the model picker to choose an organization model when one is mounted", () => {
+    const unregister = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    const before = useModelPickerIntentStore.getState().openProvidersTabNonce;
+    render(<ErrorBox message="refused" code="org_keys_required" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose an organization model" }),
+    );
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      before + 1,
+    );
+    unregister();
+  });
+
+  it("offers a retry only for the transient refusals", () => {
+    const onRetry = vi.fn();
+    render(
+      <ErrorBox message="busy" code="provider_unavailable" onRetry={onRetry} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});

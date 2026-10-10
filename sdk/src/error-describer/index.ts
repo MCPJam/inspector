@@ -19,4 +19,4 @@ export {
   type BearerChallengeSummary,
 } from "./challenge.js";
 
-export { mcpjamLimitSlugForMessage } from "./describe.js";
+export { mcpjamLimitSlugForMessage, orgPolicySlugForCode } from "./describe.js";

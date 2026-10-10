@@ -415,3 +415,26 @@ describe("JudgesSection — reasoning effort", () => {
     expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
   });
 });
+
+describe("JudgesSection — organization requires its own keys", () => {
+  it("does not promise MCPJam credits for grading", () => {
+    render(
+      <JudgesSection
+        chrome="bare"
+        value={{ goalCompletion: { enabled: true, autoRun: true } }}
+        availableModels={[]}
+        onChange={vi.fn()}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.getByText(/Runs on your organization’s AI providers\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Uses credits/)).toBeNull();
+  });
+
+  it("keeps the credits note otherwise", () => {
+    renderBare({ goalCompletion: { enabled: true, autoRun: true } });
+    expect(screen.getByText(/Uses credits\./)).toBeInTheDocument();
+  });
+});

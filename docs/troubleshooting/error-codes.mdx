@@ -689,6 +689,7 @@ not.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+- When an organization requires its own provider keys, its AI features run on its providers instead of MCPJam credits; see [Organization AI key policy](#organization-ai-key-policy).
 
 **Swarm and Eval runs**
 
@@ -696,8 +697,9 @@ When credits run out during a Swarm or Eval run, blocked work stops and you rece
 
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
-  turns are always billed to MCPJam and have no BYOK path, so adding a key does
-  not lift this limit for a swarm.
+  turns are billed to MCPJam and have no personal BYOK path, so adding a key does
+  not lift this limit for a swarm — unless your organization requires its own
+  provider keys, in which case those turns run on the organization's providers.
 </Warning>
 
 ### Credits temporarily held
@@ -773,6 +775,107 @@ The MCP server answered the request with an HTTP error status. The message names
 **Next steps**
 - Check the server URL, including the MCP endpoint path.
 - Check the server's logs for the failed request.
+
+---
+
+## Organization AI key policy
+
+When an organization turns on **Use your keys for all AI features**, every AI
+request must run on an approved organization provider. MCPJam-provided models,
+personal keys and local models are disabled, and features without a compatible
+provider are unavailable. These refusals are configuration, not outages: they
+are never retried automatically and never count against MCPJam credits.
+
+Organization-provider token charges are billed by the organization's provider.
+MCPJam's fixed product fees and infrastructure limits are unchanged.
+
+### Organization provider required
+
+`org/keys_required`
+
+This organization requires its own provider keys for AI features, so the
+request was refused before it reached a model. The selection was an
+MCPJam-provided (hosted) model, a personal key, or a local model.
+
+**Next steps**
+- Choose a model from an organization provider.
+- Organization admins can add a provider under **Organization → AI providers**.
+
+### Organization model not configured
+
+`org/model_unconfigured`
+
+The feature needs a default organization model for its role (Fast, Smart,
+Embedding or Transcription), and none is set.
+
+**Next steps**
+- Organization admins can set a default model for the role under **Organization → AI providers**.
+- Members: ask an organization admin to configure one.
+
+### Organization runtime unsupported
+
+`org/runtime_unsupported`
+
+The feature, or the selected provider, cannot run on organization credentials
+yet. Only direct cloud connections are eligible: OpenRouter (a shared gateway)
+and local-runtime connections are not.
+
+**Next steps**
+- Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
+- Organization admins can turn off the requirement to use MCPJam-provided models for this feature.
+
+### Organization scope unresolved
+
+`org/scope_unresolved`
+
+MCPJam could not tell which organization the AI request belongs to, so it did
+not run it.
+
+**Next steps**
+- Open the request from the organization's project and try again.
+- Contact support if this keeps happening.
+
+### Organization AI policy unavailable
+
+`org/policy_unavailable`
+
+MCPJam could not read the organization's AI settings and refused the request
+rather than guess. This is temporary and on MCPJam's side.
+
+**Next steps**
+- Try again in a moment.
+
+### Organization provider auth failed
+
+`org/provider_auth_failed`
+
+The organization's model provider rejected its API key (401 or 403).
+
+**Next steps**
+- Organization admins can update the key under **Organization → AI providers**.
+- Members: ask an organization admin to update it.
+
+### Organization provider missing
+
+`org/credential_missing`
+
+The organization provider the model is saved to run on is no longer available:
+the connection was deleted, disabled or moved, or its API key was removed.
+
+**Next steps**
+- Choose a model from an organization provider that is still connected.
+- Organization admins can add or reconnect the provider under **Organization → AI providers**.
+
+### Organization provider unavailable
+
+`org/provider_unavailable`
+
+The organization's model provider is rate-limiting requests or temporarily
+failing.
+
+**Next steps**
+- Try again shortly.
+- Check the provider's status page and the organization's limits on its dashboard.
 
 ---
 

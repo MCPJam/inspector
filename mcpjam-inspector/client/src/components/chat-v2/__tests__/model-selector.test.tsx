@@ -1160,3 +1160,99 @@ describe("per-row efforts", () => {
     );
   });
 });
+
+describe("ModelSelector — organization requires its own keys", () => {
+  const placeholder: ModelDefinition = {
+    id: "",
+    name: "No model available",
+    provider: "custom",
+    disabled: true,
+    disabledReason: "Choose a model from an organization provider.",
+  };
+  const savedHosted: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+    disabled: true,
+    disabledReason: "Choose a model from an organization provider.",
+  };
+  const orgModel: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "conn_1" },
+  };
+
+  it("offers an admin Add a provider when no organization model exists", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={placeholder}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      await screen.findByTestId("model-selector-org-keys-empty"),
+    ).toBeVisible();
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Free models")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a member to ask an organization admin, keeping a saved model visible", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={savedHosted}
+        availableModels={[savedHosted]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      await screen.findByText("Ask an organization admin to add one."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: /Claude Haiku 4.5/ }),
+    ).toHaveAttribute("data-disabled", "true");
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists organization models without the free/providers split", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={orgModel}
+        availableModels={[orgModel, savedHosted]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      await screen.findByRole("option", { name: /Claude Sonnet 4.5/ }),
+    ).toBeVisible();
+    expect(screen.queryByText("Your providers")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("model-selector-org-keys-empty"),
+    ).not.toBeInTheDocument();
+  });
+});

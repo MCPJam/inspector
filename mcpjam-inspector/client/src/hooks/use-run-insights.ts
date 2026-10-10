@@ -42,6 +42,7 @@ import {
   type ScenarioWindowInsightsDto,
 } from "@/lib/scenario-insights-api";
 import { signInRequiredMessage } from "@/lib/sign-in-required";
+import { isOrgKeysRefusalCode, notAnalyzedReason } from "@/lib/org-keys-refusal";
 
 /**
  * Which cohort's narration to read. The group id is REQUIRED on both arms: it
@@ -394,6 +395,11 @@ export function useRunInsights(
       return "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC.";
     }
     if (dto.errorCode === "cancelled") return null;
+    // The organization's AI key policy (or its own provider) refused the
+    // analysis: say what stopped it, never a generic failure or a top-up.
+    if (isOrgKeysRefusalCode(dto.errorCode)) {
+      return notAnalyzedReason(dto.errorCode);
+    }
     return dto.errorMessage || "Insights could not be generated.";
   }, [dto]);
 

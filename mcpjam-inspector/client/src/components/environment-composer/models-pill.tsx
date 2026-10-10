@@ -112,9 +112,8 @@ export function ModelsPill({
    */
   workload?: ModelWorkload;
 }) {
-  const { availableModels, modelSelectionsSupported } = useAvailableModels({
-    projectId,
-  });
+  const { availableModels, modelSelectionsSupported, requireOrgKeys } =
+    useAvailableModels({ projectId });
   const harnessLockReasons = useMemo(() => {
     const byId = new Map<string, string>();
     if (!harnessTargets || harnessTargets.length === 0) return byId;
@@ -451,6 +450,7 @@ export function ModelsPill({
       disabled={disabled}
       analyticsLocation="environment_composer"
       workload={workload}
+      requireOrgKeys={requireOrgKeys}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}
