@@ -19,6 +19,14 @@ npm run typecheck -w <package you touched>
 npm test -w <package you touched>
 ```
 
+Script names differ in a few workspaces:
+
+| Workspace                                                          | Typecheck                              | Tests       |
+| ------------------------------------------------------------------ | -------------------------------------- | ----------- |
+| `@mcpjam/inspector`                                                | `typecheck:client`, `typecheck:server` | `test`      |
+| `@mcpjam/slack-app`, `@mcpjam/discord-app`, `@mcpjam/surface-core` | `verify` (check, lint and test)        | `verify`    |
+| `@mcpjam/soundcheck`                                               | `typecheck`                            | `test:auth` |
+
 Then fill in `.github/pull_request_template.md`. In your last message, list
 what you deleted and what existing code you reused.
 
@@ -59,8 +67,8 @@ who removes it and by when. Do not leave a deprecated alias with live callers.
 
 - No `as any`, `: any` or `as unknown as`. Fix the type, narrow with a guard,
   or parse with zod at the boundary.
-- No new `@ts-ignore`, `@ts-nocheck` or `eslint-disable`. A suppression that
-  must stay names the rule and the reason on the same line.
+- No new `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck` or `eslint-disable`.
+  A suppression that must stay names the rule and the reason on the same line.
 
 ### Comments
 
