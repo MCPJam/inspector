@@ -13,7 +13,10 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { Predicate } from "@/shared/eval-matching";
-import { CheckRow } from "@/components/evals/checks-section";
+import {
+  CheckRow,
+  type ToolArgSchemas,
+} from "@/components/evals/checks-section";
 import {
   RoleChip,
   RoleSegmentGroup,
@@ -33,6 +36,7 @@ import { PaperCheckRow } from "../case-spine/paper-check-row";
 export function ScorecardRowView({
   row,
   availableTools,
+  toolArgSchemas,
   readOnly,
   checkPolicy,
   overlay,
@@ -48,6 +52,7 @@ export function ScorecardRowView({
   row: ScorecardRow;
   dragId?: string;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
   /**
    * Whether the backend accepts a role on a check. Absent, loading and
@@ -77,6 +82,7 @@ export function ScorecardRowView({
         row={row}
         newest={newest}
         availableTools={availableTools}
+        toolArgSchemas={toolArgSchemas}
         readOnly={readOnly}
         checkPolicy={checkPolicy}
         overlay={overlay}

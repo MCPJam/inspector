@@ -50,6 +50,7 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Trash2, Plus, X } from "lucide-react";
 import { Combobox } from "@/components/ui/combobox";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ArgLeafPicker } from "./arg-leaf-picker";
 import type {
   Predicate,
@@ -959,7 +960,7 @@ function CheckFields({
     case "toolAnnotationsPresent": {
       const fields = (
         <div className="space-y-2 text-xs">
-          Require boolean annotations (leave both off to check presence only):
+          Each tool must declare:
           {(["readOnlyHint", "destructiveHint"] as const).map((key) => (
             <label key={key} className="flex items-center gap-2">
               <Checkbox
@@ -1229,7 +1230,6 @@ function CheckFields({
       return (
         <ObservationFields
           predicate={predicate}
-          copy="Notices a tool error whose message names none of that tool's input keys and none of the values the call sent. It does not measure recovery quality — \u201cRate limited. Retry in 30 seconds.\u201d is a good message that names nothing."
           onChange={onChange}
           availableTools={availableTools}
           readOnly={readOnly}
@@ -1239,7 +1239,6 @@ function CheckFields({
       return (
         <ObservationFields
           predicate={predicate}
-          copy="Notices a page whose length equals the limit it asked for and that carries no cursor, hasMore or similar. A full page is not proof that more results exist, so this reports rather than fails."
           onChange={onChange}
           availableTools={availableTools}
           readOnly={readOnly}
@@ -1446,11 +1445,7 @@ function ToolNameField({
           onBlur={markTouched}
           placeholder="Tool name"
           className={
-            inline
-              ? "h-7 w-40 text-xs"
-              : paper
-                ? "h-9 text-sm"
-                : "h-8 text-xs"
+            inline ? "h-7 w-40 text-xs" : paper ? "h-9 text-sm" : "h-8 text-xs"
           }
           disabled={readOnly}
         />
@@ -1559,58 +1554,29 @@ export function ToolCalledWithFields({
             availableTools={availableTools}
             readOnly={readOnly}
           />
-          {predicate.args.argumentMatching === "ignore" ? (
-            <p className="text-xs text-muted-foreground">
-              Arguments are ignored.
-            </p>
-          ) : (
-            <RawArgsJsonEditor
-              paper
-              value={predicate.args.args ?? {}}
-              mode={predicate.args.argumentMatching ?? "partial"}
-              readOnly={readOnly}
-              onChange={(args) =>
-                onChange({ ...predicate, args: { ...predicate.args, args } })
-              }
-            />
-          )}
-          <details className="text-xs text-foreground">
-            <summary className="cursor-pointer">Argument settings</summary>
-            <div className="space-y-2 pt-2">
-              <ArgumentMatchingField
-                value={predicate.args.argumentMatching ?? "partial"}
-                onChange={(argumentMatching) =>
-                  onChange({
-                    ...predicate,
-                    args: { ...predicate.args, argumentMatching },
-                  })
-                }
-                readOnly={readOnly}
-              />
-              <div className="space-y-1">
-                <Label
-                  htmlFor={minCountId}
-                  className="text-xs font-normal leading-4"
-                >
-                  Minimum matching calls (optional)
-                </Label>
-                <PaperNumberField
-                  id={minCountId}
-                  ariaLabel="Minimum matching calls (optional)"
-                  value={predicate.minCount}
-                  placeholder="1"
-                  unit="calls"
-                  readOnly={readOnly}
-                  onChange={(minCount) => onChange({ ...predicate, minCount })}
-                  onClear={() => {
-                    const next = { ...predicate };
-                    delete next.minCount;
-                    onChange(next);
-                  }}
-                />
-              </div>
-            </div>
-          </details>
+          <ArgMatcherSubform
+            key={predicate.toolName}
+            paper
+            value={predicate.args}
+            argProperties={argProperties}
+            readOnly={readOnly}
+            onChange={(args) => onChange({ ...predicate, args })}
+          />
+          <PaperNumberField
+            id={minCountId}
+            ariaLabel="Minimum matching calls (optional)"
+            prefix="Called at least"
+            value={predicate.minCount}
+            placeholder="1"
+            unit="times"
+            readOnly={readOnly}
+            onChange={(minCount) => onChange({ ...predicate, minCount })}
+            onClear={() => {
+              const next = { ...predicate };
+              delete next.minCount;
+              onChange(next);
+            }}
+          />
         </div>
       </PaperFieldsContext.Provider>
     );
@@ -1668,48 +1634,58 @@ function argsAreFlat(args: Record<string, unknown>): boolean {
   return true;
 }
 
+const ARG_MATCH_COPY: Record<ArgMatchMode, { label: string; help: string }> = {
+  partial: {
+    label: "Partial",
+    help: "Match what you set. Allow extra arguments.",
+  },
+  exact: { label: "Exact", help: "Match what you set. No extra arguments." },
+  ignore: { label: "Ignore", help: "Check only that the tool was called." },
+};
+
 function ArgumentMatchingField({
   value,
   onChange,
   readOnly,
+  inline = false,
 }: {
   value: ArgMatchMode;
   onChange: (next: ArgMatchMode) => void;
   readOnly: boolean;
+  /** Control only, no visible label — sits on the "Arguments" row. */
+  inline?: boolean;
 }) {
   const modeId = useId();
   const paper = useContext(PaperFieldsContext);
+  const control = (
+    <SegmentedControl<ArgMatchMode>
+      value={value}
+      onChange={onChange}
+      disabled={readOnly}
+      options={(["partial", "exact", "ignore"] as const).map((mode) => ({
+        value: mode,
+        label: ARG_MATCH_COPY[mode].label,
+        title: ARG_MATCH_COPY[mode].help,
+      }))}
+    />
+  );
+  if (inline)
+    return (
+      <div role="group" aria-label="Argument matching">
+        {control}
+      </div>
+    );
   return (
     <div className="space-y-1">
       <Label
-        htmlFor={modeId}
+        id={modeId}
         className={paper ? "text-xs font-normal leading-4" : "text-[11px]"}
       >
         Argument matching
       </Label>
-      <Select
-        value={value}
-        onValueChange={(next) => onChange(next as ArgMatchMode)}
-        disabled={readOnly}
-      >
-        <SelectTrigger
-          id={modeId}
-          className={cn("h-8 w-full text-xs", paper && "font-normal")}
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="partial" className="text-xs">
-            Partial (extras ok)
-          </SelectItem>
-          <SelectItem value="exact" className="text-xs">
-            Exact (deep equal)
-          </SelectItem>
-          <SelectItem value="ignore" className="text-xs">
-            Ignore (only tool name matters)
-          </SelectItem>
-        </SelectContent>
-      </Select>
+      <div role="group" aria-labelledby={modeId}>
+        {control}
+      </div>
     </div>
   );
 }
@@ -1735,6 +1711,7 @@ function ArgMatcherSubform({
   onChange,
   argProperties,
   readOnly,
+  paper = false,
 }: {
   value: { args: Record<string, unknown>; argumentMatching?: ArgMatchMode };
   onChange: (next: {
@@ -1743,6 +1720,7 @@ function ArgMatcherSubform({
   }) => void;
   argProperties?: Record<string, any>;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   const modeId = useId();
   const mode: ArgMatchMode = value.argumentMatching ?? "partial";
@@ -1757,54 +1735,121 @@ function ArgMatcherSubform({
   return (
     <div className="space-y-2">
       <div className="space-y-2">
-        <ArgumentMatchingField
-          value={mode}
-          onChange={(argumentMatching) =>
-            onChange({ ...value, argumentMatching })
-          }
-          readOnly={readOnly}
-        />
+        {!paper && (
+          <ArgumentMatchingField
+            value={mode}
+            onChange={(argumentMatching) =>
+              onChange({ ...value, argumentMatching })
+            }
+            readOnly={readOnly}
+          />
+        )}
         {/* Per-row "Raw JSON" toggle so power users can author nested
             shapes the structured editor can't express. Disabled in
             ignore mode (args aren't compared anyway). */}
-        <div className="flex items-center justify-end gap-2">
-          <Switch
-            id={`${modeId}-raw`}
-            checked={useRaw}
-            onCheckedChange={(checked) => setUseRaw(checked)}
-            disabled={readOnly || mode === "ignore"}
-            aria-label="Use raw JSON editor"
-          />
-          <Label
-            htmlFor={`${modeId}-raw`}
-            className="text-[11px] text-muted-foreground"
-          >
-            Raw JSON
-          </Label>
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            paper ? "justify-between" : "justify-end",
+          )}
+        >
+          {paper ? (
+            <div className="flex items-center gap-3">
+              {!useRaw ? <span className="text-xs">Arguments</span> : null}
+              <ArgumentMatchingField
+                inline
+                value={mode}
+                onChange={(argumentMatching) =>
+                  onChange({ ...value, argumentMatching })
+                }
+                readOnly={readOnly}
+              />
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${modeId}-raw`}
+              checked={useRaw}
+              onCheckedChange={(checked) => setUseRaw(checked)}
+              disabled={readOnly || mode === "ignore"}
+              aria-label="Use raw JSON editor"
+            />
+            <Label
+              htmlFor={`${modeId}-raw`}
+              className="text-[11px] text-muted-foreground"
+            >
+              Raw JSON
+            </Label>
+          </div>
         </div>
+        {paper ? (
+          <p className="text-xs text-muted-foreground">
+            {ARG_MATCH_COPY[mode].help}
+          </p>
+        ) : null}
       </div>
-      {mode === "ignore" ? (
-        <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] italic text-muted-foreground">
-          Arguments not compared in ignore mode.
-        </div>
-      ) : useRaw ? (
-        <RawArgsJsonEditor
-          value={value.args ?? {}}
-          onChange={(args) => onChange({ ...value, args })}
-          mode={mode}
-          readOnly={readOnly}
-        />
-      ) : (
-        <StructuredArgsEditor
-          value={value.args ?? {}}
-          onChange={(args) => onChange({ ...value, args })}
-          mode={mode}
-          argProperties={argProperties}
-          readOnly={readOnly}
-        />
-      )}
+      <div className={cn(paper && "border-l-2 border-border pl-3.5")}>
+        {mode === "ignore" ? (
+          paper ? (
+            // Adding an argument only makes sense if it gets checked, so
+            // this also switches back to partial matching.
+            !readOnly ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() =>
+                  onChange({
+                    argumentMatching: "partial",
+                    args: {
+                      ...value.args,
+                      [freshArgKey(value.args ?? {})]: "",
+                    },
+                  })
+                }
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add argument
+              </Button>
+            ) : null
+          ) : (
+            <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] italic text-muted-foreground">
+              Arguments not compared in ignore mode.
+            </div>
+          )
+        ) : useRaw ? (
+          <RawArgsJsonEditor
+            paper={paper}
+            value={value.args ?? {}}
+            onChange={(args) => onChange({ ...value, args })}
+            mode={mode}
+            readOnly={readOnly}
+          />
+        ) : (
+          <StructuredArgsEditor
+            paper={paper}
+            value={value.args ?? {}}
+            onChange={(args) => onChange({ ...value, args })}
+            mode={mode}
+            argProperties={argProperties}
+            readOnly={readOnly}
+          />
+        )}
+      </div>
     </div>
   );
+}
+
+/** Pick a fresh unique key. Don't collide with existing keys; numeric
+ *  suffixes are an ergonomic default familiar from ExpectedToolsEditor. */
+function freshArgKey(args: Record<string, unknown>): string {
+  let candidate = "arg";
+  let i = 1;
+  while (Object.hasOwn(args, candidate)) {
+    candidate = `arg${i++}`;
+  }
+  return candidate;
 }
 
 /**
@@ -1819,12 +1864,14 @@ function StructuredArgsEditor({
   mode,
   argProperties,
   readOnly,
+  paper = false,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   mode: ArgMatchMode;
   argProperties?: Record<string, any>;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   // Stable ordering for the row list: insertion order via Object.entries.
   const entries = Object.entries(value);
@@ -1844,22 +1891,17 @@ function StructuredArgsEditor({
     onChange(next);
   };
   const addEmpty = () => {
-    // Pick a fresh unique key. Don't collide with existing keys; numeric
-    // suffixes are an ergonomic default familiar from ExpectedToolsEditor.
-    let candidate = "arg";
-    let i = 1;
-    while (Object.hasOwn(value, candidate)) {
-      candidate = `arg${i++}`;
-    }
-    onChange({ ...value, [candidate]: "" });
+    onChange({ ...value, [freshArgKey(value)]: "" });
   };
 
   return (
     <div className="space-y-2">
       {entries.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
-          No expected arguments. Use Add argument below.
-        </div>
+        paper ? null : (
+          <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
+            No expected arguments. Use Add argument below.
+          </div>
+        )
       ) : (
         <ul className="space-y-1.5">
           {entries.map(([key, val]) => (
@@ -1868,6 +1910,7 @@ function StructuredArgsEditor({
               // current persisted key. The row keeps its own draft of
               // edits so intermediate collisions don't lose user input.
               key={key}
+              paper={paper}
               persistedKey={key}
               value={val}
               mode={mode}
@@ -1888,7 +1931,11 @@ function StructuredArgsEditor({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          className={
+            paper
+              ? "h-7 font-sans text-xs text-foreground"
+              : "h-7 text-xs text-muted-foreground hover:text-foreground"
+          }
           onClick={addEmpty}
         >
           <Plus className="mr-1 h-3 w-3" />
@@ -1918,6 +1965,7 @@ function StructuredArgsRow({
   onCommitKey,
   onChangeValue,
   onRemove,
+  paper = false,
 }: {
   persistedKey: string;
   value: unknown;
@@ -1928,6 +1976,7 @@ function StructuredArgsRow({
   onCommitKey: (next: string) => void;
   onChangeValue: (next: unknown) => void;
   onRemove: () => void;
+  paper?: boolean;
 }) {
   const [draftKey, setDraftKey] = useState(persistedKey);
 
@@ -1969,10 +2018,29 @@ function StructuredArgsRow({
     });
 
   return (
-    <li className="space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2.5">
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-[10px] text-muted-foreground">Argument</Label>
+    <li
+      className={
+        paper
+          ? "grid gap-2 sm:grid-cols-3"
+          : "space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2.5"
+      }
+    >
+      <div className="min-w-0 space-y-1">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-2",
+            paper && "h-7",
+          )}
+        >
+          <Label
+            className={
+              paper
+                ? "font-sans text-[11px] text-foreground"
+                : "text-[10px] text-muted-foreground"
+            }
+          >
+            Argument
+          </Label>
           {!readOnly ? (
             <Button
               type="button"
@@ -1986,7 +2054,39 @@ function StructuredArgsRow({
             </Button>
           ) : null}
         </div>
-        {useKeyDropdown ? (
+        {useKeyDropdown && paper ? (
+          <Select
+            value={isPlaceholderKey ? "" : persistedKey}
+            onValueChange={onCommitKey}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              className="h-9 w-full font-sans text-sm text-foreground data-[placeholder]:text-foreground"
+              aria-label={`Argument name for ${persistedKey}`}
+            >
+              <SelectValue placeholder="Select argument…">
+                {isPlaceholderKey ? undefined : persistedKey}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {keyItems.map((item) => (
+                <SelectItem
+                  key={item.value}
+                  value={item.value}
+                  textValue={item.label}
+                >
+                  <span>{item.label}</span>
+                  {item.description ? (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {" "}
+                      {item.description}
+                    </span>
+                  ) : null}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : useKeyDropdown ? (
           <Combobox
             items={keyItems}
             value={isPlaceholderKey ? "" : persistedKey}
@@ -2010,7 +2110,9 @@ function StructuredArgsRow({
               }}
               placeholder="key"
               className={cn(
-                "h-8 w-full font-mono text-xs",
+                paper
+                  ? "h-9 w-full font-sans text-sm text-foreground placeholder:text-foreground"
+                  : "h-8 w-full font-mono text-xs",
                 (collides || isEmpty) &&
                   "border-destructive focus-visible:ring-destructive",
               )}
@@ -2033,11 +2135,19 @@ function StructuredArgsRow({
           </>
         )}
       </div>
-      <div className="min-w-0 space-y-1">
-        <Label className="text-[10px] text-muted-foreground">
+      <div className={cn("min-w-0 space-y-1", paper && "sm:col-span-2")}>
+        <Label
+          className={
+            paper
+              ? "h-7 font-sans text-[11px] text-foreground"
+              : "text-[10px] text-muted-foreground"
+          }
+        >
           Expected value
         </Label>
         <ArgLeafPicker
+          compact={paper}
+          ariaLabel={paper ? `Expected value for ${persistedKey}` : undefined}
           value={value}
           onChange={(next) => onChangeValue(next)}
           argumentMatching={mode}
@@ -2316,20 +2426,17 @@ const PATTERN_MATCH_COPY: Record<
     whole: string;
     placeholders: readonly [string, string];
     /** What `0/0` does NOT mean, after "not that". */
-    notZero: string;
   }
 > = {
   call: {
-    pathLabel: "Argument",
+    pathLabel: "Only search this argument",
     whole: "Whole input",
     placeholders: ["e.g. Idea", "e.g. Build|Ship"],
-    notZero: "the tool was never called",
   },
   result: {
-    pathLabel: "Field",
+    pathLabel: "Only search this output key",
     whole: "Whole output",
     placeholders: ["e.g. ISS-\\d+", "e.g. open|closed"],
-    notZero: "the tool returned nothing",
   },
 };
 
@@ -2648,7 +2755,7 @@ export function PatternMatchFields({
       ) : null}
       <div className="space-y-1.5">
         <Label id={patternsLabelId} className="text-[11px]">
-          Patterns
+          Regex
         </Label>
         {!paper ? (
           <p className="text-[11px] text-muted-foreground">
@@ -2731,7 +2838,7 @@ export function PatternMatchFields({
             disabled={patterns.length >= MAX_MATCH_PATTERNS}
           >
             <Plus className="h-3.5 w-3.5" />
-            Add pattern
+            Add regex
           </Button>
         )}
       </div>
@@ -2744,7 +2851,7 @@ export function PatternMatchFields({
             disabled={readOnly}
           />
           <Label htmlFor={ignoreCaseId} className="text-[11px]">
-            Ignore case
+            Ignore capitals (A = a)
           </Label>
         </div>
       ) : null}
@@ -2771,10 +2878,6 @@ export function PatternMatchFields({
                 wholeLabel={copy.whole}
                 readOnly={readOnly}
               />
-              <p className="text-[11px] text-muted-foreground">
-                A {unit} passes only if it matches every pattern. Use{" "}
-                <code className="font-mono">A|B</code> for either.
-              </p>
               <div className="flex items-center gap-2">
                 <Switch
                   id={ignoreCaseId}
@@ -2783,7 +2886,7 @@ export function PatternMatchFields({
                   disabled={readOnly}
                 />
                 <Label htmlFor={ignoreCaseId} className="text-[11px]">
-                  Ignore case
+                  Ignore capitals (A = a)
                 </Label>
               </div>
             </>
@@ -2797,8 +2900,8 @@ export function PatternMatchFields({
                 disabled={readOnly}
               />
               <Label htmlFor={multilineId} className="text-[11px]">
-                <code className="font-mono">^</code> and{" "}
-                <code className="font-mono">$</code> match at line breaks
+                Check <code className="font-mono">^</code> and{" "}
+                <code className="font-mono">$</code> on every line
               </Label>
             </div>
             <div className="flex items-center gap-2">
@@ -2809,7 +2912,7 @@ export function PatternMatchFields({
                 disabled={readOnly}
               />
               <Label htmlFor={dotAllId} className="text-[11px]">
-                <code className="font-mono">.</code> matches line breaks
+                Let <code className="font-mono">.</code> match across lines
               </Label>
             </div>
           </div>
@@ -2817,43 +2920,63 @@ export function PatternMatchFields({
             <legend className="text-[11px] font-medium text-foreground">
               Matching {unit}s
             </legend>
-            <div className="flex flex-wrap items-center gap-2">
-              <Label htmlFor={minId} className="text-[11px]">
-                At least
-              </Label>
-              <Input
-                id={minId}
-                type="number"
-                min={0}
-                step={1}
-                value={predicate.min ?? ""}
-                aria-invalid={countError ? true : undefined}
-                onChange={(e) => setCount("min", e.target.value)}
-                placeholder="1"
-                className={paper ? "h-6 w-12 px-2 text-xs" : "h-8 w-20 text-xs"}
-                disabled={readOnly}
-              />
-              <Label htmlFor={maxId} className="text-[11px]">
-                At most
-              </Label>
-              <Input
-                id={maxId}
-                type="number"
-                min={0}
-                step={1}
-                value={predicate.max ?? ""}
-                aria-invalid={countError ? true : undefined}
-                onChange={(e) => setCount("max", e.target.value)}
-                placeholder="No limit"
-                className={paper ? "h-6 w-20 px-2 text-xs" : "h-8 w-24 text-xs"}
-                disabled={readOnly}
-              />
-            </div>
-            <p>
-              Counts only {unit}s that match every pattern, not all {unit}s. At
-              least 0 and at most 0 means no {unit} matches. It does not mean{" "}
-              {copy.notZero}.
-            </p>
+            {paper ? (
+              <div className="flex flex-wrap items-center gap-4">
+                <PaperNumberField
+                  id={minId}
+                  ariaLabel="At least"
+                  prefix="At least"
+                  value={predicate.min}
+                  placeholder="1"
+                  readOnly={readOnly}
+                  onChange={(n) => setCount("min", String(n))}
+                  onClear={() => setCount("min", "")}
+                />
+                <PaperNumberField
+                  id={maxId}
+                  ariaLabel="At most"
+                  prefix="At most"
+                  value={predicate.max}
+                  placeholder="∞"
+                  readOnly={readOnly}
+                  onChange={(n) => setCount("max", String(n))}
+                  onClear={() => setCount("max", "")}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor={minId} className="text-[11px]">
+                  At least
+                </Label>
+                <Input
+                  id={minId}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={predicate.min ?? ""}
+                  aria-invalid={countError ? true : undefined}
+                  onChange={(e) => setCount("min", e.target.value)}
+                  placeholder="1"
+                  className="h-8 w-20 text-xs"
+                  disabled={readOnly}
+                />
+                <Label htmlFor={maxId} className="text-[11px]">
+                  At most
+                </Label>
+                <Input
+                  id={maxId}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={predicate.max ?? ""}
+                  aria-invalid={countError ? true : undefined}
+                  onChange={(e) => setCount("max", e.target.value)}
+                  placeholder="No limit"
+                  className="h-8 w-24 text-xs"
+                  disabled={readOnly}
+                />
+              </div>
+            )}
             {countError ? (
               <p role="alert" className="text-destructive">
                 {countError}
@@ -3110,7 +3233,7 @@ function ObservationFields<
   readOnly,
 }: {
   predicate: P;
-  copy: string;
+  copy?: string;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
   readOnly: boolean;
@@ -3133,7 +3256,7 @@ function ObservationFields<
       toolErrorNamesInput:
         "Warns when a tool error names none of its input keys or values.",
       fullPageHasContinuation:
-        "Warns when a full result page has no continuation metadata.",
+        "Warns when a tool returns a full page with no way to get the next page.",
     };
     return (
       <div className="space-y-2">
@@ -3144,7 +3267,7 @@ function ObservationFields<
           <summary className="cursor-pointer">Tool filter</summary>
           <div className="space-y-2 pt-2">
             {filter}
-            <p>{copy}</p>
+            {copy ? <p>{copy}</p> : null}
           </div>
         </details>
       </div>
@@ -3152,7 +3275,9 @@ function ObservationFields<
   }
   return (
     <div className="space-y-2">
-      <div className="text-xs text-muted-foreground">{copy}</div>
+      {copy ? (
+        <div className="text-xs text-muted-foreground">{copy}</div>
+      ) : null}
       {filter}
     </div>
   );
@@ -3525,7 +3650,7 @@ function PaperNumberField({
   value: number | undefined;
   onChange: (next: number) => void;
   onClear?: () => void;
-  unit: string;
+  unit?: string;
   prefix?: string;
   readOnly: boolean;
   id?: string;
@@ -3558,7 +3683,10 @@ function PaperNumberField({
           if (Number.isFinite(number)) onChange(Math.floor(number));
         }}
         disabled={readOnly}
-        className="h-6 min-w-10 shrink-0 appearance-none px-2 py-1 text-sm font-normal leading-4 md:text-sm [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        className={cn(
+          "h-6 min-w-9 shrink-0 appearance-none rounded-md px-2 py-1 text-sm font-normal leading-4 text-card-foreground shadow-none focus-visible:ring-[3px] md:text-sm [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+          value == null ? "border-input" : "border-border",
+        )}
         style={{
           width: Math.max(
             prefix ? 48 : 40,
@@ -3566,7 +3694,11 @@ function PaperNumberField({
           ),
         }}
       />
-      <label htmlFor={id} data-paper-unit className="text-sm font-normal leading-[18px] text-card-foreground">{unit}</label>
+      {unit ? (
+        <label htmlFor={id} data-paper-unit className="text-sm font-normal leading-[18px] text-card-foreground">
+          {unit}
+        </label>
+      ) : null}
     </div>
   );
 }

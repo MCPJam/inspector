@@ -51,6 +51,23 @@ describe("server-evaluated feature flags", () => {
   });
 
   describe("loadBootstrapFeatureFlags", () => {
+    it.each([true, false])(
+      "loads the recording flag when it is %s",
+      async (enabled) => {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ distinct_id: "user_1" }),
+        );
+        vi.mocked(fetch).mockResolvedValueOnce(
+          flagsResponse({ "evals-start-recording": enabled }),
+        );
+
+        expect(await loadBootstrapFeatureFlags()).toEqual({
+          "evals-start-recording": enabled,
+        });
+      },
+    );
+
     it("asks the server for the persisted PostHog id's flags and keeps allowlisted keys", async () => {
       window.localStorage.setItem(
         STORAGE_KEY,
@@ -124,6 +141,26 @@ describe("server-evaluated feature flags", () => {
   });
 
   describe("refreshServerFeatureFlagsForActor", () => {
+    it.each([true, false])(
+      "refreshes the signed-in actor's recording flag when it is %s",
+      async (enabled) => {
+        const posthog = { updateFlags: vi.fn() };
+        vi.mocked(fetch).mockResolvedValueOnce(
+          flagsResponse({ "evals-start-recording": enabled }),
+        );
+
+        await refreshServerFeatureFlagsForActor(posthog, {
+          actorKey: "user_1",
+          isAuthedActor: true,
+          getAccessToken: async () => "access-token",
+        });
+
+        expect(posthog.updateFlags).toHaveBeenCalledWith({
+          "evals-start-recording": enabled,
+        });
+      },
+    );
+
     it("evaluates a signed-in actor through its access token", async () => {
       const posthog = { updateFlags: vi.fn() };
       vi.mocked(fetch).mockResolvedValueOnce(

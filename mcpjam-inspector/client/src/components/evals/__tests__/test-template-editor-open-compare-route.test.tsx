@@ -1349,6 +1349,7 @@ describe("TestTemplateEditor run view from route", () => {
     const onRunCase = vi.fn();
     renderGoldenCase({ onRunCase });
     await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("switch", { name: "Use raw JSON editor" }));
     fireEvent.change(screen.getByLabelText("Arguments"), {
       target: { value: '{"unfinished":' },
     });

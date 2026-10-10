@@ -1,5 +1,5 @@
 import { useSpineDrag } from "./spine-drag";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
 import {
@@ -8,9 +8,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
-  DropdownMenuSeparator,
 } from "@mcpjam/design-system/dropdown-menu";
-import { CheckRow } from "@/components/evals/checks-section";
+import {
+  CheckRow,
+  type ToolArgSchemas,
+} from "@/components/evals/checks-section";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { Predicate } from "@/shared/eval-matching";
@@ -28,6 +31,7 @@ export function PaperCheckRow({
   readOnly,
   checkPolicy,
   availableTools,
+  toolArgSchemas,
   overlay,
   onChangePredicate,
   onRemove,
@@ -41,6 +45,7 @@ export function PaperCheckRow({
   readOnly: boolean;
   checkPolicy: boolean;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   overlay?: SimpleCaseOverlay | null;
   onChangePredicate?: (next: Predicate) => void;
   onRemove?: () => void;
@@ -75,7 +80,10 @@ export function PaperCheckRow({
       <div className="min-w-0 flex-1 space-y-1.5">
         <button
           type="button"
-          className="text-left text-[13px] font-semibold leading-[18px] text-card-foreground"
+          className={cn(
+            "text-left text-[13px] font-semibold leading-[18px] text-card-foreground",
+            canRole && onChangePredicate && "pr-56",
+          )}
           aria-label={`Edit ${row.kindLabel}`}
           title={row.tooltip}
           onClick={onSelect}
@@ -94,6 +102,7 @@ export function PaperCheckRow({
             predicate={row.predicate}
             onChange={onChangePredicate}
             availableTools={availableTools}
+            toolArgSchemas={toolArgSchemas}
             readOnly={!editable}
           />
         ) : (
@@ -106,20 +115,50 @@ export function PaperCheckRow({
         {row.stepId ? (
           <StatusDot status={overlayStatus(overlay, row.stepId)} />
         ) : null}
-        {!row.predicate ||
-        [
-          "noToolErrors",
-          "finalAssistantMessageNonEmpty",
-          "noEndingQuestion",
-        ].includes(row.predicate.type) ||
-        row.role === "advisory" ? (
+        {canRole && onChangePredicate ? (
+          <div role="group" aria-label="If this check misses">
+            <SegmentedControl<"required" | "advisory">
+              value={row.role === "required" ? "required" : "advisory"}
+              onChange={(role) =>
+                onChangePredicate(withPredicateRole(row.predicate!, role))
+              }
+              options={[
+                {
+                  value: "required",
+                  label: "Blocking",
+                  disabled: !rolesForPredicateKind(
+                    row.predicate!.type,
+                  ).includes("required"),
+                  title: rolesForPredicateKind(row.predicate!.type).includes(
+                    "required",
+                  )
+                    ? "If this fails, the run fails and later steps are skipped."
+                    : "This check can only warn.",
+                },
+                {
+                  value: "advisory",
+                  label: "Non-blocking",
+                  title:
+                    "If this fails, you get a warning. The run can still pass.",
+                },
+              ]}
+            />
+          </div>
+        ) : !row.predicate ||
+          [
+            "noToolErrors",
+            "finalAssistantMessageNonEmpty",
+            "noEndingQuestion",
+          ].includes(row.predicate.type) ||
+          row.role === "advisory" ? (
           <span className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-medium leading-[18px] text-secondary-foreground dark:text-muted-foreground">
-            {row.role === "required" ? "Required" : "Advisory"}
+            {row.role === "required" ? "Blocking" : "Non-blocking"}
           </span>
         ) : null}
         {!readOnly &&
-        (onRemove ||
-          canRole ||
+        ((editable &&
+          row.predicate?.type === "responseContains" &&
+          onChangePredicate) ||
           (onOpenSuiteSettings && row.provenance === "suite")) ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -134,52 +173,6 @@ export function PaperCheckRow({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canRole && onChangePredicate ? (
-                <>
-                  <DropdownMenuCheckboxItem
-                    checked={row.role === "required"}
-                    disabled={
-                      !rolesForPredicateKind(row.predicate!.type).includes(
-                        "required",
-                      )
-                    }
-                    onSelect={() =>
-                      onChangePredicate(
-                        withPredicateRole(row.predicate!, "required"),
-                      )
-                    }
-                    className="items-start"
-                  >
-                    <div>
-                      <div className="text-xs font-medium">Required check</div>
-                      <p className="text-[11px] text-muted-foreground">
-                        {rolesForPredicateKind(row.predicate!.type).includes(
-                          "required",
-                        )
-                          ? "A miss fails the task."
-                          : "This check can only warn."}
-                      </p>
-                    </div>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={row.role === "advisory"}
-                    onSelect={() =>
-                      onChangePredicate(
-                        withPredicateRole(row.predicate!, "advisory"),
-                      )
-                    }
-                    className="items-start"
-                  >
-                    <div>
-                      <div className="text-xs font-medium">Advisory check</div>
-                      <p className="text-[11px] text-muted-foreground">
-                        A miss warns. The task can still pass.
-                      </p>
-                    </div>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuSeparator />
-                </>
-              ) : null}
               {editable &&
               row.predicate?.type === "responseContains" &&
               onChangePredicate ? (
@@ -208,13 +201,19 @@ export function PaperCheckRow({
                   Edit in suite settings
                 </DropdownMenuItem>
               ) : null}
-              {editable && onRemove ? (
-                <DropdownMenuItem onSelect={onRemove}>
-                  Remove {row.kindLabel}
-                </DropdownMenuItem>
-              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {!readOnly && editable && onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            title={`Remove ${row.kindLabel}`}
+            aria-label={`Remove ${row.kindLabel}`}
+            className="flex size-6 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
         ) : null}
       </div>
     </li>

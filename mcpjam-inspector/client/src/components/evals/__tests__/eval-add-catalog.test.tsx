@@ -53,9 +53,9 @@ it("keeps the historical Prompt and Interact menu with the Paper action styling"
     expect(item.querySelector("svg")).toHaveClass("text-info");
   }
 });
-it("covers every predicate, widget assertion, action and outcome once, each with an icon", () => {
-  expect(EVAL_ADD_CATALOG).toHaveLength(47);
-  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(47);
+it("covers every predicate, widget assertion and action once, each with an icon", () => {
+  expect(EVAL_ADD_CATALOG).toHaveLength(46);
+  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(46);
   expect(
     EVAL_ADD_CATALOG.filter((e) => e.choice.kind === "check")
       .map((e) => e.key)

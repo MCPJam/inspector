@@ -31,7 +31,10 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
-import { ToolCalledWithFields } from "@/components/evals/checks-section";
+import {
+  ToolCalledWithFields,
+  type ToolArgSchemas,
+} from "@/components/evals/checks-section";
 import { toolNameWarning } from "@/components/evals/tool-name-warning";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import { UNSET_TOOLS_BLOCK_REASON } from "../simple-case/simple-case-model";
@@ -54,6 +57,7 @@ export type ToolCatalogStatus = "loading" | "error";
 export function RouteRow({
   row,
   availableTools,
+  toolArgSchemas,
   toolsStatus,
   onRetryTools,
   readOnly,
@@ -73,6 +77,7 @@ export function RouteRow({
 }: {
   row: ScorecardRow;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   toolsStatus?: ToolCatalogStatus;
   onRetryTools?: () => void;
   readOnly: boolean;
@@ -344,6 +349,7 @@ export function RouteRow({
                     );
                   }}
                   availableTools={availableTools}
+                  toolArgSchemas={toolArgSchemas}
                   readOnly={locked}
                 />
               </SortableToolRow>

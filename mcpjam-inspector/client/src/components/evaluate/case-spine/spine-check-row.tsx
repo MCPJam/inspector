@@ -92,6 +92,12 @@ export function SpineCheckRow({
     <ScorecardRowView
       row={row}
       availableTools={availableTools.map((tool) => tool.name)}
+      toolArgSchemas={Object.fromEntries(
+        availableTools.map((tool) => [
+          tool.name,
+          tool.inputSchema?.properties ?? {},
+        ]),
+      )}
       readOnly={readOnly}
       checkPolicy={checkPolicy}
       overlay={overlay}

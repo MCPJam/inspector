@@ -12,12 +12,16 @@ import type { Predicate } from "@/shared/eval-matching";
 import {
   CheckRow,
   CheckDraftBoundary,
+  type ToolArgSchemas,
 } from "@/components/evals/checks-section";
 import { blankPredicate } from "@/shared/predicate-kinds";
 import { EVAL_ADD_CATALOG } from "@/components/evals/eval-add-catalog";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 import { PaperCheckRow } from "../case-spine/paper-check-row";
-import { WidgetAssertionFields, defaultWidgetAssertion } from "@/components/evals/step-fields";
+import {
+  WidgetAssertionFields,
+  defaultWidgetAssertion,
+} from "@/components/evals/step-fields";
 import { SpineCheckRow } from "../case-spine/spine-check-row";
 import { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
@@ -27,10 +31,12 @@ function Fields({
   initial,
   onChange = vi.fn(),
   onValidityChange = vi.fn(),
+  toolArgSchemas,
 }: {
   initial: Predicate;
   onChange?: (p: Predicate) => void;
   onValidityChange?: (invalid: boolean) => void;
+  toolArgSchemas?: ToolArgSchemas;
 }) {
   const [value, setValue] = useState(initial);
   return (
@@ -40,6 +46,7 @@ function Fields({
         paper
         predicate={value}
         availableTools={["list_services", "get_service"]}
+        toolArgSchemas={toolArgSchemas}
         onChange={(next) => {
           setValue(next);
           onChange(next);
@@ -49,7 +56,7 @@ function Fields({
   );
 }
 
-it("keeps JSON edits local until valid, and reports the block to Save", () => {
+it("keeps JSON edits local until valid, and reports the block to Save", async () => {
   const onChange = vi.fn(),
     onValidityChange = vi.fn();
   render(
@@ -62,6 +69,9 @@ it("keeps JSON edits local until valid, and reports the block to Save", () => {
       onChange={onChange}
       onValidityChange={onValidityChange}
     />,
+  );
+  await userEvent.click(
+    screen.getByRole("switch", { name: "Use raw JSON editor" }),
   );
   const args = screen.getByLabelText("Arguments");
   fireEvent.change(args, { target: { value: '{"service":' } });
@@ -91,6 +101,7 @@ it("keeps exact matching and minimum call count behind the argument settings", a
       onChange={onChange}
     />,
   );
+  await user.click(screen.getByRole("switch", { name: "Use raw JSON editor" }));
   fireEvent.change(screen.getByLabelText("Arguments"), {
     target: { value: '{"service":"products"}' },
   });
@@ -98,19 +109,16 @@ it("keeps exact matching and minimum call count behind the argument settings", a
     args: { argumentMatching: "exact" },
     minCount: 2,
   });
-  await user.click(screen.getByText("Argument settings"));
-  expect(screen.getByLabelText("Argument matching")).toBeVisible();
-  const settings = within(screen.getByText("Argument settings").parentElement!);
-  expect(settings.getAllByRole("combobox")).toHaveLength(1);
-  expect(settings.getAllByRole("spinbutton")).toHaveLength(1);
-  expect(settings.queryByLabelText("Tool")).toBeNull();
-  expect(settings.queryByLabelText("Arguments")).toBeNull();
-  expect(settings.queryByText("Raw JSON")).toBeNull();
-  expect(settings.queryByText("Add argument")).toBeNull();
+  const matching = within(
+    screen.getByRole("group", { name: "Argument matching" }),
+  );
+  expect(screen.queryByText("Argument settings")).toBeNull();
+  expect(screen.getAllByRole("spinbutton")).toHaveLength(1);
+  expect(screen.getByText("Called at least")).toBeVisible();
   expect(screen.getAllByLabelText("Tool")).toHaveLength(1);
   expect(screen.getAllByLabelText("Arguments")).toHaveLength(1);
 
-  const minimum = settings.getByLabelText("Minimum matching calls (optional)");
+  const minimum = screen.getByLabelText("Minimum matching calls (optional)");
   expect(minimum).toHaveValue(2);
   fireEvent.change(minimum, { target: { value: "3" } });
   expect(onChange.mock.lastCall?.[0]).toMatchObject({
@@ -120,14 +128,11 @@ it("keeps exact matching and minimum call count behind the argument settings", a
   });
 
   for (const [option, mode] of [
-    ["Partial (extras ok)", "partial"],
-    ["Ignore (only tool name matters)", "ignore"],
-    ["Exact (deep equal)", "exact"],
+    ["Partial", "partial"],
+    ["Ignore", "ignore"],
+    ["Exact", "exact"],
   ]) {
-    await user.click(
-      settings.getByRole("combobox", { name: "Argument matching" }),
-    );
-    await user.click(screen.getByRole("option", { name: option, exact: true }));
+    await user.click(matching.getByRole("button", { name: option }));
     expect(onChange.mock.lastCall?.[0]).toMatchObject({
       args: { args: { service: "products" }, argumentMatching: mode },
       minCount: 3,
@@ -148,6 +153,118 @@ it("keeps exact matching and minimum call count behind the argument settings", a
   expect(onChange.mock.lastCall?.[0]).toMatchObject({
     args: { args: { service: "products" }, argumentMatching: "exact" },
   });
+});
+
+it("uses the selected server tool's argument names and keeps values typed", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <Fields
+      initial={{
+        type: "toolCalledWith",
+        toolName: "list_services",
+        args: { args: {} },
+      }}
+      toolArgSchemas={{
+        list_services: {
+          service: { type: "string" },
+          limit: { type: "integer" },
+        },
+        get_service: { service_id: { type: "string" } },
+      }}
+      onChange={onChange}
+    />,
+  );
+  expect(screen.queryByLabelText("Arguments")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Add argument" }));
+  await user.click(
+    screen.getByRole("combobox", { name: "Argument name for arg" }),
+  );
+  expect(screen.queryByRole("option", { name: /service_id/ })).toBeNull();
+  await user.click(screen.getByRole("option", { name: /^serviceType:/ }));
+  fireEvent.change(screen.getByLabelText("Expected value for service"), {
+    target: { value: "123" },
+  });
+  expect(onChange.mock.lastCall?.[0].args.args).toEqual({ service: "123" });
+
+  await user.click(screen.getByRole("button", { name: "Add argument" }));
+  await user.click(
+    screen.getByRole("combobox", { name: "Argument name for arg" }),
+  );
+  expect(screen.queryByRole("option", { name: /^serviceType:/ })).toBeNull();
+  await user.click(screen.getByRole("option", { name: /^limitType:/ }));
+  fireEvent.change(screen.getByLabelText("Expected value for limit"), {
+    target: { value: "20" },
+  });
+  expect(onChange.mock.lastCall?.[0].args.args).toEqual({
+    service: "123",
+    limit: 20,
+  });
+
+  await user.click(screen.getByRole("switch", { name: "Use raw JSON editor" }));
+  expect(
+    JSON.parse(
+      (screen.getByLabelText("Arguments") as HTMLTextAreaElement).value,
+    ),
+  ).toEqual({ service: "123", limit: 20 });
+  await user.click(screen.getByRole("switch", { name: "Use raw JSON editor" }));
+  await user.click(
+    screen.getByRole("button", { name: "Remove argument limit" }),
+  );
+  expect(onChange.mock.lastCall?.[0].args.args).toEqual({ service: "123" });
+
+  await user.click(screen.getByRole("combobox", { name: "Tool" }));
+  await user.click(
+    screen.getByRole("option", { name: "get_service", exact: true }),
+  );
+  await user.click(
+    screen.getByRole("combobox", { name: "Argument name for service" }),
+  );
+  expect(screen.queryByRole("option", { name: /^limitType:/ })).toBeNull();
+  await user.click(screen.getByRole("option", { name: /^service_idType:/ }));
+  expect(onChange.mock.lastCall?.[0].args.args).toEqual({ service_id: "123" });
+});
+
+it("allows manual argument names when the server schema is unavailable", async () => {
+  const onChange = vi.fn();
+  render(
+    <Fields
+      initial={{
+        type: "toolCalledWith",
+        toolName: "list_services",
+        args: { args: {} },
+      }}
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add argument" }));
+  fireEvent.change(screen.getByLabelText("Argument key"), {
+    target: { value: "service" },
+  });
+  fireEvent.change(screen.getByLabelText("Expected value for service"), {
+    target: { value: "users" },
+  });
+  expect(onChange.mock.lastCall?.[0].args.args).toEqual({ service: "users" });
+});
+
+it("preserves nested argument objects in the advanced JSON editor", () => {
+  render(
+    <Fields
+      initial={{
+        type: "toolCalledWith",
+        toolName: "list_services",
+        args: { args: { filter: { active: true } } },
+      }}
+    />,
+  );
+  expect(
+    screen.getByRole("switch", { name: "Use raw JSON editor" }),
+  ).toBeChecked();
+  expect(
+    JSON.parse(
+      (screen.getByLabelText("Arguments") as HTMLTextAreaElement).value,
+    ),
+  ).toEqual({ filter: { active: true } });
 });
 
 it.each([
@@ -300,34 +417,26 @@ it("shows role consequences and changes only the check role", async () => {
   const user = userEvent.setup(),
     onChange = vi.fn();
   render(<RoleRow onChange={onChange} />);
-  await user.click(
-    screen.getByRole("button", { name: "Options for No tool errors" }),
+  expect(screen.getByRole("button", { name: "Blocking" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: /Required check/ }),
-  ).toHaveAttribute("aria-checked", "true");
-  await user.click(
-    screen.getByRole("menuitemcheckbox", { name: /Advisory check/ }),
+  expect(screen.getByRole("button", { name: "Blocking" })).toHaveAttribute(
+    "title",
+    "If this fails, the run fails and later steps are skipped.",
   );
+  await user.click(screen.getByRole("button", { name: "Non-blocking" }));
   expect(onChange).toHaveBeenLastCalledWith({
     type: "noToolErrors",
     role: "advisory",
   });
 });
-it("disables Required for an advisory-only check", async () => {
-  const user = userEvent.setup();
+it("disables Blocking for an advisory-only check", () => {
   render(<RoleRow advisoryOnly />);
-  await user.click(
-    screen.getByRole("button", {
-      name: "Options for Final message does not end with a question",
-    }),
-  );
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: /Required check/ }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByText("This check can only warn.")).toBeVisible();
+  const blocking = screen.getByRole("button", { name: "Blocking" });
+  expect(blocking).toBeDisabled();
+  expect(blocking).toHaveAttribute("title", "This check can only warn.");
 });
-
 
 const primaryFields: Record<Predicate["type"], readonly string[]> = {
   toolDescriptionsPresent: ["Minimum description length"],
@@ -336,7 +445,7 @@ const primaryFields: Record<Predicate["type"], readonly string[]> = {
   toolInputSchemasWellFormed: [],
   toolOutputSchemasPresent: [],
   noDeprecatedToolExposed: [],
-  toolCalledWith: ["Tool", "Arguments"],
+  toolCalledWith: ["Tool"],
   toolCalledAtLeastOnce: ["Tool"],
   toolNeverCalled: ["Tool"],
   onlyToolsCalled: [],
@@ -473,9 +582,9 @@ it("keeps the extra pattern controls working behind More options", async () => {
     />,
   );
   expect(screen.getByLabelText("Pattern 1")).toBeVisible();
-  expect(screen.getByLabelText("Ignore case")).not.toBeVisible();
+  expect(screen.getByLabelText("Ignore capitals (A = a)")).not.toBeVisible();
   await user.click(screen.getByText("More options"));
-  await user.click(screen.getByLabelText("Ignore case"));
+  await user.click(screen.getByLabelText("Ignore capitals (A = a)"));
   expect(onChange.mock.lastCall?.[0]).toMatchObject({
     flags: "i",
     patterns: ["users"],
@@ -524,7 +633,6 @@ it("keeps Call tool server, arguments, and timeout editing in the Paper layout",
   });
 });
 
-
 it("keeps Response close to settings and reference text when folded", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();
@@ -559,7 +667,6 @@ it("keeps Response close to settings and reference text when folded", async () =
     caseSensitive: true,
   });
 });
-
 
 it("keeps annotation requirements behind Annotation settings", async () => {
   const user = userEvent.setup();

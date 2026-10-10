@@ -208,6 +208,16 @@ export function CaseSpine({
   defaultChecks,
 }: CaseSpineProps) {
   const view = useMemo(() => readSimpleCase(steps), [steps]);
+  const toolArgSchemas = useMemo(
+    () =>
+      Object.fromEntries(
+        availableTools.map((tool) => [
+          tool.name,
+          tool.inputSchema?.properties ?? {},
+        ]),
+      ),
+    [availableTools],
+  );
   const resolvedMatch = resolveMatchOptions(
     suiteDefaultMatchOptions,
     matchOptions,
@@ -561,6 +571,7 @@ export function CaseSpine({
         paper={!readOnly}
         newest={addedKey === row.key}
         availableTools={availableTools.map((tool) => tool.name)}
+        toolArgSchemas={toolArgSchemas}
         onChangePredicate={
           row.provenance === "case"
             ? (next) =>
@@ -698,6 +709,7 @@ export function CaseSpine({
             <TrialScorecardRow row={results.get(card.route.key)!} />
           ) : (
             <RouteRow
+              toolArgSchemas={toolArgSchemas}
               paper={!readOnly}
               row={firstRoute}
               newestStepId={
@@ -727,6 +739,7 @@ export function CaseSpine({
       card.route.route?.kind === "tools" ? (
         <ul className="divide-y divide-border">
           <RouteRow
+            toolArgSchemas={toolArgSchemas}
             paper={!readOnly}
             turnScoped
             newestStepId={
@@ -787,6 +800,7 @@ export function CaseSpine({
             child.step.assertion.type === "toolCalledWith" &&
             card.route.route?.kind === "tools" ? (
               <RouteRow
+                toolArgSchemas={toolArgSchemas}
                 key={child.step.id}
                 paper
                 turnScoped

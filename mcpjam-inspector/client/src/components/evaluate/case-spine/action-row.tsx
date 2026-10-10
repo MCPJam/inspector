@@ -127,153 +127,150 @@ export function ActionRow({
       data-newest={newest || undefined}
       className={cn(
         "group",
-        step.kind === "prompt"
-          ? "space-y-2"
-          : "relative bg-card py-2.5 pl-8 pr-11",
+        step.kind !== "prompt" && "relative bg-card py-2.5 pl-8 pr-11",
         newest &&
+          step.kind !== "prompt" &&
           "relative before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-primary",
       )}
       data-active={isActive || undefined}
     >
-      <div className="flex items-center gap-2">
-        {isActionCard ? (
-          drag.handle(step.kind === "toolCall" ? "Call tool" : meta.label)
-        ) : (
-          <span
-            aria-hidden
-            className={cn(
-              total === 1 && "sr-only",
-              "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground",
-            )}
-          >
-            {action.ordinal}
-          </span>
+      {/* Prompt: the newest bar marks only the prompt, not the assertions
+          below it. Prompt steps have no card padding, so make room. */}
+      <div
+        className={cn(
+          step.kind === "prompt" ? "space-y-2" : "contents",
+          newest &&
+            step.kind === "prompt" &&
+            "relative pl-3.5 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-primary",
         )}
-        {!isActionCard ? (
-          <Icon
-            className={cn(
-              "size-4 shrink-0",
-              step.kind === "prompt" ? "text-card-foreground" : meta.tint,
-            )}
-            aria-hidden="true"
-          />
-        ) : null}
-        {isActionCard ? (
-          <h3
-            className="min-w-0 flex-1 text-[13px] font-semibold leading-[18px] text-card-foreground"
-            title={summarizeStep(step, serverNamesById)}
-          >
-            {step.kind === "toolCall" ? "Call tool" : meta.label}
-          </h3>
-        ) : (
-          <Label
-            htmlFor={`spine-prompt-${step.id}`}
-            className="min-w-0 flex-1 text-lg leading-7 font-semibold text-card-foreground"
-            onClick={onSelect}
-          >
-            User prompt
-          </Label>
-        )}
-        {status ? <StepStatusBadge status={status} /> : null}
-        {!readOnly && isActionCard ? (
-          <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-2 size-7 shrink-0"
-                aria-label={`Options for step ${action.ordinal}`}
-              >
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-56 space-y-1 p-2">
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full justify-start"
-                aria-label={`Move step ${action.ordinal} up`}
-                disabled={action.ordinal === 1}
-                onClick={() => {
-                  setOptionsOpen(false);
-                  onMove(-1);
-                }}
-              >
-                Move up
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full justify-start"
-                aria-label={`Move step ${action.ordinal} down`}
-                disabled={action.ordinal === total}
-                onClick={() => {
-                  setOptionsOpen(false);
-                  onMove(1);
-                }}
-              >
-                Move down
-              </Button>
-              {canRemove ? (
+      >
+        <div className="flex items-center gap-2">
+          {isActionCard
+            ? drag.handle(step.kind === "toolCall" ? "Call tool" : meta.label)
+            : null}
+          {!isActionCard ? (
+            <Icon
+              className={cn(
+                "size-4 shrink-0",
+                step.kind === "prompt" ? "text-card-foreground" : meta.tint,
+              )}
+              aria-hidden="true"
+            />
+          ) : null}
+          {isActionCard ? (
+            <h3
+              className="min-w-0 flex-1 text-[13px] font-semibold leading-[18px] text-card-foreground"
+              title={summarizeStep(step, serverNamesById)}
+            >
+              {step.kind === "toolCall" ? "Call tool" : meta.label}
+            </h3>
+          ) : (
+            <Label
+              htmlFor={`spine-prompt-${step.id}`}
+              className="min-w-0 flex-1 text-lg leading-7 font-semibold text-card-foreground"
+              onClick={onSelect}
+            >
+              User prompt
+            </Label>
+          )}
+          {status ? <StepStatusBadge status={status} /> : null}
+          {!readOnly && isActionCard ? (
+            <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-2 size-7 shrink-0"
+                  aria-label={`Options for step ${action.ordinal}`}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 space-y-1 p-2">
                 <Button
                   type="button"
                   variant="ghost"
                   className="w-full justify-start"
-                  aria-label={`Remove step ${action.ordinal}`}
+                  aria-label={`Move step ${action.ordinal} up`}
+                  disabled={action.ordinal === 1}
                   onClick={() => {
                     setOptionsOpen(false);
-                    onRemove();
+                    onMove(-1);
                   }}
                 >
-                  Remove
+                  Move up
                 </Button>
-              ) : null}
-              {addAfter}
-            </PopoverContent>
-          </Popover>
-        ) : null}
-        {readOnly || total === 1 || isActionCard ? null : (
-          <>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} up`}
-              disabled={action.ordinal === 1}
-              onClick={() => onMove(-1)}
-            >
-              ↑
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} down`}
-              disabled={action.ordinal === total}
-              onClick={() => onMove(1)}
-            >
-              ↓
-            </Button>
-            {canRemove ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full justify-start"
+                  aria-label={`Move step ${action.ordinal} down`}
+                  disabled={action.ordinal === total}
+                  onClick={() => {
+                    setOptionsOpen(false);
+                    onMove(1);
+                  }}
+                >
+                  Move down
+                </Button>
+                {canRemove ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full justify-start"
+                    aria-label={`Remove step ${action.ordinal}`}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      onRemove();
+                    }}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+                {addAfter}
+              </PopoverContent>
+            </Popover>
+          ) : null}
+          {readOnly || total === 1 || isActionCard ? null : (
+            <>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-                aria-label={`Remove step ${action.ordinal}`}
-                onClick={onRemove}
+                aria-label={`Move step ${action.ordinal} up`}
+                disabled={action.ordinal === 1}
+                onClick={() => onMove(-1)}
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                ↑
               </Button>
-            ) : null}
-          </>
-        )}
-      </div>
-
-      <div className={cn("space-y-5", isActionCard && "mt-1.5")}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                aria-label={`Move step ${action.ordinal} down`}
+                disabled={action.ordinal === total}
+                onClick={() => onMove(1)}
+              >
+                ↓
+              </Button>
+              {canRemove ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                  aria-label={`Remove step ${action.ordinal}`}
+                  onClick={onRemove}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+            </>
+          )}
+        </div>
         {step.kind === "prompt" ? (
           <div className="space-y-2">
             <p
@@ -302,7 +299,15 @@ export function ActionRow({
             />
           </div>
         ) : null}
+      </div>
 
+      <div
+        className={cn(
+          "space-y-5",
+          isActionCard && "mt-1.5",
+          step.kind === "prompt" && "mt-5",
+        )}
+      >
         {step.kind === "toolCall" ? (
           <PinnedToolCallFields
             paper

@@ -14,7 +14,6 @@ import {
   FileJson,
   MessageSquareText,
   Regex,
-  Target,
   LayoutPanelTop,
   Type,
   Eye,
@@ -184,13 +183,4 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
       choice: { kind: "widget-check", widgetKind },
     }),
   ),
-  {
-    key: "outcome",
-    label: "Expected outcome",
-    section: ASSERTION_SECTIONS.userValue,
-    Icon: Target,
-    scope: "outcome",
-    advisory: false,
-    choice: { kind: "outcome" },
-  },
 ];

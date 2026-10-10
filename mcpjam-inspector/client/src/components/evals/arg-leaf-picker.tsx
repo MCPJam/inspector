@@ -35,15 +35,15 @@ import { cn } from "@/lib/utils";
 /** The 7 placeholder strings interpreted by the matcher in `partial` mode. */
 export type Placeholder = (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
 
-/** Human labels — italicized in the UI to distinguish from literal values. */
+/** Human labels for the argument value selector. */
 const PLACEHOLDER_LABELS: Record<Placeholder, string> = {
-  any: "any value",
-  string: "any string",
-  number: "any number",
-  boolean: "any boolean",
-  object: "any object",
-  array: "any array",
-  null: "must be null",
+  any: "Any value",
+  string: "Any string",
+  number: "Any number",
+  boolean: "Any boolean",
+  object: "Any object",
+  array: "Any list",
+  null: "Equals null",
 };
 
 /** Set membership test that doesn't widen `value`'s type. */
@@ -59,6 +59,8 @@ const LITERAL_MODE = "__literal__" as const;
 type Mode = typeof LITERAL_MODE | Placeholder;
 
 interface ArgLeafPickerProps {
+  compact?: boolean;
+  ariaLabel?: string;
   /**
    * Current leaf value. When this is one of the 7 placeholder strings AND
    * `mode === "partial"`, the picker renders the placeholder dropdown
@@ -205,6 +207,8 @@ export function ArgLeafPicker({
   inputPlaceholder,
   className,
   disabled,
+  compact = false,
+  ariaLabel,
 }: ArgLeafPickerProps) {
   const inputId = useId();
   const isIgnore = argumentMatching === "ignore";
@@ -230,7 +234,13 @@ export function ArgLeafPicker({
   };
 
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        compact && "sm:grid sm:grid-cols-2",
+        className,
+      )}
+    >
       <Select
         value={currentMode}
         onValueChange={(v) => setMode(v as Mode)}
@@ -238,56 +248,70 @@ export function ArgLeafPicker({
       >
         <SelectTrigger
           className={cn(
-            "h-8 w-full text-xs",
-            valueIsPlaceholder &&
-              "border-primary/40 bg-primary/5 text-primary",
+            "h-8 w-full text-xs text-foreground",
+            compact && "h-9 min-w-0 font-sans text-sm",
+            compact && valueIsPlaceholder && "sm:col-span-2",
           )}
           aria-label="Argument value mode"
         >
-          <SelectValue />
+          <SelectValue>
+            {currentMode === LITERAL_MODE
+              ? "Equals"
+              : PLACEHOLDER_LABELS[currentMode]}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={LITERAL_MODE} className="text-xs">
-            Literal
+            Equals
           </SelectItem>
           {allowPlaceholders ? (
             <>
-              {PREDICATE_PLACEHOLDER_STRINGS.map((p) => (
-                <SelectItem key={p} value={p} className="text-xs">
-                  {/* "any value" / "any string" / … */}
-                  <span className="italic text-muted-foreground">
-                    {PLACEHOLDER_LABELS[p]}
-                  </span>
-                </SelectItem>
-              ))}
+              {PREDICATE_PLACEHOLDER_STRINGS.filter((p) => p !== "object").map(
+                (p) => (
+                  <SelectItem key={p} value={p} className="text-xs">
+                    <span className="text-foreground">
+                      {PLACEHOLDER_LABELS[p]}
+                    </span>
+                  </SelectItem>
+                ),
+              )}
             </>
           ) : null}
         </SelectContent>
       </Select>
-      <div className="min-w-0 flex-1">
-        {isIgnore ? (
-          <div className="flex h-8 items-center rounded-md border border-dashed border-border/60 bg-muted/10 px-2 text-[11px] italic text-muted-foreground">
-            Arguments not compared in ignore mode
-          </div>
-        ) : valueIsPlaceholder ? (
-          <div className="flex h-8 items-center rounded-md border border-primary/30 bg-primary/5 px-2 text-xs italic text-primary">
-            {PLACEHOLDER_LABELS[value as Placeholder]}
-          </div>
-        ) : (
-          // Literal mode: a single-line input that mirrors the historical
-          // coercion (parse numbers/booleans/null/JSON; fall back to
-          // string). Booleans get a switch when inferredType says so —
-          // small UX win, doesn't change the persisted shape.
-          <LiteralValueEditor
-            id={inputId}
-            value={value}
-            onChange={onChange}
-            inferredType={inferredType}
-            placeholder={inputPlaceholder ?? "Value"}
-            disabled={disabled}
-          />
-        )}
-      </div>
+      {!(compact && valueIsPlaceholder) && (
+        <div className="min-w-0 flex-1">
+          {isIgnore ? (
+            <div className="flex h-8 items-center rounded-md border border-dashed border-border/60 bg-muted/10 px-2 text-[11px] italic text-muted-foreground">
+              Arguments not compared in ignore mode
+            </div>
+          ) : valueIsPlaceholder ? (
+            <div
+              className={cn(
+                "flex h-8 items-center rounded-md border border-border bg-background px-2 text-xs text-foreground",
+                compact && "h-9 text-sm",
+              )}
+            >
+              {PLACEHOLDER_LABELS[value as Placeholder]}
+            </div>
+          ) : (
+            // Literal mode: a single-line input that mirrors the historical
+            // coercion (parse numbers/booleans/null/JSON; fall back to
+            // string). Booleans get a switch when inferredType says so —
+            // small UX win, doesn't change the persisted shape.
+            <LiteralValueEditor
+              compact={compact}
+              ariaLabel={ariaLabel}
+              id={inputId}
+              value={value}
+              onChange={onChange}
+              inferredType={inferredType}
+              placeholder={inputPlaceholder ?? "Value"}
+              disabled={disabled}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -299,6 +323,8 @@ function LiteralValueEditor({
   inferredType,
   placeholder,
   disabled,
+  compact = false,
+  ariaLabel,
 }: {
   id: string;
   value: unknown;
@@ -306,16 +332,24 @@ function LiteralValueEditor({
   inferredType?: string;
   placeholder: string;
   disabled?: boolean;
+  compact?: boolean;
+  ariaLabel?: string;
 }) {
   if (inferredType === "boolean") {
     const bool = value === true;
     return (
-      <div className="flex h-8 items-center gap-2 rounded-md border border-border/60 bg-background px-2">
+      <div
+        className={cn(
+          "flex h-8 items-center gap-2 rounded-md border border-border/60 bg-background px-2",
+          compact && "h-9 text-sm",
+        )}
+      >
         <Switch
           id={id}
           checked={bool}
           onCheckedChange={(checked) => onChange(checked)}
           disabled={disabled}
+          aria-label={ariaLabel}
         />
         <span className="text-xs text-muted-foreground">
           {bool ? "true" : "false"}
@@ -327,9 +361,20 @@ function LiteralValueEditor({
     <Input
       id={id}
       value={literalToString(value)}
-      onChange={(e) => onChange(stringToLiteral(e.target.value))}
+      onChange={(e) =>
+        onChange(
+          compact && inferredType === "string"
+            ? e.target.value
+            : stringToLiteral(e.target.value),
+        )
+      }
       placeholder={placeholder}
-      className="h-8 font-mono text-xs"
+      className={
+        compact
+          ? "h-9 font-sans text-sm text-foreground placeholder:text-foreground"
+          : "h-8 font-mono text-xs"
+      }
+      aria-label={ariaLabel}
       disabled={disabled}
     />
   );

@@ -126,6 +126,39 @@ const openSpine = async (
   return user;
 };
 
+it.each(["prompt", "interact", "afterRun"] as const)(
+  "passes the selected tool's argument schema to %s checks",
+  async (placement) => {
+    const onStepsChange = vi.fn();
+    const onPredicatesChange = vi.fn();
+    const assertion = {
+      type: "toolCalledWith" as const,
+      toolName: "get_me",
+      args: { args: {} },
+    };
+    const user = await openSpine({
+      availableTools: [{ name: "get_me", inputSchema: { type: "object", properties: { user_id: { type: "string" } } } }],
+      steps: [
+        ...promptOnly,
+        ...(placement === "interact" ? [withClick[1]!] : []),
+        ...(placement !== "afterRun" ? [{ id: "check-args", kind: "assert" as const, assertion }] : []),
+      ],
+      predicates: placement === "afterRun" ? { mode: "extend", list: [assertion] } : undefined,
+      onStepsChange,
+      onPredicatesChange,
+    });
+    await user.click(screen.getByRole("button", { name: "Add argument" }));
+    await user.click(screen.getByRole("combobox", { name: "Argument name for arg" }));
+    await user.click(screen.getByRole("option", { name: /^user_idType:/ }));
+    fireEvent.change(screen.getByLabelText("Expected value for user_id"), { target: { value: "42" } });
+    if (placement === "afterRun") {
+      expect(onPredicatesChange.mock.lastCall?.[0].list[0].args.args).toEqual({ user_id: "42" });
+    } else {
+      expect(onStepsChange.mock.lastCall?.[0].find((step: TestStep) => step.id === "check-args").assertion.args.args).toEqual({ user_id: "42" });
+    }
+  },
+);
+
 describe("the first-run form", () => {
   it("keeps recording controls connected to the recorder", async () => {
     const user = userEvent.setup();
@@ -362,20 +395,12 @@ describe("Paper authoring rows", () => {
     await add(user, "check:turnCountUnder");
     await add(user, "check:tokenBudgetUnder");
     await user.click(
-      screen.getByRole("button", {
-        name: "Options for Fewer than N user turns",
-      }),
-    );
-    await user.click(
-      screen.getByRole("menuitem", { name: "Remove Fewer than N user turns" }),
+      screen.getByRole("button", { name: "Remove Fewer than N user turns" }),
     );
     expect(marked()).toHaveLength(1);
     expect(marked()[0]).toHaveTextContent("Token budget under N");
     await user.click(
-      screen.getByRole("button", { name: "Options for Token budget under N" }),
-    );
-    await user.click(
-      screen.getByRole("menuitem", { name: "Remove Token budget under N" }),
+      screen.getByRole("button", { name: "Remove Token budget under N" }),
     );
     expect(marked()).toHaveLength(0);
   });
@@ -1214,20 +1239,6 @@ it("routes a whole-run limit to case policy and preserves existing inline steps"
   );
   expect(onStepsChange).not.toHaveBeenCalled();
 });
-it("opens the existing expected outcome from the drawer", async () => {
-  const user = userEvent.setup();
-  render(<StatefulSpine />);
-  await user.click(
-    screen.getByRole("button", {
-      name: "Add assertion or action",
-      exact: true,
-    }),
-  );
-  await user.click(screen.getByTestId("add-step-item-outcome"));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByLabelText("Expected outcome")).toHaveFocus();
-});
-
 describe("a multi-prompt case", () => {
   const expectTool = (id: string, toolName: string): TestStep => ({
     id,
