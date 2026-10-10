@@ -5,8 +5,8 @@
  * shape is pushed:
  *
  *   dead-files:       only whole-file deletions, nothing added or modified.
- *   history-comments: only comment or blank lines changed, and fewer history
- *                     comments than before.
+ *   history-comments: the code with comments removed is unchanged, and there
+ *                     are fewer history comments than before.
  *
  * Both: at most MAX_LINES changed lines, and no ratchet rule goes up.
  *
@@ -16,12 +16,11 @@
  * valid, 1 otherwise. Prints the changed paths, one per line, on success.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { compare } from "./ratchet.mjs";
 
 export const MAX_LINES = 400;
-
-const COMMENT_OR_BLANK = /^\s*(?:$|\/\/|\/\*|\*)/;
 
 function git(args) {
   return execFileSync("git", args, {
@@ -41,18 +40,41 @@ function changes() {
     }));
 }
 
-/** Changed non-comment lines in a unified diff with no context. */
-export function codeLinesChanged(diff) {
-  const offending = [];
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (!line.startsWith("+") && !line.startsWith("-")) continue;
-    if (!COMMENT_OR_BLANK.test(line.slice(1))) offending.push(line);
+/**
+ * The code in `text` with comments removed and whitespace normalized: trimmed
+ * lines, runs of spaces collapsed, blank lines dropped. Strings and template
+ * literals are skipped so a `//` inside one is not read as a comment.
+ */
+export function codeOnly(text) {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+    } else if (c === "/" && next === "*") {
+      const close = text.indexOf("*/", i + 2);
+      i = close === -1 ? text.length : close + 2;
+      out += " ";
+    } else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += c;
+      i += 1;
+    }
   }
-  return offending;
+  return out
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .join("\n");
 }
 
-export function checkLane(lane, entries, { diffOf, linesOf }) {
+export function checkLane(lane, entries, { before, after, linesOf }) {
   const problems = [];
   let total = 0;
   for (const { status, path } of entries) {
@@ -65,10 +87,8 @@ export function checkLane(lane, entries, { diffOf, linesOf }) {
           `${path}: ${status}, only edits to existing files allowed`
         );
       } else {
-        for (const line of codeLinesChanged(diffOf(path))) {
-          problems.push(
-            `${path}: non-comment line changed: ${line.slice(0, 120)}`
-          );
+        if (codeOnly(before(path)) !== codeOnly(after(path))) {
+          problems.push(`${path}: code changed, not only comments`);
         }
       }
     } else {
@@ -93,7 +113,8 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     process.exit(0);
   }
   const { problems } = checkLane(lane, entries, {
-    diffOf: (path) => git(["diff", "-U0", "HEAD", "--", path]),
+    before: (path) => git(["show", `HEAD:${path}`]),
+    after: (path) => readFileSync(path, "utf8"),
     linesOf: (path) =>
       git(["diff", "--numstat", "HEAD", "--", path])
         .split("\n")

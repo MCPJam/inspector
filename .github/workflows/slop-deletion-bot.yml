@@ -83,7 +83,8 @@ jobs:
           fi
 
           # Paths in open bot PRs, and in bot PRs a reviewer closed unmerged.
-          gh pr list --label slop-bot --state all --limit 200 --json state,files \
+          # --limit is a cap, not a page size; set it far above any real count.
+          gh pr list --label slop-bot --state all --limit 10000 --json state,files \
             --jq '.[] | select(.state != "MERGED") | .files[].path' \
             | sort -u > "$RUNNER_TEMP/exclude.txt"
           node scripts/slop/deletion-candidates.mjs --limit 10 \
@@ -130,7 +131,7 @@ jobs:
 
             1. Prove nothing uses it. `git grep` for the file's stem, its path without extension, and each name it exports. Look for dynamic `import(`, `import.meta.glob`, lazy routes, string-keyed registries, `package.json` `exports`, and Vite or Vitest config. A reference from anything other than the file's own `*.test.*` / `*.spec.*` / `*.stories.*` means skip it.
             2. Delete it and its own tests with `git rm`. Never edit another file to make a deletion work.
-            3. Typecheck the package: `npm run typecheck:client -w @mcpjam/inspector` under `mcpjam-inspector/client`, `npm run typecheck:server -w @mcpjam/inspector` under `mcpjam-inspector/server`, otherwise `npm run typecheck -w <workspace>`. If it fails, `git restore --staged --worktree` the paths and move on.
+            3. Typecheck the package: `npm run typecheck:client -w @mcpjam/inspector` under `mcpjam-inspector/client`, `npm run typecheck:server -w @mcpjam/inspector` under `mcpjam-inspector/server` (if `mcpjam-inspector/package.json` has no `typecheck:server` script, skip server candidates), otherwise `npm run typecheck -w <workspace>`. If it fails, `git restore --staged --worktree` the paths and move on.
             4. Skip any candidate whose `totalLines` is over 400.
 
             ## Lane history-comments

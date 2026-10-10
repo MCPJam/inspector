@@ -181,7 +181,7 @@ describe("ratchet", () => {
 });
 
 describe("deletion bot check", async () => {
-  const { checkLane, codeLinesChanged, MAX_LINES } = await import(
+  const { checkLane, codeOnly, MAX_LINES } = await import(
     "./deletion-bot-check.mjs"
   );
   const CHECK = join(
@@ -194,7 +194,7 @@ describe("deletion bot check", async () => {
     const { problems } = checkLane(
       "dead-files",
       [{ status: "D", path: "a.ts" }],
-      { diffOf: () => "", linesOf: lines(40) }
+      { before: () => "", after: () => "", linesOf: lines(40) }
     );
     assert.deepEqual(problems, []);
   });
@@ -207,24 +207,44 @@ describe("deletion bot check", async () => {
         { status: "M", path: "b.ts" },
         { status: "??", path: "c.ts" },
       ],
-      { diffOf: () => "", linesOf: lines(MAX_LINES) }
+      { before: () => "", after: () => "", linesOf: lines(MAX_LINES) }
     );
     assert.equal(problems.length, 3);
   });
 
-  it("allows only comment lines to change in the history lane", () => {
-    const commentOnly = [
-      "--- a/x.ts",
-      "+++ b/x.ts",
-      "-// Fixed in #5474 on 2026-09-24.",
-      "+// Retries once: the first read can race the writer.",
-      "- * Landed in PR 4556.",
-      "+",
+  it("allows only comment changes in the history lane", () => {
+    const before = [
+      "// Fixed in #5474 on 2026-09-24.",
+      "const a = 1; // PR 4556",
+      "/** Landed in #6001. */",
+      'const url = "http://x//y";',
     ].join("\n");
-    assert.deepEqual(codeLinesChanged(commentOnly), []);
-    assert.equal(
-      codeLinesChanged("-const a = 1; // #5474\n+const a = 1;").length,
-      2
+    const after = [
+      "// Retries once: the first read can race the writer.",
+      "const a = 1;",
+      'const url = "http://x//y";',
+    ].join("\n");
+    assert.equal(codeOnly(before), codeOnly(after));
+    const { problems } = checkLane(
+      "history-comments",
+      [{ status: "M", path: "sdk/src/a.ts" }],
+      { before: () => before, after: () => after, linesOf: lines(5) }
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  it("catches code hidden behind a comment marker", () => {
+    assert.notEqual(
+      codeOnly("/* fixed in #123 */ doThing();"),
+      codeOnly("/* why */ doOther();")
+    );
+    assert.notEqual(
+      codeOnly("class A {\n  *gen() {}\n}"),
+      codeOnly("class A {\n  *other() {}\n}")
+    );
+    assert.notEqual(
+      codeOnly("const a = 1; // #5474"),
+      codeOnly("const a = 2;")
     );
   });
 
