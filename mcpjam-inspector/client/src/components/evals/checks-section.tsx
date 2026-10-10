@@ -1,3 +1,4 @@
+import { PAPER_FIELD_STYLES } from "./paper-field-styles";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 /**
  * Authoring UI for the deterministic predicate gate ("Checks" in user-facing
@@ -586,8 +587,7 @@ export function CheckRow({
         embedded
           ? cn(
               "min-w-0 space-y-3",
-              paper &&
-                "[font-synthesis:none] antialiased text-card-foreground [&_label:not(details_*)]:text-sm [&_label:not(details_*)]:font-medium [&_details_label]:text-xs [&_details_label]:font-normal",
+              paper && PAPER_FIELD_STYLES,
             )
           : cn(
               "rounded-md border p-3",
@@ -925,7 +925,7 @@ function CheckFields({
       if (paper)
         return (
           <div className="space-y-1">
-            <div className="text-sm font-medium">
+            <div className="text-sm font-medium leading-[18px]">
               Minimum description length
             </div>
             <PaperNumberField
@@ -2898,7 +2898,7 @@ function WidgetToolFilterField({
         >
           <SelectTrigger
             id={id}
-            className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+            className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
           >
             <SelectValue />
           </SelectTrigger>
@@ -2921,7 +2921,7 @@ function WidgetToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder="All widgets"
-          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+          className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -3054,7 +3054,7 @@ function ResultToolFilterField({
         >
           <SelectTrigger
             id={id}
-            className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+            className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
             aria-label={label}
           >
             <SelectValue />
@@ -3082,7 +3082,7 @@ function ResultToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder={anyLabel}
-          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+          className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -3535,7 +3535,7 @@ function PaperNumberField({
   const generatedId = useId();
   const id = fieldId ?? generatedId;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-[18px] text-foreground">
+    <div className="flex flex-wrap items-center gap-1.5 text-sm font-normal leading-[18px] text-card-foreground">
       {prefix ? (
         <Label htmlFor={id} className="text-[13px] font-medium">
           {prefix}
@@ -3558,7 +3558,7 @@ function PaperNumberField({
           if (Number.isFinite(number)) onChange(Math.floor(number));
         }}
         disabled={readOnly}
-        className="h-6 min-w-10 shrink-0 appearance-none px-2 py-1 text-xs leading-4 md:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        className="h-6 min-w-10 shrink-0 appearance-none px-2 py-1 text-sm font-normal leading-4 md:text-sm [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         style={{
           width: Math.max(
             prefix ? 48 : 40,
@@ -3566,7 +3566,7 @@ function PaperNumberField({
           ),
         }}
       />
-      <label htmlFor={id}>{unit}</label>
+      <label htmlFor={id} data-paper-unit className="text-sm font-normal leading-[18px] text-card-foreground">{unit}</label>
     </div>
   );
 }

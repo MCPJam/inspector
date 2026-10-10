@@ -165,7 +165,7 @@ function WidgetCheckRow({
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           title={row.tooltip}
         >
-          <span className="min-w-0 text-sm font-semibold leading-[18px] text-card-foreground">
+          <span className="min-w-0 text-[13px] font-semibold leading-[18px] text-card-foreground">
             {readOnly ? row.label : row.kindLabel}
           </span>
         </button>

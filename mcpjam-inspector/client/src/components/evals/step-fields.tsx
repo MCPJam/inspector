@@ -1,3 +1,4 @@
+import { PAPER_FIELD_STYLES } from "./paper-field-styles";
 /**
  * Per-kind step field editors, shared by the two surfaces that author steps.
  *
@@ -228,7 +229,7 @@ export function InteractActionFields({
       </div>
     ) : null;
   return (
-    <div className={paper ? "flex flex-col gap-2" : "flex flex-col gap-1.5"}>
+    <div className={paper ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5` : "flex flex-col gap-1.5"}>
       {paper ? (
         <Label htmlFor={`${id}-kind`} className={labelClass}>
           Action
@@ -470,7 +471,7 @@ export function WidgetAssertionFields({
   const target =
     "target" in value ? (value.target as ElementLocator) : undefined;
   const viewTools = invokableTools(availableTools);
-  const fieldClass = paper ? "h-9 text-sm" : "h-7 text-[11px]";
+  const fieldClass = paper ? "h-9 w-full text-sm" : "h-7 text-[11px]";
   const assertionKindPicker = (
     <div className="space-y-1">
       <Label className="text-[11px]">Assertion</Label>
@@ -499,7 +500,7 @@ export function WidgetAssertionFields({
     </div>
   );
   return (
-    <div className="flex flex-col gap-2">
+    <div className={paper ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5` : "flex flex-col gap-2"}>
       <div className={paper ? "space-y-2" : "grid gap-2 sm:grid-cols-2"}>
         <div className="space-y-1">
           <Label className={paper ? "text-sm font-medium" : "text-xs"}>

@@ -1,3 +1,4 @@
+import { PAPER_FIELD_STYLES } from "./paper-field-styles";
 /**
  * Server / Tool / Arguments / Render-timeout fields for a pinned (model-free)
  * tool call. Shared by the per-turn editor (a "Render check" turn in the
@@ -149,7 +150,7 @@ export function PinnedToolCallFields({
   }, [serverName, toolName, argsJson, renderTimeoutMs, resolvedServerId]);
 
   return (
-    <div className="space-y-3">
+    <div className={paper ? `${PAPER_FIELD_STYLES} space-y-1.5` : "space-y-3"}>
       <div className={paper ? "space-y-2" : "grid gap-3 sm:grid-cols-2"}>
         <div className="space-y-1">
           <Label
@@ -171,7 +172,7 @@ export function PinnedToolCallFields({
             >
               <SelectTrigger
                 id={serverId}
-                className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+                className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
               >
                 <SelectValue placeholder="Pick a server…" />
               </SelectTrigger>
@@ -190,7 +191,7 @@ export function PinnedToolCallFields({
               onChange={(e) => setServerName(e.target.value)}
               placeholder="Server name"
               readOnly={readOnly}
-              className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+              className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
             />
           )}
         </div>
@@ -209,7 +210,7 @@ export function PinnedToolCallFields({
             >
               <SelectTrigger
                 id={toolId}
-                className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+                className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
               >
                 <SelectValue placeholder="Pick a tool…" />
               </SelectTrigger>
@@ -228,7 +229,7 @@ export function PinnedToolCallFields({
               onChange={(e) => setToolName(e.target.value)}
               placeholder="e.g. show_map"
               readOnly={readOnly}
-              className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+              className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
             />
           )}
         </div>

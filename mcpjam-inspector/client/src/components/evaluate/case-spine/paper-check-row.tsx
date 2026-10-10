@@ -83,7 +83,7 @@ export function PaperCheckRow({
           {row.kindLabel}
         </button>
         {row.predicate?.type === "noToolErrors" ? (
-          <p className="text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
+          <p className="text-[13px] font-normal leading-[18px] text-card-foreground">
             Passes when no tool reports an error.
           </p>
         ) : row.predicate && onChangePredicate ? (
@@ -97,7 +97,7 @@ export function PaperCheckRow({
             readOnly={!editable}
           />
         ) : (
-          <p className="text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
+          <p className="text-[13px] font-normal leading-[18px] text-card-foreground">
             {row.label}
           </p>
         )}
