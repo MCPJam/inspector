@@ -180,6 +180,118 @@ describe("ratchet", () => {
   });
 });
 
+describe("deletion bot check", async () => {
+  const { checkLane, codeOnly, MAX_LINES } = await import(
+    "./deletion-bot-check.mjs"
+  );
+  const CHECK = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "deletion-bot-check.mjs"
+  );
+  const lines = (n) => () => n;
+
+  it("accepts pure deletions in the dead-files lane", () => {
+    const { problems } = checkLane(
+      "dead-files",
+      [{ status: "D", path: "a.ts" }],
+      { before: () => "", after: () => "", linesOf: lines(40) }
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  it("rejects additions, edits and oversize changes", () => {
+    const { problems } = checkLane(
+      "dead-files",
+      [
+        { status: "D", path: "a.ts" },
+        { status: "M", path: "b.ts" },
+        { status: "??", path: "c.ts" },
+      ],
+      { before: () => "", after: () => "", linesOf: lines(MAX_LINES) }
+    );
+    assert.equal(problems.length, 3);
+  });
+
+  it("allows only comment changes in the history lane", () => {
+    const before = [
+      "// Fixed in #5474 on 2026-09-24.",
+      "const a = 1; // PR 4556",
+      "/** Landed in #6001. */",
+      'const url = "http://x//y";',
+    ].join("\n");
+    const after = [
+      "// Retries once: the first read can race the writer.",
+      "const a = 1;",
+      'const url = "http://x//y";',
+    ].join("\n");
+    assert.equal(codeOnly(before), codeOnly(after));
+    const { problems } = checkLane(
+      "history-comments",
+      [{ status: "M", path: "sdk/src/a.ts" }],
+      { before: () => before, after: () => after, linesOf: lines(5) }
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  it("catches code hidden behind a comment marker", () => {
+    assert.notEqual(
+      codeOnly("/* fixed in #123 */ doThing();"),
+      codeOnly("/* why */ doOther();")
+    );
+    assert.notEqual(
+      codeOnly("class A {\n  *gen() {}\n}"),
+      codeOnly("class A {\n  *other() {}\n}")
+    );
+    assert.notEqual(
+      codeOnly("const a = 1; // #5474"),
+      codeOnly("const a = 2;")
+    );
+    assert.notEqual(
+      codeOnly('const s = "a  b"; // #5474'),
+      codeOnly('const s = "a b";')
+    );
+    assert.notEqual(
+      codeOnly("const t = `x\n  y`;"),
+      codeOnly("const t = `x\ny`;")
+    );
+  });
+
+  it("refuses a real tree that adds a file, and passes a real deletion", () => {
+    const repo = mkdtempSync(join(tmpdir(), "slop-bot-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(join(repo, "sdk/src/dead.ts"), "export const x = 1;\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      const run = () => {
+        try {
+          execFileSync("node", [CHECK, "--lane", "dead-files"], {
+            cwd: repo,
+            encoding: "utf8",
+            stdio: "pipe",
+          });
+          return 0;
+        } catch (error) {
+          return error.status;
+        }
+      };
+      git("rm", "-q", "sdk/src/dead.ts");
+      assert.equal(run(), 0);
+      // `git rm` removed the now-empty directory.
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(join(repo, "sdk/src/new.ts"), "export const y = 2;\n");
+      assert.equal(run(), 1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("agent hooks", async () => {
   const { checkNewPath, checkEdit, editFragments, FILE_BUDGET } = await import(
     "./hook.mjs"
