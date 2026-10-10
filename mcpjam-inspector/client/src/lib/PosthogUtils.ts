@@ -1,5 +1,11 @@
 import type { CaptureResult } from "posthog-js";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
+import {
+  POSTHOG_URL_PROPERTIES,
+  scrubCredentialUrl,
+  scrubTelemetryEvent,
+  scrubTelemetryValue,
+} from "../../../shared/credential-urls";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
@@ -91,33 +97,16 @@ const SERVER_EVALUATED_FLAG_OPTIONS = {
 } as const;
 
 /**
- * A score result link is a bearer credential — the token in `/results/<token>`
- * is the only thing standing between a private run and anyone who has the URL.
- * Autocapture attaches `$current_url` to every captured event, so a single
- * click on that page would ship the credential to analytics, where it lands in
- * logs and exports that no one thinks of as secret-bearing. Replace the token
- * with a placeholder before anything leaves the browser; the path itself is
- * still useful, and the token never was.
+ * Credentials out of a URL (`shared/credential-urls.ts` — share tokens, OAuth
+ * codes, secret query keys), plus organization ids. Organization ids are
+ * internal identifiers, and organization routes are captured automatically
+ * by PostHog on otherwise privacy-safe events.
  */
-// Every path whose LAST segment is a bearer credential. Autocapture attaches
-// `$current_url` to each event, so a share viewer's address bar would ship the
-// redeem token to PostHog on every click if these were not redacted.
-const CREDENTIAL_PATH_PREFIXES = [
-  "/results/",
-  "/conformance/shared/",
-  "/evals/shared/",
-];
-
 export function scrubSensitiveUrl(value: string): string {
-  let out = value;
-  for (const prefix of CREDENTIAL_PATH_PREFIXES) {
-    const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
-    out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
-  }
-  // Organization ids are internal identifiers and organization routes are
-  // captured automatically by PostHog on otherwise privacy-safe events.
-  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
-  return out;
+  return scrubCredentialUrl(value).replace(
+    /(\/organizations\/)[^/?#]+/g,
+    "$1[redacted]",
+  );
 }
 
 // What browsers say when a request never got a response. Matched exactly so
@@ -184,17 +173,7 @@ export function sanitizeAnalyticsProperties(
   // Short of a resolved `full` privacy level, names come out of URLs too
   // (lib/session-privacy.ts), on top of the credential redaction below.
   const maskNames = shouldMaskAnalytics();
-  for (const key of [
-    "$current_url",
-    "$referrer",
-    "$pathname",
-    "$session_entry_url",
-    "$session_entry_pathname",
-    "$session_entry_referrer",
-    "$initial_current_url",
-    "$initial_pathname",
-    "$initial_referrer",
-  ]) {
+  for (const key of POSTHOG_URL_PROPERTIES) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
       if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);
@@ -202,6 +181,142 @@ export function sanitizeAnalyticsProperties(
   }
   if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
+}
+
+/**
+ * rrweb event types a `$snapshot` batch may carry. 2 (full snapshot) and 3
+ * (incremental) are DOM: masked at capture by the replay profile's text,
+ * attribute and network callbacks, and gzip-compressed by posthog-js, so
+ * they cannot be walked here — scrubbing a compressed string would corrupt
+ * it. 4 (meta: the page URL), 5 (custom: `$url_changed` and friends) and 6
+ * (plugins: console logs and network requests) are plain JSON and are walked.
+ */
+const SNAPSHOT_DOM_EVENT_TYPES = new Set([0, 1, 2, 3]);
+const SNAPSHOT_WALKED_EVENT_TYPES = new Set([4, 5, 6]);
+
+/**
+ * The `$snapshot` half of `scrubCaptureEvent`. `null` when the batch is not
+ * in a shape this understands: fail closed, the batch is dropped.
+ */
+function scrubSnapshotData(data: unknown): unknown[] | null {
+  if (!Array.isArray(data)) return null;
+  const out: unknown[] = [];
+  for (const item of data) {
+    if (!item || typeof item !== "object") return null;
+    const type = (item as { type?: unknown }).type;
+    if (typeof type !== "number") return null;
+    if (SNAPSHOT_DOM_EVENT_TYPES.has(type)) {
+      out.push(item);
+    } else if (SNAPSHOT_WALKED_EVENT_TYPES.has(type)) {
+      out.push(scrubTelemetryValue(item));
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+/** The parts of a posthog-js instance whose stored state is scrubbed. */
+interface PostHogPersistenceLike {
+  props?: Record<string, unknown>;
+  save?: () => void;
+}
+interface PostHogWithPersistence {
+  persistence?: PostHogPersistenceLike | null;
+  sessionPersistence?: PostHogPersistenceLike | null;
+}
+
+let persistedPostHog: PostHogWithPersistence | null = null;
+
+/**
+ * Credentials out of what posthog-js STORES, not only what it sends: on the
+ * first capture of a visit it records the landing URL as
+ * `$initial_person_info` (`u`, `r`) straight from `location.href`, into its
+ * cookie — scoped to the parent domain, so it rides every same-site request —
+ * and into localStorage. Neither `before_send` nor any URL hook sees that
+ * write. A landing on a share link would keep the token there for a year.
+ *
+ * Run from `before_send` (posthog-js writes the person info earlier in the
+ * same `capture`) and once at load, for values an older build stored. A walk
+ * that cannot finish deletes the person info rather than leaving it raw.
+ */
+export function scrubPostHogPersistence(
+  instance: PostHogWithPersistence | null = persistedPostHog,
+): void {
+  if (!instance) return;
+  for (const store of [instance.persistence, instance.sessionPersistence]) {
+    const props = store?.props;
+    if (!store || !props) continue;
+    try {
+      const scrubbed = scrubTelemetryValue(props);
+      if (scrubbed === props) continue;
+      // In place: the SDK holds this object, not a getter for it.
+      for (const key of Object.keys(props)) {
+        if (!(key in scrubbed)) delete props[key];
+      }
+      Object.assign(props, scrubbed);
+    } catch {
+      delete props.$initial_person_info;
+    }
+    try {
+      store.save?.();
+    } catch {
+      // Storage refused the write; nothing else to do here.
+    }
+  }
+}
+
+/**
+ * The single `before_send` pass: every credential out of everything an event
+ * carries — its properties (URL properties, `$elements_chain`,
+ * `$external_click_url`, web vitals, `$$heatmap` data keyed by URL, exception
+ * text), `$set` and `$set_once` — via the shared walker
+ * (`scrubTelemetryEvent`), after the URL properties have had their names
+ * masked where the privacy level asks for it.
+ *
+ * `properties.token` is the project key and is never touched: ingestion
+ * rejects an event without it.
+ *
+ * Fail closed. When the walker cannot finish, the URL-bearing fields go and
+ * the rest is scrubbed; when even that fails, the event is dropped (`null`).
+ * A `$snapshot` batch is walked event by event (`scrubSnapshotData`) and
+ * dropped whole if any part of it is not understood.
+ */
+export function scrubCaptureEvent(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  scrubPostHogPersistence();
+  if (!event) return event;
+  try {
+    const properties: Record<string, any> = { ...(event.properties ?? {}) };
+    if (event.event === "$snapshot") {
+      const snapshot = scrubSnapshotData(properties.$snapshot_data);
+      if (snapshot === null) return null;
+      const { $snapshot_data: _omit, ...rest } = properties;
+      const scrubbedRest = scrubTelemetryEvent(rest, {
+        preserveTopLevelKeys: ["token"],
+      });
+      if (scrubbedRest === null) return null;
+      return {
+        ...event,
+        properties: { ...scrubbedRest, $snapshot_data: snapshot },
+      };
+    }
+    sanitizeAnalyticsProperties(properties, event.event);
+    const scrubbedProperties = scrubTelemetryEvent(properties, {
+      preserveTopLevelKeys: ["token"],
+    });
+    if (scrubbedProperties === null) return null;
+    const { properties: _properties, ...envelope } = event;
+    const scrubbedEnvelope = scrubTelemetryEvent(envelope);
+    if (scrubbedEnvelope === null) return null;
+    return {
+      ...scrubbedEnvelope,
+      properties: scrubbedProperties,
+    } as CaptureResult;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -283,8 +398,13 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
-  sanitize_properties: sanitizeAnalyticsProperties,
-  before_send: dropInjectedScriptException,
+  // Injected-script exceptions are dropped first, then every remaining event
+  // has its credentials scrubbed (fail closed: an event that cannot be shown
+  // clean is dropped). This replaces the deprecated `sanitize_properties`.
+  before_send: [dropInjectedScriptException, scrubCaptureEvent],
+  // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
+  // no event, replay URL or heatmap needs one.
+  disable_capture_url_hashes: true,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
@@ -320,6 +440,8 @@ export const options = {
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
+    persistedPostHog = posthog;
+    scrubPostHogPersistence(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
@@ -412,6 +534,10 @@ export const getPostHogOptions = (
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // Nothing is sent from here by default, but anything that opts in
+        // later still goes through the same scrubber.
+        before_send: [dropInjectedScriptException, scrubCaptureEvent],
+        disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({

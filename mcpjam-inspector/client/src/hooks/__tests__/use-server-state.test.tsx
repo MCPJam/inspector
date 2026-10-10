@@ -20,6 +20,10 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
+import {
+  captureOAuthCallbackFromUrl,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 
 const {
   toastError,
@@ -2371,6 +2375,47 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("completes a callback whose answer main.tsx moved into the inbox, then consumes it", async () => {
+    resetOAuthCallbackInboxForTests();
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=inbox-code");
+    captureOAuthCallbackFromUrl();
+    // What the hook sees in production: no code in the address bar.
+    expect(window.location.search).toBe("?oauth_pending=1");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(handleOAuthCallbackMock).toHaveBeenCalledWith(
+        "inbox-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/servers");
+    });
+    expect(window.location.search).toBe("");
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("inbox-code");
+    expect(handleOAuthCallbackMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves onboarding toast suppression through an OAuth callback", async () => {

@@ -21,6 +21,7 @@ import { tunnelManager } from "../services/tunnel-manager.js";
 import "../types/hono.js";
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
+import { scrubCredentialsInText } from "../../shared/credential-urls.js";
 
 /**
  * Routes that don't require authentication.
@@ -120,20 +121,22 @@ const UNPROTECTED_PREFIXES = [
 ];
 
 /**
- * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token (session token), k (tunnel bearer secret), t (the retired
- * harness `?t=` proxy-token fallback), and token (the computer terminal/
- * upload token — routes/web/computer-terminal.ts takes it from the WS
- * subprotocol only, never `?token=`, but this is scrubbed defensively in
- * case a stale client, a proxy, or a future regression puts one in the URL)
- * query parameter values with [REDACTED].
+ * Scrub credentials from a request line before it is logged (the hono/logger
+ * print function in server/index.ts and server/app.ts hands each
+ * `<-- GET /path?query` / `--> GET /path?query 200 3ms` line through here).
+ *
+ * Delegates to the credential registry (`shared/credential-urls.ts`) rather
+ * than keeping its own list. The list this used to keep — `_token` (session
+ * token), `k` (tunnel bearer secret), `t` (the retired harness proxy token)
+ * and `token` (the computer terminal token, scrubbed defensively) — is a
+ * subset of the registry's secret query keys, and it missed the rest: an
+ * OAuth callback's `?code=`/`?state=`, presigned-URL signatures, and every
+ * credential that sits in the PATH (`/results/<token>`,
+ * `/api/web/score/runs/<token>`, …), none of which has a query key at all.
+ * Secret values become the registry's placeholder, `[redacted]`.
  */
 export function scrubTokenFromUrl(url: string): string {
-  return url
-    .replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]")
-    .replace(/([?&])k=[^&]*/g, "$1k=[REDACTED]")
-    .replace(/([?&])t=[^&]*/g, "$1t=[REDACTED]")
-    .replace(/([?&])token=[^&]*/g, "$1token=[REDACTED]");
+  return scrubCredentialsInText(url);
 }
 
 // Routes that typically use query param auth (SSE endpoints)

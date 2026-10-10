@@ -272,13 +272,17 @@ describe("profiles", () => {
       responseBody: "{}",
     } as Record<string, unknown> & { name: string });
 
-    expect(masked).toMatchObject({
+    expect(masked).toEqual({
       name: "https://app.mcpjam.com/api/web/servers/[name]/tools",
-      requestHeaders: undefined,
-      responseHeaders: undefined,
-      requestBody: undefined,
-      responseBody: undefined,
     });
+    for (const field of [
+      "requestHeaders",
+      "responseHeaders",
+      "requestBody",
+      "responseBody",
+    ]) {
+      expect(masked).not.toHaveProperty(field);
+    }
     // The recorded page URL goes through the same callback as `{ name }`.
     expect(maskReplayRequest({ name: "/servers/acme" }).name).toBe(
       "/servers/[name]",

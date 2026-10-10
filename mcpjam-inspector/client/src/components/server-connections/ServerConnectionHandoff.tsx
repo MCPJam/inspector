@@ -26,6 +26,7 @@ import {
   callbackMatchesPending,
   clearPendingAuthorization,
   HANDOFF_SIGN_IN_STATE_KEY,
+  handoffRefusedPath,
   handoffRequestPath,
   isTerminalHandoffStatus,
   isWaitingHandoffStatus,
@@ -36,7 +37,14 @@ import {
   rememberClaimedHandoff,
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
+  type CallbackParams,
+  type PendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "@/lib/oauth-callback-inbox";
+import { ErrorCard } from "@/components/ui/error-card";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
@@ -149,8 +157,7 @@ async function call<T>(
         }),
   });
   const payload = (await response.json().catch(() => null)) as
-    | (T & { message?: string; details?: unknown })
-    | null;
+    (T & { message?: string; details?: unknown }) | null;
   if (!response.ok) {
     throw new HandoffCallError(
       payload?.message ?? "Something went wrong. Please try again.",
@@ -242,7 +249,8 @@ function ClaimRefusal({
           {signedInAs ? (
             <>
               You are signed in as{" "}
-              <span className="font-medium text-foreground">{signedInAs}</span>.{" "}
+              <span className="font-medium text-foreground">{signedInAs}</span>
+              .{" "}
             </>
           ) : null}
           {owner
@@ -288,7 +296,23 @@ export function ServerConnectionHandoff() {
   const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
+  // A completion that failed, kept for an in-page retry. The authorization
+  // answer lives in memory only (`oauth-callback-inbox.ts`), so a reload
+  // cannot retry it; this button can.
+  const [retryableCompletion, setRetryableCompletion] = useState<{
+    callback: CallbackParams;
+    pending: PendingAuthorization;
+  } | null>(null);
   const claimed = useRef(false);
+  // The link as it was opened, held in memory only. A claim that does not
+  // succeed takes the token out of the address bar (below), but the two
+  // recoveries for a refusal about WHO is asking — sign in, switch account —
+  // must come back to this exact link, and the token is the link.
+  const claimLinkRef = useRef<string | null>(
+    matchHandoffRoute(window.location.pathname)?.kind === "claim"
+      ? `${window.location.pathname}${window.location.search}`
+      : null,
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -323,7 +347,9 @@ export function ServerConnectionHandoff() {
 
     void (async () => {
       const route = matchHandoffRoute(window.location.pathname);
-      const callback = readCallbackParams(window.location.search);
+      // The callback's answer from the inbox `main.tsx` moved it into before
+      // telemetry started; the address bar holds only `?oauth_pending=1`.
+      const callback = readCallbackParams(readOAuthCallbackParams() ?? "");
       const pending = readPendingAuthorization();
 
       try {
@@ -355,6 +381,10 @@ export function ServerConnectionHandoff() {
           // one thing that could route them home already gone — and a reload,
           // the obvious thing to try, would do nothing.
           clearPendingAuthorization();
+          // Spent: its reload copy goes with the callback route. Kept on a
+          // failure above, for the same reason the marker is — a reload is the
+          // obvious retry, and it needs the answer.
+          consumeOAuthCallbackParams();
           window.history.replaceState(
             {},
             "",
@@ -362,6 +392,15 @@ export function ServerConnectionHandoff() {
           );
         }
       } catch (cause) {
+        // A claim that did not succeed must not leave its token in the address
+        // bar for as long as the error screen stays up: every telemetry sink
+        // and every `Referer` sees the URL. The success path trades it for the
+        // request page; this is the same rule for every other outcome. The
+        // resume below may still move on to the request page, and the
+        // recoveries use `claimLinkRef`, not the URL.
+        if (route?.kind === "claim") {
+          window.history.replaceState({}, "", handoffRefusedPath());
+        }
         // A refusal about WHO is asking is recoverable, and gets its own
         // screen with the action that recovers it. Everything else is the
         // existing dead-end report.
@@ -391,6 +430,14 @@ export function ServerConnectionHandoff() {
         // recorded which request each token became; only that request may be
         // resumed here. When they disagree, the session behind this link really
         // is gone, and the used-link screen is the honest answer.
+        if (
+          route?.kind !== "claim" &&
+          pending &&
+          callback &&
+          callbackMatchesPending(pending, callback)
+        ) {
+          setRetryableCompletion({ callback, pending });
+        }
         if (route?.kind === "claim" && isUsedLinkError(cause)) {
           const claimedRequestId = readClaimedHandoff(route.handoffToken);
           const resumed = claimedRequestId
@@ -413,6 +460,30 @@ export function ServerConnectionHandoff() {
       await refresh();
     })();
   }, [isAuthLoading, refresh]);
+
+  /** Retry a failed `/authorize/complete` with the answer still in memory. */
+  const retryCompletion = useCallback(async () => {
+    if (!retryableCompletion) return;
+    const { callback, pending } = retryableCompletion;
+    setBusy(true);
+    setError(null);
+    try {
+      await call("/authorize/complete", callback);
+      clearPendingAuthorization();
+      consumeOAuthCallbackParams();
+      setRetryableCompletion(null);
+      window.history.replaceState(
+        {},
+        "",
+        handoffRequestPath(pending.requestId),
+      );
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [retryableCompletion, refresh]);
 
   // Poll only while the outstanding step is someone else's.
   useEffect(() => {
@@ -484,10 +555,10 @@ export function ServerConnectionHandoff() {
   /**
    * Sign in and come back to THIS link.
    *
-   * The return path is the address bar as it stands, which on a refused claim
-   * still carries the handoff token — the page only strips it after a claim
-   * SUCCEEDS. `rememberHandoffSignInReturn` keeps that path same-origin and
-   * sends only a nonce through AuthKit; see its docblock.
+   * The return path is the link as it was opened (`claimLinkRef`), NOT the
+   * address bar: a refused claim has already taken the token out of the URL,
+   * and coming back needs it. `rememberHandoffSignInReturn` keeps that path
+   * same-origin and sends only a nonce through AuthKit; see its docblock.
    *
    * A `null` nonce means the return could not be stored, so the user signs in
    * without one and lands on the app shell rather than back here. Refusing to
@@ -496,7 +567,8 @@ export function ServerConnectionHandoff() {
   const signInAndReturn = useCallback(() => {
     setBusy(true);
     const nonce = rememberHandoffSignInReturn(
-      `${window.location.pathname}${window.location.search}`,
+      claimLinkRef.current ??
+        `${window.location.pathname}${window.location.search}`,
       window.location.origin,
     );
     void Promise.resolve(
@@ -528,7 +600,12 @@ export function ServerConnectionHandoff() {
     // And the gate, for the same reason: Convex drops its identity on the
     // render that loses the user. See `pause-queries-before-auth-clear`.
     pauseQueriesBeforeAuthClear();
-    const back = `${window.location.pathname}${window.location.search}`;
+    // The link itself, from memory: the address bar no longer carries the
+    // token after a refusal. Loading it puts the token back in the URL only for
+    // the claim that follows, which takes it out again either way.
+    const back =
+      claimLinkRef.current ??
+      `${window.location.pathname}${window.location.search}`;
     // Revoke the session being dropped before WorkOS forgets it; bounded,
     // never rejects. See `revoke-session`.
     void startSessionRevocation(getAccessToken)
@@ -571,11 +648,24 @@ export function ServerConnectionHandoff() {
             ? "This link was opened somewhere else"
             : "This link cannot be used"}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          {usedLink
-            ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
-            : error}
-        </p>
+        {usedLink ? (
+          <p className="text-sm text-muted-foreground">
+            Connection links only work in the browser that first opened them.
+            Create a new link from the CLI to connect again.
+          </p>
+        ) : (
+          <ErrorCard
+            error={error}
+            variant="inline"
+            onRetry={
+              retryableCompletion
+                ? () => {
+                    if (!busy) void retryCompletion();
+                  }
+                : undefined
+            }
+          />
+        )}
       </Shell>
     );
   }
@@ -623,8 +713,8 @@ export function ServerConnectionHandoff() {
             {state.status === "discovering"
               ? "Checking what this server requires…"
               : state.status === "authorizing"
-              ? "Waiting for authorization to finish…"
-              : "Verifying the connection…"}
+                ? "Waiting for authorization to finish…"
+                : "Verifying the connection…"}
           </span>
         </div>
       )}

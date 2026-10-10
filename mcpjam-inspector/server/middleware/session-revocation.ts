@@ -25,6 +25,7 @@ import {
   type SessionRevocationCheck,
 } from "../services/revoked-session-cache.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 
 export const SESSION_REVOKED_MESSAGE =
   "This session has been signed out. Sign in again to continue.";
@@ -110,7 +111,7 @@ export function refuseUnservableSession(
 ): Response | null {
   const verdict = checkSessionRevocation(sid, options);
   if (verdict.ok) return null;
-  logRefusal(c.req.path, verdict);
+  logRefusal(scrubCredentialUrl(c.req.path), verdict);
   if (verdict.reason === "revoked") return sessionRevokedResponse(c);
   if (verdict.reason === "no_session") return sessionRequiredResponse(c);
   return sessionCheckUnavailableResponse(c);

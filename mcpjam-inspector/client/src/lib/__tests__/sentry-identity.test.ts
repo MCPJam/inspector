@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   desktopSentryFallback,
   setSentryActor,
-  setSentryIdOnlyIdentity,
   setSentryOrganization,
 } from "../sentry-identity";
 
@@ -25,27 +24,21 @@ describe("setSentryActor", () => {
     vi.clearAllMocks();
   });
 
-  it("omits the email fields entirely for an actor without one", () => {
-    // Not `email: undefined`: Sentry renders a user block from whatever keys
-    // are present, and an explicit undefined is a key.
+  it("identifies a guest by id alone", () => {
     setSentryActor({ kind: "guest", id: "guest-1" });
 
     expect(mocks.setUser).toHaveBeenCalledWith({ id: "guest-1" });
     expect(mocks.setTag).toHaveBeenCalledWith("actor_kind", "guest");
   });
 
-  it("mirrors the email into username so the issue list shows a person", () => {
-    setSentryActor({
-      kind: "signedIn",
-      id: "workos-1",
-      email: "someone@example.com",
-    });
+  it("identifies a signed-in user by id alone — no email, no name", () => {
+    // `sendDefaultPii: false` does not suppress fields set by hand, so this
+    // is where the line is held. Exactly `{ id }`: Sentry renders a user
+    // block from whatever keys are present.
+    setSentryActor({ kind: "signedIn", id: "workos-1" });
 
-    expect(mocks.setUser).toHaveBeenCalledWith({
-      id: "workos-1",
-      email: "someone@example.com",
-      username: "someone@example.com",
-    });
+    expect(mocks.setUser).toHaveBeenCalledWith({ id: "workos-1" });
+    expect(mocks.setTag).toHaveBeenCalledWith("actor_kind", "signedIn");
   });
 
   it("clears the actor tag along with the user", () => {
@@ -62,12 +55,7 @@ describe("setSentryActor", () => {
     window.electronAPI = {
       sentry: { installationId: "installation:test", setActor },
     } as never;
-    setSentryActor({
-      kind: "signedIn",
-      id: "user_A",
-      email: "private@example.com",
-      name: "Private",
-    });
+    setSentryActor({ kind: "signedIn", id: "user_A" });
     expect(setActor).toHaveBeenLastCalledWith({
       id: "user_A",
       kind: "signedIn",
@@ -103,55 +91,6 @@ describe("setSentryActor", () => {
       },
     } as never;
     expect(desktopSentryFallback()).toBeUndefined();
-  });
-});
-
-describe("setSentryIdOnlyIdentity", () => {
-  const member = {
-    kind: "signedIn" as const,
-    id: "workos-1",
-    email: "someone@example.com",
-    name: "Some One",
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    setSentryIdOnlyIdentity(false);
-    setSentryActor(null);
-  });
-
-  it("drops email and name from the current actor at once", () => {
-    // A member of an organization with enterprise privacy: id only.
-    setSentryActor(member);
-    setSentryIdOnlyIdentity(true);
-
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-    expect(mocks.setTag).toHaveBeenLastCalledWith("actor_kind", "signedIn");
-  });
-
-  it("keeps later actors id-only until turned off, then restores them", () => {
-    setSentryIdOnlyIdentity(true);
-    setSentryActor(member);
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-
-    setSentryIdOnlyIdentity(false);
-    expect(mocks.setUser).toHaveBeenLastCalledWith({
-      id: "workos-1",
-      email: "someone@example.com",
-      username: "someone@example.com",
-      name: "Some One",
-    });
-  });
-
-  it("does nothing when the answer has not changed", () => {
-    setSentryActor(member);
-    mocks.setUser.mockClear();
-
-    setSentryIdOnlyIdentity(false);
-    expect(mocks.setUser).not.toHaveBeenCalled();
   });
 });
 

@@ -393,6 +393,24 @@ describe("usePostHogIdentify", () => {
       );
     });
 
+    it("clears again when identity was re-sent in between", () => {
+      // member → not a member (identity sent) → member again, in one load.
+      mockState.enterprisePrivacyMember = true;
+      const { rerender } = renderHook(identify);
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
+
+      mockState.enterprisePrivacyMember = false;
+      rerender();
+      expect(mockState.posthog.identify).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({ email: expect.any(String) }),
+      );
+
+      mockState.enterprisePrivacyMember = true;
+      rerender();
+      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(2);
+    });
+
     it("leaves guests alone: they carry no identity to clear", () => {
       mockState.auth.user = null;
       mockState.convexAuth.isAuthenticated = false;

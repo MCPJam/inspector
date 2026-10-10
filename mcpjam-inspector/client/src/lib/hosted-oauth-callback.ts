@@ -1,4 +1,5 @@
 import type { ConnectionIntent } from "@/shared/oauth-connections";
+import { readOAuthCallbackParams } from "./oauth-callback-inbox";
 import {
   isHostedOAuthSurface,
   type HostedOAuthSurface,
@@ -273,16 +274,12 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
   // from getRedirectUri()). WorkOS sign-in lands on /callback?code=… which
   // would otherwise be misread here and pair with a stale mcp-oauth-pending
   // marker, producing a ghost "Finishing OAuth…" gate after sign-in.
-  const pathname = window.location.pathname;
-  if (
-    pathname !== "/oauth/callback" &&
-    !pathname.startsWith("/oauth/callback/")
-  ) {
-    return null;
-  }
-
-  const urlParams = new URLSearchParams(window.location.search);
-  if (!urlParams.get("code") && !urlParams.get("error")) {
+  //
+  // The answer is read from the inbox `main.tsx` moved it into, not from
+  // `window.location.search` — the address bar holds only `?oauth_pending=1`
+  // by now. The inbox applies the same path scope.
+  const urlParams = readOAuthCallbackParams();
+  if (!urlParams || (!urlParams.get("code") && !urlParams.get("error"))) {
     return null;
   }
 

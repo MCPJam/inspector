@@ -12,6 +12,7 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
+import { scrubCredentialUrl } from "../shared/credential-urls.js";
 import { logger as appLogger } from "./utils/logger";
 import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
@@ -389,7 +390,7 @@ const app = new Hono().onError((err, c) => {
   const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
     source: "app.onError",
     hop: "mcpjam_internal",
-    context: { path: c.req.path, method: c.req.method },
+    context: { path: scrubCredentialUrl(c.req.path), method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -517,7 +518,9 @@ app.use("*", sessionAuthMiddleware);
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
 if (enableHttpLogs) {
-  // Use custom print function to scrub session tokens from logged URLs
+  // Custom print function: every credential the registry knows (session and
+  // link tokens in the query, share tokens in the path, OAuth codes) is
+  // scrubbed from the request line before it is logged.
   app.use(
     "*",
     logger((message) => {

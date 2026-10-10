@@ -157,7 +157,7 @@ describe("useEnsureDbUser", () => {
     });
   });
 
-  it("identifies a signed-in user by email so Sentry issues name a person", async () => {
+  it("identifies a signed-in user by WorkOS id only, never by email or name", async () => {
     mockState.auth.user = {
       id: "workos-user-1",
       email: "someone@example.com",
@@ -170,56 +170,15 @@ describe("useEnsureDbUser", () => {
     await waitFor(() => {
       expect(mockState.sentrySetUser).toHaveBeenCalledWith({
         id: "workos-user-1",
-        email: "someone@example.com",
-        username: "someone@example.com",
-        name: "Some One",
       });
     });
     expect(mockState.sentrySetTag).toHaveBeenCalledWith(
       "actor_kind",
       "signedIn"
     );
-  });
-
-  it.each([
-    ["only a first name", { firstName: "Some", lastName: null }, "Some"],
-    ["only a last name", { firstName: null, lastName: "One" }, "One"],
-    ["a whitespace-only half", { firstName: "Some", lastName: "  " }, "Some"],
-  ])("builds the display name from %s", async (_label, names, expected) => {
-    mockState.auth.user = { id: "workos-user-1", ...names };
-    mockState.actorKey = "workos-user-1";
-    renderHook(() => useEnsureDbUser());
-
-    await waitFor(() => {
-      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
-        expect.objectContaining({ name: expected })
-      );
-    });
-  });
-
-  it.each([
-    ["both halves are null", { firstName: null, lastName: null }],
-    ["both halves are empty", { firstName: "", lastName: "" }],
-    ["AuthKit supplies neither", {}],
-  ])("omits the name key entirely when %s", async (_label, names) => {
-    // Omitted rather than empty: Sentry renders a user block from whatever
-    // keys are present, and `name: ""` shows as a blank line where the email
-    // would otherwise be.
-    mockState.auth.user = {
-      id: "workos-user-1",
-      email: "someone@example.com",
-      ...names,
-    };
-    mockState.actorKey = "workos-user-1";
-    renderHook(() => useEnsureDbUser());
-
-    await waitFor(() => {
-      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
-        id: "workos-user-1",
-        email: "someone@example.com",
-        username: "someone@example.com",
-      });
-    });
+    expect(mockState.sentrySetUser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ email: "someone@example.com" })
+    );
   });
 
   it("identifies the actor before ensureUser resolves", async () => {
@@ -233,9 +192,9 @@ describe("useEnsureDbUser", () => {
     renderHook(() => useEnsureDbUser());
 
     await waitFor(() => {
-      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
-        expect.objectContaining({ email: "someone@example.com" })
-      );
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
+        id: "workos-user-1",
+      });
     });
     expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
   });
