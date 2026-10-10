@@ -21,18 +21,26 @@ export const MASKED_TO_FULL_SETTLE_MS = 3_000;
  * Apply the session's privacy level (`resolveSessionPrivacy`) to both
  * recorders, and re-apply it whenever it changes.
  *
- * - `pending` holds both recorders off. If it is still `pending` after
- *   `PRIVACY_PENDING_TIMEOUT_MS` — the organization list failed or never
- *   came — the session is recorded `masked`. It never falls back to `full`.
+ * - `pending` at startup holds both recorders off. If it is still `pending`
+ *   after `PRIVACY_PENDING_TIMEOUT_MS` — the backend never answered — the
+ *   session is recorded `masked`. It never falls back to `full`.
+ * - `pending` after something has recorded — navigating to a context whose
+ *   answer has not arrived — records `masked` at once rather than stopping:
+ *   the destination is unknown, so it is treated as private.
  * - Toward MORE privacy (`full` → `masked`, anything → `pending`) the change
  *   lands in a layout effect: in the same commit that rendered the content
  *   the new level is for, before rrweb's mutation observer reports that
  *   content. The PostHog recorder stops first, then restarts on the masked
  *   profile, so there is no unmasked window.
- * - Toward LESS privacy (`masked` → `full`) it waits
- *   `MASKED_TO_FULL_SETTLE_MS`, recording masked meanwhile.
+ * - Toward LESS privacy (`masked` → `full`) the destination must have
+ *   resolved to `full` AND finished loading (`contextReady`), and then it
+ *   still waits `MASKED_TO_FULL_SETTLE_MS`, recording masked meanwhile.
  */
-export function useSessionPrivacy(resolved: SessionPrivacy): void {
+export function useSessionPrivacy(
+  resolved: SessionPrivacy,
+  options: { contextReady?: boolean } = {},
+): void {
+  const contextReady = options.contextReady ?? true;
   const posthog = usePostHog();
   const [pendingTimedOut, setPendingTimedOut] = useState(false);
   // The last level that let anything record. `pending` does not count, so
@@ -51,8 +59,15 @@ export function useSessionPrivacy(resolved: SessionPrivacy): void {
     return () => clearTimeout(timer);
   }, [resolved]);
 
-  const effective: SessionPrivacy =
-    resolved === "pending" && pendingTimedOut ? "masked" : resolved;
+  const hasRecorded =
+    lastRecordingLevelRef.current === "masked" ||
+    lastRecordingLevelRef.current === "full";
+  let effective: SessionPrivacy = resolved;
+  if (resolved === "pending" && (pendingTimedOut || hasRecorded)) {
+    effective = "masked";
+  } else if (resolved === "full" && !contextReady) {
+    effective = "masked";
+  }
 
   useLayoutEffect(() => {
     const apply = (level: SessionPrivacy) => {

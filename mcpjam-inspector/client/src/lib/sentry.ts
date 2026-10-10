@@ -2,9 +2,14 @@ import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
-import { desktopSentryFallback } from "./sentry-identity";
+import {
+  desktopSentryFallback,
+  filterSentryEventIdentity,
+} from "./sentry-identity";
+import { telemetryNamesAllowed } from "./telemetry-context";
 import {
   currentSessionPrivacy,
+  filterSentryBreadcrumb,
   isCredentialBearingPath,
   isErrorCaptureSurface,
   recordingSurface,
@@ -47,8 +52,123 @@ export function resolveClientSentryConfig() {
 }
 
 /**
+ * Whether names were allowed when an event was captured, keyed by the hint
+ * object Sentry threads through every stage of one event — `preprocessEvent`,
+ * `postprocessEvent` and `beforeSend` for errors and transactions, the first
+ * two for replay events.
+ */
+const namesAllowedAtCapture = new WeakMap<object, boolean>();
+/** Whether the session was short of `full` when an event was captured. */
+const maskedAtCapture = new WeakMap<object, boolean>();
+
+/**
+ * Names leave only if they were allowed when the event was captured AND are
+ * allowed now. An event with no capture-time record is id-only.
+ */
+function allowNamesFor(hint: unknown): boolean {
+  if (typeof hint !== "object" || hint === null) return false;
+  return namesAllowedAtCapture.get(hint) === true && telemetryNamesAllowed();
+}
+
+/**
+ * Short of `full` at capture or now, the page URL an event reports loses its
+ * names, as every other URL does (`scrubNamesFromUrl`). Breadcrumbs were
+ * already filtered as they were recorded (`filterSentryBreadcrumb`).
+ */
+function filterSentryEventUrl<T extends { request?: { url?: unknown } }>(
+  event: T,
+  hint: unknown,
+): T {
+  const masked =
+    shouldMaskAnalytics() ||
+    typeof hint !== "object" ||
+    hint === null ||
+    maskedAtCapture.get(hint) !== false;
+  if (masked && typeof event.request?.url === "string") {
+    event.request = {
+      ...event.request,
+      url: scrubNamesFromUrl(event.request.url),
+    };
+  }
+  return event;
+}
+
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s"'<>]+/g;
+const HOST_KEYS = new Set(["server.address", "net.peer.name", "http.host"]);
+// Web-vitals attributes that name the element they measured, as a CSS
+// selector whose attribute values are the page's text (`[title="…"]`).
+const SELECTOR_KEY = /^(?:lcp\.element|cls\.source\.\d+|inp\.target|ui\.)/;
+
+function scrubSpanValue(key: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (HOST_KEYS.has(key)) {
+    return scrubNamesFromUrl(`https://${value}/`).slice("https://".length, -1);
+  }
+  if (SELECTOR_KEY.test(key)) return value.replace(/\[[^\]]*\]/g, "");
+  if (value.startsWith("/")) return scrubNamesFromUrl(value);
+  return value.replace(URL_IN_TEXT, (url) => scrubNamesFromUrl(url));
+}
+
+function scrubSpanData(data: unknown): unknown {
+  if (typeof data !== "object" || data === null) return data;
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [
+      key,
+      scrubSpanValue(key, value),
+    ]),
+  );
+}
+
+interface SentrySpanLike {
+  description?: unknown;
+  data?: unknown;
+}
+
+/**
+ * A transaction captured short of `full`: performance spans keep their
+ * timing but lose the names they carry — resource and request URLs, peer
+ * host names, and the attribute values inside web-vitals element selectors.
+ */
+function filterSentryTransactionContent<
+  T extends {
+    spans?: SentrySpanLike[];
+    contexts?: { trace?: SentrySpanLike };
+    transaction?: unknown;
+  },
+>(event: T, hint: unknown): T {
+  const masked =
+    shouldMaskAnalytics() ||
+    typeof hint !== "object" ||
+    hint === null ||
+    maskedAtCapture.get(hint) !== false;
+  if (!masked) return event;
+  const scrubSpan = <S extends SentrySpanLike>(span: S): S => ({
+    ...span,
+    ...(typeof span.description === "string"
+      ? { description: scrubSpanValue("description", span.description) }
+      : {}),
+    ...(span.data ? { data: scrubSpanData(span.data) } : {}),
+  });
+  if (Array.isArray(event.spans)) event.spans = event.spans.map(scrubSpan);
+  if (event.contexts?.trace) {
+    event.contexts = {
+      ...event.contexts,
+      trace: scrubSpan(event.contexts.trace),
+    };
+  }
+  if (typeof event.transaction === "string") {
+    event.transaction = scrubSpanValue("transaction", event.transaction);
+  }
+  return event;
+}
+
+/**
  * Initialize Sentry for error tracking and session replay.
  * This should be called once at app startup, before mounting React.
+ *
+ * Identity starts id-only: the initial scope carries at most the desktop
+ * installation id, and `setSentryActor` adds name and email only under the
+ * current actor's grant. Every outbound event is filtered again here.
  */
 export function initSentry() {
   const config = resolveClientSentryConfig();
@@ -63,14 +183,41 @@ export function initSentry() {
     },
     beforeSend: (event, hint) => {
       const filtered = config.beforeSend(event);
-      return filtered === null ? null : processQueryEvent(filtered, hint);
+      if (filtered === null) return null;
+      const processed = processQueryEvent(filtered, hint);
+      return processed === null
+        ? null
+        : filterSentryEventUrl(
+            filterSentryEventIdentity(processed, allowNamesFor(hint)),
+            hint,
+          );
     },
+    beforeSendTransaction: (event, hint) =>
+      filterSentryTransactionContent(
+        filterSentryEventUrl(
+          filterSentryEventIdentity(event, allowNamesFor(hint)),
+          hint,
+        ),
+        hint,
+      ),
+    beforeBreadcrumb: (breadcrumb) => filterSentryBreadcrumb(breadcrumb),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
     // at the first moment the privacy level allows recording — never while
     // `pending`, never on `/results/<token>`. Starting it at init and stopping
     // it later would not do: `replay.stop()` FLUSHES the buffered segment,
     // which is exactly the content that had to stay out.
     integrations: [Sentry.browserTracingIntegration()],
+  });
+  // Capture-time identity, for every event type. `postprocessEvent` runs
+  // after the scope's user is applied — replay events included, which never
+  // reach `beforeSend` — so it is where the outbound filter covers them all.
+  Sentry.getClient()?.on?.("preprocessEvent", (_event, hint) => {
+    if (!hint) return;
+    namesAllowedAtCapture.set(hint, telemetryNamesAllowed());
+    maskedAtCapture.set(hint, shouldMaskAnalytics());
+  });
+  Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
+    filterSentryEventIdentity(event, allowNamesFor(hint));
   });
   // The replay event lists every URL the replay visited. Short of `full`,
   // names come out of those like everywhere else.
@@ -82,6 +229,13 @@ export function initSentry() {
         typeof url === "string" ? scrubNamesFromUrl(url) : url,
       );
     }
+  });
+  // The scope adds the page URL and transaction name to the replay event
+  // after that; replay events never reach `beforeSend`, so they are scrubbed
+  // here, on the same terms as an error event's.
+  Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
+    if (event.type !== "replay_event") return;
+    filterSentryTransactionContent(filterSentryEventUrl(event, hint), hint);
   });
 }
 
