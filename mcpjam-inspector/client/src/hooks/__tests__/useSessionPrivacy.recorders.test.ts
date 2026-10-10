@@ -43,28 +43,29 @@ async function setup(surface: "hosted" | "desktop" | "npx") {
   const posthog = recordingPosthog();
   usePostHog.mockReturnValue(posthog);
 
-  const organizations = [
-    { _id: "org_plain" },
-    { _id: "org_private", enterprisePrivacy: true },
-  ];
+  // The backend's recording answer per organization in view.
+  const answers: Record<string, "full" | "masked"> = {
+    org_plain: "full",
+    org_private: "masked",
+  };
   const levelFor = (
     activeOrganizationId: string,
     overrides: Partial<SessionPrivacyInputs> = {},
   ) =>
     privacy.resolveSessionPrivacy({
       surface: privacy.recordingSurface(),
-      account: "signed_in",
       sharedLink: false,
-      enterprisePrivacyInView: privacy.resolveEnterprisePrivacyInView(
-        organizations,
-        [activeOrganizationId],
-      ),
+      recording: answers[activeOrganizationId],
       ...overrides,
     });
   const hook = renderHook(
     ({ level }: { level: ReturnType<typeof levelFor> }) =>
       useSessionPrivacy(level),
-    { initialProps: { level: levelFor("org_plain", { account: "loading" }) } },
+    {
+      initialProps: {
+        level: levelFor("org_plain", { recording: undefined }),
+      },
+    },
   );
   return { privacy, posthog, levelFor, hook };
 }
@@ -82,7 +83,7 @@ describe("useSessionPrivacy with the real recorders", () => {
     vi.resetModules();
   });
 
-  it("hosted: nothing records until the organization list answers", async () => {
+  it("hosted: nothing records until the backend answers", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
 
@@ -119,10 +120,10 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).toEqual(["stop", "full", "start"]);
   });
 
-  it("an organization list that never answers is recorded masked", async () => {
+  it("a backend that never answers is recorded masked", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({
-      level: levelFor("org_plain", { enterprisePrivacyInView: undefined }),
+      level: levelFor("org_plain", { recording: undefined }),
     });
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
 

@@ -611,6 +611,12 @@ export type SystemEventMap = {
     rateLimitRejects: number;
     projectRejects: number;
     busyRejects: number;
+    /** Requests forwarded with at least one event under a restricted policy. */
+    privacyMasked: number;
+    /** Requests refused because the privacy gate could not vouch for them. */
+    privacyRejected: number;
+    /** Requests with at least one event whose policy was unresolved. */
+    privacyUnresolved: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

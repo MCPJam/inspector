@@ -11,16 +11,32 @@
  *   - `full`   — replay as it has always been: inputs and annotated secret
  *                surfaces masked, everything else visible.
  *
- * Who gets which level is `resolveSessionPrivacy`. The level is applied to
- * BOTH recorders — PostHog here (`syncSessionRecording`), Sentry Replay in
- * `sentry.ts` (`syncSentryReplay`) — from the same module state, so the two
- * cannot disagree. `docs/session-replay-masking.md` has the table.
+ * Who gets which level is `resolveSessionPrivacy`, from the backend's answer
+ * for the contexts in view (`telemetryPrivacy:getContext`, read by
+ * `useTelemetryPrivacyContext`). The level is applied to BOTH recorders —
+ * PostHog here (`syncSessionRecording`), Sentry Replay in `sentry.ts`
+ * (`syncSentryReplay`) — from the same module state, so the two cannot
+ * disagree. `docs/session-replay-masking.md` has the table.
  *
  * Fail closed. Nothing records until the level is known; an answer that does
- * not arrive becomes `masked` (`useSessionPrivacy`), never `full`.
+ * not arrive becomes `masked` (`useSessionPrivacy`), never `full`. The PostHog
+ * relay enforces the same policy again on the server, so a client that gets
+ * this wrong still cannot upload an unmasked replay through it.
  */
-import { APP_ROUTES } from "./app-routes";
 import { HOSTED_MODE } from "./config";
+import {
+  MASKED_REPLAY_BLOCKED_TAGS,
+  maskReplayAttribute,
+  maskReplayText,
+  scrubNamesFromUrl,
+  type TelemetryRecording,
+} from "../../../shared/telemetry-privacy";
+
+export {
+  APP_ROUTE_WORDS,
+  maskReplayAttribute,
+  scrubNamesFromUrl,
+} from "../../../shared/telemetry-privacy";
 
 export type PrivacyLevel = "off" | "masked" | "full";
 
@@ -96,18 +112,17 @@ export function recordingSurface(): RecordingSurface {
 export interface SessionPrivacyInputs {
   surface: RecordingSurface;
   /**
-   * The WorkOS session. A guest has none: `signed_out` covers both visitors
-   * and guests, whose data is their own and who belong to no organization
-   * that could ask for privacy.
-   */
-  account: "loading" | "signed_out" | "signed_in";
-  /**
    * A share-link page (a published study's tester chat) that shows a project
    * the viewer may not belong to, so its organization's posture is unknown.
    */
   sharedLink: boolean;
-  /** `resolveEnterprisePrivacyInView`; `undefined` = not known yet. */
-  enterprisePrivacyInView: boolean | undefined;
+  /**
+   * The backend's recording level for the contexts in view, for the current
+   * actor (`useTelemetryPrivacyContext`). `undefined` = not answered yet.
+   * Anything the backend could not verify — no context in view, no access,
+   * no authentication — already arrives as `masked`.
+   */
+  recording: TelemetryRecording | undefined;
 }
 
 /**
@@ -118,10 +133,9 @@ export interface SessionPrivacyInputs {
  *   own MCP servers on their own machines, which is the npx reasoning with
  *   replay kept for crash debugging.
  * - Hosted share links: `masked` — whose data it is cannot be known here.
- * - Hosted, signed out (visitors, guests): `full`. Landing pages and a
- *   guest's own sandbox carry no organization's data.
- * - Hosted, signed in: `masked` when any organization in view has enterprise
- *   privacy, `full` when none does, `pending` until that is known.
+ * - Hosted otherwise: the backend's answer, `pending` until it arrives. Only a
+ *   verified non-private context gets `full`; visitors with no session, and
+ *   pages with nothing in view, are `masked`.
  */
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
@@ -129,50 +143,8 @@ export function resolveSessionPrivacy(
   if (inputs.surface === "off") return "off";
   if (inputs.surface === "desktop") return "masked";
   if (inputs.sharedLink) return "masked";
-  if (inputs.account === "loading") return "pending";
-  if (inputs.account === "signed_out") return "full";
-  if (inputs.enterprisePrivacyInView === undefined) return "pending";
-  return inputs.enterprisePrivacyInView ? "masked" : "full";
-}
-
-/**
- * The organization fields this module reads. `enterprisePrivacy` is on the
- * organization row `organizations:getMyOrganizations` returns; it switches on
- * when an organization moves to Enterprise and can be set explicitly.
- */
-export interface PrivacyOrganization {
-  _id: string;
-  enterprisePrivacy?: boolean;
-}
-
-/**
- * Whether an organization in view (the route's, the active one, the active
- * project's) has enterprise privacy: any one is enough. `undefined` while
- * the list has not loaded or nothing is in view — never a guess.
- */
-export function resolveEnterprisePrivacyInView(
-  organizations: readonly PrivacyOrganization[] | undefined,
-  organizationIdsInView: ReadonlyArray<string | null | undefined>,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  const inView = organizationIdsInView.filter((id): id is string => !!id);
-  if (inView.length === 0) return undefined;
-  return organizations.some(
-    (org) => org.enterprisePrivacy === true && inView.includes(org._id),
-  );
-}
-
-/**
- * Whether the signed-in person belongs to ANY organization with enterprise
- * privacy. Identity follows membership, not the organization in view,
- * because person properties outlive the page. `undefined` until the list
- * has loaded; `usePostHogIdentify` sends the id alone until this is `false`.
- */
-export function resolveEnterprisePrivacyMember(
-  organizations: readonly PrivacyOrganization[] | undefined,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  return organizations.some((org) => org.enterprisePrivacy === true);
+  if (inputs.recording === undefined) return "pending";
+  return inputs.recording === "full" ? "full" : "masked";
 }
 
 // ── The level in effect ────────────────────────────────────────────────
@@ -198,78 +170,6 @@ export function shouldMaskAnalytics(): boolean {
   return privacy === "masked" || privacy === "pending";
 }
 
-// ── URL scrubbing ──────────────────────────────────────────────────────
-
-const NAME_PLACEHOLDER = "[name]";
-
-/**
- * Path segments that are the app's own vocabulary, read off the route table
- * so a new route needs no edit here. `p` prefixes every project route; the
- * rest are the API prefixes replayed network requests start with.
- */
-const ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
-  "p",
-  "api",
-  "web",
-  "v1",
-  "mcp",
-  ...APP_ROUTES.flatMap((route) => route.path.split("/")).filter(
-    (segment) => segment && !segment.startsWith(":") && segment !== "*",
-  ),
-]);
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Ids may stay: a document id says which record without saying what it is
- * called. Convex ids (lowercase base32, always with digits in practice),
- * UUIDs and plain numbers.
- */
-function isIdLike(value: string): boolean {
-  return (
-    /^\d+$/.test(value) ||
-    UUID.test(value) ||
-    (/^[0-9a-z]{25,40}$/.test(value) && /\d/.test(value))
-  );
-}
-
-function scrubSegment(segment: string): string {
-  if (!segment || ROUTE_SEGMENTS.has(segment) || isIdLike(segment)) {
-    return segment;
-  }
-  return NAME_PLACEHOLDER;
-}
-
-/**
- * Replace every name-like part of a URL — server names, project slugs, host
- * names, free-form query values — with a placeholder, keeping route words and
- * ids. The fragment is dropped (it can hold anything, OAuth responses
- * included). A value that is not a URL or path is returned unchanged; one
- * that fails to parse becomes the placeholder.
- */
-export function scrubNamesFromUrl(value: string): string {
-  const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
-  if (!isAbsolute && !value.startsWith("/")) return value;
-  try {
-    const url = new URL(value, "http://scrub.invalid");
-    const path = url.pathname
-      .split("/")
-      .map((segment) => scrubSegment(decodeURIComponent(segment)))
-      .join("/");
-    const query = [...url.searchParams]
-      .map(
-        ([key, param]) =>
-          `${encodeURIComponent(key)}=${
-            isIdLike(param) ? encodeURIComponent(param) : NAME_PLACEHOLDER
-          }`,
-      )
-      .join("&");
-    return `${isAbsolute ? url.origin : ""}${path}${query ? `?${query}` : ""}`;
-  } catch {
-    return NAME_PLACEHOLDER;
-  }
-}
-
 // ── PostHog profiles ───────────────────────────────────────────────────
 
 /**
@@ -292,86 +192,14 @@ export const SESSION_RECORDING_OPTIONS = {
   maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
 } as const;
 
-/** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
-export const MASKED_BLOCK_SELECTOR =
-  "img, picture, video, audio, canvas, svg image, iframe, object, embed";
-
 /**
- * Attributes a `masked` replay keeps: the ones layout and styling need and
- * that never hold user text. Everything else — `title`, `alt`, `href`, `src`,
- * `placeholder`, `aria-label`, `id`, most `data-*` — is masked.
- * `maskAllElementAttributes` would also mask `class` and `style`, which
- * leaves a replay of unstyled boxes.
+ * Media rrweb would otherwise copy into the replay. Blocked at `masked`. The
+ * relay blocks the same tags (`MASKED_REPLAY_BLOCKED_TAGS`) in restricted
+ * replays it receives.
  */
-const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "class",
-  "style",
-  "role",
-  "type",
-  "dir",
-  "lang",
-  "rel",
-  "tabindex",
-  "width",
-  "height",
-  "colspan",
-  "rowspan",
-  "disabled",
-  "checked",
-  "selected",
-  "hidden",
-  "open",
-  "viewbox",
-  "xmlns",
-  "d",
-  "fill",
-  "stroke",
-  "stroke-width",
-  "stroke-linecap",
-  "stroke-linejoin",
-  "points",
-  "cx",
-  "cy",
-  "r",
-  "rx",
-  "ry",
-  "x",
-  "y",
-  "x1",
-  "x2",
-  "y1",
-  "y2",
-  "transform",
-  "opacity",
-  "aria-hidden",
-  "aria-expanded",
-  "aria-selected",
-  "aria-checked",
-  "aria-disabled",
-  "aria-pressed",
-  "aria-current",
-  "aria-orientation",
-  "data-state",
-  "data-side",
-  "data-align",
-  "data-orientation",
-  "data-disabled",
-  "data-highlighted",
-  "data-selected",
-  "data-active",
-  "data-open",
-  "data-slot",
-  "data-variant",
-  "data-size",
-]);
-
-const MASKED_ATTRIBUTE_VALUE = "***";
-
-export function maskReplayAttribute(name: string, value: string): string {
-  return MASKED_REPLAY_KEPT_ATTRIBUTES.has(name.toLowerCase())
-    ? value
-    : MASKED_ATTRIBUTE_VALUE;
-}
+export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
+  .map((tag) => (tag === "image" ? "svg image" : tag))
+  .join(", ");
 
 /**
  * posthog-js routes BOTH the recorded page URL (rrweb meta and URL-change
@@ -504,11 +332,88 @@ interface ReplayFrame {
   data?: { tag?: string; payload?: object };
 }
 
+// One `[attr]` or `[attr="value"]` part of a CSS selector, as Sentry's
+// `htmlTreeAsString` writes them (values are not escaped).
+const SELECTOR_ATTRIBUTE = /\[[\w:.-]+(?:="[^"]*")?\]/g;
+// One `#id` part. Ids can be data: an MCP prompt argument's or elicitation
+// field's name (`prompt-arg-${name}`).
+const SELECTOR_ID = /#[^\s.#[>:]+/g;
+
+/**
+ * A CSS selector from Sentry (`htmlTreeAsString`, web-vitals element names)
+ * without its attribute and id parts: `[aria-label="…"]`, `[title="…"]`,
+ * `[name="…"]` and `[alt="…"]` carry the page's text, and an id can carry a
+ * name. A value holding its own quote defeats the pattern, so the selector
+ * is cut at the first part left over.
+ */
+export function stripSelectorAttributes(selector: string): string {
+  const stripped = selector
+    .replace(SELECTOR_ATTRIBUTE, "")
+    .replace(SELECTOR_ID, "");
+  const leftover = stripped.search(/[["]/);
+  return leftover === -1 ? stripped : stripped.slice(0, leftover);
+}
+
+// What a Sentry Replay click frame's `data.node.attributes` may keep: code,
+// not data. `aria-label`, `title`, `alt` and `name` are text; `id` and
+// `testId` can be built from a name (`repo-row-${repoFullName}`).
+const UI_FRAME_KEPT_ATTRIBUTES = new Set([
+  "class",
+  "role",
+  "disabled",
+  "aria-disabled",
+  "data-sentry-component",
+]);
+
+/** A `ui.*` frame's payload (click, slow or multi click, key down), masked. */
+function maskUiFramePayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload };
+  if (typeof payload.message === "string") {
+    out.message = stripSelectorAttributes(payload.message);
+  }
+  const data = payload.data as Record<string, unknown> | undefined;
+  if (data && typeof data === "object") {
+    const nextData: Record<string, unknown> = { ...data };
+    if (typeof data.url === "string") {
+      nextData.url = scrubNamesFromUrl(data.url);
+    }
+    if (typeof data.route === "string") {
+      nextData.route = scrubNamesFromUrl(data.route);
+    }
+    const node = data.node as Record<string, unknown> | undefined;
+    if (node && typeof node === "object") {
+      const attributes =
+        node.attributes && typeof node.attributes === "object"
+          ? Object.fromEntries(
+              Object.entries(node.attributes as Record<string, unknown>).map(
+                ([key, value]) => [
+                  key,
+                  UI_FRAME_KEPT_ATTRIBUTES.has(key) ? value : "***",
+                ],
+              ),
+            )
+          : node.attributes;
+      nextData.node = {
+        ...node,
+        attributes,
+        ...(typeof node.textContent === "string"
+          ? { textContent: maskReplayText(node.textContent) }
+          : {}),
+      };
+    }
+    out.data = nextData;
+  }
+  return out;
+}
+
 /**
  * Sentry's `beforeAddRecordingEvent`. Sentry Replay masks text, inputs and
  * media at every level (`SENTRY_REPLAY_OPTIONS`); short of `full` this also
- * drops console breadcrumbs and scrubs the URLs in navigation and network
- * frames. Only Sentry's own frames come through here — rrweb's DOM events
+ * drops console breadcrumbs, scrubs the URLs in navigation and network
+ * frames, and takes the page's text out of click and key frames (their
+ * selector's attribute parts, the node's text-bearing attributes). Only Sentry's own frames come through here — rrweb's DOM events
  * cannot be edited, which is why the DOM masking is on everywhere.
  */
 export function filterSentryReplayFrame<T extends ReplayFrame>(
@@ -520,6 +425,16 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
   if (!data || !payload) return frame;
   if (data.tag === "breadcrumb" && payload.category === "console") {
     return null;
+  }
+  if (
+    data.tag === "breadcrumb" &&
+    typeof payload.category === "string" &&
+    payload.category.startsWith("ui.")
+  ) {
+    return {
+      ...frame,
+      data: { ...data, payload: maskUiFramePayload(payload) },
+    };
   }
   if (data.tag === "breadcrumb" && payload.category === "navigation") {
     const detail = (payload.data ?? {}) as Record<string, unknown>;
@@ -560,6 +475,53 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
   return frame;
 }
 
+interface SentryBreadcrumb {
+  category?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+const URL_BREADCRUMB_FIELDS: Record<string, readonly string[]> = {
+  navigation: ["from", "to"],
+  fetch: ["url"],
+  xhr: ["url"],
+};
+
+/**
+ * Sentry's `beforeBreadcrumb`. Short of `full`, a breadcrumb recorded now
+ * keeps no console output and no names in the URLs it carries: error events
+ * attach breadcrumbs wholesale, so this is the console and network content
+ * of an error event, the counterpart of `filterSentryReplayFrame` for the
+ * replay. Decided when the breadcrumb is recorded, so a later, laxer page
+ * never relaxes it.
+ */
+export function filterSentryBreadcrumb<T extends SentryBreadcrumb>(
+  breadcrumb: T,
+): T | null {
+  if (!shouldMaskAnalytics()) return breadcrumb;
+  if (breadcrumb?.category === "console") return null;
+  // A click or input names its element as a selector (`htmlTreeAsString`),
+  // whose attribute parts are the page's text.
+  if (
+    breadcrumb?.category?.startsWith("ui.") &&
+    typeof breadcrumb.message === "string"
+  ) {
+    const message = stripSelectorAttributes(breadcrumb.message);
+    return message === breadcrumb.message
+      ? breadcrumb
+      : { ...breadcrumb, message };
+  }
+  const fields = URL_BREADCRUMB_FIELDS[breadcrumb?.category ?? ""];
+  if (!fields || !breadcrumb.data) return breadcrumb;
+  const data = { ...breadcrumb.data };
+  for (const field of fields) {
+    if (typeof data[field] === "string") {
+      data[field] = scrubNamesFromUrl(data[field] as string);
+    }
+  }
+  return { ...breadcrumb, data };
+}
+
 /**
  * `Sentry.replayIntegration` options, explicit rather than inherited from
  * defaults that could move: text, inputs and media masked, and no request or
@@ -575,6 +537,27 @@ export const SENTRY_REPLAY_OPTIONS = {
     "aria-label",
     "aria-description",
     "alt",
+    "action",
+    "formaction",
+    "poster",
+  ],
+  // rrweb never passes `href`, `src` or `style` through attribute masking —
+  // it rewrites their URLs to absolute ones instead — so elements whose job
+  // is a URL, or whose inline style holds one (an MCP server's icon drawn as
+  // a CSS mask) or a string (a custom property's label, a brand font), are
+  // blocked: kept as sized boxes, their URL and content dropped. Their text
+  // is masked at every level anyway, and Sentry's DOM events cannot be
+  // edited per level, so this applies at `full` too.
+  block: [
+    "a[href]",
+    "area[href]",
+    "iframe",
+    "source",
+    "track",
+    '[style*="url(" i]',
+    '[style*="image-set(" i]',
+    `[style*='"']`,
+    `[style*="'"]`,
   ],
   networkDetailAllowUrls: [] as string[],
   networkCaptureBodies: false,

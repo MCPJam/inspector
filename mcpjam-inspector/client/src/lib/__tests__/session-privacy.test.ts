@@ -51,58 +51,46 @@ function posthogStub() {
 describe("resolveSessionPrivacy", () => {
   const base: SessionPrivacyInputs = {
     surface: "hosted",
-    account: "signed_in",
     sharedLink: false,
-    enterprisePrivacyInView: false,
+    recording: "full",
   };
+  const answers = ["full", "masked", undefined] as const;
 
   it("is off wherever replay is off", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
-      expect(resolveSessionPrivacy({ ...base, surface: "off", account })).toBe(
-        "off",
-      );
+    for (const recording of answers) {
+      expect(
+        resolveSessionPrivacy({ ...base, surface: "off", recording }),
+      ).toBe("off");
     }
   });
 
   it("is masked on packaged desktop for everyone", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
-      for (const enterprisePrivacyInView of [true, false, undefined]) {
-        expect(
-          resolveSessionPrivacy({
-            ...base,
-            surface: "desktop",
-            account,
-            enterprisePrivacyInView,
-          }),
-        ).toBe("masked");
-      }
+    for (const recording of answers) {
+      expect(
+        resolveSessionPrivacy({ ...base, surface: "desktop", recording }),
+      ).toBe("masked");
     }
   });
 
-  it("on hosted: full signed out, by organization signed in, pending until known", async () => {
+  it("on hosted: the backend's answer, pending until it arrives", async () => {
     const { resolveSessionPrivacy } = await load();
-    expect(resolveSessionPrivacy({ ...base, account: "signed_out" })).toBe(
-      "full",
-    );
-    expect(resolveSessionPrivacy({ ...base, account: "loading" })).toBe(
+    expect(resolveSessionPrivacy({ ...base, recording: undefined })).toBe(
       "pending",
     );
-    expect(
-      resolveSessionPrivacy({ ...base, enterprisePrivacyInView: undefined }),
-    ).toBe("pending");
-    expect(
-      resolveSessionPrivacy({ ...base, enterprisePrivacyInView: true }),
-    ).toBe("masked");
+    expect(resolveSessionPrivacy({ ...base, recording: "masked" })).toBe(
+      "masked",
+    );
+    // Only a verified non-private context records in full.
     expect(resolveSessionPrivacy(base)).toBe("full");
   });
 
   it("masks a share link whoever is viewing it", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
+    for (const recording of answers) {
       expect(
-        resolveSessionPrivacy({ ...base, account, sharedLink: true }),
+        resolveSessionPrivacy({ ...base, recording, sharedLink: true }),
       ).toBe("masked");
     }
   });
@@ -123,44 +111,27 @@ describe("recordingSurface", () => {
   });
 });
 
-describe("enterprise privacy from the organization list", () => {
-  const orgs = [
-    { _id: "org_plain" },
-    { _id: "org_private", enterprisePrivacy: true },
-    { _id: "org_explicit_off", enterprisePrivacy: false },
-  ];
-
-  it("in view: unknown until the list loads or something is in view", async () => {
-    const { resolveEnterprisePrivacyInView } = await load();
+describe("APP_ROUTE_WORDS", () => {
+  // The relay scrubs URLs with the shared list and cannot read the route
+  // table, so the list must cover every literal segment of it.
+  it("covers every literal segment of the route table", async () => {
+    const { APP_ROUTE_WORDS } = await load();
+    const { APP_ROUTES } = await import("../app-routes");
+    const missing = [
+      ...new Set(
+        APP_ROUTES.flatMap((route) => route.path.split("/")).filter(
+          (segment) =>
+            segment &&
+            !segment.startsWith(":") &&
+            segment !== "*" &&
+            !APP_ROUTE_WORDS.has(segment),
+        ),
+      ),
+    ];
     expect(
-      resolveEnterprisePrivacyInView(undefined, ["org_private"]),
-    ).toBeUndefined();
-    expect(
-      resolveEnterprisePrivacyInView(orgs, [null, undefined]),
-    ).toBeUndefined();
-  });
-
-  it("in view: any one organization in view is enough, and only `true` counts", async () => {
-    const { resolveEnterprisePrivacyInView } = await load();
-    expect(
-      resolveEnterprisePrivacyInView(orgs, ["org_plain", null, "org_private"]),
-    ).toBe(true);
-    expect(resolveEnterprisePrivacyInView(orgs, ["org_plain"])).toBe(false);
-    expect(resolveEnterprisePrivacyInView(orgs, ["org_explicit_off"])).toBe(
-      false,
-    );
-    // A private organization the user belongs to but is not looking at.
-    expect(
-      resolveEnterprisePrivacyInView(orgs, ["org_plain", "org_gone"]),
-    ).toBe(false);
-  });
-
-  it("membership: any organization in the list, unknown until it loads", async () => {
-    const { resolveEnterprisePrivacyMember } = await load();
-    expect(resolveEnterprisePrivacyMember(undefined)).toBeUndefined();
-    expect(resolveEnterprisePrivacyMember([])).toBe(false);
-    expect(resolveEnterprisePrivacyMember([orgs[0], orgs[2]])).toBe(false);
-    expect(resolveEnterprisePrivacyMember(orgs)).toBe(true);
+      missing,
+      "Add these route segments to APP_ROUTE_WORDS in shared/telemetry-privacy.ts",
+    ).toEqual([]);
   });
 });
 
@@ -476,6 +447,68 @@ describe("filterSentryReplayFrame", () => {
     expect(spanFrame.data.payload.description).toContain("acme");
   });
 
+  it("takes the page's text out of click and key frames short of full", async () => {
+    const mod = await load({ hosted: true });
+    const clickFrame = {
+      data: {
+        tag: "breadcrumb",
+        payload: {
+          category: "ui.slowClickDetected",
+          message:
+            'body > div.app > button#server-acme-prod.btn[aria-label="Delete Acme Prod"][type="button"]',
+          data: {
+            url: "https://app.mcpjam.com/servers/acme-prod",
+            route: "/servers/acme-prod",
+            nodeId: 12,
+            node: {
+              id: 12,
+              tagName: "button",
+              textContent: "Delete Acme Prod",
+              attributes: {
+                id: "server-acme-prod",
+                class: "btn",
+                "aria-label": "Delete Acme Prod",
+                title: "Delete Acme Prod",
+                name: "acme-prod",
+                testId: "repo-row-acme/prod",
+              },
+            },
+            clickCount: 1,
+          },
+        },
+      },
+    };
+    mod.setSessionPrivacy("full");
+    expect(mod.filterSentryReplayFrame(clickFrame)).toBe(clickFrame);
+
+    mod.setSessionPrivacy("masked");
+    const payload = mod.filterSentryReplayFrame(clickFrame)?.data
+      .payload as any;
+    expect(JSON.stringify(payload)).not.toMatch(/acme/i);
+    expect(payload).toMatchObject({
+      category: "ui.slowClickDetected",
+      message: "body > div.app > button.btn",
+      data: {
+        url: "https://app.mcpjam.com/servers/[name]",
+        route: "/servers/[name]",
+        nodeId: 12,
+        clickCount: 1,
+        node: {
+          tagName: "button",
+          textContent: "****** **** ****",
+          attributes: {
+            id: "***",
+            class: "btn",
+            "aria-label": "***",
+            title: "***",
+            name: "***",
+            testId: "***",
+          },
+        },
+      },
+    });
+  });
+
   it("is wired into the Sentry options, which mask at every level", async () => {
     const { SENTRY_REPLAY_OPTIONS, filterSentryReplayFrame } = await load();
     expect(SENTRY_REPLAY_OPTIONS).toMatchObject({
@@ -488,6 +521,38 @@ describe("filterSentryReplayFrame", () => {
     expect(SENTRY_REPLAY_OPTIONS.beforeAddRecordingEvent).toBe(
       filterSentryReplayFrame,
     );
+    // Sentry's rrweb skips attribute masking for `style`: an element whose
+    // inline style names a URL or holds a string is blocked instead.
+    expect(SENTRY_REPLAY_OPTIONS.block).toEqual(
+      expect.arrayContaining([
+        '[style*="url(" i]',
+        '[style*="image-set(" i]',
+        `[style*='"']`,
+        `[style*="'"]`,
+      ]),
+    );
+  });
+});
+
+describe("stripSelectorAttributes", () => {
+  it("drops every attribute part, values with brackets included", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes(
+        'div#main > button.btn[aria-label="a]b"][disabled][title="Zelda"]',
+      ),
+    ).toBe("div > button.btn");
+    // An id can be a name: an MCP prompt argument's, an elicitation field's.
+    expect(
+      stripSelectorAttributes("form > input#prompt-arg-acme-billing.field"),
+    ).toBe("form > input.field");
+  });
+
+  it("cuts the selector at a value holding its own quote", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes('div > span.x[title="say "Zelda""] > b'),
+    ).toBe("div > span.x");
   });
 });
 
@@ -511,5 +576,58 @@ describe("currentSessionPrivacy", () => {
     expect(mod.shouldMaskAnalytics()).toBe(false);
     mod.setSessionPrivacy("masked");
     expect(mod.shouldMaskAnalytics()).toBe(true);
+  });
+});
+
+describe("filterSentryBreadcrumb", () => {
+  it("keeps everything at full", async () => {
+    const mod = await load({ hosted: true });
+    mod.setSessionPrivacy("full");
+    const crumb = { category: "console", message: "Zelda" };
+    expect(mod.filterSentryBreadcrumb(crumb)).toBe(crumb);
+  });
+
+  it("short of full: drops console output and scrubs names from URLs", async () => {
+    const mod = await load({ hosted: true });
+    for (const level of ["masked", "pending"] as const) {
+      mod.setSessionPrivacy(level);
+      expect(
+        mod.filterSentryBreadcrumb({ category: "console", message: "Zelda" }),
+      ).toBeNull();
+      expect(
+        mod.filterSentryBreadcrumb({
+          category: "fetch",
+          data: { url: "/api/web/servers/acme-billing", method: "GET" },
+        }),
+      ).toEqual({
+        category: "fetch",
+        data: { url: "/api/web/servers/[name]", method: "GET" },
+      });
+      expect(
+        mod.filterSentryBreadcrumb({
+          category: "navigation",
+          data: { from: "/servers/acme", to: "/servers/zelda" },
+        }),
+      ).toEqual({
+        category: "navigation",
+        data: { from: "/servers/[name]", to: "/servers/[name]" },
+      });
+      for (const category of ["ui.click", "ui.input"]) {
+        expect(
+          mod.filterSentryBreadcrumb({
+            category,
+            message:
+              'div.row > button.danger[aria-label="Delete Acme Prod"][name="acme"]',
+            data: { "ui.component_name": "DeleteButton" },
+          }),
+        ).toEqual({
+          category,
+          message: "div.row > button.danger",
+          data: { "ui.component_name": "DeleteButton" },
+        });
+      }
+      const click = { category: "ui.click", message: "button.harness" };
+      expect(mod.filterSentryBreadcrumb(click)).toBe(click);
+    }
   });
 });

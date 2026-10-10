@@ -29,10 +29,16 @@ import {
 
 const posthogClient = { startSessionRecording: vi.fn() };
 
-function render(initial: SessionPrivacy) {
+function render(initial: SessionPrivacy, contextReady = true) {
   return renderHook(
-    ({ level }: { level: SessionPrivacy }) => useSessionPrivacy(level),
-    { initialProps: { level: initial } },
+    ({
+      level,
+      contextReady: ready = true,
+    }: {
+      level: SessionPrivacy;
+      contextReady?: boolean;
+    }) => useSessionPrivacy(level, { contextReady: ready }),
+    { initialProps: { level: initial, contextReady } },
   );
 }
 
@@ -125,17 +131,51 @@ describe("useSessionPrivacy", () => {
     expect(applied()).not.toContain("full");
   });
 
-  it("masked → pending → full still waits out the settle period", () => {
+  it("masked → pending → full stays masked through pending and still waits out the settle period", () => {
     const { rerender } = render("masked");
     rerender({ level: "pending" });
-    expect(applied()).toEqual(["masked", "pending"]);
+    // A navigation whose destination has not answered: masked, not stopped.
+    expect(applied()).toEqual(["masked"]);
 
     rerender({ level: "full" });
-    expect(applied()).toEqual(["masked", "pending"]);
+    expect(applied()).toEqual(["masked"]);
     act(() => {
       vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
     });
-    expect(applied()).toEqual(["masked", "pending", "full"]);
+    expect(applied()).toEqual(["masked", "full"]);
+  });
+
+  it("full → pending (a navigation) goes masked in the same commit", () => {
+    const { rerender } = render("full");
+    rerender({ level: "pending" });
+    expect(applied()).toEqual(["full", "masked"]);
+  });
+
+  it("holds full back until the destination has finished loading, then settles", () => {
+    const { rerender } = render("masked");
+    rerender({ level: "full", contextReady: false });
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS * 3);
+    });
+    expect(applied()).toEqual(["masked"]);
+
+    rerender({ level: "full", contextReady: true });
+    expect(applied()).toEqual(["masked"]);
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
+    });
+    expect(applied()).toEqual(["masked", "full"]);
+  });
+
+  it("drops back to masked at once when the destination starts loading again", () => {
+    const { rerender } = render("full");
+    rerender({ level: "full", contextReady: false });
+    expect(applied()).toEqual(["full", "masked"]);
+  });
+
+  it("at startup, a full answer whose context is still loading records masked", () => {
+    render("full", false);
+    expect(applied()).toEqual(["masked"]);
   });
 
   it("still applies the Sentry half when PostHog is unavailable", () => {

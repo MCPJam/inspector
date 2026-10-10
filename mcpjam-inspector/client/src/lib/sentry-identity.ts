@@ -3,6 +3,10 @@ import {
   isSentryId,
   type SentryActor as SharedSentryActor,
 } from "../../../shared/sentry-identity";
+import {
+  subscribeTelemetryIdentity,
+  telemetryNamesAllowed,
+} from "./telemetry-context";
 
 export function desktopSentryFallback() {
   const id =
@@ -45,7 +49,8 @@ export interface SentryActor extends SharedSentryActor {
 }
 
 let lastSentryActor: SentryActor | null = null;
-let idOnlyIdentity = false;
+/** Whether the scope currently names `lastSentryActor`. */
+let lastSentryActorNamed = false;
 
 /**
  * Point the scope at the current actor, or clear it.
@@ -55,11 +60,15 @@ let idOnlyIdentity = false;
  * browser is already carrying — while `actor_kind` keeps the two populations
  * separable in search.
  *
- * The email rides along for signed-in users only, and only because they signed
- * in: `sendDefaultPii: false` (see `shared/sentry-config.ts`) governs what the
- * SDK collects *automatically* — IP, headers, cookies — and does not suppress
- * fields set here. That split is the intended posture: nothing incidental, one
- * field on purpose.
+ * Id-only until proven otherwise. The email and name ride along only for a
+ * signed-in actor the backend has affirmatively cleared for this actor
+ * (`telemetryNamesAllowed`, lib/telemetry-context.ts): not during boot, not
+ * while the answer is pending, not after an account switch until the new
+ * actor's answer arrives, and never for a member of an organization with
+ * enterprise privacy. `sendDefaultPii: false` (see `shared/sentry-config.ts`)
+ * governs what the SDK collects *automatically* and does not suppress fields
+ * set here, so this check is what keeps them out; `filterSentryEventIdentity`
+ * enforces it again on every outbound event.
  */
 export function setSentryActor(actor: SentryActor | null): void {
   lastSentryActor = actor;
@@ -77,32 +86,58 @@ export function setSentryActor(actor: SentryActor | null): void {
     return;
   }
 
+  const named = actor.kind === "signedIn" && telemetryNamesAllowed(actor.id);
+  lastSentryActorNamed = named;
   Sentry.setUser({
     id: actor.id,
     // `username` as well as `email`: Sentry's issue list renders whichever it
     // finds first, and without it a user reads as a bare opaque id in exactly
     // the view where you are trying to recognize someone.
-    ...(actor.email && !idOnlyIdentity
+    ...(actor.email && named
       ? { email: actor.email, username: actor.email }
       : {}),
-    ...(actor.name && !idOnlyIdentity ? { name: actor.name } : {}),
+    ...(actor.name && named ? { name: actor.name } : {}),
   });
   Sentry.setTag("actor_kind", actor.kind);
 }
 
+// The grant can change without the actor changing (the backend's answer
+// arriving, a membership reload). Re-apply the current actor each time, still
+// through `setSentryActor`, so this module stays the only writer of identity
+// and the email leaves the scope the moment the grant does.
+subscribeTelemetryIdentity(() => {
+  const actor = lastSentryActor;
+  if (!actor) return;
+  const named = actor.kind === "signedIn" && telemetryNamesAllowed(actor.id);
+  if (named !== lastSentryActorNamed) setSentryActor(actor);
+});
+
+/** The `user` fields that name a person rather than identify an account. */
+const NAMING_USER_FIELDS = ["email", "username", "name", "ip_address", "geo"];
+
 /**
- * Identify by id alone: a member of an organization with enterprise privacy
- * (lib/session-privacy.ts). Re-applies the current actor at once, so the email
- * leaves the scope the moment membership is known. Still through
- * `setSentryActor`, so this module stays the only writer of identity.
- *
- * Not applied before the organization list loads: a crash during boot keeps
- * its attribution, which is the reason identity is set early at all.
+ * The outbound boundary: strip naming fields from an event's `user` unless
+ * names are allowed. `allowNames` is the stricter of the grant when the event
+ * was captured and the grant now (see `sentry.ts`), so an event captured
+ * while id-only stays id-only even if it leaves after a grant arrives.
+ * Mutates and returns the event; never throws.
  */
-export function setSentryIdOnlyIdentity(idOnly: boolean): void {
-  if (idOnly === idOnlyIdentity) return;
-  idOnlyIdentity = idOnly;
-  setSentryActor(lastSentryActor);
+export function filterSentryEventIdentity<T extends { user?: unknown }>(
+  event: T,
+  allowNames: boolean,
+): T {
+  try {
+    if (allowNames) return event;
+    const user = event.user;
+    if (!user || typeof user !== "object") return event;
+    const kept = { ...(user as Record<string, unknown>) };
+    for (const field of NAMING_USER_FIELDS) delete kept[field];
+    event.user = kept;
+  } catch {
+    // A failed filter must not drop the event; the scope was id-only anyway
+    // unless a grant was in force.
+  }
+  return event;
 }
 
 /**
