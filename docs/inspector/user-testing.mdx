@@ -1,0 +1,48 @@
+---
+title: "User Testing"
+description: "Share scenarios with real users and review their sessions"
+icon: "users"
+---
+
+The **User Testing** surface lets you publish a scenario — a client configuration bound to a server — behind a share link, then review what happened in real user sessions.
+
+Open **User Testing** from the left sidebar. The list shows all published scenarios in the current project. Click **New scenario** to create one, or click any row to open its detail view.
+
+## Scenario detail
+
+The scenario detail page shows the share link, session history, and usage insights for one scenario. From here you can also edit the scenario's metadata and manage its backing environment.
+
+### Renaming a scenario
+
+Click the scenario title in the header to edit it inline. Press **Enter** or click away to save. If the save fails, the title reverts to the last saved name and a toast describes the error.
+
+### Adding or editing a description
+
+A borderless text area below the header holds the scenario's description. Click it to start typing. The description saves automatically when you click away — only if the text actually changed. If you click away without editing, the field resyncs to the current saved value, so a collaborator's edit made while you were focused is not overwritten.
+
+The description field accepts up to 2,000 characters.
+
+## Naming an ad-hoc environment
+
+Some scenarios are backed by an **ad-hoc environment** — one created automatically from a setup rather than named and managed explicitly. Ad-hoc environments are content-addressed and cannot be edited directly, so the scenario's execution config (servers, skills, model) is frozen until the environment is named.
+
+When the backing environment is ad-hoc, a **Name environment** button appears next to the environment label in the scenario header. Clicking it opens a dialog where you can give the environment a name and an optional description.
+
+After naming:
+
+- The environment keeps its existing ID, so the scenario and all its session history follow it into its named life without any re-linking.
+- The environment appears in the **Environments** list, where you can edit its servers, skills, and sandbox image.
+- The **Name environment** button disappears from the scenario header.
+
+### Name environment dialog
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| Name | Yes | Must be unique among the project's live environments. |
+| Description | No | Optional context for teammates. |
+
+The dialog stays open if the name is already taken or if a concurrent edit caused a conflict — the error message describes exactly what happened so you can act on it.
+
+<Note>
+The **Name environment** button only appears when the project has Environments enabled. If the button is not visible for an environment-backed scenario, the feature may not be enabled for your project.
+</Note>
