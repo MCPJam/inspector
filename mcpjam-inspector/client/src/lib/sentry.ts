@@ -114,11 +114,22 @@ const HOST_KEYS = new Set(["server.address", "net.peer.name", "http.host"]);
 // selector whose attribute values are the page's text (`[title="…"]`).
 const SELECTOR_KEY = /^(?:lcp\.element|cls\.source\.\d+|inp\.target|ui\.)/;
 
+// A request span named after a relative URL: `GET /servers/acme`.
+const METHOD_AND_PATH = /^([A-Z]+) (\/\S*)$/;
+
 function scrubSpanValue(key: string, value: unknown): unknown {
   if (typeof value !== "string") return value;
   if (HOST_KEYS.has(key)) return scrubHostname(value);
   if (SELECTOR_KEY.test(key)) return stripSelectorAttributes(value);
+  // A request's query and fragment, recorded apart from its URL.
+  if (key === "http.query") {
+    const query = value.replace(/^\?/, "");
+    return query ? scrubNamesFromUrl(`/?${query}`).slice(1) : value;
+  }
+  if (key === "http.fragment") return "";
   if (value.startsWith("/")) return scrubNamesFromUrl(value);
+  const request = METHOD_AND_PATH.exec(value);
+  if (request) return `${request[1]} ${scrubNamesFromUrl(request[2])}`;
   return scrubUrlsInText(value);
 }
 

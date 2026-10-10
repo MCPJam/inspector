@@ -667,11 +667,24 @@ describe("performance transactions short of full", () => {
             start_timestamp: 1,
             timestamp: 2,
           },
+          {
+            description: "GET /api/web/servers/acme-billing?tab=tools",
+            data: { "http.query": "?q=zelda", "http.fragment": "#acme" },
+            start_timestamp: 2,
+            timestamp: 3,
+          },
         ],
       },
       {},
     );
 
+    // A request to a relative URL, and its query and fragment kept apart.
+    expect(event.spans[1]).toEqual({
+      description: "GET /api/web/servers/[name]?tab=[name]",
+      data: { "http.query": "?q=[name]", "http.fragment": "" },
+      start_timestamp: 2,
+      timestamp: 3,
+    });
     expect(event.transaction).toBe("/results/[redacted]");
     expect(event.contexts.trace.data).toEqual({
       "url.full": "https://app.mcpjam.com/servers/[name]",

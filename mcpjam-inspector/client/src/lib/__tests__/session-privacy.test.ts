@@ -455,7 +455,7 @@ describe("filterSentryReplayFrame", () => {
         payload: {
           category: "ui.slowClickDetected",
           message:
-            'body > div.app > button.btn[aria-label="Delete Acme Prod"][type="button"]',
+            'body > div.app > button#server-acme-prod.btn[aria-label="Delete Acme Prod"][type="button"]',
           data: {
             url: "https://app.mcpjam.com/servers/acme-prod",
             route: "/servers/acme-prod",
@@ -465,12 +465,12 @@ describe("filterSentryReplayFrame", () => {
               tagName: "button",
               textContent: "Delete Acme Prod",
               attributes: {
-                id: "delete-server",
+                id: "server-acme-prod",
                 class: "btn",
                 "aria-label": "Delete Acme Prod",
                 title: "Delete Acme Prod",
                 name: "acme-prod",
-                testId: "delete",
+                testId: "repo-row-acme/prod",
               },
             },
             clickCount: 1,
@@ -497,12 +497,12 @@ describe("filterSentryReplayFrame", () => {
           tagName: "button",
           textContent: "****** **** ****",
           attributes: {
-            id: "delete-server",
+            id: "***",
             class: "btn",
             "aria-label": "***",
             title: "***",
             name: "***",
-            testId: "delete",
+            testId: "***",
           },
         },
       },
@@ -541,7 +541,11 @@ describe("stripSelectorAttributes", () => {
       stripSelectorAttributes(
         'div#main > button.btn[aria-label="a]b"][disabled][title="Zelda"]',
       ),
-    ).toBe("div#main > button.btn");
+    ).toBe("div > button.btn");
+    // An id can be a name: an MCP prompt argument's, an elicitation field's.
+    expect(
+      stripSelectorAttributes("form > input#prompt-arg-acme-billing.field"),
+    ).toBe("form > input.field");
   });
 
   it("cuts the selector at a value holding its own quote", async () => {

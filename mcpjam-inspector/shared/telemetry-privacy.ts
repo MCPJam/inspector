@@ -597,13 +597,16 @@ const KNOWN_QUERY_KEYS = new Set([
 ]);
 
 function scrubQueryParam(key: string, value: string): string {
-  if (CREDENTIAL_QUERY_KEYS.has(key)) {
+  if (CREDENTIAL_QUERY_KEYS.has(key.toLowerCase())) {
     return `${encodeURIComponent(key)}=${REDACTED_PLACEHOLDER}`;
   }
-  const name = KNOWN_QUERY_KEYS.has(key)
-    ? encodeURIComponent(key)
-    : KEY_PLACEHOLDER;
-  return `${name}=${isIdLike(value) ? encodeURIComponent(value) : NAME_PLACEHOLDER}`;
+  // A key the app does not use says nothing about its value, which may be a
+  // credential under another name (`shareToken`), so both are masked.
+  if (!KNOWN_QUERY_KEYS.has(key))
+    return `${KEY_PLACEHOLDER}=${NAME_PLACEHOLDER}`;
+  return `${encodeURIComponent(key)}=${
+    isIdLike(value) ? encodeURIComponent(value) : NAME_PLACEHOLDER
+  }`;
 }
 
 /**

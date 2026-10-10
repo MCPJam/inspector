@@ -335,29 +335,33 @@ interface ReplayFrame {
 // One `[attr]` or `[attr="value"]` part of a CSS selector, as Sentry's
 // `htmlTreeAsString` writes them (values are not escaped).
 const SELECTOR_ATTRIBUTE = /\[[\w:.-]+(?:="[^"]*")?\]/g;
+// One `#id` part. Ids can be data: an MCP prompt argument's or elicitation
+// field's name (`prompt-arg-${name}`).
+const SELECTOR_ID = /#[^\s.#[>:]+/g;
 
 /**
  * A CSS selector from Sentry (`htmlTreeAsString`, web-vitals element names)
- * without its attribute parts: `[aria-label="…"]`, `[title="…"]`,
- * `[name="…"]` and `[alt="…"]` carry the page's text. A value holding its
- * own quote defeats the pattern, so the selector is cut at the first part
- * left over.
+ * without its attribute and id parts: `[aria-label="…"]`, `[title="…"]`,
+ * `[name="…"]` and `[alt="…"]` carry the page's text, and an id can carry a
+ * name. A value holding its own quote defeats the pattern, so the selector
+ * is cut at the first part left over.
  */
 export function stripSelectorAttributes(selector: string): string {
-  const stripped = selector.replace(SELECTOR_ATTRIBUTE, "");
+  const stripped = selector
+    .replace(SELECTOR_ATTRIBUTE, "")
+    .replace(SELECTOR_ID, "");
   const leftover = stripped.search(/[["]/);
   return leftover === -1 ? stripped : stripped.slice(0, leftover);
 }
 
 // What a Sentry Replay click frame's `data.node.attributes` may keep: code,
-// not text. `aria-label`, `title`, `alt` and `name` are masked.
+// not data. `aria-label`, `title`, `alt` and `name` are text; `id` and
+// `testId` can be built from a name (`repo-row-${repoFullName}`).
 const UI_FRAME_KEPT_ATTRIBUTES = new Set([
-  "id",
   "class",
   "role",
   "disabled",
   "aria-disabled",
-  "testId",
   "data-sentry-component",
 ]);
 

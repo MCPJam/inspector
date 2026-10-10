@@ -181,8 +181,9 @@ Route words (`APP_ROUTE_WORDS`, which a test keeps in step with `APP_ROUTES`),
 ids (Convex ids, UUIDs, numbers) and MCPJam's own hosts stay. Every other path
 segment and query value becomes `[name]`, every other host `[host]`, and the
 fragment and userinfo are dropped. A query key the app's own URLs do not use
-becomes `[key]` (a key can be the name itself), and a credential value
-(`code`, `state`, `token`, `t`, …) becomes `[redacted]` whatever its shape.
+becomes `[key]` and its value `[name]` (a key can be the name itself, or a
+credential under another name), and a credential value (`code`, `state`,
+`token`, `t`, …, in any case) becomes `[redacted]` whatever its shape.
 For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 `/p/<projectId>/servers/[name]?tab=[name]`.
 
@@ -207,9 +208,10 @@ Short of `full`:
 
 - `beforeAddRecordingEvent` drops console breadcrumbs from the replay and
   scrubs URLs in navigation breadcrumbs and network spans. Click and key
-  frames lose the attribute parts of their selector (`[aria-label="…"]`,
-  `[title="…"]`, `[name="…"]`, `[alt="…"]`), the node's text-bearing
-  attributes, and the names in their page URL.
+  frames lose the attribute and id parts of their selector
+  (`[aria-label="…"]`, `[title="…"]`, `[name="…"]`, `[alt="…"]`, `#…`: an id
+  can be built from a name), the node's text-bearing attributes, `id` and
+  `testId`, and the names in their page URL.
 - `beforeBreadcrumb` (`filterSentryBreadcrumb`) does the same for the
   breadcrumbs error events carry, `ui.click` and `ui.input` selectors
   included, as each breadcrumb is recorded.
@@ -358,7 +360,8 @@ the relay both strip `request_headers` from it.
 
 ## The relay backstop
 
-`/relay` and `/tlm` (`server/routes/relay.ts`, `server/routes/relay-privacy.ts`)
+`/relay` and `/tlm` (`server/routes/relay.ts`, `server/routes/relay-privacy.ts`,
+`server/routes/relay-replay-privacy.ts`)
 gate every capture request — event batches, replay batches and GET ingestion:
 
 1. Decode the payload once (gzip, base64 form, JSON) and pin it to our

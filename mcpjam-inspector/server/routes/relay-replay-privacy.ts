@@ -476,22 +476,35 @@ function cssRules(rules: unknown, what: string): Json[] {
 }
 
 // StyleSheetRule (8): rules inserted, deleted or replaced, by CSSOM.
-function restrictStyleSheetRule(data: Json): Json {
+// posthog-js compresses its `adds` and `removes` (`cv: "2024-10"`).
+async function restrictStyleSheetRule(
+  data: Json,
+  compressed: boolean,
+  ctx: MaskContext,
+): Promise<Json> {
+  const read = async (value: unknown) =>
+    compressed ? await decompressField(value, ctx) : value;
+  const write = async (value: unknown) =>
+    compressed ? await compressField(value) : value;
   const out: Json = { source: 8 };
   copySheetIds(data, out);
   if (data.adds !== undefined) {
-    out.adds = cssRules(data.adds, "style sheet rule adds");
+    out.adds = await write(
+      cssRules(await read(data.adds), "style sheet rule adds"),
+    );
   }
   if (data.removes !== undefined) {
-    out.removes = requireArray(data.removes, "style sheet rule removes").map(
-      (entry) => {
-        const index = isRecord(entry) ? numberOrNumbers(entry.index) : null;
-        if (index === undefined || index === null) {
-          throw new UnsupportedReplayError("style sheet rule remove");
-        }
-        return { index };
-      },
-    );
+    const removes = requireArray(
+      await read(data.removes),
+      "style sheet rule removes",
+    ).map((entry) => {
+      const index = isRecord(entry) ? numberOrNumbers(entry.index) : null;
+      if (index === undefined || index === null) {
+        throw new UnsupportedReplayError("style sheet rule remove");
+      }
+      return { index };
+    });
+    out.removes = await write(removes);
   }
   for (const key of ["replace", "replaceSync"]) {
     if (typeof data[key] === "string") {
@@ -580,7 +593,12 @@ async function restrictIncremental(
     }
     return { ...event, data: out };
   }
-  if (source === 8) return { ...event, data: restrictStyleSheetRule(data) };
+  if (source === 8) {
+    return {
+      ...event,
+      data: await restrictStyleSheetRule(data, compressed, ctx),
+    };
+  }
   if (source === 13) return { ...event, data: restrictStyleDeclaration(data) };
   if (source === 15) return { ...event, data: restrictAdoptedStyleSheet(data) };
   if (DROPPED_INCREMENTAL_SOURCES.has(source)) return null;

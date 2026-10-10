@@ -210,12 +210,19 @@ describe("scrubNamesFromUrl query strings", () => {
     );
   });
 
+  it("redacts credential keys in any case, and masks the value under an unknown key", () => {
+    const uuid = "123e4567-e89b-12d3-a456-426614174000";
+    expect(scrubNamesFromUrl(`/x?Token=${uuid}&shareToken=${uuid}`)).toBe(
+      "/[name]?Token=[redacted]&[key]=[name]",
+    );
+  });
+
   it("masks a key the app does not use, which can be the name itself", () => {
     expect(
       scrubNamesFromUrl("https://app.mcpjam.com/servers?zelda@example.com"),
     ).toBe("https://app.mcpjam.com/servers?[key]=[name]");
     expect(scrubNamesFromUrl("/servers?tab=tools&acme=1")).toBe(
-      "/servers?tab=[name]&[key]=1",
+      "/servers?tab=[name]&[key]=[name]",
     );
   });
 
@@ -224,7 +231,7 @@ describe("scrubNamesFromUrl query strings", () => {
       "/oauth/callback?code=abc&zelda=1&session=kd7a8f9g0h1j2k3l4m5n6p7q8r",
     );
     expect(once).toBe(
-      "/oauth/callback?code=[redacted]&[key]=1&session=kd7a8f9g0h1j2k3l4m5n6p7q8r",
+      "/oauth/callback?code=[redacted]&[key]=[name]&session=kd7a8f9g0h1j2k3l4m5n6p7q8r",
     );
     expect(scrubNamesFromUrl(once)).toBe(once);
   });
@@ -296,7 +303,7 @@ describe("scrubNamesFromUrl hosts", () => {
 
   it("is idempotent once a host is replaced", () => {
     const once = scrubNamesFromUrl("https://acme.example/servers/zelda?x=1");
-    expect(once).toBe("https://[host]/servers/[name]?[key]=1");
+    expect(once).toBe("https://[host]/servers/[name]?[key]=[name]");
     expect(scrubNamesFromUrl(once)).toBe(once);
   });
 });

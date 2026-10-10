@@ -921,6 +921,42 @@ describe("relay privacy gate", () => {
     expect(data).toHaveLength(4);
   });
 
+  it("decodes, scrubs and re-encodes posthog-js compressed style sheet rules", async () => {
+    const customerIcon = "https://mcp.acme-synthetic.example/icons/zelda.svg";
+    await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(undefined, [
+          {
+            type: 3,
+            timestamp: 1,
+            cv: "2024-10",
+            data: {
+              source: 8,
+              id: 2,
+              adds: gzipLatin1([
+                { rule: `.b { background: url("${customerIcon}") }`, index: 0 },
+              ]),
+              removes: gzipLatin1([{ index: 3 }]),
+            },
+          },
+        ]),
+      ]),
+    );
+    const [rule] = forwarded().json.batch[0].properties.$snapshot_data;
+    expect(rule.cv).toBe("2024-10");
+    expect(typeof rule.data.adds).toBe("string");
+    const inflate = (value: string) =>
+      JSON.parse(gunzipSync(Buffer.from(value, "latin1")).toString("utf8"));
+    expect(inflate(rule.data.adds)).toEqual([
+      {
+        rule: '.b { background: url("https://[host]/[name]/[name]") }',
+        index: 0,
+      },
+    ]);
+    expect(inflate(rule.data.removes)).toEqual([{ index: 3 }]);
+  });
+
   it("decodes, masks and re-encodes posthog-js compressed snapshots and mutations", async () => {
     const [meta, full, mutation] = replayEvents() as any[];
     const compressed = [
@@ -1060,6 +1096,9 @@ describe("relay privacy gate", () => {
   // Starts `count` stamped requests one after another, each once the one
   // before has finished reading and is waiting on the backend.
   async function waitingOnBackend(count: number) {
+    // The 2s lookup timeout must not fire while the requests are started;
+    // vi.waitFor keeps polling on real timers.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const releases: Array<() => void> = [];
     setTelemetryPolicyQueryForTests(
       () =>
@@ -1073,7 +1112,6 @@ describe("relay privacy gate", () => {
       responses.push(
         post("/tlm/e/", batch([identifyEvent(stamp([`org_wait_${i}`]))]), auth),
       );
-      // Quickly: a lookup unanswered for 2s times out and stops waiting.
       await vi.waitFor(() => expect(releases).toHaveLength(i + 1), {
         interval: 1,
       });
