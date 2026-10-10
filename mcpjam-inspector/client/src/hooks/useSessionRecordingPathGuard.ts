@@ -1,17 +1,17 @@
 import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
 import { getAppRouter } from "@/router-ref";
-import { syncSessionRecordingForPath } from "@/lib/PosthogUtils";
-import { syncSentryReplayForPath } from "@/lib/sentry";
+import { syncSessionRecording } from "@/lib/session-privacy";
+import { syncSentryReplay } from "@/lib/sentry";
 
 /**
  * Stop session recording while the user is on a bearer-credential route.
  *
- * `disable_session_recording` is an init-time PostHog option, so it only
- * covers a session that *loads* on `/results/<token>`. That route is reachable
- * by in-app navigation, and a user who lands anywhere else and then follows a
- * results link already has an active recorder — which snapshots the address
- * bar, token and all. This closes that window on every route change.
+ * `/results/<token>` is reachable by in-app navigation, and a user who lands
+ * anywhere else and then follows a results link already has an active
+ * recorder — which snapshots the address bar, token and all. This closes that
+ * window on every route change. The session's privacy level is applied by
+ * `useSessionPrivacy`; both feed the same two sync functions.
  *
  * Deliberately NOT `useLocation()`: `App` also renders outside a router (the
  * legacy hash path, and several test harnesses), where the router invariant
@@ -35,8 +35,8 @@ export function useSessionRecordingPathGuard(): void {
     // Sentry Replay is gated on the platform, so an ad-blocked or disabled
     // PostHog would otherwise leave it recording `/results/<token>`.
     const apply = (pathname: string) => {
-      if (posthog) syncSessionRecordingForPath(posthog, pathname);
-      syncSentryReplayForPath(pathname);
+      if (posthog) syncSessionRecording(posthog, pathname);
+      syncSentryReplay(pathname);
     };
     apply(window.location.pathname);
 
