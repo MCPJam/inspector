@@ -261,6 +261,27 @@ describe("replay callbacks", () => {
   });
 });
 
+describe("sentryTransactionName", () => {
+  it("names routes by template, never by value", async () => {
+    vi.stubGlobal("__APP_VERSION__", "test");
+    vi.stubGlobal("__BUILD_SURFACE__", "local");
+    await loadAt("full");
+    const { sentryTransactionName } = await import("../sentry");
+    expect(sentryTransactionName(`/results/${SECRET}`)).toBe(
+      "/results/:runToken",
+    );
+    expect(sentryTransactionName(`/user-testing/acme/${SECRET}`)).toBe(
+      "/user-testing/:slug/:token",
+    );
+    expect(sentryTransactionName("/p/k17abc/servers/srv_1")).toBe(
+      "/p/:projectId/servers/:serverId",
+    );
+    expect(sentryTransactionName("/settings/api-keys")).toBe(
+      "/settings/api-keys",
+    );
+  });
+});
+
 describe("installRecorderNavigationGuard", () => {
   it("stops both recorders before a pushState onto a credential URL", async () => {
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -310,6 +331,59 @@ describe("installRecorderNavigationGuard", () => {
       window.history.replaceState({}, "", "/");
       vi.doUnmock("../sentry");
       vi.doUnmock("../session-privacy");
+    }
+  });
+});
+
+describe("Sentry Replay blocks elements whose URL attributes carry a credential", () => {
+  // Sentry's rrweb writes `href`/`src` without consulting `maskAttributes`,
+  // so these elements must be BLOCKED, by selector.
+  it.each([
+    ["href", `https://app.mcpjam.com/results/${SECRET}`],
+    ["href", `/bench/results/${SECRET}`],
+    [
+      "src",
+      `https://app.mcpjam.com/user-testing/acme/${SECRET}?surface=preview`,
+    ],
+    ["href", `/api/mcp/servers/rpc/stream?serverId=a&_token=${SECRET}`],
+    ["href", `/oauth/callback?code=${SECRET}`],
+    ["action", `https://idp.example/sso?SAMLResponse=${SECRET}`],
+  ])("blocks %s=%s", async (attribute, value) => {
+    const { SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+    const element = document.createElement(
+      attribute === "src" ? "iframe" : "a",
+    );
+    element.setAttribute(attribute, value);
+    expect(element.matches(SENTRY_REPLAY_OPTIONS.block.join(","))).toBe(true);
+  });
+
+  // Selectors cannot follow the URL scrubber's semantics, so every element
+  // with an attribute Sentry records unmasked is blocked, whatever it holds.
+  it.each([
+    ["a", "href", `https://user:${SECRET}@example.com/path`],
+    ["a", "href", `https://app.mcpjam.com/%72esults/${SECRET}`],
+    ["a", "href", `https://example.com/path?x_vendor_access_token=${SECRET}`],
+    ["a", "href", "/p/k1/servers?tab=tools"],
+    ["iframe", "src", "https://docs.mcpjam.com/x"],
+    ["img", "srcset", "/a.png 1x, /b.png 2x"],
+    ["div", "style", "background-image: url(/x.png)"],
+  ])("blocks <%s %s=%s>", async (tag, attribute, value) => {
+    const { SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+    const element = document.createElement(tag);
+    element.setAttribute(attribute, value);
+    expect(element.matches(SENTRY_REPLAY_OPTIONS.block.join(","))).toBe(true);
+  });
+
+  it("leaves elements without a URL attribute recorded", async () => {
+    const { SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+    const button = document.createElement("button");
+    button.setAttribute("title", "Open");
+    const section = document.createElement("section");
+    section.setAttribute("style", "color: red");
+    for (const element of [button, section, document.createElement("a")]) {
+      expect(element.matches(SENTRY_REPLAY_OPTIONS.block.join(","))).toBe(
+        false,
+      );
     }
   });
 });

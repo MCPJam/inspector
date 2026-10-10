@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   desktopSentryFallback,
   setSentryActor,
-  setSentryIdOnlyIdentity,
   setSentryOrganization,
 } from "../sentry-identity";
 
@@ -92,48 +91,6 @@ describe("setSentryActor", () => {
       },
     } as never;
     expect(desktopSentryFallback()).toBeUndefined();
-  });
-});
-
-describe("setSentryIdOnlyIdentity", () => {
-  const member = {
-    kind: "signedIn" as const,
-    id: "workos-1",
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    setSentryIdOnlyIdentity(false);
-    setSentryActor(null);
-  });
-
-  it("re-applies the current actor id-only at once", () => {
-    // A member of an organization with enterprise privacy: id only.
-    setSentryActor(member);
-    setSentryIdOnlyIdentity(true);
-
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-    expect(mocks.setTag).toHaveBeenLastCalledWith("actor_kind", "signedIn");
-  });
-
-  it("stays id-only when turned off again", () => {
-    setSentryIdOnlyIdentity(true);
-    setSentryActor(member);
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-
-    setSentryIdOnlyIdentity(false);
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-  });
-
-  it("does nothing when the answer has not changed", () => {
-    setSentryActor(member);
-    mocks.setUser.mockClear();
-
-    setSentryIdOnlyIdentity(false);
-    expect(mocks.setUser).not.toHaveBeenCalled();
   });
 });
 

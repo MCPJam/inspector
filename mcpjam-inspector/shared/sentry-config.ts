@@ -11,6 +11,11 @@
  * unit-testable without stubbing globals.
  */
 
+import {
+  credentialRouteTemplate,
+  scrubCredentialUrl,
+  scrubTelemetryEvent,
+} from "./credential-urls";
 import { isInjectedScriptException } from "./injected-script-frames";
 import {
   describeShape,
@@ -352,7 +357,9 @@ export function buildBrowserBeforeSend(origin?: string) {
       });
       if (isInjectedScriptException(stacks, origin)) return null;
     }
-    return groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event));
+    return scrubSentryCredentials(
+      groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event)),
+    );
   };
 }
 
@@ -387,6 +394,7 @@ function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
  */
 export interface ScrubbableEvent extends FingerprintableEvent {
   message?: string;
+  transaction?: string;
   logentry?: { message?: string; params?: unknown[] };
   request?: {
     url?: string;
@@ -499,7 +507,7 @@ export function scrubServerSentryEvent<T extends ScrubbableEvent>(event: T): T {
   const request = scrubbable.request;
   if (request) {
     if (typeof request.url === "string") {
-      request.url = stripQueryAndFragment(request.url);
+      request.url = scrubCredentialUrl(stripQueryAndFragment(request.url));
     }
     if (request.query_string !== undefined) {
       request.query_string = queryParamNames(request.query_string);
@@ -523,7 +531,39 @@ export function scrubServerSentryEvent<T extends ScrubbableEvent>(event: T): T {
       scrubbable.extra.__serialized__,
     );
   }
+  if (typeof scrubbable.transaction === "string") {
+    scrubbable.transaction = sentryTransactionTemplate(scrubbable.transaction);
+  }
   return event;
+}
+
+/**
+ * A transaction name with any credential path replaced by its template:
+ * `GET /api/web/score/runs/<token>` → `GET /api/web/score/runs/:token`.
+ * Keeps an HTTP method prefix if there is one.
+ */
+export function sentryTransactionTemplate(name: string): string {
+  const match = /^([A-Z]+ )?(\/\S*)$/.exec(name);
+  if (!match) return scrubCredentialUrl(name);
+  const [, method = "", path] = match;
+  const pathname = path.split(/[?#]/)[0];
+  const template = credentialRouteTemplate(pathname);
+  return template
+    ? `${method}${template}`
+    : `${method}${scrubCredentialUrl(path)}`;
+}
+
+/**
+ * The last step of every Sentry hook on every surface: every credential out
+ * of the whole event (`shared/credential-urls.ts`) — request URLs,
+ * transaction names, span descriptions, breadcrumbs, exception text, tags,
+ * contexts, extras — whatever the SDK or our own code put there.
+ *
+ * Fail closed. If the walker cannot finish, the URL-bearing fields are
+ * deleted and the rest scrubbed; if even that fails, `null` drops the event.
+ */
+export function scrubSentryCredentials<T extends object>(event: T): T | null {
+  return scrubTelemetryEvent(event);
 }
 
 /** Minimal structural view of a Sentry breadcrumb. */
@@ -573,7 +613,7 @@ function describeConsoleCall(
 export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   breadcrumb: T,
   urlDetail: "origin" | "path",
-): T {
+): T | null {
   const crumb: ScrubbableBreadcrumb = breadcrumb;
   const data = crumb.data;
   switch (crumb.category) {
@@ -613,20 +653,23 @@ export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
         crumb.message = scrubLogText(crumb.message, MAX_ERROR_TEXT_CHARS);
       }
   }
-  return breadcrumb;
+  // Every category, Electron's (`electron`) and any the SDK adds later
+  // included: whatever URL a breadcrumb carries — `data.url`, `from`, `to` —
+  // loses its credentials. A crumb that cannot be shown clean is dropped.
+  return scrubSentryCredentials(breadcrumb) as T;
 }
 
 /** `beforeBreadcrumb` for the browser client and Electron renderer. */
 export function scrubClientSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   breadcrumb: T,
-): T {
+): T | null {
   return scrubSentryBreadcrumb(breadcrumb, "path");
 }
 
 /** `beforeBreadcrumb` for the Node surfaces: the server and Electron main. */
 export function scrubServerSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   breadcrumb: T,
-): T {
+): T | null {
   return scrubSentryBreadcrumb(breadcrumb, "origin");
 }
 
@@ -694,6 +737,10 @@ export function buildClientSentryConfig(
     // collapsing those by message would merge unrelated defects. The OAuth
     // debugger runs only in the browser client too.
     beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
+    // Spans and transaction names carry request URLs (`GET /api/web/score/
+    // runs/<token>`). Names are set to route templates at the source; this is
+    // the backstop for everything else in a transaction.
+    beforeSendTransaction: scrubSentryCredentials,
     // Console arguments are whatever a component logged — often a payload.
     beforeBreadcrumb: scrubClientSentryBreadcrumb,
     ...(ctx.replayEnabled

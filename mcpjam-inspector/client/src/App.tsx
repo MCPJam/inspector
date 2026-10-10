@@ -174,7 +174,6 @@ import {
   resolveEnterprisePrivacyMember,
   resolveSessionPrivacy,
 } from "./lib/session-privacy";
-import { setSentryIdOnlyIdentity } from "./lib/sentry-identity";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -3263,15 +3262,11 @@ export default function App() {
   }, [workOsUser?.id]);
 
   // Members of an organization with enterprise privacy are identified by id
-  // alone, in analytics and in error tracking.
+  // alone in analytics. Error tracking identifies everyone by id alone
+  // (`setSentryActor`), so it needs no membership signal.
   const enterprisePrivacyMember =
     resolveEnterprisePrivacyMember(loadedOrganizations);
   usePostHogIdentify({ enterprisePrivacyMember });
-  useEffect(() => {
-    if (enterprisePrivacyMember !== undefined) {
-      setSentryIdOnlyIdentity(enterprisePrivacyMember);
-    }
-  }, [enterprisePrivacyMember]);
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
