@@ -7,7 +7,8 @@ alongside their code — see `mcpjam-inspector/AGENTS.md` for the inspector app.
 
 `gh pr create --body` skips GitHub's PR template. When you write a PR body,
 read `.github/pull_request_template.md` and fill in every section. Where a
-section does not apply, write its stated "None: …" text.
+section does not apply, use the exact text that section's comment gives
+("Nothing", "Nothing applicable", or "None: …").
 
 ## Design
 
