@@ -40,8 +40,6 @@ export interface SentryActor extends SharedSentryActor {
    * actor without maintaining a lookup table between the two products.
    */
   id: string;
-  email?: string;
-  name?: string;
 }
 
 let lastSentryActor: SentryActor | null = null;
@@ -55,11 +53,11 @@ let idOnlyIdentity = false;
  * browser is already carrying — while `actor_kind` keeps the two populations
  * separable in search.
  *
- * The email rides along for signed-in users only, and only because they signed
- * in: `sendDefaultPii: false` (see `shared/sentry-config.ts`) governs what the
- * SDK collects *automatically* — IP, headers, cookies — and does not suppress
- * fields set here. That split is the intended posture: nothing incidental, one
- * field on purpose.
+ * The id and nothing else — no email, no name. `sendDefaultPii: false` (see
+ * `shared/sentry-config.ts`) only governs what the SDK collects
+ * *automatically*; it does not suppress fields set here, so this is where the
+ * line is held. The id resolves to a person through WorkOS when someone with
+ * access needs it, which is the same thing the server and Electron main send.
  */
 export function setSentryActor(actor: SentryActor | null): void {
   lastSentryActor = actor;
@@ -77,27 +75,15 @@ export function setSentryActor(actor: SentryActor | null): void {
     return;
   }
 
-  Sentry.setUser({
-    id: actor.id,
-    // `username` as well as `email`: Sentry's issue list renders whichever it
-    // finds first, and without it a user reads as a bare opaque id in exactly
-    // the view where you are trying to recognize someone.
-    ...(actor.email && !idOnlyIdentity
-      ? { email: actor.email, username: actor.email }
-      : {}),
-    ...(actor.name && !idOnlyIdentity ? { name: actor.name } : {}),
-  });
+  Sentry.setUser({ id: actor.id });
   Sentry.setTag("actor_kind", actor.kind);
 }
 
 /**
  * Identify by id alone: a member of an organization with enterprise privacy
- * (lib/session-privacy.ts). Re-applies the current actor at once, so the email
- * leaves the scope the moment membership is known. Still through
- * `setSentryActor`, so this module stays the only writer of identity.
- *
- * Not applied before the organization list loads: a crash during boot keeps
- * its attribution, which is the reason identity is set early at all.
+ * (lib/session-privacy.ts). Identity is already id-only for everyone (see
+ * `setSentryActor`), so this only re-applies the current actor; it is kept so
+ * the privacy hook has one call site that states the requirement.
  */
 export function setSentryIdOnlyIdentity(idOnly: boolean): void {
   if (idOnly === idOnlyIdentity) return;

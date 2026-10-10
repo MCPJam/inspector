@@ -27,6 +27,7 @@ import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
+import { scrubLogText } from "../../../shared/log-scrubber.js";
 import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
 import {
@@ -99,6 +100,29 @@ export interface E2BHarnessSandboxProviderOptions {
 }
 
 const enc = new TextEncoder();
+
+/**
+ * Longest stderr line a bridge can forward. The harness framework copies every
+ * line into this process's stderr — which ships to the platform's log
+ * pipeline — and into the tail a startup error quotes.
+ */
+const MAX_BRIDGE_STDERR_LINE_CHARS = 2000;
+
+/**
+ * A bridge's stderr carries whatever the agent and its CLI print: an upstream
+ * error quoting a request, a tool's arguments, a URL with a token in it. Each
+ * line is capped and loses credentials, emails and URL paths here, before it
+ * leaves the provider — the one place every E2B harness's stream passes.
+ *
+ * Per chunk, not per buffered line: holding a partial line back would delay a
+ * bridge's output, and a chunk boundary only ever splits a line in two.
+ */
+function redactBridgeStderr(chunk: string): string {
+  return chunk
+    .split("\n")
+    .map((line) => scrubLogText(line, MAX_BRIDGE_STDERR_LINE_CHARS))
+    .join("\n");
+}
 
 /**
  * Path confinement for the harness file writers — keeps every `write*` under the
@@ -468,7 +492,9 @@ export function createE2BHarnessSandboxProvider(
             if (!streamsClosed) outCtl.enqueue(enc.encode(d));
           },
           onStderr: (d: string) => {
-            if (!streamsClosed) errCtl.enqueue(enc.encode(d));
+            if (!streamsClosed) {
+              errCtl.enqueue(enc.encode(redactBridgeStderr(d)));
+            }
           },
         });
         // A background handle is returned only after E2B accepted the process.

@@ -17,6 +17,8 @@ import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "elect
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
+  scrubServerSentryBreadcrumb,
+  scrubServerSentryEvent,
 } from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
@@ -60,7 +62,15 @@ Sentry.init({
   // in-flight Update.exe arrives as an unhandled rejection for something that
   // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
   // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
-  beforeSend: dropUpdaterInstallSpawnRejection,
+  //
+  // What survives is scrubbed like the standalone server's events: the
+  // embedded server runs in this process, so its request bodies and outgoing
+  // requests reach Sentry through this client (see `server/sentry.ts`).
+  beforeSend: (event) => {
+    const kept = dropUpdaterInstallSpawnRejection(event);
+    return kept === null ? null : scrubServerSentryEvent(kept);
+  },
+  beforeBreadcrumb: scrubServerSentryBreadcrumb,
 });
 
 const desktopDiagnostics = installDesktopDiagnostics();

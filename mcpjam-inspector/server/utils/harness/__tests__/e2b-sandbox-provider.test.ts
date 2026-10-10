@@ -387,6 +387,42 @@ describe("bridge spawn", () => {
       expect.objectContaining({ background: true }),
     );
   });
+
+  it("caps and redacts the bridge's stderr before anything downstream reads it", async () => {
+    // The harness framework copies every stderr line into this process's
+    // stderr (and from there the log pipeline) and into startup errors.
+    let finish!: () => void;
+    sandboxState.run.mockImplementation(
+      async (
+        _command: string,
+        opts?: { background?: boolean; onStderr?: (d: string) => void },
+      ) => {
+        if (!opts?.background) return { exitCode: 0, stdout: "", stderr: "" };
+        opts.onStderr?.(
+          "[codex] POST https://mcp.acme.com/tenants/42/mcp?key=k failed for jane@acme.com\n",
+        );
+        opts.onStderr?.(`[codex] ${"x".repeat(2500)}\n`);
+        return {
+          pid: 42,
+          wait: () =>
+            new Promise<{ exitCode: number }>((resolve) => {
+              finish = () => resolve({ exitCode: 0 });
+            }),
+          kill: vi.fn(),
+        };
+      },
+    );
+    const session = await provider().createSession();
+    const proc = await session.spawn(bridgeSpawn);
+    finish();
+
+    const text = await new Response(proc.stderr).text();
+    const [first, second] = text.split("\n");
+    expect(first).toBe(
+      "[codex] POST https://mcp.acme.com/… failed for [redacted-email]",
+    );
+    expect(second).toBe(`[codex] ${"x".repeat(1992)}… [+508 chars]`);
+  });
 });
 
 describe("exec result normalization", () => {
