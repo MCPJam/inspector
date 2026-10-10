@@ -447,6 +447,11 @@ export function getHostedNavigationSections(
           return [];
         }
 
+        // Hosted WebMCP is an install entry point, independent of browser rollout.
+        if (normalizedTab === "webmcp") {
+          return [{ ...item, featureFlag: undefined }];
+        }
+
         return [item];
       }),
     }))
