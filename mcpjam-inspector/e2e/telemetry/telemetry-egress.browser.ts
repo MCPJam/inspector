@@ -34,6 +34,7 @@ import {
   assertCorpusComplete,
   EGRESS_CORPUS,
   GENERIC_EGRESS_URLS,
+  LINK_ONLY_EGRESS_URLS,
   leakReport,
   missingArrivals,
   pageCorpus,
@@ -131,7 +132,11 @@ test("share links on a normal page at full: text, href and iframe src", async ({
       section.append(frame);
       document.body.append(section);
     },
-    [...Object.values(EGRESS_CORPUS), ...GENERIC_EGRESS_URLS],
+    [
+      ...Object.values(EGRESS_CORPUS),
+      ...GENERIC_EGRESS_URLS,
+      ...LINK_ONLY_EGRESS_URLS,
+    ],
   );
   await interact(page);
   await page.evaluate(

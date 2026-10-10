@@ -678,7 +678,18 @@ const STATUS_CODE_VALUE = /^(?:[A-Z][A-Z0-9_]*|\d{1,4})[.,;:!?)]*$/;
  * very start of the text, where a form body (`code=…&state=…`) begins.
  */
 const TEXT_PARAM =
-  /((?:^|[?&#;]|%3[Ff]|%26|%23)\s*)([A-Za-z0-9_.\-[\]]+)((?:=|%3[Dd]))((?:(?!%26|%23)[^&#;\s"'<>\\`])*)/g;
+  /((?:^|[?&#;]|%3[Ff]|%26|%23)\s*)((?:[A-Za-z0-9_.\-[\]]|%(?!3[Ff]|26|23|3[Dd])[0-9A-Fa-f]{2})+)((?:=|%3[Dd]))((?:(?!%26|%23)[^&#;\s"'<>\\`])*)/g;
+
+/**
+ * Userinfo on a protocol-relative URL in prose (`failed //user:pw@host/…`).
+ * Absolute URLs lose theirs through `EMBEDDED_URL`; this is the scheme-less
+ * spelling, anchored at a boundary so a `//` inside a path does not count.
+ */
+const PROTOCOL_RELATIVE_USERINFO =
+  /(^|[\s"'(<=,[])\/\/[^\s/?#@"'<>()[\]`]+@(?=[^\s/?#@])/g;
+
+/** A whole value that is one relative or protocol-relative URL. */
+const WHOLE_RELATIVE_URL = /^[/?#]\S*$/;
 
 function scrubTextPaths(text: string): string {
   let out = text;
@@ -715,7 +726,9 @@ function scrubTextParams(text: string, depth = 0): string {
       // (`token=sk_…`, `code=4/0A…`), unless it is a form-less log line that
       // opens with an error or status code (`code=ENOENT`, `code=500`). Only
       // `code` names one; `password=HUNTER2` is still a password.
-      const decodedKey = safeDecode(key);
+      // Twice: a key quoted inside another URL's query is encoded twice
+      // (`%3Fco%2564e%3D…`).
+      const decodedKey = safeDecode(safeDecode(key));
       const statusCode =
         lead === "" &&
         depth === 0 &&
@@ -752,11 +765,15 @@ export function scrubCredentialsInText(text: string): string {
   // carries — ids, enums, names, counts — have none, and skip the scans.
   if (!MAY_HOLD_CREDENTIAL.test(text)) return text;
   try {
-    let out = text.replace(EMBEDDED_URL, (url) => {
+    // A value that is one relative URL (`/api/x?co%64e=…`, `//user:pw@host`)
+    // goes through the URL parser, as an absolute one does below.
+    let out = WHOLE_RELATIVE_URL.test(text) ? scrubUrlUnsafe(text) : text;
+    out = out.replace(EMBEDDED_URL, (url) => {
       const trailing = TRAILING_PUNCTUATION.exec(url)?.[0] ?? "";
       const core = trailing ? url.slice(0, -trailing.length) : url;
       return `${scrubUrlUnsafe(core)}${trailing}`;
     });
+    out = out.replace(PROTOCOL_RELATIVE_USERINFO, "$1//");
     out = scrubTextPaths(out);
     out = scrubTextParams(out);
     return out;

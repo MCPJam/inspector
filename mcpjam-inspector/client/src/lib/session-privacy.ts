@@ -779,16 +779,40 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
  * secret-surface convention (`rr-block`, `data-ph-no-capture`), is therefore
  * blocked outright.
  */
+/** Elements whose URL attribute Sentry's rrweb records unmasked. */
+export const SENTRY_UNMASKABLE_URL_ELEMENTS = [
+  "a[href]",
+  "area[href]",
+  "iframe[src]",
+  "frame[src]",
+  "embed[src]",
+  "source[src]",
+  "source[srcset]",
+  "track[src]",
+  "input[src]",
+  "[srcset]",
+  "object[data]",
+  "table[background]",
+  "td[background]",
+  "th[background]",
+  '[style*="url("]',
+] as const;
+
 export const SENTRY_REPLAY_OPTIONS = {
   maskAllText: true,
   maskAllInputs: true,
   blockAllMedia: true,
-  // Sentry's rrweb serializes `href`, `src` and friends without consulting
-  // `maskAttributes`, so an element whose URL attribute carries a credential
-  // is blocked outright (`credentialAttributeSelectors`).
+  // Sentry's rrweb writes `href`, `src`, `srcset`, `xlink:href`,
+  // `background`, `object[data]` and `style` as absolute URLs before any
+  // masking hook runs (`transformAttribute`), so no callback can scrub them.
+  // Every element carrying one is blocked, whatever its URL holds: matching
+  // credential shapes in selectors cannot follow the URL scrubber's semantics
+  // (userinfo, percent-encoded segments, any `*_token` key). Text is masked
+  // and media blocked here already, so this costs the replay little.
   block: [
     ".rr-block",
     `[${SECRET_SURFACE_ATTRIBUTE}]`,
+    ...SENTRY_UNMASKABLE_URL_ELEMENTS,
     ...credentialAttributeSelectors(),
   ],
   maskAttributes: [

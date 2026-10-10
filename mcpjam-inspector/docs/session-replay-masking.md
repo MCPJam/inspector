@@ -151,6 +151,13 @@ At `full`, `SENTRY_REPLAY_OPTIONS` apply:
 
 - `maskAllText`, `maskAllInputs` and `blockAllMedia` are `true`.
 - `maskAttributes` adds `alt` and `aria-description` to Sentry's defaults.
+- Every element with a URL attribute Sentry's rrweb records unmasked (`href`,
+  `src`, `srcset`, `background`, `object[data]`, a `style` with `url(`) is
+  blocked: links, frames and the like (`SENTRY_UNMASKABLE_URL_ELEMENTS`).
+  rrweb rewrites those attributes to absolute URLs before any masking hook
+  runs, and selectors cannot follow the URL scrubber's semantics (userinfo,
+  percent-encoded segments, any `*_token` key), so they are blocked whatever
+  they hold.
 - `networkDetailAllowUrls: []` and `networkCaptureBodies: false`: no request or
   response detail for any URL.
 

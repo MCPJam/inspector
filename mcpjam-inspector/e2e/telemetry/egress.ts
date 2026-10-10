@@ -113,6 +113,29 @@ export const GENERIC_EGRESS_URLS = [
   `https://provider.example.com/token?client_secret=${sentinel("cs")}&refresh_token=${sentinel("rt")}`,
 ] as const;
 
+/**
+ * Credential URLs only a page shows, never fetches (`fetch` refuses a URL
+ * with userinfo): the shapes a selector cannot match but the URL scrubber
+ * must — userinfo, a percent-encoded route segment, an unregistered
+ * `*_token` key. Rendered as share links, so they reach both recorders as
+ * text, `href` and `src`.
+ */
+export const LINK_ONLY_EGRESS_URLS = [
+  `https://user:${sentinel("userinfo")}@example.com/path`,
+  `https://app.mcpjam.com/%72esults/${sentinel("encseg")}`,
+  `https://example.com/path?x_vendor_access_token=${sentinel("vendortok")}`,
+] as const;
+
+/**
+ * Credentials in telemetry strings that are not absolute URLs: a relative URL
+ * with a percent-encoded secret key, and a protocol-relative URL with
+ * userinfo inside prose.
+ */
+export const RELATIVE_URL_EGRESS = {
+  encodedKey: `/api/test?co%64e=${sentinel("enckey")}`,
+  protocolRelative: `failed //user:${sentinel("protorel")}@example.com/path`,
+} as const;
+
 // ── Vendor fixtures ────────────────────────────────────────────────────
 
 /** The project key posthog-js is initialised with (`PosthogUtils.ts`). */

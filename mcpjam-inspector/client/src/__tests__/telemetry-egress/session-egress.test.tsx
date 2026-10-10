@@ -23,6 +23,8 @@ import {
   compressedReplayEventCount,
   EGRESS_CORPUS,
   GENERIC_EGRESS_URLS,
+  LINK_ONLY_EGRESS_URLS,
+  RELATIVE_URL_EGRESS,
   pageCorpus,
   posthogEvents,
   posthogReplayEvents,
@@ -48,6 +50,7 @@ const SENTRY_MIN_SEGMENT_MS = 5_500;
 const ALL_SHARE_LINKS = [
   ...Object.values(EGRESS_CORPUS),
   ...GENERIC_EGRESS_URLS,
+  ...LINK_ONLY_EGRESS_URLS,
 ] as const;
 
 let harness: TelemetryHarness;
@@ -76,12 +79,20 @@ describe("at `full`, on a normal page", () => {
     await harness.click();
     harness.posthog.capture("egress_custom_event", {
       opened: EGRESS_CORPUS["tester-link"],
+      requested: RELATIVE_URL_EGRESS.encodedKey,
+      failure: RELATIVE_URL_EGRESS.protocolRelative,
     });
     harness.posthog.captureException(
       new Error(`failed to load ${EGRESS_CORPUS["score-results"]}`),
     );
     harness.Sentry.captureException(
       new Error(`failed GET ${EGRESS_CORPUS["api-score-run"]}`),
+    );
+    harness.Sentry.captureException(
+      new Error(RELATIVE_URL_EGRESS.protocolRelative),
+    );
+    harness.Sentry.captureException(
+      new Error(`failed GET ${RELATIVE_URL_EGRESS.encodedKey}`),
     );
     // Console capture is on at `full` (the remote config turns it on).
     console.info("[egress] copied", EGRESS_CORPUS["tester-link"]);

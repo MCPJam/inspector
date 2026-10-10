@@ -379,6 +379,35 @@ describe("walker edge cases", () => {
     expect(scrubCredentialsInText("code=500.")).toBe("code=500.");
   });
 
+  it("scrubs relative URLs with encoded keys and protocol-relative userinfo", () => {
+    expect(scrubCredentialsInText("/api/test?co%64e=TEST_SECRET")).toBe(
+      "/api/test?co%64e=[redacted]",
+    );
+    expect(scrubCredentialsInText("see /api/test?co%64e=TEST_SECRET now")).toBe(
+      "see /api/test?co%64e=[redacted] now",
+    );
+    expect(
+      scrubCredentialsInText("failed //user:TEST_SECRET@example.com/path"),
+    ).toBe("failed //example.com/path");
+    expect(scrubCredentialsInText("//user:TEST_SECRET@example.com/path")).toBe(
+      "//example.com/path",
+    );
+    expect(
+      scrubCredentialsInText("redirect=%2Fapi%3Fco%2564e%3DTEST_SECRET"),
+    ).not.toContain("TEST_SECRET");
+    // Unchanged: an encoded delimiter is not part of a key, and a `//` with
+    // no userinfo, or inside a path, is not a credential.
+    expect(scrubCredentialsInText("%3Fcode%3Dabc%26x%3D1")).toBe(
+      "%3Fcode%3D[redacted]%26x%3D1",
+    );
+    expect(scrubCredentialsInText("//cdn.example.com/x.js")).toBe(
+      "//cdn.example.com/x.js",
+    );
+    expect(scrubCredentialsInText("path/a//b@c.com/x")).toBe(
+      "path/a//b@c.com/x",
+    );
+  });
+
   it("scrubs a credential pair at the very start of a log line", () => {
     expect(scrubCredentialsInText("token=sk_live_abc failed")).toBe(
       "token=[redacted] failed",

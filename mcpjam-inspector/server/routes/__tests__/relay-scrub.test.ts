@@ -373,6 +373,25 @@ describe("event payloads are scrubbed and re-encoded the way they came", () => {
     );
   });
 
+  it("scrubs relative and protocol-relative URLs in event strings", async () => {
+    const response = await createTestApp().request("/tlm/e/", {
+      method: "POST",
+      body: JSON.stringify({
+        event: "custom",
+        properties: {
+          token: KEY,
+          requested: "/api/test?co%64e=SENTINEL_enc",
+          failure: "failed //user:SENTINEL_pw@example.com/path",
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const forwarded = JSON.parse(forwardedBytes().toString("utf8"));
+    expect(JSON.stringify(forwarded)).not.toContain("SENTINEL");
+    expect(forwarded.properties.requested).toBe("/api/test?co%64e=[redacted]");
+    expect(forwarded.properties.failure).toBe("failed //example.com/path");
+  });
+
   it("scrubs object keys, which heatmap data is keyed by", async () => {
     const response = await createTestApp().request("/tlm/i/v0/e/", {
       method: "POST",
