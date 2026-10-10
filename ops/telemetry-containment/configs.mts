@@ -27,6 +27,7 @@
 import {
   CREDENTIAL_ROUTES,
   SECRET_PARAM_KEYS,
+  escapeRegex,
   type CredentialRoute,
 } from "../../mcpjam-inspector/shared/credential-urls.ts";
 import {
@@ -40,10 +41,6 @@ import {
 export interface PostHogUrlBlocklistEntry {
   url: string;
   matching: "regex";
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
 /**

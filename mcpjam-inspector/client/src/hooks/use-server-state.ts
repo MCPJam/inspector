@@ -7,6 +7,7 @@ import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
 import {
   consumeOAuthCallbackParams,
+  readOAuthCallbackAttempt,
   readOAuthCallbackParams,
 } from "@/lib/oauth-callback-inbox";
 import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
@@ -931,6 +932,10 @@ export function useServerState({
     [rawDispatch],
   );
   const callbackLocation = useCurrentLocationParts();
+  // Every pending callback page has the same URL, so the callback effect keys
+  // on the inbox's attempt id too: a second answer deposited onto the same
+  // `/oauth/callback?oauth_pending=1` (a second desktop callback) runs it.
+  const oauthCallbackAttempt = readOAuthCallbackAttempt();
   const oauthAccessRef = useRef({
     loading: isAuthLoading,
     userId: currentUserId,
@@ -3376,6 +3381,7 @@ export function useServerState({
     // attempt key below is what dedupes it. Consumed at the two exits that
     // leave the callback route.
     const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
+    const callbackAttempt = readOAuthCallbackAttempt();
     const code = urlParams.get("code");
     const state = urlParams.get("state");
     const error = urlParams.get("error");
@@ -3489,9 +3495,13 @@ export function useServerState({
         window.addEventListener(FIRST_RUN_OAUTH_CANCELLED_EVENT, markCancelled);
       }
       const restoreCallbackUrl = () => {
+        // A newer answer arrived on the same page while this one settled (or
+        // the page has left the callback): it is not this exchange's to
+        // consume or navigate away from.
+        if (readOAuthCallbackAttempt() !== callbackAttempt) return;
         // The exchange has settled either way, so the answer is spent (or
-        // abandoned, on a cancel): its reload copy must not outlive the flow.
-        consumeOAuthCallbackParams();
+        // abandoned, on a cancel): it must not outlive the flow.
+        consumeOAuthCallbackParams(callbackAttempt);
         if (wasCancelled) return;
         // The pending marker pinned the organization the flow started in.
         // Re-apply it as the explicit selection before navigating: most
@@ -3566,13 +3576,14 @@ export function useServerState({
       const returnTarget = hostedOAuthCallbackContext?.returnPath
         ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
         : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
-      consumeOAuthCallbackParams();
+      consumeOAuthCallbackParams(callbackAttempt);
       navigateApp(returnTarget, { replace: true });
     }
   }, [
     recoverProjectOAuth,
     callbackLocation.pathname,
     callbackLocation.search,
+    oauthCallbackAttempt,
     currentUserId,
     oauthProjectIds,
     requestSignIn,

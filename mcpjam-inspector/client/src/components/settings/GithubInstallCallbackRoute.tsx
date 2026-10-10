@@ -63,6 +63,47 @@ type Phase =
 
 const SETTINGS_PATH = "/settings/integrations/github";
 
+interface CapturedCallback {
+  installationId: string | null;
+  state: string | null;
+  code: string | null;
+}
+
+/**
+ * The callback held for the life of the PAGE, not of one mount. The URL loses
+ * it as soon as the page mounts, and the tree above this route can remount it
+ * before the one-shot flow has run (`AuthRecoveryBoundary` swaps its children
+ * for a loading screen while a session refresh settles). A second mount reads
+ * it from here instead of from a query that is no longer there. Memory only —
+ * never storage — and cleared once a completion call settles, after which the
+ * state is spent.
+ */
+let pageCallback: CapturedCallback | null = null;
+
+function captureGithubCallback(
+  searchParams: URLSearchParams,
+): CapturedCallback {
+  const fromUrl: CapturedCallback = {
+    installationId: searchParams.get("installation_id"),
+    state: searchParams.get("state"),
+    code: searchParams.get("code"),
+  };
+  if (fromUrl.state) {
+    pageCallback = fromUrl;
+    return fromUrl;
+  }
+  return pageCallback ?? fromUrl;
+}
+
+function clearPageCallback(): void {
+  pageCallback = null;
+}
+
+/** Test-only: forget the page's callback. */
+export function resetGithubCallbackForTests(): void {
+  pageCallback = null;
+}
+
 export function GithubInstallCallbackRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
   const appNavigate = useAppNavigate();
@@ -122,15 +163,13 @@ export function GithubInstallCallbackRoute() {
   // needs them.
   //
   // Memory only, deliberately: a credential copied into storage outlives the
-  // page that needed it. A reload before the backend has answered therefore
+  // page that needed it. A RELOAD before the backend has answered therefore
   // lands on the "incomplete callback" message and the user starts the
   // connection again — the state is one-time and short-lived, so a retry is
   // what a restored copy would usually have come to anyway.
-  const [captured] = useState(() => ({
-    installationId: searchParams.get("installation_id"),
-    state: searchParams.get("state"),
-    code: searchParams.get("code"),
-  }));
+  //
+  // A remount within the same page load finds it in `pageCallback`.
+  const [captured] = useState(() => captureGithubCallback(searchParams));
   const { installationId, state, code } = captured;
 
   // Back to the bare callback path, REPLACING the entry — the `?code=` URL
@@ -194,6 +233,7 @@ export function GithubInstallCallbackRoute() {
         return;
       }
       void completeInstallSetup({ installationId: parsed, state })
+        .finally(clearPageCallback)
         .then(({ authorizeUrl }) => {
           try {
             redirectToGithub(authorizeUrl);
@@ -217,6 +257,7 @@ export function GithubInstallCallbackRoute() {
     // The OAuth leg.
     if (code && state) {
       void completeUserAuthorization({ code, state })
+        .finally(clearPageCallback)
         .then((result) => {
           if (result.status === "bound") {
             toast.success(`Connected ${result.accountLogin}.`);

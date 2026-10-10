@@ -91,7 +91,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { toast } from "@/lib/toast";
-import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";
+import {
+  GithubInstallCallbackRoute,
+  resetGithubCallbackForTests,
+} from "../GithubInstallCallbackRoute";
 
 const PATH = "/settings/integrations/github/callback";
 
@@ -118,6 +121,8 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The captured callback lives for the page, i.e. the test module.
+  resetGithubCallbackForTests();
   // `clearAllMocks` clears CALLS, not implementations. Two tests here make the
   // redirect throw to prove the guard's developer text never reaches the
   // screen, and without this that throwing implementation leaks into every
@@ -714,6 +719,52 @@ function renderCallbackWithProbe(query: string) {
     </StrictMode>,
   );
 }
+
+describe("a remount before the flow has run", () => {
+  it("still finishes with the callback the first mount captured", async () => {
+    // First mount: auth not settled, the URL is scrubbed, nothing called.
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    const first = renderCallbackWithProbe(
+      "?code=gh-code&state=raw-oauth-state",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    first.unmount();
+
+    // The tree remounts on the bare path (as AuthRecoveryBoundary does).
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    renderCallbackWithProbe("");
+    await waitFor(() =>
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
+        code: "gh-code",
+        state: "raw-oauth-state",
+      }),
+    );
+    expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1);
+  });
+
+  it("never writes the callback to storage", async () => {
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    renderCallbackWithProbe("?code=gh-code&state=raw-oauth-state");
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    const stored = [sessionStorage, localStorage]
+      .flatMap((storage) =>
+        Array.from({ length: storage.length }, (_, i) =>
+          storage.getItem(storage.key(i) ?? ""),
+        ),
+      )
+      .join("\n");
+    expect(stored).not.toContain("gh-code");
+    expect(stored).not.toContain("raw-oauth-state");
+  });
+});
 
 describe("the address bar", () => {
   it("drops code and state from the URL on mount, before auth has settled", async () => {

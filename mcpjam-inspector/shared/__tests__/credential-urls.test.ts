@@ -378,3 +378,58 @@ describe("walker edge cases", () => {
     );
   });
 });
+
+describe("review findings", () => {
+  it("matches a credential path however the router would: any case, encoded", () => {
+    for (const path of [
+      "/RESULTS/tok_1",
+      "/%72esults/tok_1",
+      "/Bench/Results/ff00",
+      "/User-Testing/acme/tok_1",
+    ]) {
+      expect(matchCredentialPath(path), path).not.toBeNull();
+      expect(scrubCredentialUrl(path)).not.toContain("tok_1");
+      expect(scrubCredentialUrl(path)).not.toContain("ff00");
+      expect(isReplayBlockedLocation({ pathname: path })).toBe(true);
+      expect(
+        scrubCredentialsInText(`see https://app.mcpjam.com${path} now`),
+      ).not.toMatch(/tok_1|ff00/);
+    }
+    expect(isReplayBlockedLocation({ pathname: "/OAuth/Callback" })).toBe(true);
+    expect(matchCredentialPath("/user-testing/acme/EDIT")).toBeNull();
+  });
+
+  it("leaves its own encoded output readable and clean", () => {
+    const out = scrubCredentialUrl("/login?next=%2Fresults%2Fabc");
+    expect(out).toBe("/login?next=%2Fresults%2F[redacted]");
+    expect(containsCredential(out)).toBe(false);
+    expect(containsCredential("/login?next=%2Fresults%2F%5Bredacted%5D")).toBe(
+      false,
+    );
+  });
+
+  it("redacts a ;-separated secret, as it detects one", () => {
+    expect(scrubCredentialUrl("/page?a=1;code=XYZ")).toBe(
+      "/page?a=1;code=[redacted]",
+    );
+    expect(scrubCredentialsInText("/page?a=1;code=XYZ")).not.toContain("XYZ");
+  });
+
+  it("does not let keys that scrub alike overwrite each other", () => {
+    const out = scrubTelemetryValue({
+      "https://app/results/a": [{ x: 1 }],
+      "https://app/results/b": [{ x: 2 }],
+      "/results/c": { n: 1 },
+      "/results/d": { n: 2 },
+    }) as Record<string, unknown>;
+    expect(out["https://app/results/[redacted]"]).toEqual([{ x: 1 }, { x: 2 }]);
+    expect(out["/results/[redacted]"]).toEqual({ n: 1 });
+    expect(out["/results/[redacted]#2"]).toEqual({ n: 2 });
+  });
+
+  it("skips strings that cannot hold a credential", () => {
+    for (const text of ["abc", "k17abc9z", "Error: boom", "42"]) {
+      expect(scrubCredentialsInText(text)).toBe(text);
+    }
+  });
+});

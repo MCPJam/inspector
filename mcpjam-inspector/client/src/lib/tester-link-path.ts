@@ -22,6 +22,7 @@
 import {
   CREDENTIAL_PLACEHOLDER,
   credentialRoute,
+  escapeRegex,
 } from "@/shared/credential-urls";
 
 /**
@@ -51,10 +52,6 @@ export const TESTER_LINK_PATH_SEGMENT =
  * reserved here, as before.
  */
 const RESERVED_APP_SUBPATH = TESTER_LINK_ROUTE.reserved?.[0] ?? "edit";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-}
 
 const SEGMENT = escapeRegex(TESTER_LINK_PATH_SEGMENT);
 const RESERVED = escapeRegex(RESERVED_APP_SUBPATH);

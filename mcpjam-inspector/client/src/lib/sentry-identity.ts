@@ -42,9 +42,6 @@ export interface SentryActor extends SharedSentryActor {
   id: string;
 }
 
-let lastSentryActor: SentryActor | null = null;
-let idOnlyIdentity = false;
-
 /**
  * Point the scope at the current actor, or clear it.
  *
@@ -60,7 +57,6 @@ let idOnlyIdentity = false;
  * access needs it, which is the same thing the server and Electron main send.
  */
 export function setSentryActor(actor: SentryActor | null): void {
-  lastSentryActor = actor;
   try {
     window.electronAPI?.sentry?.setActor(
       actor ? { id: actor.id, kind: actor.kind } : null,
@@ -77,18 +73,6 @@ export function setSentryActor(actor: SentryActor | null): void {
 
   Sentry.setUser({ id: actor.id });
   Sentry.setTag("actor_kind", actor.kind);
-}
-
-/**
- * Identify by id alone: a member of an organization with enterprise privacy
- * (lib/session-privacy.ts). Identity is already id-only for everyone (see
- * `setSentryActor`), so this only re-applies the current actor; it is kept so
- * the privacy hook has one call site that states the requirement.
- */
-export function setSentryIdOnlyIdentity(idOnly: boolean): void {
-  if (idOnly === idOnlyIdentity) return;
-  idOnlyIdentity = idOnly;
-  setSentryActor(lastSentryActor);
 }
 
 /**

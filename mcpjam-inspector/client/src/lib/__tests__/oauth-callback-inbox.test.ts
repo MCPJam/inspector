@@ -12,6 +12,7 @@ import {
   isOAuthCallbackPath,
   OAUTH_CALLBACK_EXPIRED_DESCRIPTION,
   OAUTH_CALLBACK_EXPIRED_ERROR,
+  readOAuthCallbackAttempt,
   readOAuthCallbackParams,
   resetOAuthCallbackInboxForTests,
 } from "../oauth-callback-inbox";
@@ -329,5 +330,48 @@ describe("agreement with the credential registry", () => {
     expect(hasOAuthPendingMarker("?oauth_pending=1")).toBe(true);
     expect(hasOAuthPendingMarker("?oauth_pending=0")).toBe(false);
     expect(hasOAuthPendingMarker("?code=c")).toBe(false);
+  });
+});
+
+describe("attempts", () => {
+  it("gives every answer its own id, though the URL is the same", () => {
+    window.history.replaceState(null, "", "/oauth/callback?code=a&state=sa");
+    captureOAuthCallbackFromUrl();
+    const first = readOAuthCallbackAttempt();
+    expect(first).not.toBeNull();
+
+    const target = depositOAuthCallbackParams(
+      new URLSearchParams("code=b&state=sb"),
+    );
+    window.history.replaceState(null, "", target);
+    const second = readOAuthCallbackAttempt();
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+  });
+
+  it("lets an owner consume only its own answer", () => {
+    window.history.replaceState(null, "", "/oauth/callback?code=a&state=sa");
+    captureOAuthCallbackFromUrl();
+    const first = readOAuthCallbackAttempt();
+    window.history.replaceState(
+      null,
+      "",
+      depositOAuthCallbackParams(new URLSearchParams("code=b&state=sb")),
+    );
+
+    // Attempt A settles late: B's answer survives it.
+    expect(consumeOAuthCallbackParams(first)).toBeNull();
+    expect(readOAuthCallbackParams()?.get("code")).toBe("b");
+
+    const second = readOAuthCallbackAttempt();
+    expect(consumeOAuthCallbackParams(second)?.get("code")).toBe("b");
+    expect(readOAuthCallbackParams()).toBeNull();
+  });
+
+  it("has no attempt off the callback route", () => {
+    window.history.replaceState(null, "", "/oauth/callback?code=a&state=sa");
+    captureOAuthCallbackFromUrl();
+    window.history.replaceState(null, "", "/servers");
+    expect(readOAuthCallbackAttempt()).toBeNull();
   });
 });

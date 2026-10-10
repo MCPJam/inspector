@@ -34,7 +34,7 @@
  * and a marker that outlived the tab would follow the user into unrelated work.
  */
 
-import { credentialRoute } from "@/shared/credential-urls";
+import { credentialRoute, escapeRegex } from "@/shared/credential-urls";
 import {
   hasOAuthPendingMarker,
   readOAuthCallbackParams,
@@ -56,10 +56,6 @@ const CLAIM_PREFIX = CLAIM_ROUTE.pattern.slice(
 
 /** `request` — the reserved segment the secret-free request page lives under. */
 const REQUEST_SEGMENT = CLAIM_ROUTE.reserved?.[0] ?? "request";
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-}
 
 /**
  * Stricter than the registry's own matcher, on purpose and unchanged from

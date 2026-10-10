@@ -1,6 +1,7 @@
 import type { CaptureResult } from "posthog-js";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
 import {
+  POSTHOG_URL_PROPERTIES,
   scrubCredentialUrl,
   scrubTelemetryEvent,
   scrubTelemetryValue,
@@ -165,22 +166,6 @@ function attachFailedRequest(properties: Record<string, any>): void {
   properties.failed_request_age_ms = ageMs;
 }
 
-/** The URL properties PostHog attaches to events by itself. */
-const URL_PROPERTIES = [
-  "$current_url",
-  "$referrer",
-  "$pathname",
-  "$session_entry_url",
-  "$session_entry_pathname",
-  "$session_entry_referrer",
-  "$initial_current_url",
-  "$initial_pathname",
-  "$initial_referrer",
-  "$prev_pageview_pathname",
-  "$prev_pageview_url",
-  "$external_click_url",
-];
-
 export function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
   eventName?: string,
@@ -188,7 +173,7 @@ export function sanitizeAnalyticsProperties(
   // Short of a resolved `full` privacy level, names come out of URLs too
   // (lib/session-privacy.ts), on top of the credential redaction below.
   const maskNames = shouldMaskAnalytics();
-  for (const key of URL_PROPERTIES) {
+  for (const key of POSTHOG_URL_PROPERTIES) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
       if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);

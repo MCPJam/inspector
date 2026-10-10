@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { randomBytes } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 const { relayEvent } = vi.hoisted(() => ({ relayEvent: vi.fn() }));
@@ -371,6 +372,34 @@ describe("event payloads are scrubbed and re-encoded the way they came", () => {
       body: clean,
     });
     expect(forwardedBytes().toString("utf8")).toBe(clean);
+  });
+
+  it("forwards a gzip batch that inflates past the 2 MiB body limit", async () => {
+    // ~3 MB of text in a body under the 2 MiB limit.
+    // Realistic compression (~2:1), not a zip bomb: the ratio guard is a
+    // separate bound and stays in force.
+    const stack = randomBytes(1_500_000).toString("hex");
+    const payload = plantedBatch();
+    const body = gzipSync(
+      JSON.stringify({
+        ...payload,
+        batch: [
+          {
+            ...payload.batch[0],
+            properties: { ...payload.batch[0].properties, stack },
+          },
+        ],
+      }),
+    );
+    expect(body.length).toBeLessThan(2 * 1024 * 1024);
+    const response = await createTestApp().request("/tlm/i/v0/e/", {
+      method: "POST",
+      body,
+    });
+    expect(response.status).not.toBe(400);
+    const forwarded = gunzipSync(forwardedBytes()).toString("utf8");
+    expect(forwarded).not.toContain("SENTINEL");
+    expect(JSON.parse(forwarded).batch[0].properties.stack).toBe(stack);
   });
 
   it("still refuses another project before scrubbing", async () => {

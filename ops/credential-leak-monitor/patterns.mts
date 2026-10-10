@@ -21,7 +21,9 @@
  */
 import {
   CREDENTIAL_ROUTES,
+  POSTHOG_URL_PROPERTIES,
   SECRET_PARAM_KEYS,
+  escapeRegex,
   type CredentialRoute,
 } from "../../mcpjam-inspector/shared/credential-urls.ts";
 
@@ -67,10 +69,6 @@ const CLEAR_SECRET_VALUE = `([^${VALUE_STOP}\\[%:{*][^${VALUE_STOP}]*)`;
 const URL_START = `(?:^|[\\s"'=\\(<,])(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?(?://[^${STOP}]*)?`;
 /** The legacy hash router puts the path after `#`: `/#/results/<token>`. */
 const HASH_ROUTER = `(?:[^?#\\s"'<>]*#)?`;
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-}
 
 /**
  * Query/fragment keys whose value is a credential on any URL, as a regex
@@ -222,23 +220,11 @@ export function classifyLeak(
 // ── PostHog (HogQL) ────────────────────────────────────────────────────
 
 /**
- * Event properties that hold a URL or a path. `elements_chain` is a column,
+ * Event properties that hold a URL or a path (the registry's list, re-exported).
+ * `elements_chain` is a column,
  * not a property: autocapture's element chain, which carries `href`s.
  */
-export const POSTHOG_URL_PROPERTIES = [
-  "$current_url",
-  "$referrer",
-  "$pathname",
-  "$external_click_url",
-  "$session_entry_url",
-  "$session_entry_pathname",
-  "$session_entry_referrer",
-  "$initial_current_url",
-  "$initial_pathname",
-  "$initial_referrer",
-  "$prev_pageview_url",
-  "$prev_pageview_pathname",
-] as const;
+export { POSTHOG_URL_PROPERTIES };
 
 /** A HogQL single-quoted string literal. */
 export function hogqlString(value: string): string {

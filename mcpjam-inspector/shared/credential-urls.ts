@@ -240,6 +240,9 @@ export type CredentialRouteId = (typeof CREDENTIAL_ROUTES)[number]["id"];
 /** Placeholder a secret is replaced with. Never matches a credential pattern. */
 export const CREDENTIAL_PLACEHOLDER = "[redacted]";
 
+/** The placeholder percent-encoded, as `encodeURIComponent` writes it. */
+const ENCODED_PLACEHOLDER = /%5Bredacted%5D/gi;
+
 /**
  * Query and fragment keys whose value is a credential on ANY URL — ours, an
  * OAuth provider's, a presigned bucket's. Lowercase; compared
@@ -316,8 +319,24 @@ interface CompiledRoute {
  */
 const SEGMENT = "((?!:)[^/?#]+)";
 
-function escapeRegex(value: string): string {
+/** A string as a literal inside a regular expression. */
+export function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+}
+
+/**
+ * A route's static segment as the router matches it: case-insensitively
+ * (compiled with the `i` flag) and with any character percent-encoded
+ * (`/%72esults/…` is `/results/…` to React Router, so it must be to the
+ * scrubber too).
+ */
+function literalSegment(segment: string): string {
+  return [...segment]
+    .map((char) => {
+      const hex = char.charCodeAt(0).toString(16).padStart(2, "0");
+      return `(?:${escapeRegex(char)}|%${hex})`;
+    })
+    .join("");
 }
 
 function compileRoute(route: CredentialRoute): CompiledRoute {
@@ -331,14 +350,14 @@ function compileRoute(route: CredentialRoute): CompiledRoute {
         paramNames.push(segment.slice(1));
         return SEGMENT;
       }
-      return escapeRegex(segment);
+      return literalSegment(segment);
     })
     .join("/");
   const tail = splat ? "" : "(?=/|$)";
   const firstParam = body.indexOf(":");
   return {
     route,
-    anchored: new RegExp(`^${source}${tail}`),
+    anchored: new RegExp(`^${source}${tail}`, "i"),
     secretGroup:
       route.secretIn === "path" ? paramNames.indexOf(route.secretParam) + 1 : 0,
     staticPrefix: firstParam === -1 ? body : body.slice(0, firstParam),
@@ -395,7 +414,7 @@ export function matchCredentialPath(
     if (secret === undefined) continue;
     const reserved = compiled.route.reserved;
     if (reserved?.includes(safeDecode(secret).toLowerCase())) continue;
-    if (secret === CREDENTIAL_PLACEHOLDER) continue;
+    if (safeDecode(secret) === CREDENTIAL_PLACEHOLDER) continue;
     const params: Record<string, string> = {};
     compiled.paramNames.forEach((name, index) => {
       params[name] = safeDecode(match[index + 1] ?? "");
@@ -461,9 +480,12 @@ function hasSecretKey(params: string): boolean {
  * `redirect_uri` can itself carry a credential URL).
  */
 function scrubParamString(body: string): string {
+  // `&` and `;` both separate pairs (`hasSecretKey` agrees); the separators
+  // are kept as written.
   return body
-    .split("&")
-    .map((pair) => {
+    .split(/([&;])/)
+    .map((pair, index) => {
+      if (index % 2 === 1) return pair;
       const eq = pair.indexOf("=");
       if (eq === -1) return pair;
       const rawKey = pair.slice(0, eq);
@@ -473,11 +495,17 @@ function scrubParamString(body: string): string {
       }
       const decoded = safeDecode(rawValue.replace(/\+/g, " "));
       const scrubbed = scrubCredentialsInText(decoded);
+      // Re-encoded with the placeholder left readable: an encoded
+      // `%5Bredacted%5D` is still the placeholder, but a reader (or a leak
+      // check) should not have to decode to see it.
       return scrubbed === decoded
         ? pair
-        : `${rawKey}=${encodeURIComponent(scrubbed)}`;
+        : `${rawKey}=${encodeURIComponent(scrubbed).replace(
+            ENCODED_PLACEHOLDER,
+            CREDENTIAL_PLACEHOLDER,
+          )}`;
     })
-    .join("&");
+    .join("");
 }
 
 function scrubPathname(pathname: string): string {
@@ -602,7 +630,7 @@ function safeTextFallback(value: string): string {
 /** A slash, raw or percent-encoded (URLs nested in other URLs' queries). */
 const SLASH = "(?:/|%2[Ff])";
 /** A segment inside free text: stops at the usual URL and prose delimiters. */
-const TEXT_SEGMENT = `((?!:)(?:(?!%2[Ff]|%3[Ff]|%23)[^/?#\\s"'<>\\\\()[\\]\`|,;])+)`;
+const TEXT_SEGMENT = `((?!:|%5[Bb])(?:(?!%2[Ff]|%3[Ff]|%23)[^/?#\\s"'<>\\\\()[\\]\`|,;])+)`;
 
 interface TextPattern {
   regex: RegExp;
@@ -613,14 +641,14 @@ function textPatternFor(compiled: CompiledRoute): TextPattern {
   const segments = compiled.route.pattern.split("/").filter(Boolean);
   const source = segments
     .map((segment) =>
-      segment.startsWith(":") ? TEXT_SEGMENT : escapeRegex(segment),
+      segment.startsWith(":") ? TEXT_SEGMENT : literalSegment(segment),
     )
     .join(SLASH);
   // No boundary before the leading slash: in prose the route follows a host
   // (`app.mcpjam.com/results/…`) as often as a space, and the slash itself is
   // what keeps `/foo-results/…` out.
   return {
-    regex: new RegExp(`${SLASH}${source}`, "g"),
+    regex: new RegExp(`${SLASH}${source}`, "gi"),
     reserved: compiled.route.reserved ?? [],
   };
 }
@@ -645,7 +673,7 @@ const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
  * very start of the text, where a form body (`code=…&state=…`) begins.
  */
 const TEXT_PARAM =
-  /((?:^|[?&#]|%3[Ff]|%26|%23)\s*)([A-Za-z0-9_.\-[\]]+)((?:=|%3[Dd]))((?:(?!%26|%23)[^&#\s"'<>\\`])*)/g;
+  /((?:^|[?&#;]|%3[Ff]|%26|%23)\s*)([A-Za-z0-9_.\-[\]]+)((?:=|%3[Dd]))((?:(?!%26|%23)[^&#;\s"'<>\\`])*)/g;
 
 function scrubTextPaths(text: string): string {
   let out = text;
@@ -671,7 +699,11 @@ function scrubTextParams(text: string, depth = 0): string {
   return text.replace(
     TEXT_PARAM,
     (match, lead: string, key: string, eq: string, value: string) => {
-      if (value === "" || value.startsWith(CREDENTIAL_PLACEHOLDER)) {
+      if (
+        value === "" ||
+        value.startsWith(CREDENTIAL_PLACEHOLDER) ||
+        /^%5Bredacted%5D/i.test(value)
+      ) {
         return match;
       }
       // At the very start of the text, only a form body (`code=…&state=…`)
@@ -702,6 +734,10 @@ function scrubTextParams(text: string, depth = 0): string {
  */
 export function scrubCredentialsInText(text: string): string {
   if (typeof text !== "string" || text === "") return text;
+  // Every shape this removes needs one of these: a path (`/`), a parameter
+  // (`=`), an encoded form (`%`) or a scheme (`:`). Most strings an event
+  // carries — ids, enums, names, counts — have none, and skip the scans.
+  if (!MAY_HOLD_CREDENTIAL.test(text)) return text;
   try {
     let out = text.replace(EMBEDDED_URL, (url) => {
       const trailing = TRAILING_PUNCTUATION.exec(url)?.[0] ?? "";
@@ -715,6 +751,8 @@ export function scrubCredentialsInText(text: string): string {
     return CREDENTIAL_PLACEHOLDER;
   }
 }
+
+const MAY_HOLD_CREDENTIAL = /[/=%:]/;
 
 /** Whether a string still carries a credential this module would scrub. */
 export function containsCredential(text: string): boolean {
@@ -847,10 +885,30 @@ export function scrubTelemetryValue<T>(
         const next =
           depth === 0 && preserve.has(key) ? child : walk(child, depth + 1);
         if (cleanKey !== key || next !== child) changed = true;
+        // Two keys that differ only in their secret (`$$heatmap` data keyed
+        // by `/results/a` and `/results/b`) scrub to the same key. Lists are
+        // merged; anything else keeps both under a numbered key rather than
+        // letting the later silently overwrite the earlier.
+        let targetKey = cleanKey;
+        let value = next;
+        if (Object.prototype.hasOwnProperty.call(out, cleanKey)) {
+          const existing = out[cleanKey];
+          if (Array.isArray(existing) && Array.isArray(next)) {
+            value = [...existing, ...next];
+          } else {
+            let n = 2;
+            while (
+              Object.prototype.hasOwnProperty.call(out, `${cleanKey}#${n}`)
+            ) {
+              n++;
+            }
+            targetKey = `${cleanKey}#${n}`;
+          }
+        }
         // Defined, not assigned: a JSON key named `__proto__` must stay a
         // key, not become the copy's prototype.
-        Object.defineProperty(out, cleanKey, {
-          value: next,
+        Object.defineProperty(out, targetKey, {
+          value,
           enumerable: true,
           writable: true,
           configurable: true,
@@ -865,25 +923,34 @@ export function scrubTelemetryValue<T>(
 }
 
 /**
- * Fields that hold a URL or a path on the events our sinks send. When the
- * walker cannot finish, these are deleted so what remains carries no URL.
+ * The PostHog event properties whose value is a URL or a path. One list for
+ * the client's name masking, the walker's fail-closed strip and the leak
+ * monitor.
  */
-export const URL_BEARING_FIELDS: readonly string[] = [
-  // PostHog
+export const POSTHOG_URL_PROPERTIES = [
   "$current_url",
   "$referrer",
-  "$referring_domain",
   "$pathname",
-  "$host",
+  "$external_click_url",
   "$session_entry_url",
   "$session_entry_pathname",
   "$session_entry_referrer",
   "$initial_current_url",
   "$initial_pathname",
   "$initial_referrer",
-  "$prev_pageview_pathname",
   "$prev_pageview_url",
-  "$external_click_url",
+  "$prev_pageview_pathname",
+] as const;
+
+/**
+ * Fields that hold a URL or a path on the events our sinks send. When the
+ * walker cannot finish, these are deleted so what remains carries no URL.
+ */
+export const URL_BEARING_FIELDS: readonly string[] = [
+  // PostHog
+  ...POSTHOG_URL_PROPERTIES,
+  "$referring_domain",
+  "$host",
   "$elements_chain",
   "$elements",
   "$exception_list",

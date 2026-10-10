@@ -165,8 +165,8 @@ organization list has loaded and shows no such membership. When it does show
 one, the hook calls `unsetPersonProperties` once per load to clear values sent
 earlier.
 
-**Sentry.** `setSentryIdOnlyIdentity` drops email and name from the user once
-membership is known. Before the list loads, a boot crash keeps its attribution.
+**Sentry.** Everyone is identified by id alone (`setSentryActor`): no email, no
+name, member or not, so no membership signal is needed.
 
 Desktop identity is unchanged for everyone else.
 

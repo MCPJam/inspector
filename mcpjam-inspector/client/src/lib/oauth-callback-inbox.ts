@@ -67,9 +67,17 @@ interface InboxEntry {
   pathname: string;
   /** The answer, as a query string without `?`. */
   params: string;
+  /** Which callback this is: every capture and deposit gets a new one. */
+  attempt: string;
 }
 
 let inbox: InboxEntry | null = null;
+let attempts = 0;
+
+function nextAttempt(): string {
+  attempts += 1;
+  return `inbox:${attempts}`;
+}
 
 /**
  * The MCP server OAuth callback routes: `/oauth/callback` and everything
@@ -149,10 +157,11 @@ export function captureOAuthCallbackFromUrl(): boolean {
   params.delete(OAUTH_PENDING_PARAM);
 
   if ([...params.keys()].length > 0) {
-    inbox = { pathname, params: params.toString() };
+    inbox = { pathname, params: params.toString(), attempt: nextAttempt() };
   } else if (marked) {
     if (inbox?.pathname === pathname) return true;
     inbox = {
+      attempt: nextAttempt(),
       pathname,
       params: new URLSearchParams({
         error: OAUTH_CALLBACK_EXPIRED_ERROR,
@@ -189,7 +198,7 @@ export function depositOAuthCallbackParams(
 ): string {
   const copy = new URLSearchParams(params);
   copy.delete(OAUTH_PENDING_PARAM);
-  inbox = { pathname, params: copy.toString() };
+  inbox = { pathname, params: copy.toString(), attempt: nextAttempt() };
   return oauthPendingPath(pathname);
 }
 
@@ -217,6 +226,27 @@ export function readOAuthCallbackParams(): URLSearchParams | null {
 }
 
 /**
+ * WHICH callback answer the page is showing, or `null` when it shows none.
+ *
+ * Every pending page has the same URL now (`/oauth/callback?oauth_pending=1`),
+ * so the URL can no longer tell one authorization attempt from the next: a
+ * slow completion of attempt A could otherwise finalize, consume and navigate
+ * away from attempt B's answer. Owners capture this when they start and
+ * compare it before they finish; effects key on it so a second answer
+ * deposited onto the same URL runs them again.
+ */
+export function readOAuthCallbackAttempt(): string | null {
+  if (typeof window === "undefined") return null;
+  const { pathname, search } = window.location;
+  if (!isOAuthCallbackPath(pathname)) return null;
+  if (hasOAuthPendingMarker(search)) {
+    return inbox && inbox.pathname === pathname ? inbox.attempt : null;
+  }
+  // The URL fallback: the query itself is the identity, as it always was.
+  return search && search !== "?" ? `url:${search}` : null;
+}
+
+/**
  * Whether a callback answer is waiting: a `code` or an `error`, the two
  * things an authorization server can answer with.
  */
@@ -226,11 +256,19 @@ export function hasPendingOAuthCallback(): boolean {
 }
 
 /**
- * Take the answer and clear it. Called by the
+ * Take the answer and clear it — only if it is still `attempt`'s, when one is
+ * named. Called by the
  * owner that finished the callback, right before it leaves the callback
  * route, so the code does not outlive the flow it belonged to.
  */
-export function consumeOAuthCallbackParams(): URLSearchParams | null {
+export function consumeOAuthCallbackParams(
+  attempt?: string | null,
+): URLSearchParams | null {
+  // An owner that names its attempt only ever consumes its own answer: a
+  // newer one deposited meanwhile belongs to someone else.
+  if (attempt !== undefined && attempt !== readOAuthCallbackAttempt()) {
+    return null;
+  }
   const params = readOAuthCallbackParams();
   inbox = null;
   return params;

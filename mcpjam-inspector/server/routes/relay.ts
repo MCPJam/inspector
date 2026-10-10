@@ -546,10 +546,15 @@ const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
 // Event, log and metric payloads are rewritten, so they are parsed whole:
 // JSON.parse, the scrubber, JSON.stringify — synchronous work, bounded by
 // this cap on the JSON text and broken up by a yield every
-// SCRUB_YIELD_EVENTS events. It is the body limit's 2 MiB, which a
-// posthog-js batch never approaches; a gzip body that declares more is
-// dropped before it is inflated.
-export const RELAY_SCRUB_MAX_TEXT_BYTES = INFLATE_FLOOR_BYTES;
+// SCRUB_YIELD_EVENTS events. 8 MiB of INFLATED text: the body limit's
+// 2 MiB applies to the compressed bytes, and a gzip batch of large
+// `$exception` stacks or `$set` payloads legitimately inflates several times
+// past it. A drop here is a 400 posthog-js does not retry, so the cap sits
+// where the relay always allowed event payloads to inflate (the pre-scrub
+// MAX_INFLATED_BODY_BYTES). A gzip body that declares more is dropped before
+// it is inflated; payloads above the floor are admitted only
+// RELAY_MAX_LARGE_PAYLOAD_CHECKS at a time.
+export const RELAY_SCRUB_MAX_TEXT_BYTES = 8 * 1024 * 1024;
 const SCRUB_YIELD_EVENTS = 64;
 
 // A replay payload is never parsed whole. Its JSON is read by a byte scanner
