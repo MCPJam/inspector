@@ -2,7 +2,7 @@ name: Slop Ratchet
 
 # Fails a PR whose changed source files add more type escapes, swallowed
 # errors, suppressions, server `console` calls or history comments than they
-# remove. The rules live in scripts/slop/rules.mjs; this job only runs them.
+# remove, or that adds repo litter or pushes a file past 800 lines. The rules live in scripts/slop/rules.mjs; this job only runs them.
 #
 # `labeled` / `unlabeled` re-run the check when a CODEOWNER applies or removes
 # `slop-waiver`, so the waiver takes effect without a new push.
@@ -41,3 +41,11 @@ jobs:
         env:
           SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
         run: node scripts/slop/ratchet.mjs --base HEAD^1
+
+      # The agent hooks' file rules, for every author: no new root files or
+      # scratch notes, and no source file crossing 800 lines.
+      - name: Repo hygiene
+        if: ${{ !cancelled() }}
+        env:
+          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
+        run: node scripts/slop/repo-hygiene.mjs --base HEAD^1
