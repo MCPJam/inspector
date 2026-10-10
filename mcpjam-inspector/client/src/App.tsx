@@ -303,6 +303,11 @@ import {
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackAttempt,
+  readOAuthCallbackParams,
+} from "./lib/oauth-callback-inbox";
+import {
   FIRST_RUN_OAUTH_CANCELLED_EVENT,
   getFirstRunOAuthReturnServerName,
 } from "./lib/first-run-oauth-return";
@@ -493,7 +498,8 @@ function mergeFirstRunAnalyticsContext(
 }
 
 function getHostedOAuthCallbackErrorMessage(): string {
-  const params = new URLSearchParams(window.location.search);
+  // The inbox, not the address bar: see `lib/oauth-callback-inbox.ts`.
+  const params = readOAuthCallbackParams() ?? new URLSearchParams();
   const error = params.get("error");
   const description = params.get("error_description");
 
@@ -3080,7 +3086,10 @@ export default function App() {
       return;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started. Read, not consumed: the attempt key dedupes re-runs,
+    // and `finalizeHostedOAuth` consumes it on the way out.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
@@ -3092,12 +3101,15 @@ export default function App() {
     hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
-    const callbackSearch = window.location.search;
+    // Which callback this is. Every pending page has the same URL
+    // (`?oauth_pending=1`), so the URL cannot tell attempts apart; the inbox's
+    // attempt id can, and it is null once the page has left the callback.
+    const callbackAttempt = readOAuthCallbackAttempt();
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       // Ignore a completion after the user has left or started another attempt.
       if (
         window.location.pathname !== "/oauth/callback" ||
-        window.location.search !== callbackSearch
+        readOAuthCallbackAttempt() !== callbackAttempt
       )
         return;
       if (errorMessage && callbackContext.serverName) {
@@ -3119,6 +3131,8 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
+      // The code is spent; it must not outlive the route.
+      consumeOAuthCallbackParams(callbackAttempt);
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
       });

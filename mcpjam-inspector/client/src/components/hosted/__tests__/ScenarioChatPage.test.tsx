@@ -877,6 +877,136 @@ describe("ScenarioChatPage", () => {
     ).toBeInTheDocument();
   });
 
+  describe("a redeem that fails takes the token out of the address bar", () => {
+    function notFound() {
+      return createFetchResponse(
+        {
+          code: "NOT_FOUND",
+          message: "This scenario link is invalid or has expired.",
+        },
+        { ok: false, status: 404, statusText: "Not Found" },
+      );
+    }
+
+    it("replaces an expired link's token with the placeholder, keeping its shape", async () => {
+      window.history.replaceState(
+        { idx: 1 },
+        "",
+        "/user-testing/demo/stale-token?surface=preview#demo",
+      );
+      mockAuthFetch.mockResolvedValueOnce(notFound());
+
+      render(<ScenarioChatPage pathToken="stale-token" />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Link Unavailable" }),
+      ).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/user-testing/demo/[redacted]");
+      expect(window.location.search).toBe("?surface=preview");
+      expect(window.location.hash).toBe("#demo");
+      expect(window.location.href).not.toContain("stale-token");
+      expect(window.history.state).toEqual({ idx: 1 });
+    });
+
+    it("redacts a refused link too, and its sign-in still returns to the real link", async () => {
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      window.history.replaceState({}, "", "/user-testing/test/token-denied");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "FORBIDDEN",
+            message:
+              "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
+          },
+          { ok: false, status: 403, statusText: "Forbidden" },
+        ),
+      );
+
+      render(<ScenarioChatPage pathToken="token-denied" />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Access Denied" }),
+      ).toBeInTheDocument();
+      expect(window.location.href).not.toContain("token-denied");
+
+      await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      // Held in memory, not read back from the (now redacted) URL.
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe("/user-testing/scenario/token-denied");
+    });
+
+    it("does not redeem again when App re-renders with the redacted path", async () => {
+      window.history.replaceState({}, "", "/user-testing/demo/stale-token");
+      mockAuthFetch.mockResolvedValueOnce(notFound());
+
+      const { rerender } = render(<ScenarioChatPage pathToken="stale-token" />);
+      await screen.findByRole("heading", { name: "Link Unavailable" });
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+
+      // `App` reads the token from the address bar on its next render.
+      rerender(<ScenarioChatPage pathToken="[redacted]" />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByRole("heading", { name: "Link Unavailable" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the token for an unexpected failure, whose retry is a reload", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      window.history.replaceState({}, "", "/user-testing/demo/broken-token");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          { code: "INTERNAL_ERROR", message: "boom" },
+          { ok: false, status: 500, statusText: "Internal Server Error" },
+        ),
+      );
+
+      render(<ScenarioChatPage pathToken="broken-token" />);
+
+      expect(
+        await screen.findByText(
+          "We couldn't open this link right now. Please try again or open MCPJam.",
+        ),
+      ).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/user-testing/demo/broken-token");
+    });
+
+    it("leaves a different link alone if the address bar moved on", async () => {
+      window.history.replaceState({}, "", "/user-testing/demo/other-token");
+      mockAuthFetch.mockResolvedValueOnce(notFound());
+
+      render(<ScenarioChatPage pathToken="stale-token" />);
+
+      await screen.findByRole("heading", { name: "Link Unavailable" });
+      expect(window.location.pathname).toBe("/user-testing/demo/other-token");
+    });
+
+    it("answers a reload of the redacted path without redeeming the placeholder", async () => {
+      window.history.replaceState({}, "", "/user-testing/demo/[redacted]");
+
+      render(<ScenarioChatPage pathToken="[redacted]" />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Link Unavailable" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.",
+        ),
+      ).toBeInTheDocument();
+      expect(mockAuthFetch).not.toHaveBeenCalledWith(
+        "/api/web/scenarios/redeem",
+        expect.anything(),
+      );
+    });
+  });
+
   it("persists the redeemed session to sessionStorage when standalone", async () => {
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
