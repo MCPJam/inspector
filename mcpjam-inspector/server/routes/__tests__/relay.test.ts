@@ -65,6 +65,30 @@ function sized(body: string | ReturnType<typeof gzipSync>): RequestInit {
   };
 }
 
+// An rrweb full snapshot: a document holding one text node.
+function fullSnapshot(text: string, extra: Record<string, unknown> = {}) {
+  return {
+    type: 2,
+    timestamp: 1,
+    data: {
+      node: {
+        type: 0,
+        id: 1,
+        childNodes: [
+          {
+            type: 2,
+            id: 2,
+            tagName: "div",
+            attributes: { class: "row", ...extra },
+            childNodes: [{ type: 3, id: 3, textContent: text }],
+          },
+        ],
+      },
+      initialOffset: { top: 0, left: 0 },
+    },
+  };
+}
+
 // A replay batch whose snapshot data barely compresses.
 function largeReplayBatch(snapshotBytes: number): string {
   return JSON.stringify([
@@ -72,10 +96,31 @@ function largeReplayBatch(snapshotBytes: number): string {
       event: "$snapshot",
       properties: {
         token: POSTHOG_PROJECT_KEY,
-        $snapshot_data: randomBytes(snapshotBytes).toString("base64"),
+        $snapshot_data: [
+          fullSnapshot(randomBytes(snapshotBytes).toString("base64")),
+        ],
       },
     },
   ]);
+}
+
+// The JSON a forwarded request carried.
+function forwardedJson(callIndex = 0): unknown {
+  const body = mockedFetchInit(callIndex).body;
+  return JSON.parse(
+    typeof body === "string" ? body : new TextDecoder().decode(body as never),
+  );
+}
+
+// Events as the relay forwards them without a bearer: the conservative
+// policy marks each one GeoIP-disabled and drops any client IP.
+function restricted<T extends { properties?: Record<string, unknown> }>(
+  event: T,
+): T {
+  return {
+    ...event,
+    properties: { ...event.properties, $geoip_disable: true },
+  };
 }
 
 // Mount on BOTH prefixes exactly like both production entries so the tests
@@ -120,7 +165,7 @@ describe("posthog relay proxy", () => {
     for (const run of zlibControl.held.splice(0)) run();
   });
 
-  it("forwards ingest POSTs with the /relay prefix stripped, preserving trailing slash, query, and body bytes", async () => {
+  it("forwards ingest POSTs with the /relay prefix stripped, preserving trailing slash and query, as plain JSON", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
@@ -135,13 +180,20 @@ describe("posthog relay proxy", () => {
     );
 
     expect(res.status).toBe(200);
+    // The payload is re-encoded as JSON, so its `compression` flag goes.
     expect(mockedFetchUrl()).toBe(
-      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js&ip=1&ver=1.2.3",
+      "https://us.i.posthog.com/i/v0/e/?ip=1&ver=1.2.3",
     );
     const init = mockedFetchInit();
     expect(init.method).toBe("POST");
-    expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(payload);
-    expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
+    const sent = JSON.parse(payload);
+    expect(forwardedJson()).toEqual({
+      ...sent,
+      batch: sent.batch.map(restricted),
+    });
+    expect(new Headers(init.headers).get("content-type")).toBe(
+      "application/json",
+    );
   });
 
   it("serves the /tlm alias identically: prefix stripped, static/array/ingest routing intact", async () => {
@@ -167,9 +219,7 @@ describe("posthog relay proxy", () => {
     expect(mockedFetchUrl(1)).toBe(
       `https://us.i.posthog.com/array/${POSTHOG_PROJECT_KEY}/config`,
     );
-    expect(mockedFetchUrl(2)).toBe(
-      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
-    );
+    expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/i/v0/e/");
   });
 
   it("routes /static to the assets host and /array to the ingest host", async () => {
@@ -215,7 +265,6 @@ describe("posthog relay proxy", () => {
       ["POST", "/e/"],
       ["POST", "/i/v0/e/?compression=gzip-js"],
       ["POST", "/s/?compression=gzip-js"],
-      ["POST", `/i/v1/logs?token=${key}`],
       ["POST", `/i/v1/metrics?token=${key}`],
       ["GET", `/array/${key}/config`],
       ["GET", `/array/${key}/config.js`],
@@ -238,8 +287,28 @@ describe("posthog relay proxy", () => {
       const host = path.startsWith("/static/")
         ? "https://us-assets.i.posthog.com"
         : "https://us.i.posthog.com";
-      expect(mockedFetchUrl()).toBe(`${host}${path}`);
+      const forwarded = new URL(mockedFetchUrl());
+      const sent = new URL(`${host}${path}`);
+      expect(forwarded.origin + forwarded.pathname).toBe(
+        sent.origin + sent.pathname,
+      );
+      if (/^\/(?:e|i\/v0\/e|s)\/$/.test(sent.pathname)) {
+        // Capture payloads are forwarded as the JSON the relay checked.
+        expect(forwarded.searchParams.has("compression")).toBe(false);
+      } else {
+        expect(forwarded.search).toBe(sent.search);
+      }
       expect(mockedFetchInit().method).toBe(method);
+    });
+
+    it("refuses PostHog logs, which carry console output the gate cannot vouch for", async () => {
+      const response = await createTestApp().request(
+        `${prefix}/i/v1/logs?token=${key}`,
+        { method: "POST", body: "{}" },
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "telemetry_restricted" });
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -271,7 +340,7 @@ describe("posthog relay proxy", () => {
     });
   });
 
-  it("strips cookie/host/session-auth headers and forwards the trusted client IP", async () => {
+  it("strips cookie/host/session-auth/authorization headers and withholds the client IP from an unauthenticated capture", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
@@ -285,9 +354,12 @@ describe("posthog relay proxy", () => {
         "x-inspector-service-token": "service",
         Cookie: "mcpjam_session=secret",
         "X-MCP-Session-Auth": "token",
+        "X-MCPJam-Telemetry-Context": "{}",
         "User-Agent": "test-agent",
         // Edge chain: first hop is the real client per client-ip.ts.
         "X-Forwarded-For": "1.2.3.4, 10.0.0.1",
+        "X-Real-IP": "1.2.3.4",
+        Forwarded: "for=1.2.3.4",
       },
     });
 
@@ -298,14 +370,17 @@ describe("posthog relay proxy", () => {
       "cf-connecting-ip",
       "cf-ray",
       "x-inspector-service-token",
+      "x-mcpjam-telemetry-context",
+      "forwarded",
     ])
       expect(headers.get(name)).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-mcp-session-auth")).toBeNull();
     expect(headers.get("host")).toBeNull();
     expect(headers.get("user-agent")).toBe("test-agent");
-    expect(headers.get("x-forwarded-for")).toBe("1.2.3.4");
-    expect(headers.get("x-real-ip")).toBe("1.2.3.4");
+    // No bearer, so the conservative policy: no client address at all.
+    expect(headers.get("x-forwarded-for")).toBeNull();
+    expect(headers.get("x-real-ip")).toBeNull();
   });
 
   it("scrubs encoding/cookie/CORS headers from the upstream response and passes status through", async () => {
@@ -374,7 +449,10 @@ describe("posthog relay proxy", () => {
       body: JSON.stringify([
         {
           event: "$snapshot",
-          properties: { token: POSTHOG_PROJECT_KEY, $snapshot_data: threeMb },
+          properties: {
+            token: POSTHOG_PROJECT_KEY,
+            $snapshot_data: [fullSnapshot(threeMb)],
+          },
         },
       ]),
     });
@@ -421,7 +499,7 @@ describe("posthog relay proxy", () => {
     ];
 
     it.each(encodings)(
-      "forwards a %s for our project byte for byte",
+      "forwards a %s for our project as the JSON it checked",
       async (_name, encode) => {
         vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
         const body = encode(POSTHOG_PROJECT_KEY);
@@ -432,11 +510,19 @@ describe("posthog relay proxy", () => {
         });
 
         expect(response.status).toBe(200);
-        expect(
-          Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(
-            typeof body === "string" ? Buffer.from(body) : body,
-          ),
-        ).toBe(true);
+        const sent = forwardedJson() as Record<string, unknown>;
+        const events = (
+          Array.isArray(sent)
+            ? sent
+            : Array.isArray(sent.batch)
+              ? sent.batch
+              : [sent]
+        ) as Array<{ properties: Record<string, unknown> }>;
+        expect(events.length).toBeGreaterThan(0);
+        for (const event of events) {
+          expect(event.properties.token).toBe(POSTHOG_PROJECT_KEY);
+          expect(event.properties.$geoip_disable).toBe(true);
+        }
       },
     );
 
@@ -475,7 +561,6 @@ describe("posthog relay proxy", () => {
       ["GET", `/array/${OTHER_PROJECT_KEY}/config.js`],
       ["GET", `/api/surveys/?token=${OTHER_PROJECT_KEY}`],
       ["GET", `/api/early_access_features/?token=${OTHER_PROJECT_KEY}`],
-      ["POST", `/i/v1/logs?token=${OTHER_PROJECT_KEY}`],
       ["POST", `/i/v1/metrics?token=${OTHER_PROJECT_KEY}`],
       ["POST", `/i/v0/e/?token=${OTHER_PROJECT_KEY}`],
       ["GET", `/e/?data=${dataParam(eventBatch(OTHER_PROJECT_KEY))}`],
@@ -495,7 +580,6 @@ describe("posthog relay proxy", () => {
       ["POST", "/i/v0/e/", "[]"],
       ["POST", "/s/", "data=%%%"],
       ["POST", "/s/", Buffer.from([0x1f, 0x8b, 0x00, 0x01])],
-      ["POST", "/i/v1/logs", "{}"],
       ["GET", "/e/", undefined],
       ["GET", "/api/surveys/", undefined],
     ])(
@@ -542,9 +626,10 @@ describe("posthog relay proxy", () => {
       });
 
       expect(response.status).toBe(200);
-      expect(
-        Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(body),
-      ).toBe(true);
+      const [event] = forwardedJson() as Array<{
+        properties: { $snapshot_data: unknown[] };
+      }>;
+      expect(event.properties.$snapshot_data).toHaveLength(1);
     });
 
     it("answers 503 for a large payload while others are being read", async () => {
@@ -800,9 +885,11 @@ describe("posthog relay proxy", () => {
 
       const response = await pending;
       expect(response.status).toBe(200);
-      expect(
-        Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(bytes),
-      ).toBe(true);
+      const sent = JSON.parse(bytes.toString("utf8"));
+      expect(forwardedJson()).toEqual({
+        ...sent,
+        batch: sent.batch.map(restricted),
+      });
     });
   });
 
@@ -838,11 +925,9 @@ describe("posthog relay proxy", () => {
         ...event,
         properties: {
           ...(event.properties as Record<string, unknown>),
+          // A token below the event is not the event's: never counted.
           $snapshot_data: [
-            {
-              type: 2,
-              data: { token: OTHER_PROJECT_KEY, blob: "x".repeat(96 * 1024) },
-            },
+            fullSnapshot("x".repeat(96 * 1024), { token: OTHER_PROJECT_KEY }),
           ],
         },
       }));
@@ -952,14 +1037,28 @@ describe("posthog relay proxy", () => {
       });
     });
 
-    it("reads a large payload without parsing it whole", async () => {
+    it("reads a large payload one event at a time, never whole", async () => {
       vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      // Over 3 MiB in all, but no single event near the parse limit.
+      const events = Array.from({ length: 80 }, () => ({
+        event: "$snapshot",
+        properties: {
+          token: POSTHOG_PROJECT_KEY,
+          $snapshot_data: [
+            fullSnapshot(randomBytes(30 * 1024).toString("base64")),
+          ],
+        },
+      }));
+      const json = JSON.stringify({
+        api_key: POSTHOG_PROJECT_KEY,
+        batch: events,
+      });
+      expect(json.length).toBeGreaterThan(3 * 1024 * 1024);
       const parse = vi.spyOn(JSON, "parse");
       try {
-        const body = gzipSync(largeReplayBatch(3 * 1024 * 1024));
         const response = await createTestApp().request("/tlm/s/", {
           method: "POST",
-          body,
+          body: gzipSync(json),
         });
         expect(response.status).toBe(200);
         for (const [text] of parse.mock.calls) {
@@ -970,6 +1069,8 @@ describe("posthog relay proxy", () => {
       } finally {
         parse.mockRestore();
       }
+      const sent = forwardedJson() as { batch: unknown[] };
+      expect(sent.batch).toHaveLength(80);
     });
 
     it.each([
