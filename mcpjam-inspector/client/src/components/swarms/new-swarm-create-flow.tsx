@@ -1687,15 +1687,16 @@ export function NewSwarmCreateFlow({
         // so a counter moved since reaches the preview and the launch here.
         targets = withChosenIterations(targets, iterationsByPersona);
 
-        // ── Sponsored split: verify, then launch what was shown ───────────
+        // ── Sponsored split: verify, then launch ──────────────────────────
         //
         // Every run has a goal id now, so ask the backend how THIS launch's
         // conversations would be funded (sponsored versus the organization's
-        // credits) and compare it with what the person was looking at. If it
-        // is not the same, stop BEFORE creating any run and show the new
-        // split: they launch again with it on screen. Otherwise each run is
-        // launched with the sponsored count that was shown, so the backend
-        // refuses it (409) rather than moving conversations onto org credits.
+        // credits). Stop BEFORE creating any run only when that split is worse
+        // than what was on screen: fewer sponsored, so more on org credits.
+        // A split at least as good as the one shown (including brand-new goals,
+        // which had none shown) launches in the same click. Each run is
+        // launched with its previewed sponsored count, so the backend refuses
+        // it (409) rather than moving conversations onto org credits.
         //
         // A preview that fails, or sponsorship not applying here, is the
         // launch exactly as it was before this existed.
@@ -1723,24 +1724,24 @@ export function NewSwarmCreateFlow({
         //
         // Both stops return before the launch's own summary, so a failure from
         // earlier in this pass (a goal that could not be created) is said here.
-        if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
-          setFundingNotice(
-            fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
-          );
+        const shownSponsored = payload.funding.shownSponsored;
+        if (!fundingSplit && (shownSponsored ?? 0) > 0) {
+          setFundingNotice(fundingUnverifiedNotice());
           if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
           return;
         }
-        if (fundingSplit) {
-          const shown = payload.funding.shownSponsored;
-          if ((shown ?? 0) !== fundingSplit.sponsored) {
-            setFundingNotice(
-              fundingReviewNotice({ shown, now: fundingSplit }),
-            );
-            if (firstError) setErrorMessage(alsoFailedNotice(firstError));
-            setFundingRefreshKey((key) => key + 1);
-            return;
-          }
+        if (
+          fundingSplit &&
+          shownSponsored !== null &&
+          fundingSplit.sponsored < shownSponsored
+        ) {
+          setFundingNotice(
+            fundingReviewNotice({ shown: shownSponsored, now: fundingSplit }),
+          );
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+          setFundingRefreshKey((key) => key + 1);
+          return;
         }
         // With sponsored conversations in the wave, runs launch one at a time
         // in the order the preview counted them, so each run's expected count

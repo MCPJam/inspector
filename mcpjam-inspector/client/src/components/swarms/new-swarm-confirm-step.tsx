@@ -129,7 +129,8 @@ export type ConfirmLaunchPayload = {
    * launch. `shownSponsored` is the sponsored total across the WHOLE launch as
    * displayed, or `null` when the display did not cover every run (new goals
    * that do not exist yet) or showed nothing. The launch compares it with the
-   * split it is about to get and stops for review when they differ.
+   * split it is about to get and stops for review only when fewer
+   * conversations would be sponsored than were shown.
    */
   funding: { shownSponsored: number | null };
 };
