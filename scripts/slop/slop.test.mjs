@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -273,6 +273,15 @@ describe("ratchet", () => {
   it("counts untracked new files", () => {
     write("sdk/src/new.ts", "p.catch(() => {});\n");
     assert.equal(run().code, 1);
+  });
+
+  it("exits 2, not 1, when the base cannot be resolved", () => {
+    const result = spawnSync("node", [RATCHET, "--base", "no-such-ref"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /no-such-ref/);
   });
 
   it("reports but passes under a waiver", () => {
