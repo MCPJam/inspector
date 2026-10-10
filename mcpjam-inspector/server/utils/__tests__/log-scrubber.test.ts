@@ -60,6 +60,23 @@ describe("scrubLogPayload", () => {
       });
     });
 
+    // `process.vitals` counters whose names happen to contain "token". They
+    // shipped redacted for six weeks before anyone noticed, because the row
+    // still lands — only the number is gone.
+    it("does NOT redact the tokenizer vitals counters (allowlisted)", () => {
+      expect(
+        scrubLogPayload({
+          tokenizerPeakChars: 48213,
+          tokenizerOversizeSkips: 0,
+          token: "abc",
+        }),
+      ).toEqual({
+        tokenizerPeakChars: 48213,
+        tokenizerOversizeSkips: 0,
+        token: "[redacted]",
+      });
+    });
+
     it("redacts stripeCustomer key", () => {
       expect(scrubLogPayload({ stripeCustomer: "cus_123" })).toEqual({
         stripeCustomer: "[redacted]",
