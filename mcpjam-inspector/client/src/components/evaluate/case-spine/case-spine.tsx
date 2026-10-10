@@ -1127,7 +1127,7 @@ export function CaseSpine({
               id="spine-expected-outcome-help"
               className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
             >
-              The result the reply is judged against.
+              Describe what success looks like. The LLM as a judge checks whether this goal was met.
             </p>
             <Textarea
               id="spine-expected-outcome"

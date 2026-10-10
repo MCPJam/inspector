@@ -155,7 +155,7 @@ describe("the first-run form", () => {
     ).toHaveAccessibleDescription("The message the user could send the agent.");
     expect(
       screen.getByLabelText("Expected outcome"),
-    ).toHaveAccessibleDescription("The result the reply is judged against.");
+    ).toHaveAccessibleDescription("Describe what success looks like. The LLM as a judge checks whether this goal was met.");
     expect(screen.getByText("Assertions or actions")).toBeInTheDocument();
     expect(screen.getByText("Expected outcome")).toHaveClass(
       "text-card-foreground",
