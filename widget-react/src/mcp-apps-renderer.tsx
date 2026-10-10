@@ -524,8 +524,10 @@ function mapLogToLifecycle(
   if (method === "debug/view-mounted") {
     // No -ready/-error suffix to read: the mount mode IS the status. A srcdoc
     // mount means the view has no real URL, which is the degraded outcome
-    // this event exists to make visible.
-    status = details.mode === "url" ? "ok" : "error";
+    // this event exists to make visible. `opaque` has no URL either, but on
+    // purpose: the client models a host whose app iframe is not same-origin.
+    status =
+      details.mode === "url" || details.mode === "opaque" ? "ok" : "error";
   } else if (
     method.endsWith("-error") ||
     method === "debug/widget-content-invalid-mimetype"
@@ -1395,7 +1397,7 @@ export function MCPAppsRendererSurface({
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
     mountId?: CspMountId;
-    mode: "url" | "srcdoc" | "srcdoc-fallback";
+    mode: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
     url: string;
   } | null>(null);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
@@ -1496,6 +1498,12 @@ export function MCPAppsRendererSurface({
   // response. Changing it re-navigates the sandbox iframe, so it is state
   // rather than a ref.
   const [viewOriginLabel, setViewOriginLabel] = useState<string | undefined>(
+    undefined
+  );
+  // The resource's `_meta.ui.domain`, from the same response. A client whose
+  // app iframe is not same-origin still gives such an app a stable origin
+  // (claude.ai's stable-origin carve-out), so it decides the mount mode.
+  const [declaredDomain, setDeclaredDomain] = useState<string | undefined>(
     undefined
   );
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
@@ -2086,6 +2094,7 @@ export function MCPAppsRendererSurface({
       );
 
       setViewOriginLabel(serverViewOriginLabel);
+      setDeclaredDomain(serverDeclaredDomain);
 
       // Update the widget debug store with CSP and permissions info. A
       // declared domain alone is enough to open the Workbench: the origin
@@ -2818,6 +2827,18 @@ export function MCPAppsRendererSurface({
     () => profileSandbox?.browserStorage,
     [activeMcpProfileKey]
   );
+  const sameOriginAppIframe = useMemo(
+    () => profileSandbox?.sameOriginAppIframe,
+    [activeMcpProfileKey]
+  );
+  // How the proxy mounts the view. A client whose app iframe is not
+  // same-origin (claude.ai) gets the opaque srcdoc mount — unless the app
+  // declares `ui.domain`, which keeps a stable origin there too. Everything
+  // else uses the build-time default.
+  const viewMountMode =
+    sameOriginAppIframe === false && !declaredDomain
+      ? "opaque"
+      : host.surface.viewMountMode;
   // Hosted-mode clamp for cspDirectives. The resolver's
   // `hostedClampExtraDeny` strips MCPJam app/API origins from the
   // widget-declared CSP (`restrictTo` + resource declaration), but
@@ -4180,10 +4201,15 @@ export function MCPAppsRendererSurface({
 
     // Where the proxy mounted the view. `url` is the view's real document URL
     // when it was written into a blank frame; "about:srcdoc" on the srcdoc
-    // paths, which have no origin to allowlist.
+    // and opaque paths, which have no origin to allowlist.
     if (data.type === "mcpjam:view-mode") {
       const mode = data.mode;
-      if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
+      if (
+        mode === "url" ||
+        mode === "srcdoc" ||
+        mode === "srcdoc-fallback" ||
+        mode === "opaque"
+      ) {
         const url = typeof data.url === "string" ? data.url : "";
         const mountId = normalizeCspMountId(data.mountId);
         setViewMount({ mountId, mode, url });
@@ -4606,7 +4632,7 @@ export function MCPAppsRendererSurface({
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}
       sandboxOrigin={host.surface.sandboxOrigin}
-      mountMode={host.surface.viewMountMode}
+      mountMode={viewMountMode}
       viewOriginLabel={viewOriginLabel}
       viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
       className={`bg-transparent overflow-hidden ${
@@ -4812,6 +4838,7 @@ export function MCPAppsRendererSurface({
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
         widgetClientContext={cspClientContext}
         widgetBrowserStorage={effectiveSandbox.browserStorage}
+        widgetMountMode={viewMountMode}
         widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
         serverId={serverId}

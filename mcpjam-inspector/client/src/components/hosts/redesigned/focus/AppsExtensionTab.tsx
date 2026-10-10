@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
@@ -108,6 +108,9 @@ const SEGMENT_BUTTON_CLASSES =
  *                                    4 SEP-blessed features
  *   sandbox.browserStorage            observed browser storage APIs in the
  *                                    sandboxed iframe (not an MCP concept)
+ *   sandbox.sameOriginAppIframe       whether the app iframe shares the
+ *                                    sandbox page's origin (not an MCP
+ *                                    concept; `false` = opaque, claude.ai)
  *
  * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
  * the JSON entirely — they're owned by the structured editor and preserved
@@ -165,6 +168,12 @@ type SandboxDoc = {
     sessionStorage?: boolean;
     indexedDB?: boolean;
   };
+  /**
+   * Observed: whether the app iframe shares the sandbox page's origin.
+   * `false` mounts the app in an opaque origin, like claude.ai. Not an MCP
+   * capability.
+   */
+  sameOriginAppIframe?: boolean;
   /**
    * Inspector-only: extra tokens for the proxy iframe's HTML `sandbox=`
    * attribute, on top of the spec-required `allow-scripts allow-same-origin`.
@@ -288,6 +297,9 @@ function sandboxFromPolicy(
   if (policy.browserStorage !== undefined) {
     out.browserStorage = { ...policy.browserStorage };
   }
+  if (policy.sameOriginAppIframe !== undefined) {
+    out.sameOriginAppIframe = policy.sameOriginAppIframe;
+  }
 
   // Inspector-only knobs round-trip with their full undefined-vs-empty
   // semantics so the JSON faithfully represents what's in storage.
@@ -402,13 +414,15 @@ function liftSandboxIntoPolicy(args: {
   const nextSandboxAttrs = incoming?.iframeSandboxAttrs;
   const nextAllowFeatures = incoming?.permissionsPolicy;
   const nextBrowserStorage = incoming?.browserStorage;
+  const nextSameOriginAppIframe = incoming?.sameOriginAppIframe;
 
   if (
     !cspNonEmpty &&
     !permsNonEmpty &&
     nextSandboxAttrs === undefined &&
     nextAllowFeatures === undefined &&
-    nextBrowserStorage === undefined
+    nextBrowserStorage === undefined &&
+    nextSameOriginAppIframe === undefined
   ) {
     return undefined;
   }
@@ -418,6 +432,9 @@ function liftSandboxIntoPolicy(args: {
   if (nextSandboxAttrs !== undefined) next.sandboxAttrs = nextSandboxAttrs;
   if (nextAllowFeatures !== undefined) next.allowFeatures = nextAllowFeatures;
   if (nextBrowserStorage !== undefined) next.browserStorage = nextBrowserStorage;
+  if (nextSameOriginAppIframe !== undefined) {
+    next.sameOriginAppIframe = nextSameOriginAppIframe;
+  }
   return next;
 }
 
@@ -842,6 +859,9 @@ export function applyJsonToDraft(
         // The parent key itself is meaningful: an empty record clears an
         // earlier measurement when the JSON block is saved.
         parsedSandbox.browserStorage = storage;
+      }
+      if (typeof sandboxBlock.sameOriginAppIframe === "boolean") {
+        parsedSandbox.sameOriginAppIframe = sandboxBlock.sameOriginAppIframe;
       }
       incomingSandbox = parsedSandbox;
     }
@@ -1953,6 +1973,84 @@ function BrowserStorageCard({
 }
 
 /**
+ * Probe finding: whether the app iframe shares the sandbox page's origin.
+ * Off models claude.ai, which mounts apps in an opaque origin. Like browser
+ * storage, a browser consequence of the sandbox rather than an MCP feature.
+ */
+function SameOriginAppIframeCard({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+  ) => void;
+}) {
+  const stored = draft.mcpProfile?.apps?.sandbox?.sameOriginAppIframe;
+  const sameOrigin = stored !== false;
+  // An explicit `true` is a measurement (ChatGPT's template carries one). Once
+  // switched off, the draft only holds `false`, so remember the `true` to put
+  // it back when the switch goes on again.
+  const explicitTrueRef = useRef(stored === true);
+  if (stored === true) explicitTrueRef.current = true;
+  const setSameOrigin = (enabled: boolean) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const apps = base.apps ?? {};
+      const sandbox = { ...(apps.sandbox ?? {}) };
+      // Absence means same-origin, so only persist the non-default finding,
+      // unless the client had recorded an explicit `true`.
+      if (!enabled) sandbox.sameOriginAppIframe = false;
+      else if (
+        sandbox.sameOriginAppIframe === true ||
+        explicitTrueRef.current
+      ) {
+        sandbox.sameOriginAppIframe = true;
+      } else delete sandbox.sameOriginAppIframe;
+      const nextApps = { ...apps };
+      if (Object.keys(sandbox).length > 0) nextApps.sandbox = sandbox;
+      else delete nextApps.sandbox;
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
+      };
+      // Collapse to absence, like BrowserStorageCard: flipping the switch off
+      // and on again must not mint a new config row.
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  return (
+    <section
+      data-testid="same-origin-app-iframe-card"
+      className="rounded-[10px] border border-border bg-background"
+    >
+      <div className="border-b border-border px-3.5 py-2.5">
+        <div className="text-[12px] font-medium">Same-origin app iframe</div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          When off, your app runs with no origin, like in Claude: storage
+          throws and fetches send <code>Origin: null</code>. Apps that set{" "}
+          <code>ui.domain</code> keep their origin.
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-3.5 py-2">
+        <span className="font-mono text-[12px]">allow-same-origin</span>
+        <Switch
+          checked={sameOrigin}
+          onCheckedChange={setSameOrigin}
+          aria-label="Same-origin app iframe"
+        />
+      </div>
+    </section>
+  );
+}
+
+/**
  * `mcpProfile.apps.mcpAppsOverrides.toolResult` — which halves of a tool
  * result the emulated host relays to a widget that called the tool.
  *
@@ -2205,6 +2303,10 @@ export function AppsExtensionTab({
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
+        <SameOriginAppIframeCard
+          draft={draft}
+          onDraftChange={onDraftChange}
+        />
         <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
         <PluginExtensionsCard draft={draft} onDraftChange={onDraftChange} />
         {/* Read-only companion to the two matrices: the capability rows say

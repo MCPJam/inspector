@@ -753,4 +753,44 @@ describe("SandboxedIframe — view mount reporting", () => {
       expect.any(String),
     );
   });
+
+  it("re-sends with the opaque mount when the client's app iframe is not same-origin", async () => {
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="write"
+      />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+        params: {},
+      });
+    });
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="opaque"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          method: "ui/notifications/sandbox-resource-ready",
+          params: expect.objectContaining({ mountMode: "opaque" }),
+        }),
+        expect.any(String),
+      );
+    });
+  });
 });

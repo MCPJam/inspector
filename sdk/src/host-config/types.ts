@@ -439,8 +439,17 @@ export type HostConfigMcpProfileV1 = {
         sessionStorage?: boolean;
         indexedDB?: boolean;
       };
+      // Whether the MCP App's iframe shares the sandbox page's origin
+      // (probe-measured). `false` models claude.ai: the App mounts via
+      // `srcdoc` without `allow-same-origin`, so its origin is opaque
+      // (`"null"`) — storage and cookies throw, and its fetches send
+      // `Origin: null`. Apps that declare `ui.domain` keep a stable origin
+      // either way (Claude's stable-origin carve-out). Absent -> same-origin.
+      sameOriginAppIframe?: boolean;
       // Extra outer/inner iframe `sandbox=` tokens unioned with the
-      // mandatory `allow-scripts allow-same-origin`. Inspector-only.
+      // mandatory `allow-scripts allow-same-origin` (`allow-same-origin` is
+      // left off the inner iframe when `sameOriginAppIframe` is false).
+      // Inspector-only.
       sandboxAttrs?: string[];
       // Extra Permissions Policy entries appended to outer/inner iframe
       // `allow=`. Keys are RAW kebab Permissions Policy tokens

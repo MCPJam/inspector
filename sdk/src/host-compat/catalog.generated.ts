@@ -689,6 +689,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
+            sameOriginAppIframe: false,
             allowFeatures: {
               fullscreen: "*",
             },
@@ -1024,6 +1025,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
+            sameOriginAppIframe: false,
             allowFeatures: {
               fullscreen: "*",
             },
@@ -1596,6 +1598,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "allow-popups",
               "allow-popups-to-escape-sandbox",
             ],
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: true,

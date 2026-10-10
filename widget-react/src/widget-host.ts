@@ -338,9 +338,11 @@ export interface WidgetSandboxApplied {
    * How the proxy mounted the view. `"url"` means it was written into a blank
    * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
    * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
-   * forced because the frame's document was unreachable).
+   * forced because the frame's document was unreachable). `"opaque"` is the
+   * intended srcdoc mount of a client whose app iframe is not same-origin
+   * (claude.ai): no URL and an opaque origin, by design.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
@@ -590,6 +592,13 @@ export interface WidgetHostProfileSandbox {
    * field missing here silently disappears before reaching the renderer.
    */
   browserStorage?: BrowserStoragePolicy;
+  /**
+   * Probe-measured: whether the app iframe shares the sandbox page's origin.
+   * `false` makes the proxy mount the view in an opaque origin (srcdoc, no
+   * `allow-same-origin`), like claude.ai — unless the app declares
+   * `ui.domain`. Absent or `true` = same-origin.
+   */
+  sameOriginAppIframe?: boolean;
 }
 
 /**

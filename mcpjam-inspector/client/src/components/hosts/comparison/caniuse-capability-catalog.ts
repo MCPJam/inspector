@@ -228,6 +228,7 @@ export function getCaniuseSupportLevel(
   if (
     (field.id.startsWith("toolResult.") ||
       field.id.startsWith("sandbox.browserStorage.") ||
+      field.id === "sandbox.sameOriginAppIframe" ||
       field.id.startsWith("toolListChanged.") ||
       // Enum rather than boolean, so it resolves to "neutral" rather than
       // undefined when unset — and "neutral" renders as "Not supported".

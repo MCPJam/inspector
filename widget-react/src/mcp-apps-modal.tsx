@@ -70,6 +70,11 @@ export interface McpAppsModalProps {
    */
   widgetToolResult: ToolResultPolicy | undefined;
   widgetBrowserStorage: BrowserStoragePolicy | undefined;
+  /**
+   * The inline view's mount mode, so a modal over the same resource mounts
+   * the same way (opaque for a client whose app iframe is not same-origin).
+   */
+  widgetMountMode?: "write" | "srcdoc" | "opaque";
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
@@ -146,6 +151,7 @@ export function McpAppsModal({
   widgetClientContext,
   widgetToolResult,
   widgetBrowserStorage,
+  widgetMountMode,
   hostContextRef,
   serverId,
   resourceUri,
@@ -504,7 +510,7 @@ export function McpAppsModal({
             title={`MCP App Modal: ${title}`}
             hostedMode={host.surface.hostedMode}
             sandboxOrigin={host.surface.sandboxOrigin}
-            mountMode={host.surface.viewMountMode}
+            mountMode={widgetMountMode ?? host.surface.viewMountMode}
             viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
             className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
             style={{
