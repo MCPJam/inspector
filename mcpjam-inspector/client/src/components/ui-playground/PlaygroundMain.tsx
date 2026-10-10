@@ -82,7 +82,10 @@ import {
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
 } from "@/lib/compare-cards";
-import { withReasoningEffort } from "@/lib/reasoning-effort-selection";
+import {
+  selectionReasoningEffort,
+  withReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -1679,7 +1682,7 @@ export function PlaygroundMain({
         // (a later pick on the chip wins and is remembered per model).
         // A host with none clears what the previous host seeded (High must
         // not stick across a switch to a host that saved nothing).
-        const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
+        const hostEffort = selectionReasoningEffort(cfg.modelSelection);
         const clearsSeededEffort =
           hostEffort === undefined && hostSeededEffortRef.current;
         if (hostEffort || hostSeededEffortRef.current) {

@@ -538,6 +538,48 @@ describe("stored choices", () => {
     ).toBe(true);
   });
 
+  it("a stored legacy selection resolves to an own-key row, never the hosted twin", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    const byok = models.find(
+      (m) =>
+        String(m.id) === "anthropic/claude-haiku-4.5" && m.hosted === false,
+    )!;
+    const modelId = "anthropic/claude-haiku-4.5";
+    const legacy = { source: "legacy" as const, modelId };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: String(byok.provider) } },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    // Only the hosted row listed: "own key only" never lands on MCPJam credits.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [hostedHaiku],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // Two own-key rows with that id: the legacy fields cannot tell which
+    // connection ran it, so neither is picked.
+    const twin = { ...byok, name: `${byok.name} (second)` };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, twin],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+  });
+
   it("bare BYOK ids round-trip through the canonical stored id", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
     const bare = models.find(

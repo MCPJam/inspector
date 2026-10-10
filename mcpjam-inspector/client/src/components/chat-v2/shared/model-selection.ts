@@ -56,6 +56,7 @@ import {
   type ModelConnectionRef,
   type ModelSelection,
   type ModelSelectionPurpose,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 import {
@@ -316,14 +317,29 @@ export function storedModelChoice(
  * With a selection: the row whose own selection has the same `selectionKey`
  * (same source, same connection, same model) — so an id listed both in the
  * hosted catalog and under an org OpenRouter connection resolves to the row
- * that was actually picked. Without one (a legacy row): the row with that id,
- * hosted rows first, exactly as the legacy read did.
+ * that was actually picked. With a stored legacy selection ("own key only"):
+ * the one own-key row with that id (narrowed by the provider hint when it
+ * has one); none when several qualify, since the legacy fields cannot say
+ * which connection ran it, and none rather than the hosted twin, which would
+ * move the model onto MCPJam credits. Without one (a legacy row): the row
+ * with that id, hosted rows first, exactly as the legacy read did.
  */
 export function findModelForStoredChoice(
-  choice: { modelId: string; selection?: ModelSelection | null },
+  choice: { modelId: string; selection?: RequestedModelSelection | null },
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
 ): ModelDefinition | undefined {
+  const id = choice.modelId.trim();
+  if (choice.selection?.source === "legacy") {
+    const hint = choice.selection.provider;
+    const own = models.filter(
+      (model) => String(model.id) === id && !isHostedRow(model),
+    );
+    const named = hint
+      ? own.filter((model) => String(model.provider) === hint)
+      : own;
+    return named.length === 1 ? named[0] : undefined;
+  }
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);
     const match = models.find((model) => {
@@ -332,7 +348,6 @@ export function findModelForStoredChoice(
     });
     if (match) return match;
   }
-  const id = choice.modelId.trim();
   return (
     models.find((model) => String(model.id) === id && isHostedRow(model)) ??
     models.find((model) => String(model.id) === id)

@@ -18,10 +18,14 @@ import { JudgeModelPicker } from "./judge-model-picker";
 import { judgeModelPatch } from "./judges-section";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
-import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
+import {
+  nonLegacySelection,
+  selectionReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
 import {
   selectionConfigKey,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
@@ -495,9 +499,8 @@ function fullSelection(
   modelId?: string,
 ): ModelSelection | undefined {
   if (!selection || typeof selection !== "object") return undefined;
-  const candidate = selection as ModelSelection | { source: "legacy" };
-  if (candidate.source === "legacy") return undefined;
-  const full = candidate as ModelSelection;
-  if (modelId !== undefined && full.modelId !== modelId) return undefined;
-  return full;
+  const full = nonLegacySelection(selection as RequestedModelSelection);
+  return full && (modelId === undefined || full.modelId === modelId)
+    ? full
+    : undefined;
 }

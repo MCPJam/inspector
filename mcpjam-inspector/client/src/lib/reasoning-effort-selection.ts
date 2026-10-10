@@ -9,6 +9,7 @@
 import type {
   ModelReasoningEffort,
   ModelSelection,
+  RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
@@ -23,10 +24,23 @@ import {
 import { modelTarget, sameModelTarget } from "@/lib/model-target";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
+/**
+ * The selection an editor may build on. A stored legacy selection (an id
+ * outside the hosted catalog, saved without one) carries no settings and the
+ * backend refuses it with any, so it reads as no selection: the surface
+ * works from the bare id, exactly as for a row saved before selections, and
+ * an effort pick mints a proper selection from the row instead.
+ */
+export function nonLegacySelection(
+  selection: RequestedModelSelection | undefined | null,
+): ModelSelection | undefined {
+  return selection && selection.source !== "legacy" ? selection : undefined;
+}
+
 export function selectionReasoningEffort(
-  selection: ModelSelection | undefined | null,
+  selection: RequestedModelSelection | undefined | null,
 ): ModelReasoningEffort | undefined {
-  return selection?.settings?.reasoningEffort;
+  return nonLegacySelection(selection)?.settings?.reasoningEffort;
 }
 
 /** The selection with its effort set (or cleared); other settings survive. */
@@ -119,12 +133,13 @@ export function carryEffortToModel(args: {
  */
 export function setEffortForRow(args: {
   row: ModelDefinition;
-  selection: ModelSelection | undefined;
+  selection: RequestedModelSelection | undefined;
   effort: ModelReasoningEffort | undefined;
   purpose: ModelSelectionPurpose;
   bareIds?: "canonicalize" | "keep-id";
 }): { modelId: string; selection: ModelSelection | undefined } | null {
-  const { row, selection, effort, purpose, bareIds = "keep-id" } = args;
+  const { row, effort, purpose, bareIds = "keep-id" } = args;
+  const selection = nonLegacySelection(args.selection);
   const base =
     selection ??
     (bareIds === "canonicalize"
