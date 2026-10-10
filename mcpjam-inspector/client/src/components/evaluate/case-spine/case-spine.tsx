@@ -1140,7 +1140,7 @@ export function CaseSpine({
               placeholder={
                 readOnly
                   ? "No expected outcome captured"
-                  : "One sentence the judge scores against"
+                  : "Describe the outcome you expect…"
               }
               className="min-h-[72px] resize-y rounded-lg border-input bg-card px-3.5 py-3 font-sans text-[15px] leading-[22px] text-card-foreground md:text-[15px]"
             />

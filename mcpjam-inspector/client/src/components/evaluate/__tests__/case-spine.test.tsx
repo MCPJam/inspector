@@ -1323,7 +1323,7 @@ describe("the Expected outcome box", () => {
     await openSpine({ steps: golden });
     const outcome = screen.getByLabelText("Expected outcome");
     expect(outcome.getAttribute("placeholder")).toBe(
-      "One sentence the judge scores against",
+      "Describe the outcome you expect…",
     );
   });
 });
