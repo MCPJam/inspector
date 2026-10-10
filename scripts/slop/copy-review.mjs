@@ -14,6 +14,11 @@
  *   4. The rewrites go on the PR as one-click suggestions, and the check
  *      fails unless the `slop-waiver` label is set.
  *
+ * CI runs this file from the base branch, not from the PR, because the step
+ * holds the API key and a PR-write token. The PR's tree is data: its strings
+ * are read, nothing in it is imported. The rubric comes from the same trusted
+ * checkout as this script.
+ *
  *   node scripts/slop/copy-review.mjs --base HEAD^1
  *   node scripts/slop/copy-review.mjs --dry-run      # print, post nothing
  *
@@ -25,7 +30,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { changedPaths } from "./ratchet.mjs";
 import { addedCopy, isUiFile } from "./ui-strings.mjs";
 
@@ -34,8 +40,10 @@ export const MODELS = {
   rewrite: { id: "claude-sonnet-5-5", input: 2, output: 10 },
 };
 
-const RUBRIC_PATH = ".agents/skills/ui-copy/SKILL.md";
-const MAX_STRINGS = 150;
+/** Beside this script, not in the working tree: the reviewed PR may differ. */
+const RUBRIC_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../.agents/skills/ui-copy/SKILL.md");
+/** Strings per classification request. Every string is reviewed; this only splits the calls. */
+export const BATCH = 150;
 
 function git(args) {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 28 });
@@ -109,7 +117,20 @@ export async function callClaude({ model, system, user, format, effort }, fetchI
   return { items: JSON.parse(text).items ?? [], usage: message.usage };
 }
 
+/** Classify in batches of BATCH and merge the findings and usage. */
 export async function classify(items, rubricText, call) {
+  const merged = { items: [], usage: { input_tokens: 0, output_tokens: 0 } };
+  for (let start = 0; start < items.length; start += BATCH) {
+    const result = await classifyBatch(items.slice(start, start + BATCH), rubricText, call);
+    merged.items.push(...result.items);
+    for (const key of Object.keys(result.usage ?? {})) {
+      merged.usage[key] = (merged.usage[key] ?? 0) + (result.usage[key] ?? 0);
+    }
+  }
+  return merged;
+}
+
+async function classifyBatch(items, rubricText, call) {
   return call({
     model: MODELS.classify,
     effort: "low",
@@ -129,9 +150,32 @@ export async function rewrite(flagged, rubricText, call) {
   });
 }
 
-/** The source line with the old copy swapped for the new, or null when it spans lines. */
+/**
+ * The source line with the old copy swapped for the new, escaped for the
+ * literal it sits in. Null when the copy spans lines, the enclosing syntax is
+ * not a plain literal or JSX text, or the rewrite would break it; the caller
+ * then shows the rewrite as text instead of a code suggestion.
+ */
 export function suggestion(source, oldText, newText) {
-  return source.includes(oldText) ? source.replace(oldText, newText) : null;
+  const at = source.indexOf(oldText);
+  if (at === -1 || /\n/.test(newText)) return null;
+  const open = source[at - 1];
+  if (open === '"' || open === "'") {
+    const escaped = newText.replace(/\\/g, "\\\\").replace(new RegExp(open, "g"), `\\${open}`);
+    return source.slice(0, at) + escaped + source.slice(at + oldText.length);
+  }
+  if (open === "`") {
+    // Keep ${placeholders}; escape a stray backtick or backslash.
+    const escaped = newText.replace(/\\(?!\$\{)/g, "\\\\").replace(/`/g, "\\`");
+    return source.slice(0, at) + escaped + source.slice(at + oldText.length);
+  }
+  // JSX text: right after a tag, or alone on an indented line of its own.
+  const before = source.slice(0, at);
+  const after = source.slice(at + oldText.length);
+  if (open === ">" || (/^\s*$/.test(before) && /^\s*(?:[<{].*)?$/.test(after))) {
+    return /[<>{}]/.test(newText) ? null : before + newText + after;
+  }
+  return null;
 }
 
 export function marker({ path, text }) {
@@ -200,6 +244,11 @@ export function report({ items, findings, usd, waived, posted }) {
     for (const f of findings) lines.push(`| \`${f.path}:${f.line}\` | ${f.pattern} | ${f.text} | ${f.rewrite} |`);
     lines.push("", waived ? "Waived by the `slop-waiver` label." : `${posted} suggestions posted on the PR. Accept them, or a CODEOWNER can apply \`slop-waiver\` with a reason.`);
   }
+  if (items.length) {
+    lines.push("", "<details><summary>Every new string reviewed</summary>", "");
+    for (const item of items) lines.push(`- \`${item.path}:${item.line}\` ${item.text}`);
+    lines.push("", "</details>");
+  }
   if (usd) lines.push("", `Review cost: about $${usd.toFixed(3)}.`);
   const text = lines.join("\n");
   console.log(text);
@@ -214,10 +263,6 @@ export async function main(argv, call = callClaude) {
   const waived = process.env.SLOP_WAIVER === "true";
   const items = collectAdded(base);
   if (!items.length) return report({ items, findings: [], usd: 0, waived, posted: 0 });
-  if (items.length > MAX_STRINGS) {
-    console.log(`::warning::${items.length} new strings; reviewing the first ${MAX_STRINGS}. Split the PR.`);
-    items.length = MAX_STRINGS;
-  }
   const text = rubric();
   const classified = await classify(items, text, call);
   let usd = cost(classified.usage, MODELS.classify);

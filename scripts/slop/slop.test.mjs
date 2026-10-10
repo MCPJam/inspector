@@ -8,12 +8,15 @@ import { fileURLToPath } from "node:url";
 import { countFile, isMeasuredFile } from "./rules.mjs";
 import { addedCopy, extractUiStrings, isUiFile } from "./ui-strings.mjs";
 import {
+  BATCH,
   MODELS,
   callClaude,
+  classify,
   collectAdded,
   commentBody,
   main as reviewCopy,
   marker,
+  report,
   suggestion,
 } from "./copy-review.mjs";
 
@@ -270,10 +273,51 @@ describe("copy review", () => {
       'toast.error("Could not save.");'
     );
     assert.equal(suggestion("<p>", "spans two lines", "x"), null);
+  });
+
+  it("escapes the rewrite for the literal it sits in, or gives up", () => {
+    assert.equal(
+      suggestion("toast.error('Failed to save');", "Failed to save", "Couldn't save. Try again."),
+      "toast.error('Couldn\\'t save. Try again.');"
+    );
+    assert.equal(
+      suggestion('t("Say \\"hi\\" now");', 'Say \\"hi\\" now', 'Say "hello"'),
+      't("Say \\"hello\\"");'
+    );
+    assert.equal(
+      suggestion("toast.error(`Saved ${name}`);", "Saved ${name}", "Saved ${name} to `main`"),
+      "toast.error(`Saved ${name} to \\`main\\``);"
+    );
+    assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "New copy"), "<p>New copy</p>");
+    assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "Use {count}"), null);
+    assert.equal(suggestion("      Old copy here", "Old copy here", "New copy"), "      New copy");
+    assert.equal(suggestion("x(y, Old copy here)", "Old copy here", "New"), null);
+    assert.equal(suggestion('t("Old copy here")', "Old copy here", "Two\nlines"), null);
     const finding = { path: ui, line: 2, text: "Something went wrong", source: 'toast.error("Something went wrong");', pattern: "vague-error", note: "names no cause", rewrite: "Could not save." };
     const body = commentBody(finding);
     assert.match(body, /```suggestion\ntoast\.error\("Could not save\."\);\n```/);
     assert.ok(body.endsWith(marker(finding)));
+  });
+
+  it("classifies every string, in batches, and lists them all in the report", async () => {
+    const many = Array.from({ length: BATCH + 1 }, (_, i) => ({ id: i + 1, path: ui, text: `String ${i + 1} here`, source: "" }));
+    const batches = [];
+    const fake = async (request) => {
+      batches.push(JSON.parse(request.user).length);
+      return { items: [], usage: { input_tokens: 10, output_tokens: 1 } };
+    };
+    const result = await classify(many, "rubric", fake);
+    assert.deepEqual(batches, [BATCH, 1]);
+    assert.equal(result.usage.input_tokens, 20);
+    const logged = [];
+    const log = console.log;
+    console.log = (text) => logged.push(text);
+    try {
+      report({ items: many.slice(0, 2), findings: [], usd: 0, waived: false, posted: 0 });
+    } finally {
+      console.log = log;
+    }
+    assert.match(logged[0], /String 1 here[\s\S]*String 2 here/);
   });
 
   it("classifies with Haiku, rewrites with Sonnet, and fails without a waiver", async () => {
@@ -281,7 +325,7 @@ describe("copy review", () => {
     const fake = async (request) => {
       calls.push(request);
       if (request.model === MODELS.classify) {
-        assert.match(request.system, /vague-error: say what failed/);
+        assert.match(request.system, /vague-error/);
         return { items: [{ id: 1, pattern: "vague-error", note: "names no cause" }], usage: { input_tokens: 1000, output_tokens: 50 } };
       }
       assert.deepEqual(JSON.parse(request.user).map((item) => item.id), [1]);

@@ -6,6 +6,11 @@ name: UI Copy Review
 # the flagged strings, and the rewrites land as one-click suggestions.
 # scripts/slop/copy-review.mjs is the whole job; this file only runs it.
 #
+# The review step holds ANTHROPIC_API_KEY and a PR-write token, so it runs
+# the script and the rubric from the BASE branch, never from the PR. The PR's
+# tree is data: the script reads its strings and imports nothing from it.
+# The PR's own copy of the script is tested in a separate job with no secrets.
+#
 # `labeled` / `unlabeled` re-run it when a CODEOWNER applies `slop-waiver`.
 on:
   pull_request:
@@ -13,13 +18,27 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ui-copy-review-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  test:
+    name: UI Copy Review / tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+      - name: Test the review script from this PR
+        run: node --test scripts/slop/slop.test.mjs
+
   review:
     name: UI Copy Review
     # A fork's PR cannot read ANTHROPIC_API_KEY. The regex copy rules in the
@@ -27,20 +46,31 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      # The PR merge commit and its base are all the script compares. No
-      # install: it uses Node builtins and `fetch`.
+      # The PR merge commit and its base: the data the script compares.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
           persist-credentials: false
 
+      # The reviewer itself, from the base branch. Nothing a PR pushes can
+      # change what runs with the credentials below.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: .reviewer
+          sparse-checkout: |
+            scripts/slop
+            .agents/skills/ui-copy
+          fetch-depth: 1
+          persist-credentials: false
+
       - uses: actions/setup-node@v7
         with:
           node-version: "24.14.0"
-
-      - name: Test the review script
-        run: node --test scripts/slop/slop.test.mjs
 
       - name: Review the copy this change adds
         env:
@@ -50,4 +80,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
-        run: node scripts/slop/copy-review.mjs --base HEAD^1
+        run: |
+          if [ ! -f .reviewer/scripts/slop/copy-review.mjs ]; then
+            echo "::notice::The base branch has no copy reviewer yet, so this PR cannot be reviewed from trusted code. The first PR after this one merges will be."
+            exit 0
+          fi
+          node .reviewer/scripts/slop/copy-review.mjs --base HEAD^1
