@@ -593,6 +593,54 @@ export async function startLoopbackModelBroker(args: {
 }
 
 /**
+ * The model proxy's own most recent refusal on the caller's leases for
+ * `runId` — its `x-mcpjam-proxy-refusal` reason, which the backend records on
+ * the lease — or undefined. The runtime in the sandbox surfaces only the
+ * refusal's status, so a failed turn reads the reason back here to classify
+ * what failed. Never throws: an unreachable endpoint leaves the failure
+ * unclassified, the safe direction.
+ */
+export async function readHarnessLeaseRefusal(args: {
+  runId: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<{ reason: string; at: number } | undefined> {
+  try {
+    const url = new URL(
+      "/web/harness/model-broker/refusal",
+      getConvexHttpUrl(),
+    ).toString();
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({ runId: args.runId }),
+      signal: args.signal
+        ? AbortSignal.any([args.signal, AbortSignal.timeout(5_000)])
+        : AbortSignal.timeout(5_000),
+    });
+    const payload: any = await response.json().catch(() => null);
+    const refusal = payload?.refusal;
+    if (
+      !response.ok ||
+      payload?.ok !== true ||
+      typeof refusal?.reason !== "string" ||
+      typeof refusal?.at !== "number"
+    ) {
+      return undefined;
+    }
+    return { reason: refusal.reason, at: refusal.at };
+  } catch (err) {
+    logger.warn("[harness-model-broker] refusal lookup failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
+/**
  * Best-effort revoke on harness teardown/abort. Revocation is the source of
  * truth server-side; a failure here is logged (not retried in the user flow) —
  * TTL + the backend cron backstop a missed revoke.

@@ -210,6 +210,7 @@ import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js
 import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
+import { stampOrgCredentialRevision } from "../org-credential-continuity";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -869,4 +870,134 @@ describe("runHarnessTurn local continuity", () => {
     expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
   });
 
+
+  describe("on the organization's own key", () => {
+    const ORG_SELECTION = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.6",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const ADAPTER_STATE = { data: { bridge: { sandboxId: "local-session" } } };
+    /** Each preparation's lease names the next revision in `revisions`. */
+    function leasesOn(...revisions: string[]) {
+      for (const revision of revisions) leaseOn(revision);
+    }
+    function leaseOn(revision: string) {
+      vi.mocked(prepareLocalHarnessTurn).mockImplementationOnce(
+        async () =>
+          ({
+            ok: true,
+            prepared: {
+              plan: { runtime: { runtimeId: "runtime-1" } },
+              sandbox: {},
+              auth: {},
+              sandboxWorkDir: "project",
+              skillsBaseDir: "/private/local/home/.claude/skills",
+              permissionMode: "allow-reads",
+              sessionStateExists: harnessState.stateExists,
+              teardown: harnessState.teardown,
+              discardState: harnessState.discardState,
+              park: harnessState.park,
+              unpark: harnessState.unpark,
+              brokerRunId: "run_local",
+              orgUpstream: {
+                credentialSource: "org",
+                profile: "anthropic-native",
+                nativeModelId: "claude-sonnet-4-6",
+                credentialRevision: revision,
+              },
+            },
+          }) as any,
+      );
+    }
+    function claimStampedWith(revision: string) {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, revision),
+        },
+      } as any);
+    }
+    const orgOptions = () =>
+      baseOptions({
+        modelId: "claude-sonnet-4-6",
+        modelSelection: ORG_SELECTION,
+      });
+
+    it("a renamed connection (same key) resumes the same local session", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_a");
+      await runHarnessTurn(orgOptions() as any, "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "local-session",
+          modelSelection: ORG_SELECTION,
+        }),
+      );
+      expect(harnessState.create).toHaveBeenLastCalledWith({
+        sessionId: "local-session",
+        resumeFrom: ADAPTER_STATE,
+      });
+    });
+
+    it("a replaced key prepares again under a FRESH session id and starts fresh", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b", "rev_b");
+      await runHarnessTurn(orgOptions() as any, "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledTimes(2);
+      const calls = vi.mocked(prepareLocalHarnessTurn).mock.calls;
+      expect(calls[0]![0].sessionId).toBe("local-session");
+      const freshId = calls[1]![0].sessionId;
+      expect(freshId).not.toBe("local-session");
+      expect(freshId).toMatch(/^local-/);
+      // The first preparation, on the old session, was torn down.
+      expect(harnessState.teardown).toHaveBeenCalled();
+      // The runtime starts a fresh session under the new id — never the old
+      // account's session, never resuming its transcript.
+      expect(harnessState.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionId: freshId }),
+      );
+      expect(
+        (harnessState.create.mock.lastCall?.[0] as Record<string, unknown>)
+          ?.resumeFrom,
+      ).toBeUndefined();
+    });
+
+    it("an approval waiting across a key replacement does not run", async () => {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, "rev_a"),
+          awaitingApproval: true,
+        },
+      } as any);
+      harnessState.continuations = [
+        { approvalId: "approval-1", approved: true },
+      ];
+      leasesOn("rev_b");
+      const events: Array<{ message: string }> = [];
+      await runHarnessTurn(
+        {
+          ...orgOptions(),
+          onEngineError: (event: { message: string }) => events.push(event),
+        } as any,
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/key was replaced/);
+    });
+  });
 });

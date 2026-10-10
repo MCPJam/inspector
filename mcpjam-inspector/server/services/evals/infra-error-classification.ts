@@ -205,7 +205,9 @@ function classifyProxyRefusal(code: string | undefined): Row | undefined {
       code.startsWith("byok_") || code.startsWith("upstream_")
         ? MODEL
         : "platform",
-    retryable: reasonClass === "provider_unavailable",
+    // The proxy's own `x-should-retry` for the reason: a timed-out or
+    // interrupted call may have run on the provider, so it is never re-sent.
+    retryable: HARNESS_PROXY_REFUSAL_REASONS[code].retry,
   };
 }
 

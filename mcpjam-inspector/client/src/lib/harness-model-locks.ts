@@ -265,6 +265,29 @@ export function harnessPickerModels(
 }
 
 /**
+ * Stands in for the selected model when a harness host has NO row it can run
+ * (`harnessPickerModels` returned the empty list): a runtime version the
+ * evidence table admits nothing on, or no hosted rows and no matching org
+ * connection. Disabled, with the reason, so the picker shows the empty state
+ * and the chat refuses to send rather than send an id the server refuses.
+ */
+export const NO_RUNNABLE_HARNESS_MODEL: ModelDefinition = {
+  id: "mcpjam/no-runnable-harness-model",
+  name: "No model this client can run",
+  provider: "custom",
+  hosted: false,
+  disabled: true,
+  disabledReason:
+    "None of your models runs on this client's harness. Pick an MCPJam-provided model or add your organization's provider key.",
+};
+
+export function isNoRunnableHarnessModel(
+  model: ModelDefinition | null | undefined,
+): boolean {
+  return model?.id === NO_RUNNABLE_HARNESS_MODEL.id;
+}
+
+/**
  * The model a harness host starts on when nothing selected is runnable: the
  * host's own model if it is offered and enabled, else the first enabled row
  * the evidence table fully supports, else the first enabled row. Never the

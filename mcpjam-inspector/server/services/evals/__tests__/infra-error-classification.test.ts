@@ -567,9 +567,14 @@ describe("classifyEvalInfraError — organization-key refusals", () => {
     expect(byReason("byok_connection_changed")).toMatchObject({
       class: "configuration",
     });
+    // Retryable as the proxy says: a timeout may have run on the provider.
     expect(byReason("upstream_timeout")).toMatchObject({
       class: "provider_unavailable",
       layer: "model",
+      retryable: false,
+    });
+    expect(byReason("upstream_unreachable")).toMatchObject({
+      class: "provider_unavailable",
       retryable: true,
     });
     // Spend, lease caps and a transport limit are not infrastructure.

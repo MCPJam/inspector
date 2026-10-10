@@ -49,6 +49,15 @@ vi.mock("../mcp-tool-result-model-output.js", () => ({
   convertToMcpjamModelMessages: vi.fn(async () => []),
 }));
 
+// A scope step-up resume is built from the live MCP session; a stand-in
+// resume is all dispatch needs to see.
+vi.mock("../hosted-scope-step-up-continuation.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../hosted-scope-step-up-continuation.js")
+  >()),
+  buildHostedScopeStepUpResume: vi.fn(() => ({ kind: "scope-step-up-resume" })),
+}));
+
 vi.mock("../harness/harness-proxy-strategy.js", () => ({
   resolveWebAuthorizedHarnessStrategy: vi.fn(() => ({
     plane: "web-authorized",
@@ -371,6 +380,26 @@ describe("streamWebChatTurn model dispatch", () => {
       ).rejects.toThrow(/organization's Anthropic key/);
       expect(handlers.mcpjamFree).not.toHaveBeenCalled();
       expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    });
+
+    it("a scope step-up resume of an org-key harness turn runs on the org's key, never MCPJam's /stream", async () => {
+      const turn = args(
+        { id: "claude-sonnet-4-5", provider: "anthropic", hosted: false },
+        "claude-code",
+        { routingSelection: orgSel("anthropic/claude-sonnet-4.5") },
+      ) as any;
+      turn.persist.chatSessionId = "chat-1";
+      turn.runtime.scopeStepUp = {
+        bearer: "Bearer t",
+        authPrincipal: "user_1",
+        resumeRequest: { toolCallId: "call_1" },
+      };
+      await streamWebChatTurn(turn);
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+      expect(
+        (handlers.hostedOrg.mock.calls[0] as unknown[] | undefined)?.[0],
+      ).toMatchObject({ scopeStepUpResume: { kind: "scope-step-up-resume" } });
     });
 
     it("a hosted harness turn carries no selection to the harness", async () => {

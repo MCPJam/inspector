@@ -17,6 +17,11 @@ const harnessState = vi.hoisted(() => ({
   claimedState: null as unknown,
   approvalContinuations: [] as unknown[],
   leaseRevision: "rev_a",
+  /** Thrown by the runtime's stream after its parts, when set. */
+  streamError: undefined as unknown,
+  /** What the backend recorded as the proxy's refusal on the lease. */
+  recordedRefusal: undefined as { reason: string; at: number } | undefined,
+  readRefusal: vi.fn(),
   createHarness: vi.fn((_args?: unknown) => ({ harnessId: "claude-code" })),
   toNativeModel: vi.fn((modelId: string, _upstream?: unknown) => modelId),
   createSession: vi.fn(async (_opts?: unknown) => ({
@@ -34,6 +39,9 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
+        }
+        if (harnessState.streamError !== undefined) {
+          throw harnessState.streamError;
         }
       })(),
       text: Promise.resolve(harnessState.finalText),
@@ -117,6 +125,10 @@ vi.mock("../harness-model-broker.js", () => ({
   })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
+  readHarnessLeaseRefusal: vi.fn(async (args: unknown) => {
+    harnessState.readRefusal(args);
+    return harnessState.recordedRefusal;
+  }),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
@@ -146,6 +158,7 @@ import {
   startHarnessModelBroker,
 } from "../harness-model-broker.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
+import { classifyEvalInfraError } from "../../../services/evals/infra-error-classification";
 
 const ADAPTER_STATE = {
   type: "resume-session",
@@ -206,6 +219,98 @@ describe("runHarnessTurn on the organization's own key", () => {
     vi.unstubAllEnvs();
     harnessState.claimedState = null;
     harnessState.leaseRevision = "rev_a";
+    harnessState.streamError = undefined;
+    harnessState.recordedRefusal = undefined;
+    harnessState.readRefusal.mockClear();
+  });
+
+  describe("a turn the model proxy refused", () => {
+    async function failedTurn() {
+      const events: Array<{ infra?: Record<string, unknown> }> = [];
+      const result = await runHarnessTurn(
+        {
+          ...options(),
+          onEngineError: (event: { infra?: Record<string, unknown> }) =>
+            events.push(event),
+        } as any,
+        "ui",
+      );
+      await result.response!.text();
+      return events;
+    }
+    // What the hosted Claude Code bridge sends for a model call the proxy
+    // answered with its refusal status: a typed provider error carrying only
+    // the status — the reason never reaches the sandbox runtime.
+    const bridgeRefusalError = {
+      name: "HarnessProviderError",
+      message: "API Error: 409",
+      source: "model",
+      httpStatus: 409,
+    };
+
+    it("classifies on the reason the proxy recorded, not as a model failure", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = bridgeRefusalError;
+      harnessState.recordedRefusal = {
+        reason: "byok_credential_rejected",
+        at: Date.now() + 60_000,
+      };
+      const events = await failedTurn();
+      expect(harnessState.readRefusal).toHaveBeenCalledWith(
+        expect.objectContaining({ bearer: "Bearer test" }),
+      );
+      const infra = events.at(-1)?.infra;
+      expect(infra).toEqual({
+        source: "harness_runtime",
+        code: "byok_credential_rejected",
+        httpStatus: 409,
+        endpoint: "byok_hosted",
+      });
+      expect(classifyEvalInfraError(infra as never)).toMatchObject({
+        class: "auth",
+        layer: "model",
+        retryable: false,
+      });
+    });
+
+    it("the same with no typed evidence at all (a runtime that sends a sentence)", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = new Error("API Error: 409 Conflict");
+      harnessState.recordedRefusal = {
+        reason: "org_keys_required",
+        at: Date.now() + 60_000,
+      };
+      const infra = (await failedTurn()).at(-1)?.infra;
+      expect(infra).toMatchObject({ code: "org_keys_required" });
+      expect(classifyEvalInfraError(infra as never)).toMatchObject({
+        class: "configuration",
+        layer: "platform",
+      });
+    });
+
+    it("a refusal recorded before this turn is not this turn's", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = bridgeRefusalError;
+      harnessState.recordedRefusal = {
+        reason: "byok_credential_rejected",
+        at: 1,
+      };
+      const infra = (await failedTurn()).at(-1)?.infra;
+      expect(infra).toMatchObject({ httpStatus: 409 });
+      expect(infra?.code).toBeUndefined();
+    });
+
+    it("a definite provider status stands: no lookup", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = { ...bridgeRefusalError, httpStatus: 529 };
+      harnessState.recordedRefusal = {
+        reason: "byok_credential_rejected",
+        at: Date.now() + 60_000,
+      };
+      const infra = (await failedTurn()).at(-1)?.infra;
+      expect(harnessState.readRefusal).not.toHaveBeenCalled();
+      expect(infra).toMatchObject({ httpStatus: 529 });
+    });
   });
 
   function claimStampedWith(revision: string) {

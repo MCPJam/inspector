@@ -220,15 +220,18 @@ export function orgHarnessSelection(
 /**
  * The provider an org turn's connection serves: the resolved row's, or — for
  * a caller that carries only the selection — the canonical id's creator
- * prefix (`anthropic/claude-sonnet-4.5` → `anthropic`).
+ * prefix (`anthropic/claude-sonnet-4.5` → `anthropic`). When both are known
+ * and disagree, the saved selection is inconsistent with its row: no provider,
+ * so the turn is refused here rather than at lease start.
  */
 function orgSelectionProvider(
   model: { provider?: string },
   selection: OrgHarnessSelection,
 ): string | undefined {
-  if (model.provider) return model.provider;
   const slash = selection.modelId.indexOf("/");
-  return slash > 0 ? selection.modelId.slice(0, slash) : undefined;
+  const prefix = slash > 0 ? selection.modelId.slice(0, slash) : undefined;
+  if (model.provider && prefix && model.provider !== prefix) return undefined;
+  return model.provider ?? prefix;
 }
 
 /**

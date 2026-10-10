@@ -105,6 +105,8 @@ import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  NO_RUNNABLE_HARNESS_MODEL,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -3009,7 +3011,11 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all (a harness host none of the rows runs on):
+      // a disabled stand-in, never `undefined`, which every reader below
+      // dereferences. The chat refuses to send on it (`submitBlocked`).
+      NO_RUNNABLE_HARNESS_MODEL;
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -6038,7 +6044,8 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    isNoRunnableHarnessModel(selectedModel);
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was

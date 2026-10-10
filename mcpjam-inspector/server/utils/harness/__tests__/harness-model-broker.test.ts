@@ -7,6 +7,7 @@ import {
   renewHarnessBoxReservation,
   orgLeaseUpstreamFrom,
   ORG_BINDING_UNCONFIRMED,
+  readHarnessLeaseRefusal,
 } from "../harness-model-broker";
 import { buildBrokerDummyAuth } from "../registry";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
@@ -608,5 +609,44 @@ describe("orgLeaseUpstreamFrom", () => {
     ]) {
       expect(orgLeaseUpstreamFrom(partial)).toBeNull();
     }
+  });
+});
+
+describe("readHarnessLeaseRefusal", () => {
+  it("POSTs the run id and returns the proxy's recorded refusal", async () => {
+    let seenUrl = "";
+    let seenBody: any = {};
+    mockFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        refusal: { reason: "byok_credential_rejected", at: 123 },
+      });
+    });
+    await expect(
+      readHarnessLeaseRefusal({ runId: "run_1", bearer: "t" }),
+    ).resolves.toEqual({ reason: "byok_credential_rejected", at: 123 });
+    expect(seenUrl).toBe(
+      "https://convex.example.com/web/harness/model-broker/refusal",
+    );
+    expect(seenBody).toEqual({ runId: "run_1" });
+  });
+
+  it("is undefined when nothing was refused, the endpoint fails, or the network does", async () => {
+    mockFetch(() => Response.json({ ok: true }));
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
+    mockFetch(() => Response.json({ ok: false }, { status: 404 }));
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
+    mockFetch(() => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      readHarnessLeaseRefusal({ runId: "r", bearer: "t" }),
+    ).resolves.toBeUndefined();
   });
 });

@@ -1364,10 +1364,17 @@ chatV2.post("/", async (c) => {
         selection: routingSelection,
       }),
     );
+    // A scope step-up RESUME never runs the harness: the free path hands it
+    // to the emulated engine on MCPJam's `/stream`. On an org-key harness turn
+    // that would spend MCPJam's credits — past an org that requires its own
+    // keys — so the resume takes the org-BYOK branch below (`/stream/org`), on
+    // the organization's key, exactly as it did before org-key harness turns.
+    const orgKeyHarnessStepUpResume =
+      isOrgKeyHarnessTurn && Boolean(scopeStepUpResumeRequest);
     const usesMcpjamFreePath =
       isMcpJamProvidedModel ||
       isExternalAccountHarnessTurn ||
-      isOrgKeyHarnessTurn;
+      (isOrgKeyHarnessTurn && !orgKeyHarnessStepUpResume);
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
     // allowlist. A guest MCPJam-model request still gets its bearer minted

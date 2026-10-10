@@ -1274,16 +1274,25 @@ export async function streamWebChatTurn(
       },
       selection: prepare.routingSelection,
     });
+  // A scope step-up RESUME never runs the harness: the free path hands it to
+  // the emulated engine on MCPJam's `/stream`. On an org-key harness turn that
+  // would spend MCPJam's credits — past an org that requires its own keys —
+  // so the resume takes the org path below (`/stream/org`) instead, on the
+  // organization's key, exactly as it did before org-key harness turns.
+  const orgKeyHarnessStepUpResume = isOrgKeyHarnessTurn && !!scopeStepUpResume;
   const usesMcpjamFreePath =
-    isMCPJam || isExternalAccountHarnessTurn || isOrgKeyHarnessTurn;
+    isMCPJam ||
+    isExternalAccountHarnessTurn ||
+    (isOrgKeyHarnessTurn && !orgKeyHarnessStepUpResume);
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
   // over a turn the harness never touched. The route pre-flight refuses a
   // non-MCPJam model on a brokered harness already; this refuses the same
   // thing here, with the same sentence, for any caller that reaches this
-  // helper without one.
-  if (persist.harness && !usesMcpjamFreePath) {
+  // helper without one. (An org-key harness turn's step-up resume is the one
+  // exception, above: it is the emulated engine on any path.)
+  if (persist.harness && !usesMcpjamFreePath && !orgKeyHarnessStepUpResume) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {

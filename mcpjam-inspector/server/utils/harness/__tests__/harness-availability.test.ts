@@ -1091,6 +1091,24 @@ describe("organization-key selections", () => {
     ).toEqual({ ok: true });
   });
 
+  it("refuses a row whose provider disagrees with its saved selection", () => {
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        selection: orgSel("openai/gpt-5"),
+      }),
+    ).toBe(false);
+    expect(
+      harnessModelRefusal({
+        adapter: getHarnessAdapter("claude-code"),
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        purpose: "chat",
+        selection: orgSel("openai/gpt-5"),
+      }).refusal?.kind,
+    ).toBe("model-provider-unsupported");
+  });
+
   it("infers the provider from the canonical id when the row carries none", () => {
     expect(
       runsHarness({

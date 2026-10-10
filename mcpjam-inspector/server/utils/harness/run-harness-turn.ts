@@ -87,9 +87,15 @@ import {
   reserveHarnessBox,
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
+  readHarnessLeaseRefusal,
   type HarnessBrokerBox,
   type HarnessOrgLeaseUpstream,
 } from "./harness-model-broker.js";
+import {
+  HARNESS_PROXY_REFUSAL_STATUS,
+  isHarnessProxyRefusalReason,
+  type HarnessProxyRefusalReason,
+} from "@/shared/harness-proxy-refusal-reasons";
 import {
   orgResumeAllowed,
   orgUpstreamProfileFor,
@@ -792,6 +798,47 @@ function harnessToolErrorText(part: unknown): string {
  *  expiry). */
 const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
 
+/**
+ * The model proxy's own refusal reason for a failed turn, or undefined.
+ *
+ * Asked only when the failure could BE one: a model call was made under a
+ * lease, and the runtime's evidence is absent or carries the proxy's refusal
+ * status (or no status). A definite provider status (a 529, a 401) is the
+ * provider's own answer and stands. The reason must be from this turn and from
+ * the shared vocabulary; anything else leaves the evidence as it was.
+ */
+async function proxyRefusalForFailedTurn(args: {
+  evidence: InfraFailureEvidence | undefined;
+  modelInvoked: boolean;
+  leaseRunId: string | undefined;
+  bearer: string | undefined;
+  turnStartedAt: number;
+}): Promise<HarnessProxyRefusalReason | undefined> {
+  const { evidence } = args;
+  if (!args.modelInvoked || !args.leaseRunId || !args.bearer) return undefined;
+  if (
+    evidence &&
+    (evidence.source !== "harness_runtime" ||
+      (evidence.httpStatus !== undefined &&
+        evidence.httpStatus !== HARNESS_PROXY_REFUSAL_STATUS))
+  ) {
+    return undefined;
+  }
+  try {
+    const refusal = await readHarnessLeaseRefusal({
+      runId: args.leaseRunId,
+      bearer: args.bearer,
+    });
+    return refusal &&
+      refusal.at >= args.turnStartedAt &&
+      isHarnessProxyRefusalReason(refusal.reason)
+      ? refusal.reason
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -1028,6 +1075,9 @@ export async function runHarnessTurn(
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
+  // The LOCAL delivery's lease run, for reading back the proxy's own refusal
+  // when the turn fails (the box delivery's is `brokerRunId`).
+  let localLeaseRunId: string | undefined;
   let brokerRevoked = false;
   /**
    * The LOCAL path's own teardown: revoke the gateway, revoke the lease, stop
@@ -2222,7 +2272,7 @@ export async function runHarnessTurn(
       const localComputerId = harnessExecutionTarget
         ? `${harnessExecutionTarget.machineId}:${harnessExecutionTarget.runtimeId}`
         : undefined;
-      const localEligibility = localComputerId
+      let localEligibility = localComputerId
         ? getHarnessResumeEligibility({
             state: continuity?.state ?? null,
             computerId: localComputerId,
@@ -2238,7 +2288,7 @@ export async function runHarnessTurn(
           "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
-      const localSessionId = harnessExecutionTarget
+      let localSessionId = harnessExecutionTarget
         ? localEligibility?.resume
           ? continuity!.state!.harnessSessionId
           : harnessExecutionTarget.localSessionId ?? `local-${crypto.randomUUID()}`
@@ -2269,12 +2319,12 @@ export async function runHarnessTurn(
             ),
           };
         }
-        const preparation = await prepareLocalHarnessTurn({
+        const prepareLocal = (sessionId: string) => prepareLocalHarnessTurn({
           target: harnessExecutionTarget,
           scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
           harnessId: harnessAdapter.id,
           modelId,
-          sessionId: localSessionId!,
+          sessionId,
           runId: localRunId,
           evalIterationId, journeyRunId, hostId,
           targetId: harnessExecutionTarget.targetId,
@@ -2299,13 +2349,13 @@ export async function runHarnessTurn(
           ...(orgSelection ? { modelSelection: orgSelection } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
+        let preparation = await prepareLocal(localSessionId!);
         if (!preparation.ok) {
           throw new Error(
             `Can't run this turn on your machine (${preparation.status}): ` +
               preparation.message,
           );
         }
-        localPrepared = preparation.prepared;
         if (orgSelection) {
           // The loopback start refuses (and revokes) a lease that does not
           // confirm the org binding; this is the turn's own backstop.
@@ -2315,8 +2365,53 @@ export async function runHarnessTurn(
               "The model broker did not confirm a lease on the organization's key; the turn was not started.",
             );
           }
+          // A turn on the organization's own key resumes only state produced
+          // on the SAME key, and the lease only now names the revision. A
+          // replaced key (or state never produced on an org key) is decided
+          // HERE, before retention or the runtime session is derived from the
+          // old state: this preparation is torn down and the turn prepares
+          // again under a FRESH session id, so the CLI neither continues the
+          // previous account's session nor collides with its retained
+          // transcript. A rename keeps the key, the revision and the session.
+          if (
+            localEligibility?.resume &&
+            continuity?.state &&
+            !orgResumeAllowed(
+              continuityCredentialRevision,
+              preparation.prepared.orgUpstream.credentialRevision,
+            )
+          ) {
+            await preparation.prepared.teardown().catch(() => {});
+            if (isApprovalResume) {
+              throw new Error(
+                "The organization's provider key was replaced while the approval was waiting; the pending action will not run. Start a new turn.",
+              );
+            }
+            continuity = {
+              ...continuity,
+              state: null,
+              runtimeChanged: continuity.stateVersion > 0,
+            };
+            localEligibility = { ...localEligibility, resume: false };
+            localSessionId = `local-${crypto.randomUUID()}`;
+            preparation = await prepareLocal(localSessionId);
+            if (!preparation.ok) {
+              throw new Error(
+                `Can't run this turn on your machine (${preparation.status}): ` +
+                  preparation.message,
+              );
+            }
+            if (!preparation.prepared.orgUpstream) {
+              await preparation.prepared.teardown().catch(() => {});
+              throw new Error(
+                "The model broker did not confirm a lease on the organization's key; the turn was not started.",
+              );
+            }
+          }
           orgUpstream = preparation.prepared.orgUpstream;
         }
+        localPrepared = preparation.prepared;
+        localLeaseRunId = preparation.prepared.brokerRunId;
         // A failed or stopped turn must not erase an already saved conversation.
         retainLocalState = Boolean(localEligibility?.resume && localPrepared.sessionStateExists);
         localTeardown = preparation.prepared.teardown;
@@ -4649,7 +4744,26 @@ export async function runHarnessTurn(
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
       const errorText = harnessFailureMessageOf(err);
-      const typedEvidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      const runtimeEvidence =
+        harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      // The model proxy's own refusal (the org's key rejected or replaced, its
+      // policy, a lease cap) reaches the runtime as a bare refusal status, or
+      // as nothing typed at all. The proxy recorded its reason on the lease:
+      // read it back so the failure is classified as what it was.
+      const proxyRefusal = await proxyRefusalForFailedTurn({
+        evidence: runtimeEvidence,
+        modelInvoked,
+        leaseRunId: brokerRunId ?? localLeaseRunId,
+        bearer: authHeader,
+        turnStartedAt,
+      });
+      const typedEvidence: InfraFailureEvidence | undefined = proxyRefusal
+        ? {
+            source: "harness_runtime",
+            code: proxyRefusal,
+            httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+          }
+        : runtimeEvidence;
       // A runtime's provider failure says whose endpoint it came from.
       const failureEvidence =
         typedEvidence?.source === "harness_runtime" && modelEndpoint
