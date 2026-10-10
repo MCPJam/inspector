@@ -56,6 +56,9 @@ jobs:
             .github/scripts/local-harness-bot-pr.test.mjs \
             .github/scripts/check-workos-loopback.test.mjs
 
+      - name: Unapproved merge report tests
+        run: node --test .github/scripts/unapproved-merges.test.mjs
+
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
       # ubuntu-latest rather than the Playwright container, and the tree carries
