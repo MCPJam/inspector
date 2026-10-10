@@ -16,6 +16,7 @@ import {
 import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { JudgeModelPicker } from "./judge-model-picker";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
+import { judgeModelOptions } from "@/components/chat-v2/shared/available-models";
 import { judgeModelPatch } from "./judges-section";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
@@ -169,9 +170,27 @@ export function GoalCompletionCard({
   // `JudgesSection` does) and offers no effort.
   const saveSelections = useModelSelectionsSupported();
   // While the organization requires its own keys only a judge chosen from an
-  // organization provider can grade: an unset judge, and a saved model the
-  // policy no longer allows, both wait for that choice.
-  const judgeUnset = requireOrgKeys && selectedSelection?.source !== "org";
+  // organization provider can grade: an unset judge, a saved model the policy
+  // no longer allows, and a saved organization judge the picker no longer
+  // offers (its connection removed or ineligible) all wait for that choice.
+  // Decided from the same options the picker lists.
+  const judgeOptions = useMemo(
+    () =>
+      requireOrgKeys
+        ? judgeModelOptions(availableModels, {
+            currentModelId: selectedModelId,
+            managedDefaultModelId: DEFAULT_JUDGE_MODEL,
+            currentSelection: selectedSelection,
+            requireOrgKeys,
+          })
+        : undefined,
+    [availableModels, selectedModelId, selectedSelection, requireOrgKeys],
+  );
+  const judgeUnset =
+    requireOrgKeys &&
+    (selectedSelection?.source !== "org" ||
+      !judgeOptions?.current ||
+      judgeOptions.currentIneligible);
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the
