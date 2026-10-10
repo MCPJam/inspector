@@ -17,6 +17,7 @@
  * socket-diagnostics.ts): a fixed field set, no per-event rows, and a timer
  * that never holds the process open.
  */
+import fs from "node:fs";
 import v8 from "node:v8";
 import * as Sentry from "@sentry/node";
 import { getSystemLogger } from "./request-logger.js";
@@ -64,6 +65,8 @@ export type ProcessVitals = {
   peakRpcLogBufferBytes: number;
   tokenizerPeakChars: number;
   tokenizerOversizeSkips: number;
+  openFdCount: number | null;
+  openFdError: string | null;
 };
 
 let peakHeapUsedBytes = 0;
@@ -80,6 +83,28 @@ function oldSpace(): { used: number; size: number } {
     }
   }
   return { used: 0, size: 0 };
+}
+
+/**
+ * Open file descriptors of THIS process, by listing `/dev/fd` (devfs on macOS,
+ * a link to `/proc/self/fd` on Linux). When the listing fails the count is
+ * `null`, never zero, and the errno says why: ENOENT is a platform with no fd
+ * table to read (Windows); EMFILE/ENFILE is the very exhaustion this gauge
+ * exists to catch — opendir needs an fd of its own, so the sample taken at
+ * the worst moment is the one that cannot list. That one extra fd is also in
+ * the count; the ramp is what matters, not the exact figure.
+ *
+ * INSPECTOR-ELECTRON-X3 (PLB-140): the renderer died of ENFILE, the SYSTEM
+ * file table, while holding 15 fds of its own. Whether the main process was
+ * the one draining that table went unrecorded. This answers it next time.
+ */
+function openFds(): Pick<ProcessVitals, "openFdCount" | "openFdError"> {
+  try {
+    return { openFdCount: fs.readdirSync("/dev/fd").length, openFdError: null };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return { openFdCount: null, openFdError: code ?? "unknown" };
+  }
 }
 
 export function collectProcessVitals(): ProcessVitals {
@@ -109,6 +134,7 @@ export function collectProcessVitals(): ProcessVitals {
     peakRpcLogBufferBytes,
     tokenizerPeakChars: tokenizer.chars,
     tokenizerOversizeSkips: tokenizer.oversizeSkips,
+    ...openFds(),
   };
 }
 
