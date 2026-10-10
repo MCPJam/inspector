@@ -7,6 +7,18 @@ import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { countFile, isMeasuredFile } from "./rules.mjs";
 import { addedCopy, extractUiStrings, isUiFile } from "./ui-strings.mjs";
+import {
+  BATCH,
+  MODELS,
+  callClaude,
+  classify,
+  collectAdded,
+  commentBody,
+  main as reviewCopy,
+  marker,
+  report,
+  suggestion,
+} from "./copy-review.mjs";
 
 const RATCHET = join(dirname(fileURLToPath(import.meta.url)), "ratchet.mjs");
 
@@ -211,6 +223,144 @@ describe("ui strings", () => {
     assert.equal(counts["ui-filler"], 1);
     assert.equal(counts["ui-vague-error"], 2);
     assert.equal(countFile("sdk/src/a.ts", source)["ui-dash"], 0);
+  });
+});
+
+
+describe("copy review", () => {
+  const repo = mkdtempSync(join(tmpdir(), "slop-copy-"));
+  after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+  const ui = "mcpjam-inspector/client/src/A.tsx";
+  mkdirSync(join(repo, "mcpjam-inspector/client/src"), { recursive: true });
+  mkdirSync(join(repo, ".agents/skills/ui-copy"), { recursive: true });
+  writeFileSync(
+    join(repo, ".agents/skills/ui-copy/SKILL.md"),
+    "---\nname: ui-copy\n---\n# Rubric\nvague-error: say what failed.\n"
+  );
+  writeFileSync(join(repo, ui), '<p>Try again</p>\n');
+  git("init", "-q");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "test");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  writeFileSync(
+    join(repo, ui),
+    '<p>Try again</p>\ntoast.error("Something went wrong");\ntoast.error(`Saved ${name} to your project`);\n'
+  );
+  const cwd = process.cwd();
+  const inRepo = (fn) => {
+    process.chdir(repo);
+    try {
+      return fn();
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+
+  it("lists the copy a change added with its source line", () => {
+    const items = inRepo(() => collectAdded("HEAD"));
+    assert.deepEqual(items, [
+      { id: 1, path: ui, line: 2, text: "Something went wrong", source: 'toast.error("Something went wrong");' },
+      { id: 2, path: ui, line: 3, text: "Saved ${name} to your project", source: "toast.error(`Saved ${name} to your project`);" },
+    ]);
+  });
+
+  it("turns a rewrite into a one-line suggestion when the copy sits on one line", () => {
+    assert.equal(
+      suggestion('toast.error("Something went wrong");', "Something went wrong", "Could not save."),
+      'toast.error("Could not save.");'
+    );
+    assert.equal(suggestion("<p>", "spans two lines", "x"), null);
+  });
+
+  it("escapes the rewrite for the literal it sits in, or gives up", () => {
+    assert.equal(
+      suggestion("toast.error('Failed to save');", "Failed to save", "Couldn't save. Try again."),
+      "toast.error('Couldn\\'t save. Try again.');"
+    );
+    assert.equal(
+      suggestion('t("Say \\"hi\\" now");', 'Say \\"hi\\" now', 'Say "hello"'),
+      't("Say \\"hello\\"");'
+    );
+    assert.equal(
+      suggestion("toast.error(`Saved ${name}`);", "Saved ${name}", "Saved ${name} to `main`"),
+      "toast.error(`Saved ${name} to \\`main\\``);"
+    );
+    assert.equal(
+      suggestion("t(`Old copy here`)", "Old copy here", "Path C:\\\\tmp for ${name}"),
+      "t(`Path C:\\\\\\\\tmp for ${name}`)"
+    );
+    assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "New copy"), "<p>New copy</p>");
+    assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "Use {count}"), null);
+    assert.equal(suggestion("      Old copy here", "Old copy here", "New copy"), "      New copy");
+    assert.equal(suggestion("x(y, Old copy here)", "Old copy here", "New"), null);
+    assert.equal(suggestion('t("Old copy here")', "Old copy here", "Two\nlines"), null);
+    const finding = { path: ui, line: 2, text: "Something went wrong", source: 'toast.error("Something went wrong");', pattern: "vague-error", note: "names no cause", rewrite: "Could not save." };
+    const body = commentBody(finding);
+    assert.match(body, /```suggestion\ntoast\.error\("Could not save\."\);\n```/);
+    assert.ok(body.endsWith(marker(finding)));
+  });
+
+  it("classifies every string, in batches, and lists them all in the report", async () => {
+    const many = Array.from({ length: BATCH + 1 }, (_, i) => ({ id: i + 1, path: ui, text: `String ${i + 1} here`, source: "" }));
+    const batches = [];
+    const fake = async (request) => {
+      batches.push(JSON.parse(request.user).length);
+      return { items: [], usage: { input_tokens: 10, output_tokens: 1 } };
+    };
+    const result = await classify(many, "rubric", fake);
+    assert.deepEqual(batches, [BATCH, 1]);
+    assert.equal(result.usage.input_tokens, 20);
+    const logged = [];
+    const log = console.log;
+    console.log = (text) => logged.push(text);
+    try {
+      report({ items: many.slice(0, 2), findings: [], usd: 0, waived: false, posted: 0 });
+    } finally {
+      console.log = log;
+    }
+    assert.match(logged[0], /String 1 here[\s\S]*String 2 here/);
+  });
+
+  it("classifies with Haiku, rewrites with Sonnet, and fails without a waiver", async () => {
+    const calls = [];
+    const fake = async (request) => {
+      calls.push(request);
+      if (request.model === MODELS.classify) {
+        assert.match(request.system, /vague-error/);
+        return { items: [{ id: 1, pattern: "vague-error", note: "names no cause" }], usage: { input_tokens: 1000, output_tokens: 50 } };
+      }
+      assert.deepEqual(JSON.parse(request.user).map((item) => item.id), [1]);
+      return { items: [{ id: 1, text: "Could not save." }], usage: { input_tokens: 500, output_tokens: 20 } };
+    };
+    const code = await inRepo(() => reviewCopy(["--base", "HEAD", "--dry-run"], fake));
+    assert.equal(code, 1);
+    assert.deepEqual(calls.map((request) => request.model.id), ["claude-haiku-5-5", "claude-sonnet-5-5"]);
+    process.env.SLOP_WAIVER = "true";
+    try {
+      assert.equal(await inRepo(() => reviewCopy(["--base", "HEAD", "--dry-run"], fake)), 0);
+    } finally {
+      delete process.env.SLOP_WAIVER;
+    }
+  });
+
+  it("sends a structured-output request and surfaces a refusal", async () => {
+    let body;
+    const ok = async (_url, init) => {
+      body = JSON.parse(init.body);
+      return { ok: true, json: async () => ({ stop_reason: "end_turn", content: [{ type: "text", text: '{"items":[{"id":1}]}' }], usage: {} }) };
+    };
+    const result = await callClaude({ model: MODELS.classify, system: "s", user: "u", format: { type: "object" }, effort: "low" }, ok);
+    assert.deepEqual(result.items, [{ id: 1 }]);
+    assert.equal(body.model, "claude-haiku-5-5");
+    assert.equal(body.output_config.format.type, "json_schema");
+    assert.equal(body.output_config.effort, "low");
+    const refused = async () => ({ ok: true, json: async () => ({ stop_reason: "refusal", stop_details: { category: "general_harms" }, content: [] }) });
+    await assert.rejects(callClaude({ model: MODELS.classify, system: "s", user: "u", format: {} }, refused), /declined/);
+    const cutOff = async () => ({ ok: true, json: async () => ({ stop_reason: "max_tokens", content: [{ type: "thinking", thinking: "" }], usage: {} }) });
+    await assert.rejects(callClaude({ model: MODELS.classify, system: "s", user: "u", format: {} }, cutOff), /no result \(stop_reason max_tokens\)/);
   });
 });
 
