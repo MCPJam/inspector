@@ -299,6 +299,26 @@ describe("event payloads are scrubbed and re-encoded the way they came", () => {
     expect(url.href).not.toContain("SENTINEL");
   });
 
+  it("scrubs the query parameters it forwards beside ?data=", async () => {
+    const clean = JSON.stringify({
+      event: "$pageview",
+      properties: { token: KEY },
+    });
+    const response = await createTestApp().request(
+      `/tlm/e/?data=${encodeURIComponent(clean)}&ver=1&redirect_uri=${encodeURIComponent(
+        "https://user:SENTINEL_pw@example.com/x",
+      )}&code=SENTINEL_code`,
+    );
+    expect(response.status).toBe(200);
+    const { url } = forwardedCall();
+    expect(url.href).not.toContain("SENTINEL");
+    expect(url.searchParams.get("ver")).toBe("1");
+    expect(url.searchParams.get("code")).toBe("[redacted]");
+    expect(JSON.parse(url.searchParams.get("data") ?? "")).toEqual(
+      JSON.parse(clean),
+    );
+  });
+
   it("drops a ?data= that a POST carries next to its body", async () => {
     const response = await createTestApp().request(
       `/tlm/i/v0/e/?ver=1&data=${encodeURIComponent(SHARE_URL)}`,

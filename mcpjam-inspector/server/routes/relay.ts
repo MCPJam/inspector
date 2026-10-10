@@ -1,6 +1,7 @@
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
 import {
   containsCredential,
+  scrubCredentialUrl,
   scrubTelemetryValue,
 } from "../../shared/credential-urls.js";
 import { promisify } from "node:util";
@@ -1251,6 +1252,29 @@ function withDataParam(search: string, data: string | null): string {
   return out.length > 0 ? `?${out.join("&")}` : "";
 }
 
+const PROJECT_KEY_SHAPE = /^phc_[A-Za-z0-9]+$/;
+
+/**
+ * The query string as forwarded: every parameter but `data` through the
+ * credential scrub. `data` is the payload, already scrubbed and re-encoded by
+ * the inspection, and must reach PostHog byte for byte. So must `token` when
+ * it is a project key (`phc_…`): public by design, and checked against the
+ * relay's own project above. PostHog's flags (`compression`, `ver`, `ip`, `_`)
+ * carry nothing to scrub and pass as they are. Anything else a client added
+ * (`redirect_uri=…`, `code=…`) does not reach PostHog in the clear.
+ */
+function scrubForwardedSearch(search: string): string {
+  const body = search.startsWith("?") ? search.slice(1) : search;
+  if (body === "") return search;
+  const out = body.split("&").map((pair) => {
+    const [[key, value] = ["", ""]] = new URLSearchParams(pair);
+    if (key === "data") return pair;
+    if (key === "token" && PROJECT_KEY_SHAPE.test(value)) return pair;
+    return scrubCredentialUrl(`?${pair}`).slice(1);
+  });
+  return `?${out.join("&")}`;
+}
+
 // The text a body holds once inflated: its own length, or for gzip the size
 // its trailer declares. Null when that is more than the path may inflate to,
 // or the gzip is too short to be one.
@@ -1802,10 +1826,11 @@ relayRoutes.all("*", async (c) => {
 
     // Preserve the subpath verbatim (trailing slashes matter to PostHog) and
     // the query string (compression=gzip-js, ver, ip flags) — as the
-    // inspection left it: a GET's `?data=` is the scrubbed payload. The body
+    // inspection left it: a GET's `?data=` is the scrubbed payload — with
+    // every other parameter scrubbed (`scrubForwardedSearch`). The body
     // is the scrubbed, re-encoded payload on the event, log and metric paths;
     // fetch() sets its Content-Length (the client's was stripped above).
-    const target = `${upstreamBase}${subpath}${inspection.search}`;
+    const target = `${upstreamBase}${subpath}${scrubForwardedSearch(inspection.search)}`;
     try {
       upstream = await fetch(target, {
         method,

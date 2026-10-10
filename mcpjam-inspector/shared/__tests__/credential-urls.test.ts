@@ -372,9 +372,19 @@ describe("walker edge cases", () => {
     expect(out.u).toBe("/results/[redacted]");
   });
 
-  it("does not read a log line opening with code= as a form body", () => {
+  it("does not read a log line opening with an error code as a credential", () => {
     expect(scrubCredentialsInText("code=ENOENT while reading")).toBe(
       "code=ENOENT while reading",
+    );
+    expect(scrubCredentialsInText("code=500.")).toBe("code=500.");
+  });
+
+  it("scrubs a credential pair at the very start of a log line", () => {
+    expect(scrubCredentialsInText("token=sk_live_abc failed")).toBe(
+      "token=[redacted] failed",
+    );
+    expect(scrubCredentialsInText("code=4/0AbCdEf123 exchange failed")).toBe(
+      "code=[redacted] exchange failed",
     );
   });
 });

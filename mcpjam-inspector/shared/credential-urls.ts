@@ -669,6 +669,9 @@ const EMBEDDED_URL =
 /** Trailing sentence punctuation a URL in prose should not swallow. */
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
+/** An error or status code, not a secret: `ENOENT`, `ERR_TIMEOUT`, `500`. */
+const STATUS_CODE_VALUE = /^(?:[A-Z][A-Z0-9_]*|\d{1,4})[.,;:!?)]*$/;
+
 /**
  * `?code=…`, `&state=…`, `#access_token=…`, and their percent-encoded
  * spellings (a callback URL quoted inside another URL's query). Also at the
@@ -708,10 +711,15 @@ function scrubTextParams(text: string, depth = 0): string {
       ) {
         return match;
       }
-      // At the very start of the text, only a form body (`code=…&state=…`)
-      // counts; a log line that opens with `code=ENOENT` is not one.
-      const formStart = lead !== "" || depth > 0 || text.includes("&");
-      if (formStart && isSecretParamKey(safeDecode(key))) {
+      // At the very start of the text a pair is a credential too
+      // (`token=sk_…`, `code=4/0A…`), unless it is a form-less log line that
+      // opens with an error or status code (`code=ENOENT`, `code=500`).
+      const statusCode =
+        lead === "" &&
+        depth === 0 &&
+        !text.includes("&") &&
+        STATUS_CODE_VALUE.test(value);
+      if (!statusCode && isSecretParamKey(safeDecode(key))) {
         // Sentence punctuation after a value in prose is not part of it.
         const trailing = TRAILING_PUNCTUATION.exec(value)?.[0] ?? "";
         return `${lead}${key}${eq}${CREDENTIAL_PLACEHOLDER}${trailing}`;
