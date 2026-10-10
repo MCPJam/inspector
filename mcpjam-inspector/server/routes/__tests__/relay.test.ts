@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import relayRoutes, {
   RELAY_BODY_READ_TIMEOUT_MS,
   RELAY_MAX_BUFFERED_BYTES,
   RELAY_MAX_LARGE_PAYLOAD_CHECKS,
   RELAY_MAX_PAYLOAD_CHECKS,
-  RELAY_PARSE_MAX_BYTES,
   relayBodyLimit,
   scanPayloadTokens,
 } from "../relay.js";
@@ -33,6 +32,12 @@ vi.mock("node:zlib", async (importOriginal) => {
 });
 
 const ORIGINAL_FETCH = global.fetch;
+
+// Replay payloads used to be parsed outright up to this size and scanned
+// above it. They are always scanned now (never parsed whole), and the tests
+// below still send each payload both under and over it, so a regression to
+// a size-dependent reader shows up as a disagreement between the two.
+const RELAY_PARSE_MAX_BYTES = 64 * 1024;
 
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
 
@@ -271,7 +276,7 @@ describe("posthog relay proxy", () => {
     });
   });
 
-  it("strips cookie/host/session-auth headers and forwards the trusted client IP", async () => {
+  it("strips cookie/host/session-auth/referer headers and forwards the trusted client IP", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
@@ -286,6 +291,8 @@ describe("posthog relay proxy", () => {
         Cookie: "mcpjam_session=secret",
         "X-MCP-Session-Auth": "token",
         "User-Agent": "test-agent",
+        // The page posthog-js runs on, which on a share link is the token.
+        Referer: "https://app.mcpjam.com/results/SENTINEL_tok_123",
         // Edge chain: first hop is the real client per client-ip.ts.
         "X-Forwarded-For": "1.2.3.4, 10.0.0.1",
       },
@@ -303,6 +310,10 @@ describe("posthog relay proxy", () => {
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-mcp-session-auth")).toBeNull();
     expect(headers.get("host")).toBeNull();
+    expect(headers.get("referer")).toBeNull();
+    const forwardedValues: string[] = [];
+    headers.forEach((value) => forwardedValues.push(value));
+    expect(forwardedValues.join(" ")).not.toContain("SENTINEL");
     expect(headers.get("user-agent")).toBe("test-agent");
     expect(headers.get("x-forwarded-for")).toBe("1.2.3.4");
     expect(headers.get("x-real-ip")).toBe("1.2.3.4");
@@ -420,8 +431,11 @@ describe("posthog relay proxy", () => {
       ],
     ];
 
+    // Event bodies are scrubbed and re-encoded rather than forwarded as
+    // sent (relay-scrub.test.ts); one with nothing to scrub comes out as the
+    // same payload in the same encoding.
     it.each(encodings)(
-      "forwards a %s for our project byte for byte",
+      "forwards a %s for our project, encoded as it came",
       async (_name, encode) => {
         vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
         const body = encode(POSTHOG_PROJECT_KEY);
@@ -432,11 +446,13 @@ describe("posthog relay proxy", () => {
         });
 
         expect(response.status).toBe(200);
-        expect(
-          Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(
-            typeof body === "string" ? Buffer.from(body) : body,
-          ),
-        ).toBe(true);
+        const forwarded = Buffer.from(mockedFetchInit().body as ArrayBuffer);
+        if (typeof body === "string") {
+          expect(forwarded.toString("utf8")).toBe(body);
+        } else {
+          expect([forwarded[0], forwarded[1]]).toEqual([0x1f, 0x8b]);
+          expect(gunzipSync(forwarded).equals(gunzipSync(body))).toBe(true);
+        }
       },
     );
 
@@ -831,7 +847,7 @@ describe("posthog relay proxy", () => {
   describe("large payload reads", () => {
     type Events = Array<Record<string, unknown>>;
 
-    // Pads a payload past the size that is parsed outright, the way a replay
+    // Pads a payload past the size that used to be parsed outright, the way a replay
     // batch's snapshot data does: a large value on each event.
     function padded(events: Events): Events {
       return events.map((event) => ({

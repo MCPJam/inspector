@@ -74,19 +74,24 @@ describe("scrubLogPayload", () => {
     });
 
     it("replaces JWT-like strings", () => {
-      const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+      const jwt =
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
       const result = scrubLogPayload({ note: jwt }) as any;
       expect(result.note).toBe("[redacted-jwt]");
     });
 
     it("replaces email-like strings in values", () => {
-      const result = scrubLogPayload({ message: "contact user@example.com today" }) as any;
+      const result = scrubLogPayload({
+        message: "contact user@example.com today",
+      }) as any;
       expect(result.message).toContain("[redacted-email]");
       expect(result.message).not.toContain("user@example.com");
     });
 
     it("replaces sk- secret key patterns", () => {
-      const result = scrubLogPayload({ note: "sk-abcdefghijklmnopqrstuvwx" }) as any;
+      const result = scrubLogPayload({
+        note: "sk-abcdefghijklmnopqrstuvwx",
+      }) as any;
       expect(result.note).toContain("[redacted-secret]");
     });
 
@@ -184,18 +189,21 @@ describe("scrubLogPayload", () => {
 
     it("redacts basic-auth credentials in URLs", () => {
       const result = scrubLogPayload({
-        message: "getaddrinfo ENOTFOUND for https://user:hunter2@internal.host/mcp",
+        message:
+          "getaddrinfo ENOTFOUND for https://user:hunter2@internal.host/mcp",
       }) as any;
       expect(result.message).not.toContain("hunter2");
       expect(result.message).not.toContain("user");
       expect(result.message).toContain("https://internal.host/…");
 
-      // Schemes the URL reducer leaves alone still lose their userinfo.
+      // Schemes the URL reducer leaves alone still lose their userinfo: the
+      // credential registry strips it, username included, from every scheme.
       const db = scrubLogPayload({
         message: "connect failed for postgres://admin:hunter2@db.internal/app",
       }) as any;
       expect(db.message).not.toContain("hunter2");
-      expect(db.message).toContain("[redacted]@db.internal");
+      expect(db.message).not.toContain("admin");
+      expect(db.message).toBe("connect failed for postgres://db.internal/app");
     });
 
     it("leaves ordinary error strings readable", () => {
@@ -486,6 +494,81 @@ describe("scrubLogText", () => {
 
   it("caps at the length it is given", () => {
     expect(scrubLogText("abcdef", 3)).toBe("abc… [+3 chars]");
+  });
+
+  // The URL reducer only sees absolute web URLs. A credential in a RELATIVE
+  // path or a bare query has to be caught by the credential registry, which
+  // runs first (shared/credential-urls.ts).
+  describe("credential registry", () => {
+    it.each([
+      ["a share token in a relative path", "GET /results/SENTINEL_tok_123 404"],
+      [
+        "a bench secret in a relative path",
+        "not found: /bench/results/SENTINEL_hex",
+      ],
+      ["a score API path", "fetch /api/web/score/runs/SENTINEL_tok_123 failed"],
+      [
+        "a tester link",
+        "render failed at /user-testing/study-1/SENTINEL_tester",
+      ],
+      [
+        "a callback's one-time code",
+        "exchange failed for /oauth/callback?code=SENTINEL_code&state=SENTINEL_state",
+      ],
+      ["a bare query", "redirecting to ?code=SENTINEL_code"],
+      [
+        "a session token query",
+        "stream closed /api/mcp/servers/rpc/stream?_token=SENTINEL_session",
+      ],
+      [
+        "a presigned signature",
+        "upload to /bucket/obj?X-Amz-Signature=SENTINEL_sig failed",
+      ],
+      [
+        "a percent-encoded path inside a query",
+        "redirect=%2Fresults%2FSENTINEL_tok_123",
+      ],
+    ])("removes %s", (_name, text) => {
+      const scrubbed = scrubLogText(text);
+      expect(scrubbed).not.toContain("SENTINEL");
+      expect(scrubbed).toContain("[redacted]");
+    });
+
+    it("keeps the route around a scrubbed path segment", () => {
+      expect(scrubLogText("GET /results/SENTINEL_tok_123 404")).toBe(
+        "GET /results/[redacted] 404",
+      );
+      expect(scrubLogText("GET /user-testing/study-1/edit 200")).toBe(
+        "GET /user-testing/study-1/edit 200",
+      );
+    });
+
+    it("scrubs a path that log payloads carry under a plain key", () => {
+      // `path: c.req.path` is how the auth middleware and app.onError log a
+      // request; it is a plain key, so only the text scrubber sees it.
+      expect(
+        scrubLogPayload({
+          event: "auth.optional_actor_unresolved",
+          path: "/api/web/score/runs/SENTINEL_tok_123",
+        }),
+      ).toEqual({
+        event: "auth.optional_actor_unresolved",
+        path: "/api/web/score/runs/[redacted]",
+      });
+    });
+
+    it("still cuts absolute URLs to their origin", () => {
+      expect(
+        scrubLogText("see https://app.mcpjam.com/results/SENTINEL_tok_123"),
+      ).toBe("see https://app.mcpjam.com/…");
+    });
+
+    it("stays idempotent", () => {
+      const once = scrubLogText(
+        "GET /results/SENTINEL_tok_123?code=SENTINEL_code for bob@example.com",
+      );
+      expect(scrubLogText(once)).toBe(once);
+    });
   });
 });
 

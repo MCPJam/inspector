@@ -611,6 +611,12 @@ export type SystemEventMap = {
     rateLimitRejects: number;
     projectRejects: number;
     busyRejects: number;
+    /** Event/log/metric payloads dropped because they could not be shown clean. */
+    scrubDrops: number;
+    /** Replay batches accepted and dropped: they carried a credential URL. */
+    replayCredentialDrops: number;
+    /** Replay batches accepted and dropped: nested data could not be decoded. */
+    replayUndecodableDrops: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };
