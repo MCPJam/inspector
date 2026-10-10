@@ -63,78 +63,6 @@ type Phase =
 
 const SETTINGS_PATH = "/settings/integrations/github";
 
-interface CapturedCallback {
-  installationId: string | null;
-  state: string | null;
-  code: string | null;
-}
-
-/**
- * Where the captured callback survives a reload. The URL loses it at once (it
- * is a credential), so a reload while auth is still settling or while a
- * completion call is in flight would otherwise find nothing and report an
- * incomplete callback with the one-time state still unspent. Per tab, short
- * lived, and cleared as soon as a completion call settles — after that the
- * state is spent and a retry could only be refused.
- */
-export const GITHUB_CALLBACK_STORAGE_KEY = "mcpjam-github-install-callback";
-export const GITHUB_CALLBACK_STORAGE_TTL_MS = 5 * 60 * 1000;
-
-function captureGithubCallback(
-  searchParams: URLSearchParams,
-  now: number = Date.now(),
-): CapturedCallback {
-  const fromUrl: CapturedCallback = {
-    installationId: searchParams.get("installation_id"),
-    state: searchParams.get("state"),
-    code: searchParams.get("code"),
-  };
-  try {
-    if (fromUrl.state) {
-      sessionStorage.setItem(
-        GITHUB_CALLBACK_STORAGE_KEY,
-        JSON.stringify({
-          ...fromUrl,
-          expiresAt: now + GITHUB_CALLBACK_STORAGE_TTL_MS,
-        }),
-      );
-      return fromUrl;
-    }
-    const raw = sessionStorage.getItem(GITHUB_CALLBACK_STORAGE_KEY);
-    if (!raw) return fromUrl;
-    const stored = JSON.parse(raw) as Partial<CapturedCallback> & {
-      expiresAt?: unknown;
-    };
-    const asText = (value: unknown) =>
-      typeof value === "string" && value ? value : null;
-    if (
-      typeof stored.expiresAt !== "number" ||
-      stored.expiresAt <= now ||
-      !asText(stored.state)
-    ) {
-      sessionStorage.removeItem(GITHUB_CALLBACK_STORAGE_KEY);
-      return fromUrl;
-    }
-    return {
-      installationId: asText(stored.installationId),
-      state: asText(stored.state),
-      code: asText(stored.code),
-    };
-  } catch {
-    // Storage unavailable (private mode, a blocked partition): the flow still
-    // works without a reload, which is all it had before.
-    return fromUrl;
-  }
-}
-
-function clearStoredGithubCallback(): void {
-  try {
-    sessionStorage.removeItem(GITHUB_CALLBACK_STORAGE_KEY);
-  } catch {
-    // see above
-  }
-}
-
 export function GithubInstallCallbackRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
   const appNavigate = useAppNavigate();
@@ -193,9 +121,16 @@ export function GithubInstallCallbackRoute() {
   // whole point is that the URL stops carrying them while this page still
   // needs them.
   //
-  // Kept in `sessionStorage` too, for a reload before the backend has
-  // answered (`captureGithubCallback`).
-  const [captured] = useState(() => captureGithubCallback(searchParams));
+  // Memory only, deliberately: a credential copied into storage outlives the
+  // page that needed it. A reload before the backend has answered therefore
+  // lands on the "incomplete callback" message and the user starts the
+  // connection again — the state is one-time and short-lived, so a retry is
+  // what a restored copy would usually have come to anyway.
+  const [captured] = useState(() => ({
+    installationId: searchParams.get("installation_id"),
+    state: searchParams.get("state"),
+    code: searchParams.get("code"),
+  }));
   const { installationId, state, code } = captured;
 
   // Back to the bare callback path, REPLACING the entry — the `?code=` URL
@@ -259,7 +194,6 @@ export function GithubInstallCallbackRoute() {
         return;
       }
       void completeInstallSetup({ installationId: parsed, state })
-        .finally(clearStoredGithubCallback)
         .then(({ authorizeUrl }) => {
           try {
             redirectToGithub(authorizeUrl);
@@ -283,7 +217,6 @@ export function GithubInstallCallbackRoute() {
     // The OAuth leg.
     if (code && state) {
       void completeUserAuthorization({ code, state })
-        .finally(clearStoredGithubCallback)
         .then((result) => {
           if (result.status === "bound") {
             toast.success(`Connected ${result.accountLogin}.`);

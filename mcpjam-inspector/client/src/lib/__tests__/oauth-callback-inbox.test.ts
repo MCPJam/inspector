@@ -12,8 +12,6 @@ import {
   isOAuthCallbackPath,
   OAUTH_CALLBACK_EXPIRED_DESCRIPTION,
   OAUTH_CALLBACK_EXPIRED_ERROR,
-  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
-  OAUTH_CALLBACK_INBOX_TTL_MS,
   readOAuthCallbackParams,
   resetOAuthCallbackInboxForTests,
 } from "../oauth-callback-inbox";
@@ -31,11 +29,9 @@ import {
 //      authkit-js, and the GitHub install callback has its own page.
 //   3. Every reader still gets the whole answer, as often as it asks, for as
 //      long as the callback route is showing.
-//   4. A reload of the pending page restores the answer within a short TTL,
-//      and answers with an explicit error, never silence, once it cannot.
-//   5. Consuming clears the reload copy too.
-
-const NOW = 1_700_000_000_000;
+//   4. The code is held in memory only — never written to storage — so a
+//      reload of the pending page answers with an explicit error, never
+//      silence and never a restored credential.
 
 /** A fresh module instance: what a page reload gives `main.tsx`. */
 async function reloadInboxModule() {
@@ -43,9 +39,13 @@ async function reloadInboxModule() {
   return import("../oauth-callback-inbox");
 }
 
-function storedEntry(): Record<string, unknown> | null {
-  const raw = sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY);
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+/** Everything in both storages, to prove a code never lands in either. */
+function storageText(): string {
+  const read = (storage: Storage) =>
+    Array.from({ length: storage.length }, (_, i) =>
+      storage.getItem(storage.key(i) ?? ""),
+    ).join("\n");
+  return `${read(sessionStorage)}\n${read(localStorage)}`;
 }
 
 beforeEach(() => {
@@ -66,7 +66,7 @@ describe("capturing the callback", () => {
       "/oauth/callback?code=one-time-code&state=s1&iss=https%3A%2F%2Fauth.example.com&session_state=xyz",
     );
 
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(true);
+    expect(captureOAuthCallbackFromUrl()).toBe(true);
 
     expect(window.location.pathname).toBe("/oauth/callback");
     expect(window.location.search).toBe("?oauth_pending=1");
@@ -88,7 +88,7 @@ describe("capturing the callback", () => {
       "",
       "/oauth/callback?error=access_denied&error_description=User%20said%20no&error_uri=https%3A%2F%2Fdocs&state=s1",
     );
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
 
     const params = readOAuthCallbackParams();
     expect(params?.get("error")).toBe("access_denied");
@@ -103,7 +103,7 @@ describe("capturing the callback", () => {
       "",
       "/oauth/callback/debug?code=dbg&state=s",
     );
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(true);
+    expect(captureOAuthCallbackFromUrl()).toBe(true);
     expect(window.location.pathname).toBe("/oauth/callback/debug");
     expect(window.location.search).toBe("?oauth_pending=1");
     expect(readOAuthCallbackParams()?.get("code")).toBe("dbg");
@@ -117,20 +117,20 @@ describe("capturing the callback", () => {
     "/servers?code=x",
   ])("leaves %s alone", (url) => {
     window.history.replaceState(null, "", url);
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(false);
+    expect(captureOAuthCallbackFromUrl()).toBe(false);
     expect(`${window.location.pathname}${window.location.search}`).toBe(url);
-    expect(storedEntry()).toBeNull();
+    expect(readOAuthCallbackParams()).toBeNull();
   });
 
   it("does nothing on a callback path with no query", () => {
     window.history.replaceState(null, "", "/oauth/callback");
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(false);
+    expect(captureOAuthCallbackFromUrl()).toBe(false);
     expect(window.location.search).toBe("");
   });
 
   it("keeps a plain anchor fragment", () => {
     window.history.replaceState(null, "", "/oauth/callback?code=c#tools");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     expect(window.location.hash).toBe("#tools");
   });
 
@@ -143,27 +143,26 @@ describe("capturing the callback", () => {
     "#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
   ])("drops a fragment that could carry a secret (%s)", (fragment) => {
     window.history.replaceState(null, "", `/oauth/callback?code=c${fragment}`);
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     expect(window.location.hash).toBe("");
     expect(window.location.href).not.toContain(fragment.slice(1));
   });
 
   it("keeps a fragment of non-secret keys", () => {
     window.history.replaceState(null, "", "/oauth/callback?code=c#tab=tools");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     expect(window.location.hash).toBe("#tab=tools");
   });
 
-  it("writes a reload copy that expires within the TTL", () => {
-    window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    captureOAuthCallbackFromUrl(NOW);
-    expect(storedEntry()).toEqual({
-      pathname: "/oauth/callback",
-      params: "code=c&state=s",
-      expiresAt: NOW + OAUTH_CALLBACK_INBOX_TTL_MS,
-    });
-    // "A few minutes": long enough for a reload, shorter than a code lives.
-    expect(OAUTH_CALLBACK_INBOX_TTL_MS).toBeLessThanOrEqual(10 * 60 * 1000);
+  it("never writes the code to storage", () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/oauth/callback?code=one-time-code&state=s",
+    );
+    captureOAuthCallbackFromUrl();
+    expect(readOAuthCallbackParams()?.get("code")).toBe("one-time-code");
+    expect(storageText()).not.toContain("one-time-code");
   });
 
   it("still captures and scrubs when storage is unavailable", () => {
@@ -171,7 +170,7 @@ describe("capturing the callback", () => {
       throw new Error("QuotaExceededError");
     });
     window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(true);
+    expect(captureOAuthCallbackFromUrl()).toBe(true);
     expect(window.location.search).toBe("?oauth_pending=1");
     expect(readOAuthCallbackParams()?.get("code")).toBe("c");
   });
@@ -187,7 +186,7 @@ describe("capturing the callback", () => {
         `${window.location.pathname}${window.location.search}`,
       ),
     ).toBe(true);
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     expect(
       containsCredential(
         `${window.location.pathname}${window.location.search}`,
@@ -199,7 +198,7 @@ describe("capturing the callback", () => {
 describe("reading the inbox", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
   });
 
   it("is non-destructive and hands out copies", () => {
@@ -233,16 +232,15 @@ describe("reading the inbox", () => {
   it("counts only a code or an error as a pending answer", () => {
     resetOAuthCallbackInboxForTests();
     window.history.replaceState(null, "", "/oauth/callback?state=only");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     expect(readOAuthCallbackParams()?.get("state")).toBe("only");
     expect(hasPendingOAuthCallback()).toBe(false);
   });
 
-  it("consuming returns the answer and clears memory and the reload copy", () => {
+  it("consuming returns the answer and clears it", () => {
     expect(consumeOAuthCallbackParams()?.get("code")).toBe("c");
     expect(readOAuthCallbackParams()).toBeNull();
     expect(hasPendingOAuthCallback()).toBe(false);
-    expect(storedEntry()).toBeNull();
   });
 });
 
@@ -261,23 +259,13 @@ describe("the URL fallback", () => {
 });
 
 describe("a reload of the pending page", () => {
-  it("restores the answer within the TTL", async () => {
+  it("answers with an explicit error: the code did not survive it", async () => {
     window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
 
     const reloaded = await reloadInboxModule();
     expect(reloaded.readOAuthCallbackParams()).toBeNull();
-    expect(reloaded.captureOAuthCallbackFromUrl(NOW + 60_000)).toBe(true);
-    expect(reloaded.readOAuthCallbackParams()?.get("code")).toBe("c");
-    expect(window.location.search).toBe("?oauth_pending=1");
-  });
-
-  it("answers with an explicit error once the TTL has passed", async () => {
-    window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    captureOAuthCallbackFromUrl(NOW);
-
-    const reloaded = await reloadInboxModule();
-    reloaded.captureOAuthCallbackFromUrl(NOW + OAUTH_CALLBACK_INBOX_TTL_MS);
+    expect(reloaded.captureOAuthCallbackFromUrl()).toBe(true);
     const params = reloaded.readOAuthCallbackParams();
     expect(params?.get("code")).toBeNull();
     expect(params?.get("error")).toBe(OAUTH_CALLBACK_EXPIRED_ERROR);
@@ -285,59 +273,25 @@ describe("a reload of the pending page", () => {
       OAUTH_CALLBACK_EXPIRED_DESCRIPTION,
     );
     expect(reloaded.hasPendingOAuthCallback()).toBe(true);
-    // The expired copy is gone, not merely ignored.
-    expect(storedEntry()).toBeNull();
+    expect(window.location.search).toBe("?oauth_pending=1");
   });
 
   it("answers with an explicit error after the answer was consumed", async () => {
     window.history.replaceState(null, "", "/oauth/callback?code=c&state=s");
-    captureOAuthCallbackFromUrl(NOW);
+    captureOAuthCallbackFromUrl();
     consumeOAuthCallbackParams();
 
     const reloaded = await reloadInboxModule();
-    reloaded.captureOAuthCallbackFromUrl(NOW + 1_000);
+    reloaded.captureOAuthCallbackFromUrl();
     expect(reloaded.readOAuthCallbackParams()?.get("code")).toBeNull();
     expect(reloaded.readOAuthCallbackParams()?.get("error")).toBe(
       OAUTH_CALLBACK_EXPIRED_ERROR,
     );
-  });
-
-  it("does not restore a copy taken on a different callback pathname", async () => {
-    window.history.replaceState(null, "", "/oauth/callback/debug?code=dbg");
-    captureOAuthCallbackFromUrl(NOW);
-    window.history.replaceState(null, "", "/oauth/callback?oauth_pending=1");
-
-    const reloaded = await reloadInboxModule();
-    reloaded.captureOAuthCallbackFromUrl(NOW + 1_000);
-    expect(reloaded.readOAuthCallbackParams()?.get("code")).toBeNull();
-    expect(reloaded.readOAuthCallbackParams()?.get("error")).toBe(
-      OAUTH_CALLBACK_EXPIRED_ERROR,
-    );
-  });
-
-  it.each([
-    ["malformed JSON", "{not json"],
-    [
-      "an immortal expiry",
-      JSON.stringify({
-        pathname: "/oauth/callback",
-        params: "code=c",
-        expiresAt: null,
-      }),
-    ],
-  ])("ignores %s in storage", async (_label, raw) => {
-    sessionStorage.setItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY, raw);
-    window.history.replaceState(null, "", "/oauth/callback?oauth_pending=1");
-
-    const reloaded = await reloadInboxModule();
-    reloaded.captureOAuthCallbackFromUrl(NOW);
-    expect(reloaded.readOAuthCallbackParams()?.get("code")).toBeNull();
-    expect(storedEntry()).toBeNull();
   });
 
   it("does not invent an answer for a marker off the callback route", () => {
     window.history.replaceState(null, "", "/servers?oauth_pending=1");
-    expect(captureOAuthCallbackFromUrl(NOW)).toBe(false);
+    expect(captureOAuthCallbackFromUrl()).toBe(false);
     expect(readOAuthCallbackParams()).toBeNull();
   });
 });
@@ -347,7 +301,6 @@ describe("depositing an answer that arrived another way", () => {
     const target = depositOAuthCallbackParams(
       new URLSearchParams("code=desk&state=electron_mcp%3Aone&oauth_pending=1"),
       "/oauth/callback",
-      NOW,
     );
     expect(target).toBe("/oauth/callback?oauth_pending=1");
     expect(target).not.toContain("desk");
@@ -355,7 +308,7 @@ describe("depositing an answer that arrived another way", () => {
     window.history.replaceState(null, "", target);
     const params = readOAuthCallbackParams();
     expect(params?.toString()).toBe("code=desk&state=electron_mcp%3Aone");
-    expect(storedEntry()?.expiresAt).toBe(NOW + OAUTH_CALLBACK_INBOX_TTL_MS);
+    expect(storageText()).not.toContain("desk");
   });
 });
 

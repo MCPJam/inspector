@@ -5,7 +5,6 @@ import OAuthDebugCallback, {
 } from "../OAuthDebugCallback";
 import {
   captureOAuthCallbackFromUrl,
-  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
   readOAuthCallbackParams,
   resetOAuthCallbackInboxForTests,
 } from "@/lib/oauth-callback-inbox";
@@ -95,11 +94,13 @@ describe("OAuthDebugCallback", () => {
         state: "inbox-state",
         iss: "https://auth.example.com",
       });
-      // Handed to the opener: no reload copy left behind.
+      // Handed to the opener; the code was never written to storage.
       expect(readOAuthCallbackParams()).toBeNull();
       expect(
-        sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY),
-      ).toBeNull();
+        Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+      ).not.toContain("inbox-code");
       // And the card still says it worked, rather than re-reading an empty
       // inbox as "Missing code or error in response".
       expect(

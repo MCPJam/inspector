@@ -53,7 +53,6 @@ import {
 } from "@/lib/server-connection-handoff";
 import {
   captureOAuthCallbackFromUrl,
-  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
   readOAuthCallbackParams,
   resetOAuthCallbackInboxForTests,
 } from "@/lib/oauth-callback-inbox";
@@ -571,8 +570,12 @@ describe("returning from the authorization server", () => {
       errorDescription: undefined,
       error: undefined,
     });
-    // Spent: the reload copy goes with the callback route.
-    expect(sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY)).toBeNull();
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("auth-code");
   });
 
   it("keeps the inbox's answer when completing fails, so a reload can retry", async () => {

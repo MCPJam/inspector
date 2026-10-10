@@ -22,7 +22,6 @@ import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import {
   captureOAuthCallbackFromUrl,
-  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
   resetOAuthCallbackInboxForTests,
 } from "@/lib/oauth-callback-inbox";
 
@@ -2410,8 +2409,12 @@ describe("useServerState OAuth callback failures", () => {
       expect(window.location.pathname).toBe("/servers");
     });
     expect(window.location.search).toBe("");
-    // Spent: the reload copy does not outlive the callback route.
-    expect(sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY)).toBeNull();
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("inbox-code");
     expect(handleOAuthCallbackMock).toHaveBeenCalledTimes(1);
   });
 

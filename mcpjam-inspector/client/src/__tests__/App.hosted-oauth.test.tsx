@@ -9,7 +9,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   captureOAuthCallbackFromUrl,
-  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
   resetOAuthCallbackInboxForTests,
 } from "../lib/oauth-callback-inbox";
 import userEvent from "@testing-library/user-event";
@@ -955,7 +954,12 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(window.location.pathname).not.toBe("/oauth/callback");
     });
-    expect(sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY)).toBeNull();
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("oauth-code");
     resetOAuthCallbackInboxForTests();
   });
 

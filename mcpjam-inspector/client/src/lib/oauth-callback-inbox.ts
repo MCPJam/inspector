@@ -30,33 +30,15 @@
  * code there; nothing in this app reads a callback fragment, so losing one
  * costs nothing.
  *
- * PERSISTENCE: memory, mirrored to `sessionStorage` for a few minutes. Memory
- * alone loses the answer on any reload of the pending page — and `main.tsx`
- * itself offers one: its "Reload MCPJam" recovery for a failed bootstrap chunk
- * reloads exactly this page. A user who refreshes a slow exchange is the other
- * case. Either way the URL no longer holds the code, so without a copy the
- * callback is simply gone.
+ * PERSISTENCE: memory only. The code is a credential, and a copy in any
+ * storage outlives the page that needed it — so a reload of the pending page
+ * (a user refreshing a slow exchange, or `main.tsx`'s own "Reload MCPJam"
+ * recovery) does not restore it. It is answered instead with the explicit
+ * "expired" error below, and the user starts the connection again. The code
+ * is single-use and expires within minutes anyway, so a retry is what a
+ * restored copy would usually have come to.
  *
- * The copy is bounded on every side, because it is a credential:
- *
- *  - `sessionStorage`, not `localStorage`: one tab, never synced, gone with
- *    the tab.
- *  - A short TTL (`OAUTH_CALLBACK_INBOX_TTL_MS`). Authorization servers expire
- *    codes within minutes (RFC 6749 §4.1.2 recommends ten at most), so a copy
- *    older than that could only ever fail the exchange.
- *  - Restored only on the pending URL itself (the callback pathname with the
- *    marker), and only for the pathname it was captured on.
- *  - Cleared once consumed (`consumeOAuthCallbackParams`).
- *
- * And what it adds is small: the code is single-use and PKCE-bound, so
- * redeeming it also needs the `code_verifier` — which this origin ALREADY
- * keeps in `localStorage` for the duration of the flow. A script that can read
- * this tab's `sessionStorage` can read that too; the copy here gives it
- * nothing it did not have. What the copy must never do is outlive the flow,
- * and the TTL and the consume are what stop it.
- *
- * A RELOAD WITH NOTHING TO RESTORE (storage blocked, or the TTL ran out) is
- * answered with an explicit `error` instead of an empty inbox. Every reader
+ * A RELOAD OF THE PENDING PAGE is answered with an explicit `error` instead of an empty inbox. Every reader
  * already has an error path that tells the user and routes them home; an
  * empty inbox on `/oauth/callback` would instead leave the app on its
  * callback loading screen with nothing that could ever finish it.
@@ -75,12 +57,6 @@ export const OAUTH_PENDING_PARAM = "oauth_pending";
 /** The marker's value. */
 export const OAUTH_PENDING_VALUE = "1";
 
-/** How long a reload of the pending page can still restore the answer. */
-export const OAUTH_CALLBACK_INBOX_TTL_MS = 5 * 60 * 1000;
-
-/** `sessionStorage` key of the reload copy. */
-export const OAUTH_CALLBACK_INBOX_STORAGE_KEY = "mcpjam.oauth-callback-inbox";
-
 /** What a reload with nothing to restore answers with. */
 export const OAUTH_CALLBACK_EXPIRED_ERROR = "invalid_request";
 export const OAUTH_CALLBACK_EXPIRED_DESCRIPTION =
@@ -91,10 +67,6 @@ interface InboxEntry {
   pathname: string;
   /** The answer, as a query string without `?`. */
   params: string;
-}
-
-interface StoredInboxEntry extends InboxEntry {
-  expiresAt: number;
 }
 
 let inbox: InboxEntry | null = null;
@@ -153,74 +125,21 @@ function isSafeFragment(hash: string): boolean {
   });
 }
 
-function writeStoredEntry(entry: InboxEntry, now: number): void {
-  try {
-    const stored: StoredInboxEntry = {
-      ...entry,
-      expiresAt: now + OAUTH_CALLBACK_INBOX_TTL_MS,
-    };
-    sessionStorage.setItem(
-      OAUTH_CALLBACK_INBOX_STORAGE_KEY,
-      JSON.stringify(stored),
-    );
-  } catch {
-    // Unavailable storage costs only the reload case, which then answers
-    // with the explicit "expired" error rather than restoring.
-  }
-}
-
-function clearStoredEntry(): void {
-  try {
-    sessionStorage.removeItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY);
-  } catch {
-    // Nothing to clear when storage is unavailable.
-  }
-}
-
-function readStoredEntry(pathname: string, now: number): InboxEntry | null {
-  let raw: string | null = null;
-  try {
-    raw = sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<StoredInboxEntry> | null;
-    if (
-      typeof parsed?.pathname !== "string" ||
-      typeof parsed?.params !== "string" ||
-      // `Number.isFinite`: `Infinity` and `NaN` both pass a `typeof` check and
-      // both defeat the `<=` below, which would make the copy immortal.
-      !Number.isFinite(parsed?.expiresAt) ||
-      parsed.expiresAt! <= now ||
-      parsed.pathname !== pathname
-    ) {
-      clearStoredEntry();
-      return null;
-    }
-    return { pathname: parsed.pathname, params: parsed.params };
-  } catch {
-    clearStoredEntry();
-    return null;
-  }
-}
-
 /**
  * Move an MCP OAuth callback's answer from the address bar into the inbox.
  * Runs once, in `main.tsx`, before telemetry exists.
  *
- *  - A callback path with a query: every parameter goes into the inbox (and
- *    the reload copy), and the URL becomes `<pathname>?oauth_pending=1`,
+ *  - A callback path with a query: every parameter goes into the inbox, and
+ *    the URL becomes `<pathname>?oauth_pending=1`,
  *    keeping `history.state` and any fragment that carries no secret.
  *  - A callback path with only the marker: a reload of the pending page.
- *    The answer comes back from the reload copy, or — when there is none —
- *    as the explicit "expired" error (see the module docblock).
+ *    Nothing survived it (memory only), so the answer is the explicit
+ *    "expired" error (see the module docblock).
  *  - Anything else: untouched.
  *
  * Returns whether the inbox now holds an answer.
  */
-export function captureOAuthCallbackFromUrl(now: number = Date.now()): boolean {
+export function captureOAuthCallbackFromUrl(): boolean {
   if (typeof window === "undefined") return false;
   const { pathname, search, hash } = window.location;
   if (!isOAuthCallbackPath(pathname)) return false;
@@ -230,12 +149,10 @@ export function captureOAuthCallbackFromUrl(now: number = Date.now()): boolean {
   params.delete(OAUTH_PENDING_PARAM);
 
   if ([...params.keys()].length > 0) {
-    const entry = { pathname, params: params.toString() };
-    inbox = entry;
-    writeStoredEntry(entry, now);
+    inbox = { pathname, params: params.toString() };
   } else if (marked) {
     if (inbox?.pathname === pathname) return true;
-    inbox = readStoredEntry(pathname, now) ?? {
+    inbox = {
       pathname,
       params: new URLSearchParams({
         error: OAUTH_CALLBACK_EXPIRED_ERROR,
@@ -269,13 +186,10 @@ export function captureOAuthCallbackFromUrl(now: number = Date.now()): boolean {
 export function depositOAuthCallbackParams(
   params: URLSearchParams,
   pathname = "/oauth/callback",
-  now: number = Date.now(),
 ): string {
   const copy = new URLSearchParams(params);
   copy.delete(OAUTH_PENDING_PARAM);
-  const entry = { pathname, params: copy.toString() };
-  inbox = entry;
-  writeStoredEntry(entry, now);
+  inbox = { pathname, params: copy.toString() };
   return oauthPendingPath(pathname);
 }
 
@@ -312,19 +226,17 @@ export function hasPendingOAuthCallback(): boolean {
 }
 
 /**
- * Take the answer and clear it — memory and the reload copy. Called by the
+ * Take the answer and clear it. Called by the
  * owner that finished the callback, right before it leaves the callback
  * route, so the code does not outlive the flow it belonged to.
  */
 export function consumeOAuthCallbackParams(): URLSearchParams | null {
   const params = readOAuthCallbackParams();
   inbox = null;
-  clearStoredEntry();
   return params;
 }
 
-/** Test-only: forget everything, including the reload copy. */
+/** Test-only: forget everything. */
 export function resetOAuthCallbackInboxForTests(): void {
   inbox = null;
-  clearStoredEntry();
 }
