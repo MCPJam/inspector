@@ -5,6 +5,10 @@ import {
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "@/lib/oauth-callback-inbox";
 import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
@@ -3366,7 +3370,12 @@ export function useServerState({
     if (isLoading) return;
     if (isAuthLoading) return;
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started (the address bar holds only `?oauth_pending=1`). Read,
+    // not consumed: this effect re-runs on every dependency change and the
+    // attempt key below is what dedupes it. Consumed at the two exits that
+    // leave the callback route.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const state = urlParams.get("state");
     const error = urlParams.get("error");
@@ -3480,6 +3489,9 @@ export function useServerState({
         window.addEventListener(FIRST_RUN_OAUTH_CANCELLED_EVENT, markCancelled);
       }
       const restoreCallbackUrl = () => {
+        // The exchange has settled either way, so the answer is spent (or
+        // abandoned, on a cancel): its reload copy must not outlive the flow.
+        consumeOAuthCallbackParams();
         if (wasCancelled) return;
         // The pending marker pinned the organization the flow started in.
         // Re-apply it as the explicit selection before navigating: most
@@ -3500,11 +3512,12 @@ export function useServerState({
         navigateApp(returnTarget, { replace: true });
       };
 
-      // Strip the ?code from the URL only after completion settles. The
-      // pending-marker org pin (use-app-state) is scoped to "callback params
-      // present in the URL"; stripping eagerly killed the pin mid-completion,
-      // so the active org/project flipped to the fallback organization while
-      // the token exchange was still in flight.
+      // Consume the answer and leave the callback route only after completion
+      // settles. The pending-marker org pin (use-app-state) is scoped to "a
+      // callback answer is pending" (the inbox, formerly `?code=` in the URL);
+      // ending that eagerly killed the pin mid-completion, so the active
+      // org/project flipped to the fallback organization while the token
+      // exchange was still in flight.
       void handleOAuthCallbackComplete(
         code,
         state,
@@ -3553,6 +3566,7 @@ export function useServerState({
       const returnTarget = hostedOAuthCallbackContext?.returnPath
         ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
         : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+      consumeOAuthCallbackParams();
       navigateApp(returnTarget, { replace: true });
     }
   }, [
@@ -4163,9 +4177,9 @@ export function useServerState({
           return;
         }
 
-        const hasPendingCallback = new URLSearchParams(
-          window.location.search,
-        ).has("code");
+        // From the inbox: the address bar no longer carries the `code`.
+        const hasPendingCallback =
+          readOAuthCallbackParams()?.has("code") === true;
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
@@ -4421,9 +4435,9 @@ export function useServerState({
         authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
-      const hasPendingOAuthCallback = new URLSearchParams(
-        window.location.search,
-      ).has("code");
+      // From the inbox: the address bar no longer carries the `code`.
+      const hasPendingOAuthCallback =
+        readOAuthCallbackParams()?.has("code") === true;
       if (!formData.useOAuth && !hasPendingOAuthCallback) {
         clearOAuthData(serverName);
       }
@@ -4911,9 +4925,9 @@ export function useServerState({
       return;
     }
 
-    const oauthCallbackInProgress = new URLSearchParams(
-      window.location.search,
-    ).has("code");
+    // From the inbox: the address bar no longer carries the `code`.
+    const oauthCallbackInProgress =
+      readOAuthCallbackParams()?.has("code") === true;
 
     const applyCliUiConfig = (cliConfig: any) => {
       if (

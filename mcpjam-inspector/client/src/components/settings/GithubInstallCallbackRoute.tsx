@@ -64,7 +64,7 @@ type Phase =
 const SETTINGS_PATH = "/settings/integrations/github";
 
 export function GithubInstallCallbackRoute() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const appNavigate = useAppNavigate();
   const {
     completeInstallSetup,
@@ -113,9 +113,40 @@ export function GithubInstallCallbackRoute() {
   // synchronously, before the second invocation can read it.
   const startedRef = useRef(false);
 
-  const installationId = searchParams.get("installation_id");
-  const state = searchParams.get("state");
-  const code = searchParams.get("code");
+  // CAPTURED ONCE, ON MOUNT, then taken out of the address bar (the effect
+  // just below). GitHub's `code` is a one-time credential and `state` is the
+  // other half of the proof; every telemetry sink and every `Referer` sees the
+  // URL, and the flow below can sit on a picker for as long as the user takes
+  // to choose. A state initializer rather than a read per render, because the
+  // whole point is that the URL stops carrying them while this page still
+  // needs them.
+  const [captured] = useState(() => ({
+    installationId: searchParams.get("installation_id"),
+    state: searchParams.get("state"),
+    code: searchParams.get("code"),
+  }));
+  const { installationId, state, code } = captured;
+
+  // Back to the bare callback path, REPLACING the entry — the `?code=` URL
+  // must not survive in history for the back button to replay (the state is
+  // spent by then, so a replay could only land on a refusal anyway). The
+  // router's own setter, not `appNavigate`: this is not an exit, the page
+  // stays, and only its query goes.
+  const hasCallbackQuery =
+    searchParams.has("code") ||
+    searchParams.has("state") ||
+    searchParams.has("installation_id");
+  useEffect(() => {
+    if (!hasCallbackQuery) return;
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }, [hasCallbackQuery, setSearchParams]);
+
+  // Every exit REPLACES the callback entry: going "back" from settings must
+  // not return to a callback page that no longer has anything to finish.
+  const leaveToSettings = useCallback(
+    () => appNavigate(SETTINGS_PATH, { replace: true }),
+    [appNavigate],
+  );
 
   const fail = useCallback((error: unknown) => {
     setPhase({
@@ -183,7 +214,7 @@ export function GithubInstallCallbackRoute() {
         .then((result) => {
           if (result.status === "bound") {
             toast.success(`Connected ${result.accountLogin}.`);
-            appNavigate(SETTINGS_PATH);
+            leaveToSettings();
             return;
           }
           // NOTHING TO PICK FROM, and that is an answer rather than a
@@ -223,7 +254,6 @@ export function GithubInstallCallbackRoute() {
     // Neither. Somebody opened or reloaded this URL directly.
     setPhase({ kind: "failed", message: GITHUB_CALLBACK_INCOMPLETE_MESSAGE });
   }, [
-    appNavigate,
     canCall,
     code,
     completeInstallSetup,
@@ -231,6 +261,7 @@ export function GithubInstallCallbackRoute() {
     fail,
     installationId,
     isAuthSettling,
+    leaveToSettings,
     state,
     workosUser,
   ]);
@@ -275,7 +306,7 @@ export function GithubInstallCallbackRoute() {
         installationId: installation.installationId,
       });
       toast.success(`Connected ${installation.accountLogin}.`);
-      appNavigate(SETTINGS_PATH);
+      leaveToSettings();
     } catch (error) {
       fail(error);
     } finally {
@@ -305,10 +336,7 @@ export function GithubInstallCallbackRoute() {
             <p role="status" className="text-sm text-muted-foreground">
               {phase.message}
             </p>
-            <Button
-              variant="outline"
-              onClick={() => appNavigate(SETTINGS_PATH)}
-            >
+            <Button variant="outline" onClick={leaveToSettings}>
               Back to GitHub Checks
             </Button>
           </div>
@@ -333,10 +361,7 @@ export function GithubInstallCallbackRoute() {
                 on any account you administer. Install it from the app&rsquo;s
                 page on GitHub, then connect it here.
               </p>
-              <Button
-                variant="outline"
-                onClick={() => appNavigate(SETTINGS_PATH)}
-              >
+              <Button variant="outline" onClick={leaveToSettings}>
                 Back to GitHub Checks
               </Button>
             </div>

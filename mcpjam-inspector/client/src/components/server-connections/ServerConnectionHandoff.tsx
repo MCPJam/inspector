@@ -26,6 +26,7 @@ import {
   callbackMatchesPending,
   clearPendingAuthorization,
   HANDOFF_SIGN_IN_STATE_KEY,
+  handoffRefusedPath,
   handoffRequestPath,
   isTerminalHandoffStatus,
   isWaitingHandoffStatus,
@@ -37,6 +38,10 @@ import {
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "@/lib/oauth-callback-inbox";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
@@ -289,6 +294,15 @@ export function ServerConnectionHandoff() {
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const claimed = useRef(false);
+  // The link as it was opened, held in memory only. A claim that does not
+  // succeed takes the token out of the address bar (below), but the two
+  // recoveries for a refusal about WHO is asking — sign in, switch account —
+  // must come back to this exact link, and the token is the link.
+  const claimLinkRef = useRef<string | null>(
+    matchHandoffRoute(window.location.pathname)?.kind === "claim"
+      ? `${window.location.pathname}${window.location.search}`
+      : null,
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -323,7 +337,9 @@ export function ServerConnectionHandoff() {
 
     void (async () => {
       const route = matchHandoffRoute(window.location.pathname);
-      const callback = readCallbackParams(window.location.search);
+      // The callback's answer from the inbox `main.tsx` moved it into before
+      // telemetry started; the address bar holds only `?oauth_pending=1`.
+      const callback = readCallbackParams(readOAuthCallbackParams() ?? "");
       const pending = readPendingAuthorization();
 
       try {
@@ -355,6 +371,10 @@ export function ServerConnectionHandoff() {
           // one thing that could route them home already gone — and a reload,
           // the obvious thing to try, would do nothing.
           clearPendingAuthorization();
+          // Spent: its reload copy goes with the callback route. Kept on a
+          // failure above, for the same reason the marker is — a reload is the
+          // obvious retry, and it needs the answer.
+          consumeOAuthCallbackParams();
           window.history.replaceState(
             {},
             "",
@@ -362,6 +382,15 @@ export function ServerConnectionHandoff() {
           );
         }
       } catch (cause) {
+        // A claim that did not succeed must not leave its token in the address
+        // bar for as long as the error screen stays up: every telemetry sink
+        // and every `Referer` sees the URL. The success path trades it for the
+        // request page; this is the same rule for every other outcome. The
+        // resume below may still move on to the request page, and the
+        // recoveries use `claimLinkRef`, not the URL.
+        if (route?.kind === "claim") {
+          window.history.replaceState({}, "", handoffRefusedPath());
+        }
         // A refusal about WHO is asking is recoverable, and gets its own
         // screen with the action that recovers it. Everything else is the
         // existing dead-end report.
@@ -484,10 +513,10 @@ export function ServerConnectionHandoff() {
   /**
    * Sign in and come back to THIS link.
    *
-   * The return path is the address bar as it stands, which on a refused claim
-   * still carries the handoff token — the page only strips it after a claim
-   * SUCCEEDS. `rememberHandoffSignInReturn` keeps that path same-origin and
-   * sends only a nonce through AuthKit; see its docblock.
+   * The return path is the link as it was opened (`claimLinkRef`), NOT the
+   * address bar: a refused claim has already taken the token out of the URL,
+   * and coming back needs it. `rememberHandoffSignInReturn` keeps that path
+   * same-origin and sends only a nonce through AuthKit; see its docblock.
    *
    * A `null` nonce means the return could not be stored, so the user signs in
    * without one and lands on the app shell rather than back here. Refusing to
@@ -496,7 +525,8 @@ export function ServerConnectionHandoff() {
   const signInAndReturn = useCallback(() => {
     setBusy(true);
     const nonce = rememberHandoffSignInReturn(
-      `${window.location.pathname}${window.location.search}`,
+      claimLinkRef.current ??
+        `${window.location.pathname}${window.location.search}`,
       window.location.origin,
     );
     void Promise.resolve(
@@ -528,7 +558,12 @@ export function ServerConnectionHandoff() {
     // And the gate, for the same reason: Convex drops its identity on the
     // render that loses the user. See `pause-queries-before-auth-clear`.
     pauseQueriesBeforeAuthClear();
-    const back = `${window.location.pathname}${window.location.search}`;
+    // The link itself, from memory: the address bar no longer carries the
+    // token after a refusal. Loading it puts the token back in the URL only for
+    // the claim that follows, which takes it out again either way.
+    const back =
+      claimLinkRef.current ??
+      `${window.location.pathname}${window.location.search}`;
     // Revoke the session being dropped before WorkOS forgets it; bounded,
     // never rejects. See `revoke-session`.
     void startSessionRevocation(getAccessToken)

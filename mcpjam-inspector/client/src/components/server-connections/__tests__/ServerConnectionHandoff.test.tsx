@@ -51,6 +51,12 @@ import {
   rememberPendingAuthorization,
   takeHandoffSignInReturn,
 } from "@/lib/server-connection-handoff";
+import {
+  captureOAuthCallbackFromUrl,
+  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
+  readOAuthCallbackParams,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 
 const ORIGIN = "https://app.mcpjam.test";
 // Carries the `state` the marker binds to; the callbacks below return it.
@@ -115,6 +121,7 @@ function goTo(path: string, search = "") {
 
 afterEach(() => {
   clearPendingAuthorization();
+  resetOAuthCallbackInboxForTests();
   // The claimed-handoff record is deliberately localStorage, so it outlives a
   // tab — and would outlive a test too.
   localStorage.clear();
@@ -322,6 +329,45 @@ describe("the claim", () => {
     expect(
       screen.getByText("That authorization link has expired."),
     ).toBeInTheDocument();
+    // A failed claim does not leave its token in the address bar for as long
+    // as the error screen stays up.
+    expect(window.location.pathname).toBe("/connect/server");
+    expect(window.location.href).not.toContain("expired-token");
+  });
+
+  it("takes a spent token out of the address bar too", async () => {
+    mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+    });
+    goTo("/connect/server/someone-elses-token");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link was opened somewhere else");
+
+    expect(window.location.pathname).toBe("/connect/server");
+    expect(window.location.href).not.toContain("someone-elses-token");
+  });
+
+  it("takes the token out of the address bar on an unexpected failure", async () => {
+    mockApi({
+      "/claim": () =>
+        new Response(JSON.stringify({ message: "Upstream exploded" }), {
+          status: 500,
+        }),
+    });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link cannot be used");
+
+    expect(window.location.href).not.toContain("handoff-token-abc");
   });
 });
 
@@ -500,6 +546,54 @@ describe("returning from the authorization server", () => {
     );
   });
 
+  it("reads the answer from the inbox once main.tsx has scrubbed the URL, and consumes it", async () => {
+    const calls = mockApi({
+      "/authorize/complete": () => ({
+        requestId: "scr_1",
+        status: "validating",
+      }),
+      "/state": () => stateBody({ status: "validating" }),
+    });
+    rememberPendingAuthorization("scr_1", AUTH_URL);
+    goTo("/oauth/callback", "?code=auth-code&state=st");
+    captureOAuthCallbackFromUrl();
+    expect(window.location.search).toBe("?oauth_pending=1");
+
+    render(<ServerConnectionHandoff />);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/connect/server/request/scr_1"),
+    );
+    expect(calls.find((c) => c.path === "/authorize/complete")?.body).toEqual({
+      state: "st",
+      code: "auth-code",
+      iss: undefined,
+      errorDescription: undefined,
+      error: undefined,
+    });
+    // Spent: the reload copy goes with the callback route.
+    expect(sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY)).toBeNull();
+  });
+
+  it("keeps the inbox's answer when completing fails, so a reload can retry", async () => {
+    mockApi({
+      "/authorize/complete": () =>
+        new Response(JSON.stringify({ message: "Try again" }), {
+          status: 503,
+        }),
+    });
+    rememberPendingAuthorization("scr_1", AUTH_URL);
+    goTo("/oauth/callback", "?code=auth-code&state=st");
+    captureOAuthCallbackFromUrl();
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Try again");
+
+    expect(window.location.pathname).toBe("/oauth/callback");
+    expect(readOAuthCallbackParams()?.get("code")).toBe("auth-code");
+    expect(readPendingAuthorization()).not.toBeNull();
+  });
+
   it("carries a denial through as an ordinary answer", async () => {
     const calls = mockApi({
       "/authorize/complete": () => ({
@@ -674,6 +768,9 @@ describe("a refused claim", () => {
     expect(screen.queryByText(/different account/i)).toBeNull();
     expect(screen.getByText(/still valid/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+    // The link survives, but not in the address bar: the page holds it.
+    expect(window.location.pathname).toBe("/connect/server");
+    expect(window.location.href).not.toContain("handoff-token-abc");
   });
 
   it("names both accounts on a real mismatch", async () => {

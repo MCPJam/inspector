@@ -304,6 +304,10 @@ import {
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "./lib/oauth-callback-inbox";
+import {
   FIRST_RUN_OAUTH_CANCELLED_EVENT,
   getFirstRunOAuthReturnServerName,
 } from "./lib/first-run-oauth-return";
@@ -494,7 +498,8 @@ function mergeFirstRunAnalyticsContext(
 }
 
 function getHostedOAuthCallbackErrorMessage(): string {
-  const params = new URLSearchParams(window.location.search);
+  // The inbox, not the address bar: see `lib/oauth-callback-inbox.ts`.
+  const params = readOAuthCallbackParams() ?? new URLSearchParams();
   const error = params.get("error");
   const description = params.get("error_description");
 
@@ -3081,7 +3086,10 @@ export default function App() {
       return;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started. Read, not consumed: the attempt key dedupes re-runs,
+    // and `finalizeHostedOAuth` consumes it on the way out.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
@@ -3093,6 +3101,8 @@ export default function App() {
     hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
+    // Identity of this callback's page, not a read of its answer: after the
+    // inbox capture it is `?oauth_pending=1`, and any navigation changes it.
     const callbackSearch = window.location.search;
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       // Ignore a completion after the user has left or started another attempt.
@@ -3120,6 +3130,8 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
+      // The code is spent; its reload copy must not outlive the route.
+      consumeOAuthCallbackParams();
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
       });

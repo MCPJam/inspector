@@ -34,8 +34,46 @@
  * and a marker that outlived the tab would follow the user into unrelated work.
  */
 
-const TOKEN_PATH = /^\/connect\/server\/([A-Za-z0-9_-]+)\/?$/;
-const REQUEST_PATH = /^\/connect\/server\/request\/([A-Za-z0-9_-]+)\/?$/;
+import { credentialRoute } from "@/shared/credential-urls";
+import {
+  hasOAuthPendingMarker,
+  readOAuthCallbackParams,
+} from "./oauth-callback-inbox";
+
+/**
+ * The claim route as the credential registry (`shared/credential-urls.ts`)
+ * declares it — `/connect/server/:handoffToken`, with `request` reserved — so
+ * this page and every telemetry scrubber agree on which segment is the secret.
+ * A shape change made there lands here too.
+ */
+const CLAIM_ROUTE = credentialRoute("server-connection-claim");
+
+/** `/connect/server/` — the template up to its secret segment. */
+const CLAIM_PREFIX = CLAIM_ROUTE.pattern.slice(
+  0,
+  CLAIM_ROUTE.pattern.indexOf(`:${CLAIM_ROUTE.secretParam}`),
+);
+
+/** `request` — the reserved segment the secret-free request page lives under. */
+const REQUEST_SEGMENT = CLAIM_ROUTE.reserved?.[0] ?? "request";
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+}
+
+/**
+ * Stricter than the registry's own matcher, on purpose and unchanged from
+ * before it existed: a token is minted from `[A-Za-z0-9_-]`, and the path ends
+ * at it (trailing slash tolerated). The registry matches a PREFIX, because a
+ * scrubber must catch a secret wherever it sits; a router must not claim a
+ * path it does not own.
+ */
+const TOKEN_PATH = new RegExp(
+  `^${escapeRegex(CLAIM_PREFIX)}([A-Za-z0-9_-]+)\\/?$`,
+);
+const REQUEST_PATH = new RegExp(
+  `^${escapeRegex(`${CLAIM_PREFIX}${REQUEST_SEGMENT}/`)}([A-Za-z0-9_-]+)\\/?$`,
+);
 
 const MARKER_KEY = "mcpjam-server-connection-pending";
 
@@ -62,14 +100,33 @@ export function matchHandoffRoute(pathname: string): HandoffRoute | null {
   // "request" is a literal segment, not a token — the regex above already
   // claimed it, and this guard covers the bare `/connect/server/request` case
   // that neither pattern should treat as a token.
-  if (token?.[1] && token[1] !== "request") {
+  if (token?.[1] && token[1] !== REQUEST_SEGMENT) {
     return { kind: "claim", handoffToken: token[1] };
   }
   return null;
 }
 
 export function handoffRequestPath(requestId: string): string {
-  return `/connect/server/request/${requestId}`;
+  return `${CLAIM_PREFIX}${REQUEST_SEGMENT}/${requestId}`;
+}
+
+/**
+ * Where the address bar goes when a claim does NOT succeed.
+ *
+ * The success path already trades the token URL for the request page. A
+ * refused or failed claim used to leave the token where it was — in the
+ * address bar, in `history`, and in front of every telemetry sink for as long
+ * as the error screen stayed up. The page keeps the token in memory for its
+ * own recovery actions (sign in, switch account), so the URL does not need it.
+ *
+ * The bare prefix is a real path that renders nothing secret: it is not a
+ * handoff route (no token segment), so a reload falls through to the app's
+ * not-found screen rather than to a claim. That is the honest answer to
+ * reloading a link whose claim was refused — the link itself, still in the
+ * user's terminal, is how to try again.
+ */
+export function handoffRefusedPath(): string {
+  return CLAIM_PREFIX.replace(/\/$/, "");
 }
 
 /** An attempt cannot outlive the request it belongs to, and the backend caps
@@ -406,8 +463,21 @@ export interface CallbackParams {
  * only ours when it carries a `state` AND one of the two things an
  * authorization server can answer with.
  */
-export function readCallbackParams(search: string): CallbackParams | null {
-  const params = new URLSearchParams(search);
+export function readCallbackParams(
+  search: string | URLSearchParams,
+): CallbackParams | null {
+  // `main.tsx` moves the answer out of the address bar before telemetry
+  // starts and leaves `?oauth_pending=1` behind (`oauth-callback-inbox.ts`).
+  // A caller that still passes `window.location.search` — `app-bootstrap`'s
+  // routing check does — is handed the inbox's copy for that marker, so the
+  // handoff page is still recognised on a scrubbed callback.
+  const params =
+    typeof search === "string"
+      ? hasOAuthPendingMarker(search)
+        ? readOAuthCallbackParams()
+        : new URLSearchParams(search)
+      : search;
+  if (!params) return null;
   const state = params.get("state")?.trim();
   if (!state) return null;
 

@@ -4,6 +4,7 @@ import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
 } from "./lib/access-link";
+import { captureOAuthCallbackFromUrl } from "./lib/oauth-callback-inbox";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { appRoot } from "./app-root";
@@ -72,7 +73,15 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
 
 consumeAccessLinkFromUrl();
 watchForAccessLinks();
+// After the access link, whose `#token=` it would otherwise drop wholesale
+// along with any other fragment it cannot vouch for; before anything that
+// reads the callback (the desktop hand-off just below) and before
+// `app-bootstrap` starts Sentry and PostHog, so the one-time code never
+// reaches either. See `oauth-callback-inbox.ts`.
+captureOAuthCallbackFromUrl();
 
+// Reads the answer from the inbox, so the browser tab's URL is already
+// scrubbed whether or not this load hands off to the desktop app.
 const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
 if (electronMcpReturnUrl) {
   // The browser owns no app session here. Do not initialize auth, Convex,

@@ -1,0 +1,330 @@
+// Keep this module dependency-free: main captures the callback before loading
+// the app, analytics, error reporting, or any OAuth modules (the same reason
+// `access-link.ts` is dependency-free).
+
+/**
+ * The OAuth callback inbox: where an MCP server's authorization answer waits
+ * once it has been taken out of the address bar.
+ *
+ * WHY THE ANSWER LEAVES THE URL. An authorization server returns to
+ * `/oauth/callback?code=…&state=…`, and the code is a one-time credential.
+ * Everything that observes the page sees the address bar — PostHog's
+ * `$current_url` and session replay, Sentry's transaction names and
+ * breadcrumbs, the `Referer` of every request the page makes, the history
+ * entry the back button returns to. The telemetry sinks scrub what they
+ * receive, but scrubbing is a second line; the first is for the code not to be
+ * there. So `main.tsx` moves the parameters in here BEFORE it imports
+ * `app-bootstrap` (which starts Sentry and PostHog), and replaces the URL with
+ * the same pathname and `?oauth_pending=1`. That marker is the only trace the
+ * callback leaves in the URL: it says "the answer is in the inbox", and it
+ * carries nothing.
+ *
+ * WHAT IS CAPTURED: every query parameter, not a list. The readers need
+ * `code`, `state`, `error`, `error_description`, `error_uri` and `iss`; the
+ * desktop hand-offs (`electron-mcp-callback.ts`, `OAuthDebugCallback`) forward
+ * the WHOLE query to the app, and providers add their own (`session_state`).
+ * Everything an authorization server put on our redirect URI is its answer.
+ *
+ * THE FRAGMENT is kept only when it is a plain anchor or carries only
+ * non-secret-looking keys. A `response_mode=fragment` provider would put the
+ * code there; nothing in this app reads a callback fragment, so losing one
+ * costs nothing.
+ *
+ * PERSISTENCE: memory, mirrored to `sessionStorage` for a few minutes. Memory
+ * alone loses the answer on any reload of the pending page — and `main.tsx`
+ * itself offers one: its "Reload MCPJam" recovery for a failed bootstrap chunk
+ * reloads exactly this page. A user who refreshes a slow exchange is the other
+ * case. Either way the URL no longer holds the code, so without a copy the
+ * callback is simply gone.
+ *
+ * The copy is bounded on every side, because it is a credential:
+ *
+ *  - `sessionStorage`, not `localStorage`: one tab, never synced, gone with
+ *    the tab.
+ *  - A short TTL (`OAUTH_CALLBACK_INBOX_TTL_MS`). Authorization servers expire
+ *    codes within minutes (RFC 6749 §4.1.2 recommends ten at most), so a copy
+ *    older than that could only ever fail the exchange.
+ *  - Restored only on the pending URL itself (the callback pathname with the
+ *    marker), and only for the pathname it was captured on.
+ *  - Cleared once consumed (`consumeOAuthCallbackParams`).
+ *
+ * And what it adds is small: the code is single-use and PKCE-bound, so
+ * redeeming it also needs the `code_verifier` — which this origin ALREADY
+ * keeps in `localStorage` for the duration of the flow. A script that can read
+ * this tab's `sessionStorage` can read that too; the copy here gives it
+ * nothing it did not have. What the copy must never do is outlive the flow,
+ * and the TTL and the consume are what stop it.
+ *
+ * A RELOAD WITH NOTHING TO RESTORE (storage blocked, or the TTL ran out) is
+ * answered with an explicit `error` instead of an empty inbox. Every reader
+ * already has an error path that tells the user and routes them home; an
+ * empty inbox on `/oauth/callback` would instead leave the app on its
+ * callback loading screen with nothing that could ever finish it.
+ *
+ * THE URL FALLBACK. On a callback path WITHOUT the marker, the readers see the
+ * query as it stands. That is what happens on any load that did not go through
+ * `main.tsx` (a unit test rendering a component directly, a future entry
+ * point). It is not the production path, and it deliberately does not scrub:
+ * a `replaceState` issued from inside a render would desync the router, which
+ * never observes it.
+ */
+
+/** Query key of the marker the scrubbed callback URL carries. */
+export const OAUTH_PENDING_PARAM = "oauth_pending";
+
+/** The marker's value. */
+export const OAUTH_PENDING_VALUE = "1";
+
+/** How long a reload of the pending page can still restore the answer. */
+export const OAUTH_CALLBACK_INBOX_TTL_MS = 5 * 60 * 1000;
+
+/** `sessionStorage` key of the reload copy. */
+export const OAUTH_CALLBACK_INBOX_STORAGE_KEY = "mcpjam.oauth-callback-inbox";
+
+/** What a reload with nothing to restore answers with. */
+export const OAUTH_CALLBACK_EXPIRED_ERROR = "invalid_request";
+export const OAUTH_CALLBACK_EXPIRED_DESCRIPTION =
+  "The authorization response was no longer available after the page reloaded. Start the connection again.";
+
+interface InboxEntry {
+  /** The callback pathname the answer arrived on. */
+  pathname: string;
+  /** The answer, as a query string without `?`. */
+  params: string;
+}
+
+interface StoredInboxEntry extends InboxEntry {
+  expiresAt: number;
+}
+
+let inbox: InboxEntry | null = null;
+
+/**
+ * The MCP server OAuth callback routes: `/oauth/callback` and everything
+ * under it (the debugger's `/oauth/callback/debug`). Not the WorkOS sign-in's
+ * `/callback` — authkit-js owns that one.
+ */
+export function isOAuthCallbackPath(pathname: string): boolean {
+  return (
+    pathname === "/oauth/callback" || pathname.startsWith("/oauth/callback/")
+  );
+}
+
+/** Whether a query string is the scrubbed callback's marker. */
+export function hasOAuthPendingMarker(search: string): boolean {
+  try {
+    return (
+      new URLSearchParams(search).get(OAUTH_PENDING_PARAM) ===
+      OAUTH_PENDING_VALUE
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The URL a callback's answer is parked behind. */
+export function oauthPendingPath(pathname: string): string {
+  return `${pathname}?${OAUTH_PENDING_PARAM}=${OAUTH_PENDING_VALUE}`;
+}
+
+const SECRET_LOOKING_KEY =
+  /token|secret|code|key|sig|cred|pass|state|session|auth|ticket|assertion/i;
+const PLAIN_ANCHOR = /^[A-Za-z][\w-]{0,63}$/;
+
+/**
+ * Whether a fragment may stay on the scrubbed URL: a plain anchor
+ * (`#tools`, which `consumeAccessLinkFromUrl` leaves behind), or key/value
+ * pairs none of whose keys looks like a credential. Anything else — including
+ * an opaque value that might be a bare token — is dropped.
+ */
+function isSafeFragment(hash: string): boolean {
+  const body = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!body) return false;
+  if (!body.includes("=")) return PLAIN_ANCHOR.test(body);
+  return body.split("&").every((pair) => {
+    const key = pair.split("=", 1)[0] ?? "";
+    let decoded = key;
+    try {
+      decoded = decodeURIComponent(key);
+    } catch {
+      return false;
+    }
+    return decoded !== "" && !SECRET_LOOKING_KEY.test(decoded);
+  });
+}
+
+function writeStoredEntry(entry: InboxEntry, now: number): void {
+  try {
+    const stored: StoredInboxEntry = {
+      ...entry,
+      expiresAt: now + OAUTH_CALLBACK_INBOX_TTL_MS,
+    };
+    sessionStorage.setItem(
+      OAUTH_CALLBACK_INBOX_STORAGE_KEY,
+      JSON.stringify(stored),
+    );
+  } catch {
+    // Unavailable storage costs only the reload case, which then answers
+    // with the explicit "expired" error rather than restoring.
+  }
+}
+
+function clearStoredEntry(): void {
+  try {
+    sessionStorage.removeItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY);
+  } catch {
+    // Nothing to clear when storage is unavailable.
+  }
+}
+
+function readStoredEntry(pathname: string, now: number): InboxEntry | null {
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredInboxEntry> | null;
+    if (
+      typeof parsed?.pathname !== "string" ||
+      typeof parsed?.params !== "string" ||
+      // `Number.isFinite`: `Infinity` and `NaN` both pass a `typeof` check and
+      // both defeat the `<=` below, which would make the copy immortal.
+      !Number.isFinite(parsed?.expiresAt) ||
+      parsed.expiresAt! <= now ||
+      parsed.pathname !== pathname
+    ) {
+      clearStoredEntry();
+      return null;
+    }
+    return { pathname: parsed.pathname, params: parsed.params };
+  } catch {
+    clearStoredEntry();
+    return null;
+  }
+}
+
+/**
+ * Move an MCP OAuth callback's answer from the address bar into the inbox.
+ * Runs once, in `main.tsx`, before telemetry exists.
+ *
+ *  - A callback path with a query: every parameter goes into the inbox (and
+ *    the reload copy), and the URL becomes `<pathname>?oauth_pending=1`,
+ *    keeping `history.state` and any fragment that carries no secret.
+ *  - A callback path with only the marker: a reload of the pending page.
+ *    The answer comes back from the reload copy, or — when there is none —
+ *    as the explicit "expired" error (see the module docblock).
+ *  - Anything else: untouched.
+ *
+ * Returns whether the inbox now holds an answer.
+ */
+export function captureOAuthCallbackFromUrl(now: number = Date.now()): boolean {
+  if (typeof window === "undefined") return false;
+  const { pathname, search, hash } = window.location;
+  if (!isOAuthCallbackPath(pathname)) return false;
+
+  const params = new URLSearchParams(search);
+  const marked = params.get(OAUTH_PENDING_PARAM) === OAUTH_PENDING_VALUE;
+  params.delete(OAUTH_PENDING_PARAM);
+
+  if ([...params.keys()].length > 0) {
+    const entry = { pathname, params: params.toString() };
+    inbox = entry;
+    writeStoredEntry(entry, now);
+  } else if (marked) {
+    if (inbox?.pathname === pathname) return true;
+    inbox = readStoredEntry(pathname, now) ?? {
+      pathname,
+      params: new URLSearchParams({
+        error: OAUTH_CALLBACK_EXPIRED_ERROR,
+        error_description: OAUTH_CALLBACK_EXPIRED_DESCRIPTION,
+      }).toString(),
+    };
+  } else {
+    return false;
+  }
+
+  const keptHash = hash && isSafeFragment(hash) ? hash : "";
+  try {
+    history.replaceState(
+      history.state,
+      "",
+      `${oauthPendingPath(pathname)}${keptHash}`,
+    );
+  } catch {
+    // A sandboxed document can refuse replaceState. The readers still find
+    // the answer in the inbox; only the address bar is left as it was.
+  }
+  return true;
+}
+
+/**
+ * Put an answer that arrived some other way into the inbox — the desktop app
+ * receives it on its custom scheme and routes itself to the callback page —
+ * and return the URL to navigate to, so the code is never written into the
+ * address bar at all.
+ */
+export function depositOAuthCallbackParams(
+  params: URLSearchParams,
+  pathname = "/oauth/callback",
+  now: number = Date.now(),
+): string {
+  const copy = new URLSearchParams(params);
+  copy.delete(OAUTH_PENDING_PARAM);
+  const entry = { pathname, params: copy.toString() };
+  inbox = entry;
+  writeStoredEntry(entry, now);
+  return oauthPendingPath(pathname);
+}
+
+/**
+ * The callback's answer, or `null`. Non-destructive: every reader on the page
+ * may ask, any number of times (StrictMode runs effects twice).
+ *
+ * Scoped like the URL it replaces: it answers only while the page is still
+ * on the callback pathname, so once the owner navigates away the answer
+ * stops existing for every reader at once — exactly as `?code=` used to when
+ * the route was restored.
+ */
+export function readOAuthCallbackParams(): URLSearchParams | null {
+  if (typeof window === "undefined") return null;
+  const { pathname, search } = window.location;
+  if (!isOAuthCallbackPath(pathname)) return null;
+  if (hasOAuthPendingMarker(search)) {
+    return inbox && inbox.pathname === pathname
+      ? new URLSearchParams(inbox.params)
+      : null;
+  }
+  // The URL fallback; see the module docblock.
+  const params = new URLSearchParams(search);
+  return [...params.keys()].length > 0 ? params : null;
+}
+
+/**
+ * Whether a callback answer is waiting: a `code` or an `error`, the two
+ * things an authorization server can answer with.
+ */
+export function hasPendingOAuthCallback(): boolean {
+  const params = readOAuthCallbackParams();
+  return Boolean(params && (params.has("code") || params.has("error")));
+}
+
+/**
+ * Take the answer and clear it — memory and the reload copy. Called by the
+ * owner that finished the callback, right before it leaves the callback
+ * route, so the code does not outlive the flow it belonged to.
+ */
+export function consumeOAuthCallbackParams(): URLSearchParams | null {
+  const params = readOAuthCallbackParams();
+  inbox = null;
+  clearStoredEntry();
+  return params;
+}
+
+/** Test-only: forget everything, including the reload copy. */
+export function resetOAuthCallbackInboxForTests(): void {
+  inbox = null;
+  clearStoredEntry();
+}

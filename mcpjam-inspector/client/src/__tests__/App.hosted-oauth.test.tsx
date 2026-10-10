@@ -7,6 +7,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  captureOAuthCallbackFromUrl,
+  OAUTH_CALLBACK_INBOX_STORAGE_KEY,
+  resetOAuthCallbackInboxForTests,
+} from "../lib/oauth-callback-inbox";
 import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
@@ -918,6 +923,40 @@ describe("App hosted OAuth callback handling", () => {
         }),
       );
     });
+  });
+
+  it("completes a scenario callback whose answer main.tsx moved into the inbox, then consumes it", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockCompleteHostedOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: {
+        url: "https://mcp.asana.com/sse",
+        requestInit: { headers: { Authorization: "Bearer token" } },
+      },
+    });
+    resetOAuthCallbackInboxForTests();
+    captureOAuthCallbackFromUrl();
+    // What App sees in production: the code is no longer in the address bar.
+    expect(window.location.search).toBe("?oauth_pending=1");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({ surface: "scenario", serverId: "srv_asana" }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: "Bearer guest-bearer",
+        }),
+      );
+    });
+    // Finalizing leaves the callback route and takes the reload copy with it.
+    await waitFor(() => {
+      expect(window.location.pathname).not.toBe("/oauth/callback");
+    });
+    expect(sessionStorage.getItem(OAUTH_CALLBACK_INBOX_STORAGE_KEY)).toBeNull();
+    resetOAuthCallbackInboxForTests();
   });
 
   it("uses hosted completion for authenticated scenario callbacks without a hosted session id", async () => {

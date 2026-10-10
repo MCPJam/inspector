@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  CREDENTIAL_PLACEHOLDER,
+  matchCredentialPath,
+} from "@/shared/credential-urls";
+import {
   extractTesterLinkToken,
+  isRedactedTesterLinkToken,
+  redactTesterLinkPath,
   TESTER_LINK_PATH_SEGMENT,
   TESTER_LINK_RUNTIME_PATH_PATTERN,
 } from "../tester-link-path";
@@ -94,6 +100,69 @@ describe("tester-link-path", () => {
       "/",
     ]) {
       expect(TESTER_LINK_RUNTIME_PATH_PATTERN.test(otherPath)).toBe(false);
+    }
+  });
+});
+
+describe("agreement with the credential registry", () => {
+  // Built from `credentialRoute("tester-link")`: the runtime and every
+  // telemetry scrubber agree on which segment is the secret.
+  it("reads the same token the registry scrubs", () => {
+    const match = matchCredentialPath("/user-testing/demo/tok_1");
+    expect(match?.route.id).toBe("tester-link");
+    expect(match?.secret).toBe(
+      extractTesterLinkToken("/user-testing/demo/tok_1"),
+    );
+  });
+
+  it("reserves the same editor sub-path the registry does", () => {
+    expect(matchCredentialPath("/user-testing/host_123/edit")).toBeNull();
+    expect(extractTesterLinkToken("/user-testing/host_123/edit")).toBeNull();
+  });
+});
+
+describe("redactTesterLinkPath", () => {
+  it("replaces only the token with the registry placeholder", () => {
+    expect(redactTesterLinkPath("/user-testing/demo/tok_1")).toBe(
+      `/user-testing/demo/${CREDENTIAL_PLACEHOLDER}`,
+    );
+    expect(redactTesterLinkPath("/user-testing/demo/tok_1/")).toBe(
+      `/user-testing/demo/${CREDENTIAL_PLACEHOLDER}/`,
+    );
+  });
+
+  it("keeps the link's shape for every matcher that routes on it", () => {
+    const redacted = redactTesterLinkPath("/user-testing/demo/tok_1")!;
+    // `App` keeps rendering the runtime (and its error screen), and the
+    // iframe guard and `isEmbeddedPreview()` still recognise the embed.
+    expect(TESTER_LINK_RUNTIME_PATH_PATTERN.test(redacted)).toBe(true);
+    expect(isRedactedTesterLinkToken(extractTesterLinkToken(redacted))).toBe(
+      true,
+    );
+    // While the registry sees no secret left in it.
+    expect(matchCredentialPath(redacted)).toBeNull();
+  });
+
+  it("recognises the placeholder however the browser encoded it", () => {
+    expect(
+      isRedactedTesterLinkToken(
+        extractTesterLinkToken("/user-testing/demo/%5Bredacted%5D"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not mistake a real token for the placeholder", () => {
+    expect(isRedactedTesterLinkToken("tok_1")).toBe(false);
+    expect(isRedactedTesterLinkToken(null)).toBe(false);
+  });
+
+  it("declines anything that is not a tester link", () => {
+    for (const path of [
+      "/user-testing/host_123",
+      "/user-testing/host_123/edit",
+      "/servers",
+    ]) {
+      expect(redactTesterLinkPath(path)).toBeNull();
     }
   });
 });
