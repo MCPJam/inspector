@@ -37,6 +37,15 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL: "https://app.mcpjam.com",
+    // The full Chromium in its headless mode, not the default headless shell.
+    // The shell reports a `HeadlessChrome` brand in
+    // `navigator.userAgentData`, which posthog-js's bot filter drops every
+    // event for (the device's user-agent string does not change it), so the
+    // PostHog half of this proof would observe nothing. An explicit
+    // executable below takes its place.
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+      ? {}
+      : { channel: "chromium" }),
     launchOptions: {
       // posthog-js drops every event when `navigator.webdriver` is true (its
       // bot filter); this flag makes it false, as for a real visitor. See

@@ -365,7 +365,9 @@ function parseJsonOrThrow(text: string, what: string): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new EgressDecodeError(`${what}: ${String(error)} — ${text.slice(0, 80)}`);
+    throw new EgressDecodeError(
+      `${what}: ${String(error)} — ${text.slice(0, 80)}`,
+    );
   }
 }
 
@@ -376,7 +378,9 @@ function parseJsonOrThrow(text: string, what: string): unknown {
 function decodeReplayRecording(payload: Uint8Array): unknown {
   const newline = payload.indexOf(0x0a);
   if (newline === -1) {
-    throw new EgressDecodeError("replay_recording item without a segment header");
+    throw new EgressDecodeError(
+      "replay_recording item without a segment header",
+    );
   }
   const segment = parseJsonOrThrow(
     utf8(payload.subarray(0, newline)),
@@ -444,7 +448,10 @@ export function decodeSentryEnvelope(bytes: Uint8Array): DecodedEnvelope {
     const payload =
       itemHeader.type === "replay_recording"
         ? decodeReplayRecording(payloadBytes)
-        : parseJsonOrThrow(utf8(payloadBytes), `envelope ${String(itemHeader.type)} item`);
+        : parseJsonOrThrow(
+            utf8(payloadBytes),
+            `envelope ${String(itemHeader.type)} item`,
+          );
     items.push({ header: itemHeader, payload });
   }
   return { header, items };
@@ -481,7 +488,8 @@ export function findSentinelPaths(
   const walk = (node: unknown, at: string) => {
     if (typeof node === "string") {
       const index = node.search(STEM_PATTERN);
-      if (index !== -1) hits.push({ path: at, excerpt: excerptAround(node, index) });
+      if (index !== -1)
+        hits.push({ path: at, excerpt: excerptAround(node, index) });
       return;
     }
     if (Array.isArray(node)) {
@@ -521,7 +529,13 @@ export function decodeRequest(request: CapturedRequest): DecodedRequest {
       sink,
       posthog: decoded
         ? { sink, url: request.url, ...decoded }
-        : { sink, url: request.url, body: null, inflated: null, inflatedFields: 0 },
+        : {
+            sink,
+            url: request.url,
+            body: null,
+            inflated: null,
+            inflatedFields: 0,
+          },
     };
   }
   if (sink === "sentry") {
@@ -568,7 +582,12 @@ export function scanRequest(decoded: DecodedRequest): SentinelHit[] {
   const add = (into: SentinelHit[], where: string, text: string) => {
     const index = text.search(STEM_PATTERN);
     if (index !== -1) {
-      into.push({ sink, url: request.url, where, excerpt: excerptAround(text, index) });
+      into.push({
+        sink,
+        url: request.url,
+        where,
+        excerpt: excerptAround(text, index),
+      });
     }
   };
   add(hits, "url", safeDecodeUri(request.url));
@@ -581,7 +600,12 @@ export function scanRequest(decoded: DecodedRequest): SentinelHit[] {
   const structuredHits: SentinelHit[] = [];
   if (structured !== undefined) {
     for (const hit of findSentinelPaths(structured)) {
-      structuredHits.push({ sink, url: request.url, where: hit.path, excerpt: hit.excerpt });
+      structuredHits.push({
+        sink,
+        url: request.url,
+        where: hit.path,
+        excerpt: hit.excerpt,
+      });
     }
   }
   hits.push(...structuredHits);
@@ -629,7 +653,9 @@ export interface PostHogEvent {
 }
 
 /** Every PostHog event in the decoded requests (batches flattened). */
-export function posthogEvents(decoded: readonly DecodedRequest[]): PostHogEvent[] {
+export function posthogEvents(
+  decoded: readonly DecodedRequest[],
+): PostHogEvent[] {
   const out: PostHogEvent[] = [];
   for (const entry of decoded) {
     const body = entry.posthog?.inflated;
@@ -639,10 +665,14 @@ export function posthogEvents(decoded: readonly DecodedRequest[]): PostHogEvent[
     const batch = Array.isArray(body)
       ? body
       : Array.isArray((body as { batch?: unknown }).batch)
-        ? ((body as { batch: unknown[] }).batch)
+        ? (body as { batch: unknown[] }).batch
         : [body];
     for (const item of batch) {
-      if (item && typeof item === "object" && typeof (item as PostHogEvent).event === "string") {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof (item as PostHogEvent).event === "string"
+      ) {
         out.push(item as PostHogEvent);
       }
     }
@@ -674,8 +704,11 @@ export function posthogReplayEvents(
 }
 
 /** How many `cv: "2024-10"` events were seen (compressed on the wire). */
-export function compressedReplayEventCount(decoded: readonly DecodedRequest[]): number {
-  return posthogReplayEvents(decoded).filter((event) => event.cv === "2024-10").length;
+export function compressedReplayEventCount(
+  decoded: readonly DecodedRequest[],
+): number {
+  return posthogReplayEvents(decoded).filter((event) => event.cv === "2024-10")
+    .length;
 }
 
 /** Every item of every Sentry envelope, with its type. */

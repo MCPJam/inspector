@@ -20,14 +20,17 @@
  *  - anything else (fonts, the app's other API routes, third parties): 404,
  *    and listed, so a new outbound host is visible in a failure.
  *
- * Two things make the session look like a real visitor's rather than a test
- * runner's. Both are declared, not hidden:
+ * Three things make the session look like a real visitor's rather than a test
+ * runner's. All are declared, not hidden:
  *
  *  - Chromium runs with `--disable-blink-features=AutomationControlled`
  *    (`playwright.telemetry.config.ts`). posthog-js drops EVERY event when
  *    `navigator.webdriver` is true (its bot filter), which under Playwright
  *    it always is; without the flag the PostHog half of this proof would
- *    observe nothing and pass.
+ *    observe nothing.
+ *  - It is the full Chromium (`channel: "chromium"`), not Playwright's
+ *    default headless shell, whose `navigator.userAgentData` brand
+ *    `HeadlessChrome` trips the same filter.
  *  - `Math.random` is pinned low (an init script), so Sentry's 10% replay and
  *    trace sampling take the sampled branch every run — the same pin the
  *    jsdom harness uses.
@@ -109,7 +112,9 @@ function pinRandomScript() {
   };
 }
 
-export async function installEgressRecorder(page: Page): Promise<EgressRecorder> {
+export async function installEgressRecorder(
+  page: Page,
+): Promise<EgressRecorder> {
   const recorder: EgressRecorder = {
     telemetry: [],
     api: [],
@@ -272,7 +277,10 @@ function decodeURIComponentSafe(value: string): string {
  * delay (5s), read the SDKs' storage, then unload the page so whatever is
  * left leaves by beacon.
  */
-export async function drain(page: Page, recorder: EgressRecorder): Promise<void> {
+export async function drain(
+  page: Page,
+  recorder: EgressRecorder,
+): Promise<void> {
   await page.waitForTimeout(7_000);
   await readSdkStorage(page, recorder);
   const before = recorder.telemetry.length;

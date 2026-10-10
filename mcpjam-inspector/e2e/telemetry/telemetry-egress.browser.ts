@@ -133,7 +133,10 @@ test("share links on a normal page at full: text, href and iframe src", async ({
     [...Object.values(EGRESS_CORPUS), ...GENERIC_EGRESS_URLS],
   );
   await interact(page);
-  await page.evaluate((url) => console.log("[egress] copied", url), EGRESS_CORPUS["tester-link"]);
+  await page.evaluate(
+    (url) => console.log("[egress] copied", url),
+    EGRESS_CORPUS["tester-link"],
+  );
   // The app's own requests carrying credentials: PostHog's network capture
   // records them (on this non-localhost origin), Sentry's breadcrumbs too.
   await page.evaluate(
@@ -251,7 +254,9 @@ test("a tab closed on a credential page ships nothing planted", async ({
   ).toBe(true);
 });
 
-test("a visitor who reads a page, then opens a share link", async ({ page }) => {
+test("a visitor who reads a page, then opens a share link", async ({
+  page,
+}) => {
   // Long enough on the normal page that Sentry keeps the replay segment the
   // guard stops on the way in (it drops a first segment under 5s) — so the
   // segment, and the replay event that describes it, are actually sent.
