@@ -288,6 +288,10 @@ describe("copy review", () => {
       suggestion("toast.error(`Saved ${name}`);", "Saved ${name}", "Saved ${name} to `main`"),
       "toast.error(`Saved ${name} to \\`main\\``);"
     );
+    assert.equal(
+      suggestion("t(`Old copy here`)", "Old copy here", "Path C:\\\\tmp for ${name}"),
+      "t(`Path C:\\\\\\\\tmp for ${name}`)"
+    );
     assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "New copy"), "<p>New copy</p>");
     assert.equal(suggestion("<p>Old copy here</p>", "Old copy here", "Use {count}"), null);
     assert.equal(suggestion("      Old copy here", "Old copy here", "New copy"), "      New copy");
@@ -355,6 +359,8 @@ describe("copy review", () => {
     assert.equal(body.output_config.effort, "low");
     const refused = async () => ({ ok: true, json: async () => ({ stop_reason: "refusal", stop_details: { category: "general_harms" }, content: [] }) });
     await assert.rejects(callClaude({ model: MODELS.classify, system: "s", user: "u", format: {} }, refused), /declined/);
+    const cutOff = async () => ({ ok: true, json: async () => ({ stop_reason: "max_tokens", content: [{ type: "thinking", thinking: "" }], usage: {} }) });
+    await assert.rejects(callClaude({ model: MODELS.classify, system: "s", user: "u", format: {} }, cutOff), /no result \(stop_reason max_tokens\)/);
   });
 });
 
