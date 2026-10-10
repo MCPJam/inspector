@@ -302,11 +302,15 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     expect(screen.getByTestId("org-ai-keys-toggle")).toBeDisabled();
   });
 
-  it("stays disabled until the current setting has loaded", () => {
+  it("shows no switch until the current setting has loaded", () => {
     hookState = { ...hookState, config: undefined, isLoading: true };
     render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
 
-    expect(screen.getByTestId("org-ai-keys-toggle")).toBeDisabled();
+    // Never an unchecked switch for a value nobody knows yet.
+    expect(screen.queryByTestId("org-ai-keys-toggle")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("org-ai-keys-toggle-loading"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(
       screen.queryByTestId("org-ai-keys-off-summary"),

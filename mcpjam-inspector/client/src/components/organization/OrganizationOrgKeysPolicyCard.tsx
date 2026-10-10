@@ -6,6 +6,7 @@ import {
 } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@mcpjam/design-system/cn";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
   useOrgAiConfig,
@@ -78,16 +79,23 @@ export function OrganizationOrgKeysPolicyCard({
               provider are unavailable.
             </p>
           </div>
-          <Switch
-            checked={requireOrgKeys}
-            disabled={disabled}
-            aria-label={TOGGLE_LABEL}
-            data-testid="org-ai-keys-toggle"
-            onCheckedChange={(checked) => {
-              if (!configReady) return;
-              void setRequireOrgKeys(checked).catch(() => {});
-            }}
-          />
+          {configReady ? (
+            <Switch
+              checked={requireOrgKeys}
+              disabled={disabled}
+              aria-label={TOGGLE_LABEL}
+              data-testid="org-ai-keys-toggle"
+              onCheckedChange={(checked) => {
+                void setRequireOrgKeys(checked).catch(() => {});
+              }}
+            />
+          ) : (
+            // Never an unchecked switch for a value nobody knows yet.
+            <Skeleton
+              className="h-5 w-9 rounded-full"
+              data-testid="org-ai-keys-toggle-loading"
+            />
+          )}
         </div>
 
         {!canManage ? (
