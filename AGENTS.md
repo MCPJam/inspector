@@ -14,7 +14,10 @@ section does not apply, use the exact text that section's comment gives
 
 These rules bind every change, human or agent. Agents write most of the code
 here, so the cheap place to stop slop is before the PR exists. CI and the
-hooks in `.claude/settings.json` check the same rules (`scripts/slop/`).
+hooks in `.claude/settings.json` enforce the rules implemented in
+`scripts/slop/`: type escapes, swallowed errors, suppressions, server
+`console`, history comments, file and PR size, and repo litter. The rest, such
+as reuse and "one way to do a thing", is checked in review.
 
 ### Before you finish
 
