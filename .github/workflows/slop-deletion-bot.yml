@@ -159,12 +159,26 @@ jobs:
           node scripts/slop/deletion-bot-check.mjs --lane "$LANE" > "$RUNNER_TEMP/paths.txt"
           echo "changed=$(wc -l < "$RUNNER_TEMP/paths.txt" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
+      # Pushes made with GITHUB_TOKEN start no workflows, and a PR without its
+      # required checks can never merge. A GitHub App token does start them, and
+      # unlike a personal token it authors the PR as the bot, so any maintainer
+      # can approve it. It is minted only after the check passes, scoped to this
+      # repository, and revoked when the job ends.
+      - name: Get a bot token
+        id: app-token
+        if: steps.plan.outputs.skip != 'true' && steps.check.outputs.changed != '0'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Open the PR
         if: steps.plan.outputs.skip != 'true' && steps.check.outputs.changed != '0'
         env:
-          # Pushes made with GITHUB_TOKEN start no workflows, and a PR without
-          # its required checks can never merge. See local-harness-bot-pr.sh.
-          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           LANE: ${{ steps.plan.outputs.lane }}
           REVIEWERS: ${{ vars.SLOP_BOT_REVIEWERS }}
         run: |
@@ -181,8 +195,9 @@ jobs:
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/body.md"
 
           branch="bot/slop-$LANE-$GITHUB_RUN_ID"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bot_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git add -A
           git commit -q -m "$title"
