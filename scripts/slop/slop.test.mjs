@@ -7,6 +7,15 @@ import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { countFile, isMeasuredFile } from "./rules.mjs";
 import { addedCopy, extractUiStrings, isUiFile } from "./ui-strings.mjs";
+import {
+  MODELS,
+  callClaude,
+  collectAdded,
+  commentBody,
+  main as reviewCopy,
+  marker,
+  suggestion,
+} from "./copy-review.mjs";
 
 const RATCHET = join(dirname(fileURLToPath(import.meta.url)), "ratchet.mjs");
 
@@ -211,6 +220,97 @@ describe("ui strings", () => {
     assert.equal(counts["ui-filler"], 1);
     assert.equal(counts["ui-vague-error"], 2);
     assert.equal(countFile("sdk/src/a.ts", source)["ui-dash"], 0);
+  });
+});
+
+
+describe("copy review", () => {
+  const repo = mkdtempSync(join(tmpdir(), "slop-copy-"));
+  after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+  const ui = "mcpjam-inspector/client/src/A.tsx";
+  mkdirSync(join(repo, "mcpjam-inspector/client/src"), { recursive: true });
+  mkdirSync(join(repo, ".claude/skills/ui-copy"), { recursive: true });
+  writeFileSync(
+    join(repo, ".claude/skills/ui-copy/SKILL.md"),
+    "---\nname: ui-copy\n---\n# Rubric\nvague-error: say what failed.\n"
+  );
+  writeFileSync(join(repo, ui), '<p>Try again</p>\n');
+  git("init", "-q");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "test");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  writeFileSync(
+    join(repo, ui),
+    '<p>Try again</p>\ntoast.error("Something went wrong");\ntoast.error(`Saved ${name} to your project`);\n'
+  );
+  const cwd = process.cwd();
+  const inRepo = (fn) => {
+    process.chdir(repo);
+    try {
+      return fn();
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+
+  it("lists the copy a change added with its source line", () => {
+    const items = inRepo(() => collectAdded("HEAD"));
+    assert.deepEqual(items, [
+      { id: 1, path: ui, line: 2, text: "Something went wrong", source: 'toast.error("Something went wrong");' },
+      { id: 2, path: ui, line: 3, text: "Saved ${name} to your project", source: "toast.error(`Saved ${name} to your project`);" },
+    ]);
+  });
+
+  it("turns a rewrite into a one-line suggestion when the copy sits on one line", () => {
+    assert.equal(
+      suggestion('toast.error("Something went wrong");', "Something went wrong", "Could not save."),
+      'toast.error("Could not save.");'
+    );
+    assert.equal(suggestion("<p>", "spans two lines", "x"), null);
+    const finding = { path: ui, line: 2, text: "Something went wrong", source: 'toast.error("Something went wrong");', pattern: "vague-error", note: "names no cause", rewrite: "Could not save." };
+    const body = commentBody(finding);
+    assert.match(body, /```suggestion\ntoast\.error\("Could not save\."\);\n```/);
+    assert.ok(body.endsWith(marker(finding)));
+  });
+
+  it("classifies with Haiku, rewrites with Sonnet, and fails without a waiver", async () => {
+    const calls = [];
+    const fake = async (request) => {
+      calls.push(request);
+      if (request.model === MODELS.classify) {
+        assert.match(request.system, /vague-error: say what failed/);
+        return { items: [{ id: 1, pattern: "vague-error", note: "names no cause" }], usage: { input_tokens: 1000, output_tokens: 50 } };
+      }
+      assert.deepEqual(JSON.parse(request.user).map((item) => item.id), [1]);
+      return { items: [{ id: 1, text: "Could not save." }], usage: { input_tokens: 500, output_tokens: 20 } };
+    };
+    const code = await inRepo(() => reviewCopy(["--base", "HEAD", "--dry-run"], fake));
+    assert.equal(code, 1);
+    assert.deepEqual(calls.map((request) => request.model.id), ["claude-haiku-5-5", "claude-sonnet-5-5"]);
+    process.env.SLOP_WAIVER = "true";
+    try {
+      assert.equal(await inRepo(() => reviewCopy(["--base", "HEAD", "--dry-run"], fake)), 0);
+    } finally {
+      delete process.env.SLOP_WAIVER;
+    }
+  });
+
+  it("sends a structured-output request and surfaces a refusal", async () => {
+    let body;
+    const ok = async (_url, init) => {
+      body = JSON.parse(init.body);
+      return { ok: true, json: async () => ({ stop_reason: "end_turn", content: [{ type: "text", text: '{"items":[{"id":1}]}' }], usage: {} }) };
+    };
+    const result = await callClaude({ model: MODELS.classify, system: "s", user: "u", format: { type: "object" }, effort: "low" }, ok);
+    assert.deepEqual(result.items, [{ id: 1 }]);
+    assert.equal(body.model, "claude-haiku-5-5");
+    assert.equal(body.output_config.format.type, "json_schema");
+    assert.equal(body.output_config.effort, "low");
+    const refused = async () => ({ ok: true, json: async () => ({ stop_reason: "refusal", stop_details: { category: "general_harms" }, content: [] }) });
+    await assert.rejects(callClaude({ model: MODELS.classify, system: "s", user: "u", format: {} }, refused), /declined/);
   });
 });
 

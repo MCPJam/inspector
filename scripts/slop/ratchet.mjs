@@ -33,7 +33,7 @@ function resolveBase(argv) {
   return git(["merge-base", "HEAD", "origin/main"]).trim();
 }
 
-function changedPaths(base) {
+export function changedPaths(base) {
   const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
     .split("\0")
     .filter(Boolean);
