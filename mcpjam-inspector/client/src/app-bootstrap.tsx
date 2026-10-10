@@ -22,6 +22,7 @@ import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { installRecorderNavigationGuard } from "./lib/recorder-navigation-guard.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
@@ -83,6 +84,11 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+// After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own
+// instrumentation: both recorders stop before a navigation onto a credential
+// URL reaches either of them. See the module comment.
+installRecorderNavigationGuard();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();

@@ -95,6 +95,14 @@ export function usePostHogIdentify({
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
     if (isAuthedActor && user && enterprisePrivacyMember === false) {
+      // Identity is about to be re-sent, so the clearing below must be able
+      // to run again if this person later joins (or their organization later
+      // turns on) enterprise privacy within this page load. Without re-arming,
+      // a member → non-member → member sequence would leave the name and email
+      // sent in the middle step on their PostHog person.
+      if (identityUnsetForActorRef.current === actorKey) {
+        identityUnsetForActorRef.current = null;
+      }
       personProperties = {
         ...personProperties,
         email: user.email,
