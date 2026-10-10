@@ -283,12 +283,12 @@ const DEFAULT_SEED_THEME: HostThemeMode = "dark";
 
 /**
  * Model pinned by the default ("mcpjam") template. A hosted catalog id in its
- * dotted spelling (`anthropic/claude-haiku-4.5`, not `…-4-5`), so a seeded
+ * dotted spelling (`anthropic/claude-haiku-5.5`, not `…-5-5`), so a seeded
  * host is runnable on MCPJam-provided models without a picker round trip.
  * Consumers that seed a default host re-export this rather than repeating the
  * literal.
  */
-export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-4.5";
+export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-5.5";
 
 export interface HostTemplate {
   id: HostTemplateId;
