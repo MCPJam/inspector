@@ -85,8 +85,9 @@ A daily job counts events stored in PostHog and Sentry that still carry a creden
 
 Installed desktop apps keep the code they shipped with until they update. For those builds:
 
-- **PostHog replay** is blocked before capture on credential pages by a URL blocklist that PostHog sends to every client from its project settings, so it reaches old builds without an update.
-- **Other data** (events and error reports) is contained after it is sent, by scrubbing rules applied on the vendor side. The gap closes as installed apps auto-update.
+- **PostHog replay** can be blocked before capture on credential pages by a URL blocklist that PostHog sends to every client from its project settings. Once applied, it reaches old builds without an update.
+- **Other data** (events and error reports) can be contained after it is sent, by scrubbing rules applied on the vendor side.
+- Both are vendor settings, applied separately from a code release; until they are, old builds are covered only by updating. The gap closes as installed apps auto-update.
 
 We do not claim that an older build never sends a credential. Updating the desktop app removes this gap.
 

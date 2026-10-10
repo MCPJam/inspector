@@ -597,6 +597,39 @@ describe("returning from the authorization server", () => {
     expect(readPendingAuthorization()).not.toBeNull();
   });
 
+  it("retries a failed completion in place, with the answer still in memory", async () => {
+    let attempts = 0;
+    const calls = mockApi({
+      "/authorize/complete": () => {
+        attempts += 1;
+        return attempts === 1
+          ? new Response(JSON.stringify({ message: "Upstream hiccup" }), {
+              status: 503,
+            })
+          : { requestId: "scr_1", status: "validating" };
+      },
+      "/state": () => stateBody({ status: "validating" }),
+    });
+    rememberPendingAuthorization("scr_1", AUTH_URL);
+    goTo("/oauth/callback", "?code=auth-code&state=st");
+    captureOAuthCallbackFromUrl();
+
+    render(<ServerConnectionHandoff />);
+    const retry = await screen.findByRole("button", {
+      name: "Retry connecting",
+    });
+    fireEvent.click(retry);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/connect/server/request/scr_1"),
+    );
+    const completions = calls.filter((c) => c.path === "/authorize/complete");
+    expect(completions).toHaveLength(2);
+    expect(completions[1]?.body).toEqual(completions[0]?.body);
+    expect(readOAuthCallbackParams()).toBeNull();
+    expect(readPendingAuthorization()).toBeNull();
+  });
+
   it("carries a denial through as an ordinary answer", async () => {
     const calls = mockApi({
       "/authorize/complete": () => ({
@@ -816,8 +849,7 @@ describe("a refused claim", () => {
 
     await waitFor(() => expect(authkit.signIn).toHaveBeenCalled());
     const state = authkit.signIn.mock.calls[0]?.[0]?.state as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const nonce = state?.mcpjamHandoffReturn;
     expect(typeof nonce).toBe("string");
     // AuthKit round-trips `state` through WorkOS, into a redirect URL and this

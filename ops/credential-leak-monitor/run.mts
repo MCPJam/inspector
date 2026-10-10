@@ -205,6 +205,7 @@ async function runSentry(hours: number): Promise<SinkResult> {
   }
   const patterns = buildLeakPatterns();
   const seen = new Set<string>();
+  let truncated = false;
   const leakedIds = new Map<string, string[]>();
   try {
     for (const search of buildSentryQueries()) {
@@ -256,8 +257,11 @@ async function runSentry(hours: number): Promise<SinkResult> {
         cursor = nextCursor(response.headers.get("link"));
         if (!cursor) break;
         if (page === SENTRY_MAX_PAGES - 1) {
+          // Events past the cap were never looked at. A leak among them would
+          // otherwise read as "clean"; a monitor that could not look is blind.
+          truncated = true;
           result.notes.push(
-            `Sentry search "${search.name}" hit the ${SENTRY_MAX_PAGES}-page cap; counts are a lower bound.`,
+            `Sentry search "${search.name}" hit the ${SENTRY_MAX_PAGES}-page cap; events past it were not examined.`,
           );
         }
       }
@@ -266,7 +270,10 @@ async function runSentry(hours: number): Promise<SinkResult> {
       result.notes.push(`${route}: events ${ids.join(", ")}`);
     }
     result.notes.push(`${seen.size} candidate events examined.`);
-    result.status = result.counts.size > 0 ? "leak" : "clean";
+    // A leak found is a leak whatever else happened; otherwise a capped
+    // search cannot vouch for what it did not read.
+    result.status =
+      result.counts.size > 0 ? "leak" : truncated ? "blind" : "clean";
   } catch (error) {
     result.notes.push(`Sentry search failed: ${safeError(error)}`);
   }

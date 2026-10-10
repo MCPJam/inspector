@@ -114,14 +114,35 @@ const MAX_BRIDGE_STDERR_LINE_CHARS = 2000;
  * line is capped and loses credentials, emails and URL paths here, before it
  * leaves the provider — the one place every E2B harness's stream passes.
  *
- * Per chunk, not per buffered line: holding a partial line back would delay a
- * bridge's output, and a chunk boundary only ever splits a line in two.
+ * Per COMPLETE line: a chunk boundary can fall inside a credential
+ * (`/res` | `ults/<token>`), and neither half matches a scrubber pattern. The
+ * incomplete last line of a chunk waits for the next one (or the stream's
+ * end); a line that never ends is flushed once it passes twice the cap, so
+ * the hold-back is bounded.
  */
-function redactBridgeStderr(chunk: string): string {
-  return chunk
-    .split("\n")
-    .map((line) => scrubLogText(line, MAX_BRIDGE_STDERR_LINE_CHARS))
-    .join("\n");
+export function createBridgeStderrRedactor(): {
+  push(chunk: string): string;
+  flush(): string;
+} {
+  let pending = "";
+  const redact = (line: string) =>
+    scrubLogText(line, MAX_BRIDGE_STDERR_LINE_CHARS);
+  return {
+    push(chunk) {
+      const lines = `${pending}${chunk}`.split("\n");
+      pending = lines.pop() ?? "";
+      if (pending.length > MAX_BRIDGE_STDERR_LINE_CHARS * 2) {
+        lines.push(pending);
+        pending = "";
+      }
+      return lines.length > 0 ? `${lines.map(redact).join("\n")}\n` : "";
+    },
+    flush() {
+      const rest = pending;
+      pending = "";
+      return rest ? redact(rest) : "";
+    },
+  };
 }
 
 /**
@@ -454,11 +475,18 @@ export function createE2BHarnessSandboxProvider(
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;
+        const stderrRedactor = createBridgeStderrRedactor();
         const closeStreams = () => {
           if (streamsClosed) return;
           streamsClosed = true;
           try {
             outCtl.close();
+          } catch {
+            /* already closed */
+          }
+          try {
+            const rest = stderrRedactor.flush();
+            if (rest) errCtl.enqueue(enc.encode(rest));
           } catch {
             /* already closed */
           }
@@ -493,7 +521,8 @@ export function createE2BHarnessSandboxProvider(
           },
           onStderr: (d: string) => {
             if (!streamsClosed) {
-              errCtl.enqueue(enc.encode(redactBridgeStderr(d)));
+              const redacted = stderrRedactor.push(d);
+              if (redacted) errCtl.enqueue(enc.encode(redacted));
             }
           },
         });

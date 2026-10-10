@@ -352,7 +352,7 @@ describe("agreement with the credential registry", () => {
   it("claims exactly the paths the registry scrubs as a handoff token", () => {
     const match = matchCredentialPath("/connect/server/abc-123_XYZ");
     expect(match?.route.id).toBe("server-connection-claim");
-    expect(match?.secret).toBe("abc-123_XYZ");
+    expect(match?.segment).toBe("abc-123_XYZ");
     expect(matchHandoffRoute("/connect/server/abc-123_XYZ")?.kind).toBe(
       "claim",
     );

@@ -58,9 +58,9 @@ describe("credential route completeness (APP_ROUTES)", () => {
         match,
         `${path} has a secret-looking parameter. Register it in shared/credential-urls.ts (CREDENTIAL_ROUTES) or add it to NOT_CREDENTIALS with the reason it is not a credential.`,
       ).not.toBeNull();
-      expect(match?.secret?.startsWith("PARAM_")).toBe(true);
+      expect(match?.segment?.startsWith("PARAM_")).toBe(true);
       expect(
-        SECRET_LOOKING_PARAM.test(match?.secret?.slice("PARAM_".length) ?? ""),
+        SECRET_LOOKING_PARAM.test(match?.segment?.slice("PARAM_".length) ?? ""),
       ).toBe(true);
     },
   );

@@ -60,7 +60,7 @@ describe("credential route completeness (/api/web)", () => {
         `${path} has a secret-looking parameter. Register it in shared/credential-urls.ts (CREDENTIAL_ROUTES) or add it to NOT_CREDENTIALS with the reason it is not a credential.`,
       ).not.toBeNull();
       expect(secretParams.map((param) => `PARAM_${param}`)).toContain(
-        match?.secret,
+        match?.segment,
       );
     },
   );

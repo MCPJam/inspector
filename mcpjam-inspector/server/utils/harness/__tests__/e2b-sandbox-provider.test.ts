@@ -48,7 +48,10 @@ vi.mock("e2b", () => ({
 }));
 
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
-import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import {
+  createBridgeStderrRedactor,
+  createE2BHarnessSandboxProvider,
+} from "../e2b-sandbox-provider.js";
 import {
   HARNESS_TEMPLATE_PNPM_VERSION,
   harnessPnpmGuardCommand,
@@ -422,6 +425,31 @@ describe("bridge spawn", () => {
       "[codex] POST https://mcp.acme.com/… failed for [redacted-email]",
     );
     expect(second).toBe(`[codex] ${"x".repeat(1992)}… [+508 chars]`);
+  });
+});
+
+describe("createBridgeStderrRedactor", () => {
+  it("redacts a credential a chunk boundary splits", () => {
+    const redactor = createBridgeStderrRedactor();
+    const out =
+      redactor.push("[codex] opened /res") +
+      redactor.push("ults/tok_secret_123 and ?co") +
+      redactor.push("de=one_time&x=1\n") +
+      redactor.flush();
+    expect(out).not.toContain("tok_secret_123");
+    expect(out).not.toContain("one_time");
+    expect(out.endsWith("\n")).toBe(true);
+  });
+
+  it("flushes an unterminated last line at the end of the stream", () => {
+    const redactor = createBridgeStderrRedactor();
+    expect(redactor.push("partial /results/tok_x")).toBe("");
+    expect(redactor.flush()).toBe("partial /results/[redacted]");
+  });
+
+  it("bounds the hold-back for a line that never ends", () => {
+    const redactor = createBridgeStderrRedactor();
+    expect(redactor.push("y".repeat(4100)).length).toBeGreaterThan(0);
   });
 });
 

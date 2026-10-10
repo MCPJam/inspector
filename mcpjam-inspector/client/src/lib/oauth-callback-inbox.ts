@@ -123,13 +123,12 @@ function isSafeFragment(hash: string): boolean {
   if (!body.includes("=")) return PLAIN_ANCHOR.test(body);
   return body.split("&").every((pair) => {
     const key = pair.split("=", 1)[0] ?? "";
-    let decoded = key;
     try {
-      decoded = decodeURIComponent(key);
+      const decoded = decodeURIComponent(key);
+      return decoded !== "" && !SECRET_LOOKING_KEY.test(decoded);
     } catch {
       return false;
     }
-    return decoded !== "" && !SECRET_LOOKING_KEY.test(decoded);
   });
 }
 

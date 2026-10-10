@@ -37,6 +37,8 @@ import {
   rememberClaimedHandoff,
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
+  type CallbackParams,
+  type PendingAuthorization,
 } from "@/lib/server-connection-handoff";
 import {
   consumeOAuthCallbackParams,
@@ -154,8 +156,7 @@ async function call<T>(
         }),
   });
   const payload = (await response.json().catch(() => null)) as
-    | (T & { message?: string; details?: unknown })
-    | null;
+    (T & { message?: string; details?: unknown }) | null;
   if (!response.ok) {
     throw new HandoffCallError(
       payload?.message ?? "Something went wrong. Please try again.",
@@ -247,7 +248,8 @@ function ClaimRefusal({
           {signedInAs ? (
             <>
               You are signed in as{" "}
-              <span className="font-medium text-foreground">{signedInAs}</span>.{" "}
+              <span className="font-medium text-foreground">{signedInAs}</span>
+              .{" "}
             </>
           ) : null}
           {owner
@@ -293,6 +295,13 @@ export function ServerConnectionHandoff() {
   const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
+  // A completion that failed, kept for an in-page retry. The authorization
+  // answer lives in memory only (`oauth-callback-inbox.ts`), so a reload
+  // cannot retry it; this button can.
+  const [retryableCompletion, setRetryableCompletion] = useState<{
+    callback: CallbackParams;
+    pending: PendingAuthorization;
+  } | null>(null);
   const claimed = useRef(false);
   // The link as it was opened, held in memory only. A claim that does not
   // succeed takes the token out of the address bar (below), but the two
@@ -420,6 +429,14 @@ export function ServerConnectionHandoff() {
         // recorded which request each token became; only that request may be
         // resumed here. When they disagree, the session behind this link really
         // is gone, and the used-link screen is the honest answer.
+        if (
+          route?.kind !== "claim" &&
+          pending &&
+          callback &&
+          callbackMatchesPending(pending, callback)
+        ) {
+          setRetryableCompletion({ callback, pending });
+        }
         if (route?.kind === "claim" && isUsedLinkError(cause)) {
           const claimedRequestId = readClaimedHandoff(route.handoffToken);
           const resumed = claimedRequestId
@@ -442,6 +459,30 @@ export function ServerConnectionHandoff() {
       await refresh();
     })();
   }, [isAuthLoading, refresh]);
+
+  /** Retry a failed `/authorize/complete` with the answer still in memory. */
+  const retryCompletion = useCallback(async () => {
+    if (!retryableCompletion) return;
+    const { callback, pending } = retryableCompletion;
+    setBusy(true);
+    setError(null);
+    try {
+      await call("/authorize/complete", callback);
+      clearPendingAuthorization();
+      consumeOAuthCallbackParams();
+      setRetryableCompletion(null);
+      window.history.replaceState(
+        {},
+        "",
+        handoffRequestPath(pending.requestId),
+      );
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [retryableCompletion, refresh]);
 
   // Poll only while the outstanding step is someone else's.
   useEffect(() => {
@@ -611,6 +652,16 @@ export function ServerConnectionHandoff() {
             ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
             : error}
         </p>
+        {retryableCompletion && (
+          <button
+            type="button"
+            className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
+            disabled={busy}
+            onClick={() => void retryCompletion()}
+          >
+            {busy ? "Retrying…" : "Retry connecting"}
+          </button>
+        )}
       </Shell>
     );
   }
@@ -658,8 +709,8 @@ export function ServerConnectionHandoff() {
             {state.status === "discovering"
               ? "Checking what this server requires…"
               : state.status === "authorizing"
-              ? "Waiting for authorization to finish…"
-              : "Verifying the connection…"}
+                ? "Waiting for authorization to finish…"
+                : "Verifying the connection…"}
           </span>
         </div>
       )}

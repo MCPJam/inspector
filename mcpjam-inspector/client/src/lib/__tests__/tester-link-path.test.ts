@@ -110,7 +110,7 @@ describe("agreement with the credential registry", () => {
   it("reads the same token the registry scrubs", () => {
     const match = matchCredentialPath("/user-testing/demo/tok_1");
     expect(match?.route.id).toBe("tester-link");
-    expect(match?.secret).toBe(
+    expect(match?.segment).toBe(
       extractTesterLinkToken("/user-testing/demo/tok_1"),
     );
   });

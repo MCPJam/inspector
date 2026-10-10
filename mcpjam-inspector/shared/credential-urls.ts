@@ -305,7 +305,7 @@ interface CompiledRoute {
   /** Anchored at the start of a pathname. */
   anchored: RegExp;
   /** 1-based group of the secret segment, for `path` routes. */
-  secretGroup: number;
+  segmentGroup: number;
   /** The literal path before the first parameter. */
   staticPrefix: string;
   /** Segment names, in order, for `path` routes. */
@@ -358,7 +358,7 @@ function compileRoute(route: CredentialRoute): CompiledRoute {
   return {
     route,
     anchored: new RegExp(`^${source}${tail}`, "i"),
-    secretGroup:
+    segmentGroup:
       route.secretIn === "path" ? paramNames.indexOf(route.secretParam) + 1 : 0,
     staticPrefix: firstParam === -1 ? body : body.slice(0, firstParam),
     paramNames,
@@ -385,11 +385,14 @@ export interface CredentialRouteMatch {
   route: CredentialRoute;
   /** Every `:param` in the template, decoded where possible. */
   params: Record<string, string>;
-  /** The secret's raw (undecoded) text, for `path` routes. */
-  secret?: string;
-  /** Index range of the secret segment within the pathname. */
-  secretStart?: number;
-  secretEnd?: number;
+  /**
+   * The raw (undecoded) text of the segment that holds the secret, for `path`
+   * routes. Named for what it is — a segment of the URL — not what it guards.
+   */
+  segment?: string;
+  /** Index range of that segment within the pathname. */
+  segmentStart?: number;
+  segmentEnd?: number;
 }
 
 function safeDecode(value: string): string {
@@ -410,25 +413,24 @@ export function matchCredentialPath(
   for (const compiled of PATH_ROUTES) {
     const match = compiled.anchored.exec(pathname);
     if (!match) continue;
-    const secret = match[compiled.secretGroup];
-    if (secret === undefined) continue;
+    const segment = match[compiled.segmentGroup];
+    if (segment === undefined) continue;
     const reserved = compiled.route.reserved;
-    if (reserved?.includes(safeDecode(secret).toLowerCase())) continue;
-    if (safeDecode(secret) === CREDENTIAL_PLACEHOLDER) continue;
+    if (reserved?.includes(safeDecode(segment).toLowerCase())) continue;
+    if (safeDecode(segment) === CREDENTIAL_PLACEHOLDER) continue;
     const params: Record<string, string> = {};
     compiled.paramNames.forEach((name, index) => {
       params[name] = safeDecode(match[index + 1] ?? "");
     });
-    // The secret is the template's LAST group up to this point, so it ends
-    // where the match ends minus anything after it in the template — which
-    // is nothing, because every registered secret is the final segment.
-    const secretEnd = match[0].length;
+    // The secret segment is the template's last, so it ends where the match
+    // ends.
+    const segmentEnd = match[0].length;
     return {
       route: compiled.route,
       params,
-      secret,
-      secretStart: secretEnd - secret.length,
-      secretEnd,
+      segment,
+      segmentStart: segmentEnd - segment.length,
+      segmentEnd,
     };
   }
   return null;
@@ -510,8 +512,8 @@ function scrubParamString(body: string): string {
 
 function scrubPathname(pathname: string): string {
   const match = matchCredentialPath(pathname);
-  if (!match || match.secretStart === undefined) return pathname;
-  return `${pathname.slice(0, match.secretStart)}${CREDENTIAL_PLACEHOLDER}${pathname.slice(match.secretEnd)}`;
+  if (!match || match.segmentStart === undefined) return pathname;
+  return `${pathname.slice(0, match.segmentStart)}${CREDENTIAL_PLACEHOLDER}${pathname.slice(match.segmentEnd)}`;
 }
 
 function scrubFragment(fragment: string): string {
@@ -678,9 +680,9 @@ const TEXT_PARAM =
 function scrubTextPaths(text: string): string {
   let out = text;
   for (const pattern of TEXT_PATH_PATTERNS) {
-    const { secretGroup, paramNames } = pattern.compiled;
+    const { segmentGroup, paramNames } = pattern.compiled;
     out = out.replace(pattern.regex, (match: string, ...groups: unknown[]) => {
-      const secret = groups.slice(0, paramNames.length)[secretGroup - 1];
+      const secret = groups.slice(0, paramNames.length)[segmentGroup - 1];
       if (
         typeof secret !== "string" ||
         pattern.reserved.includes(safeDecode(secret).toLowerCase())

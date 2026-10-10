@@ -368,8 +368,6 @@ recorders, or they drift.
   and Sentry offers no hook to edit rrweb events. It is never a credential URL
   (replay is blocked there) and never a `masked` session (Sentry Replay does
   not record at `masked`), so what remains is names at `full`.
-- **Sentry email at boot.** Before the organization list loads, Sentry still
-  has the signed-in email.
 - **Viewers outside the organization.** The posture of an organization the
   viewer does not belong to is unknown. Share links are `masked` for that
   reason, but a project shared to a non-member outside a share link is judged
