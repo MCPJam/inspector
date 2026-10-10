@@ -3,6 +3,77 @@
 Repository-wide instructions for AI coding agents. Package-specific rules live
 alongside their code — see `mcpjam-inspector/AGENTS.md` for the inspector app.
 
+## Code quality contract
+
+These rules bind every change, human or agent. Agents write most of the code
+here, so the cheap place to stop slop is before the PR exists. CI and the
+hooks in `.claude/settings.json` check the same rules (`scripts/slop/`).
+
+### Before you finish
+
+Run these and fix what they report before you end the turn or open a PR:
+
+```
+npm run slop:check                      # no rule may go up (scripts/slop/rules.mjs)
+npm run typecheck -w <package you touched>
+npm test -w <package you touched>
+```
+
+Then fill in `.github/pull_request_template.md`. In your last message, list
+what you deleted and what existing code you reused.
+
+### Size
+
+- A new file stays under 400 lines; a function under 80.
+- A file already over 800 lines does not grow. Put new code in its own module.
+- A PR stays under 400 changed lines of hand-written source. Larger needs the
+  `large-pr` label; over 1,500 needs to be split or labelled `mechanical`.
+- A move or split is its own PR with no behavior change in it.
+
+### Reuse before you write
+
+Search before adding a helper. `isRecord`, `sleep`, `truncate`,
+`formatDuration`, `stableStringify` and retry loops already exist many times
+over; adding another copy makes the next cleanup harder. Shared code lives in:
+
+- `sdk/` for anything the CLI, the inspector server or a user can import.
+- `mcpjam-inspector/shared/` for code both the inspector client and server
+  use, such as `abort-errors.ts`.
+- `design-system/` for tokens and primitives, `chat-ui/` for chat components.
+  The inspector imports `chat-ui` rather than copying from it.
+
+### One way to do a thing
+
+When you add a v2, delete the v1 in the same PR. If you cannot, say in the PR
+who removes it and by when. Do not leave a deprecated alias with live callers.
+
+### Errors
+
+- Handle or report an error; never swallow it. A best-effort catch carries a
+  comment saying why the failure is safe to ignore, and a debug-level log.
+- No `.catch(() => {})` and no empty `catch {}`.
+- Server code logs through `logger`, never `console` (see
+  `mcpjam-inspector/AGENTS.md`).
+
+### Types
+
+- No `as any`, `: any` or `as unknown as`. Fix the type, narrow with a guard,
+  or parse with zod at the boundary.
+- No new `@ts-ignore`, `@ts-nocheck` or `eslint-disable`. A suppression that
+  must stay names the rule and the reason on the same line.
+
+### Comments
+
+A comment says why the code is this way now. How it got here belongs in the
+commit message and PR description. Do not cite PR numbers, issue or ticket
+IDs, dates, phases or "used to" in source comments.
+
+### Repo hygiene
+
+No scratch files in the repo: no `NOTES-*.md`, no `.spike-*` folders, no new
+root files. Keep working notes in your scratch directory and put the
+conclusions in the PR description.
+
 ## Design
 
 **Read [`DESIGN.md`](./DESIGN.md) before any UI or styling work.** It describes the
