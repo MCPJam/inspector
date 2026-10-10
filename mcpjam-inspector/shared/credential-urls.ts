@@ -675,7 +675,9 @@ function scrubTextParams(text: string, depth = 0): string {
         return match;
       }
       if (isSecretParamKey(safeDecode(key))) {
-        return `${lead}${key}${eq}${CREDENTIAL_PLACEHOLDER}`;
+        // Sentence punctuation after a value in prose is not part of it.
+        const trailing = TRAILING_PUNCTUATION.exec(value)?.[0] ?? "";
+        return `${lead}${key}${eq}${CREDENTIAL_PLACEHOLDER}${trailing}`;
       }
       // A non-secret value can be a whole URL, percent-encoded
       // (`redirect=https%3A%2F%2F…%3Fcode%3D…`); its own parameters are
