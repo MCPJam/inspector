@@ -113,7 +113,12 @@ export async function callClaude({ model, system, user, format, effort }, fetchI
   if (message.stop_reason === "refusal") {
     throw new Error(`${model.id} declined the request (${message.stop_details?.category ?? "refusal"}).`);
   }
-  const text = message.content.find((block) => block.type === "text")?.text ?? "{}";
+  // A response cut off at max_tokens, or one that is all thinking, has no text
+  // block. Treating it as "no findings" would pass copy nobody reviewed.
+  const text = message.content.find((block) => block.type === "text")?.text;
+  if (message.stop_reason !== "end_turn" || text === undefined) {
+    throw new Error(`${model.id} returned no result (stop_reason ${message.stop_reason}).`);
+  }
   return { items: JSON.parse(text).items ?? [], usage: message.usage };
 }
 
@@ -165,8 +170,8 @@ export function suggestion(source, oldText, newText) {
     return source.slice(0, at) + escaped + source.slice(at + oldText.length);
   }
   if (open === "`") {
-    // Keep ${placeholders}; escape a stray backtick or backslash.
-    const escaped = newText.replace(/\\(?!\$\{)/g, "\\\\").replace(/`/g, "\\`");
+    // ${placeholders} carry no backslash, so every backslash and backtick is escaped.
+    const escaped = newText.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
     return source.slice(0, at) + escaped + source.slice(at + oldText.length);
   }
   // JSX text: right after a tag, or alone on an indented line of its own.
