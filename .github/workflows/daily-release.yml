@@ -2,7 +2,7 @@ name: Daily Inspector release
 
 on:
   schedule:
-    - cron: "0 17 * * *"
+    - cron: "0 17 * * 0-5"
       timezone: America/Los_Angeles
   workflow_dispatch:
 
