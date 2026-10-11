@@ -5,8 +5,8 @@
  * This module grades nothing. It knows what a finding, a lane and a coverage
  * tally ARE, and how a set of lanes rolls up into one verdict; it does not
  * know a single requirement of any directory. The publisher modules
- * (`claude-readiness`, `openai-readiness`) supply the lanes, the corpus and
- * the checks.
+ * (`claude-readiness`, `openai-readiness`, `muse-readiness`) supply the
+ * lanes, the corpus and the checks.
  *
  * Pure data reasoning. Safe from the browser entry.
  */

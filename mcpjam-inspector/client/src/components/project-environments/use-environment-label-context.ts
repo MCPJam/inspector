@@ -3,8 +3,8 @@ import { useConvexAuth } from "convex/react";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { useHostList } from "@/hooks/useClients";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { EnvironmentLabelContext } from "@/lib/environment-label";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -54,7 +54,8 @@ export function useEnvironmentLabelContext(
     // those rows "Unknown client" — hiding a name, not a choice.
     includePrivateBacking: true,
   });
-  const computersEnabled = useComputersEnabled();
+  // The image chip is the sandbox-images surface, not the personal computer.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const hasPinnedImage = (environments ?? []).some(
     (environment) => environment.computerEnvironmentId
   );
@@ -62,7 +63,7 @@ export function useEnvironmentLabelContext(
     (environment) => environment.modelId
   );
   const sandboxImages = useSandboxImages(
-    computersEnabled && hasPinnedImage ? normalizedProjectId : null
+    sandboxImagesEnabled && hasPinnedImage ? normalizedProjectId : null
   );
   // Query-budget: only pay for the catalog when a loaded row actually
   // carries a model override. Passing no projectId still resolves the
@@ -96,11 +97,11 @@ export function useEnvironmentLabelContext(
     () => ({
       hostName: (hostId: string) => hostNamesById.get(hostId),
       imageName: (imageId: string) => imageNamesById.get(imageId),
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
       ...(modelNamesById
         ? { modelName: (modelId: string) => modelNamesById.get(modelId) }
         : {}),
     }),
-    [hostNamesById, imageNamesById, computersEnabled, modelNamesById]
+    [hostNamesById, imageNamesById, sandboxImagesEnabled, modelNamesById]
   );
 }

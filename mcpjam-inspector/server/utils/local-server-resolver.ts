@@ -91,6 +91,10 @@ import {
   retainPluginLease,
 } from "../services/plugins/local-stdio.js";
 import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
+import {
+  requireServiceCredential,
+  WORKOS_API_KEY_FEATURE,
+} from "../services/service-credential.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -265,14 +269,9 @@ export async function authorizeBatchLocal(
     "Content-Type": "application/json",
   };
   if (workosApiKeyActingAs) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-    if (!serviceToken) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
-      );
-    }
+    // Only reachable for a validated `sk_…` key, which itself needs the
+    // credential (see bearer-auth), so absence here is the hosted-only case.
+    const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     headers["Authorization"] = `Bearer ${serviceToken}`;
     headers["x-mcpjam-acting-as"] = workosApiKeyActingAs.workosUserId;
     headers["x-mcpjam-acting-in-org"] =

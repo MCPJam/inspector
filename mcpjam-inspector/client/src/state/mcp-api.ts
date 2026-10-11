@@ -1,4 +1,5 @@
 import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
+import { composeAbortSignals } from "@/lib/compose-abort-signals";
 import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
 import type {
   HttpServerConfig,
@@ -198,15 +199,16 @@ async function authFetchWithTimeout(
       ),
     timeoutMs,
   );
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, controller.signal])
-    : controller.signal;
+  const { signal, dispose } = composeAbortSignals(
+    options.signal ? [options.signal, controller.signal] : [controller.signal],
+  );
   try {
     return await authFetch(url, { ...options, signal });
   } catch (error) {
     if (signal.aborted) throw signal.reason;
     throw error;
   } finally {
+    dispose();
     clearTimeout(timeoutId);
   }
 }
@@ -244,7 +246,10 @@ async function localConnectionRequest(
       intent: "manual" as const,
     };
     const done = new AbortController();
-    const promotionSignal = AbortSignal.any([signal, done.signal]);
+    const { signal: promotionSignal, dispose } = composeAbortSignals([
+      signal,
+      done.signal,
+    ]);
     const detach = serverCheckQueue.bindPromotion(signal, async () => {
       try {
         while (!promotionSignal.aborted) {
@@ -293,6 +298,7 @@ async function localConnectionRequest(
     } finally {
       done.abort();
       detach();
+      dispose();
     }
   };
   if (queueSignal) return execute(queueSignal);

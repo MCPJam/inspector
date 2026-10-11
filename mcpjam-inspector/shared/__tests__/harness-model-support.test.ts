@@ -10,6 +10,9 @@ import {
   harnessModelSupport,
   harnessModelSupportAtPinnedVersion,
   harnessModelVerdictAdmits,
+  harnessNoRunnableModelReason,
+  harnessOrgUpstream,
+  harnessRunsOnOrgProvider,
   harnessVersionInRange,
   isValidHarnessVersionRange,
   normalizeHarnessModelId,
@@ -314,6 +317,44 @@ describe("evidence table", () => {
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
       "41b4b5c1219d35ba8891280f22a6600273a60c202de52f66dd5eda47d82068ee",
+    );
+  });
+});
+
+describe("harnessOrgUpstream", () => {
+  it("maps each brokered harness to its vendor and native profile", () => {
+    expect(harnessOrgUpstream("claude-code")).toEqual({
+      provider: "anthropic",
+      profile: "anthropic-native",
+    });
+    expect(harnessOrgUpstream("codex")).toEqual({
+      provider: "openai",
+      profile: "openai-native",
+    });
+  });
+
+  it("is null for a harness on the customer's own account, or an unknown id", () => {
+    expect(harnessOrgUpstream("cursor")).toBeNull();
+    expect(harnessOrgUpstream("toString")).toBeNull();
+    expect(harnessOrgUpstream("not-a-harness")).toBeNull();
+  });
+
+  it("admits only the harness's own vendor", () => {
+    expect(harnessRunsOnOrgProvider("claude-code", "anthropic")).toBe(true);
+    expect(harnessRunsOnOrgProvider("claude-code", "openai")).toBe(false);
+    expect(harnessRunsOnOrgProvider("codex", "openai")).toBe(true);
+    expect(harnessRunsOnOrgProvider("cursor", "anthropic")).toBe(false);
+    expect(harnessRunsOnOrgProvider("codex", undefined)).toBe(false);
+  });
+});
+
+describe("harnessNoRunnableModelReason", () => {
+  it("names the harness and the org key that would run it", () => {
+    expect(harnessNoRunnableModelReason("codex")).toBe(
+      "Codex runs MCPJam models or your organization's OpenAI key. Add one in Organization models.",
+    );
+    expect(harnessNoRunnableModelReason("cursor")).toBe(
+      "Cursor CLI has no model it can run here.",
     );
   });
 });
