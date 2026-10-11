@@ -45,6 +45,7 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   // server, so no query parameter or segment can address a specific one.
   start_claude_readiness_run: "conformance/readiness/:runId",
   start_openai_readiness_run: "conformance/readiness/:runId",
+  start_muse_readiness_run: "conformance/readiness/:runId",
   get_readiness_run: "conformance/readiness/:runId",
   list_readiness_runs: "conformance/readiness/:runId",
   get_readiness_report: "conformance/readiness/:runId",
@@ -162,6 +163,7 @@ describe("every catalog operation declares a permalink policy", () => {
       "get_conformance_run",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_muse_readiness_run",
       "list_chat_sessions",
       "get_chat_session",
       "publish_study",

@@ -8,8 +8,31 @@ import type {
   RequestLogContext,
   SystemLogContext,
 } from "./log-events.js";
-import { scrubLogPayload } from "./log-scrubber.js";
+import {
+  MAX_ERROR_TEXT_CHARS,
+  scrubLogPayload,
+  scrubLogText,
+} from "../../shared/log-scrubber.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
+import { sentryIdentityMetadata } from "./sentry-request-identity.js";
+
+function withIdentityCapture(capture: () => void): void {
+  const identity = sentryIdentityMetadata();
+  if (!("user" in identity)) {
+    capture();
+    return;
+  }
+  // Sentry merges users from several scopes. Strip ambient identity AFTER
+  // that merge so an old email or another request's user cannot survive.
+  Sentry.withScope((scope) => {
+    scope.addEventProcessor((event) => ({
+      ...event,
+      user: identity.user?.id ? { id: identity.user.id } : undefined,
+      tags: { ...event.tags, ...identity.tags },
+    }));
+    capture();
+  });
+}
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -75,6 +98,12 @@ const environment = () => resolveEnvironment();
  */
 type SentryOptions = { error?: unknown; sentry?: boolean };
 
+/**
+ * Every free-form row goes through the same scrubber as `logger.event`.
+ * Before, only typed events did, and the free-form path is where the raw
+ * context lives: an MCP server's URL and name, a sandbox's stderr, `debug`'s
+ * arbitrary arguments.
+ */
 function ingestToAxiom(
   level: "info" | "warn" | "error" | "debug",
   message: string,
@@ -83,7 +112,12 @@ function ingestToAxiom(
   const axiom = getAxiom();
   if (!axiom) return;
   axiom.ingest(dataset(), [
-    { ...context, level, message, environment: environment() },
+    scrubLogPayload({
+      ...context,
+      level,
+      message,
+      environment: environment(),
+    }),
   ]);
 }
 
@@ -133,7 +167,17 @@ export function captureOriginErrorToSentry(
     fingerprint?: string[];
   },
 ): void {
-  Sentry.captureException(error, options);
+  const identity = sentryIdentityMetadata();
+  withIdentityCapture(() =>
+    Sentry.captureException(error, {
+      ...options,
+      // Callers pass route context through here (`reportRouteFailure`'s
+      // `extra`), so it is scrubbed exactly like `logger.error`'s.
+      extra: scrubLogPayload(options.extra),
+      ...identity,
+      tags: { ...options.tags, ...identity.tags },
+    }),
+  );
 }
 
 /**
@@ -162,9 +206,15 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
-      Sentry.captureException(error ?? new Error(message), {
-        extra: { message, ...context },
-      });
+      // Scrubbed like the Axiom row. This context used to reach Sentry raw —
+      // an MCP server's URL and display name among it. The exception's own
+      // message is scrubbed by the SDK's `beforeSend` (`server/sentry.ts`).
+      withIdentityCapture(() =>
+        Sentry.captureException(error ?? new Error(message), {
+          extra: scrubLogPayload({ message, ...context }),
+          ...sentryIdentityMetadata(),
+        }),
+      );
     }
 
     ingestToAxiom("error", message, {
@@ -217,6 +267,9 @@ export const logger = {
 
   /**
    * Log debug info. Always sends to Axiom. Only prints to console in dev/verbose mode. Does not send to Sentry.
+   *
+   * Axiom gets the SHAPE of `args`, not their values: these are whatever the
+   * caller had in hand, and that is routinely a request or a tool result.
    */
   debug(message: string, ...args: unknown[]) {
     ingestToAxiom("debug", message, args.length ? { args } : undefined);
@@ -324,17 +377,30 @@ function emit(
 
   if (options?.sentry === true) {
     if (options.error instanceof Error) {
-      Sentry.captureException(options.error, { extra: fullPayload });
+      withIdentityCapture(() =>
+        Sentry.captureException(options.error, {
+          extra: fullPayload,
+          ...sentryIdentityMetadata(),
+        }),
+      );
     } else {
-      Sentry.captureMessage(eventName, {
-        level: "error",
-        extra: {
-          ...fullPayload,
-          ...(options.error !== undefined
-            ? { rawError: String(options.error) }
-            : {}),
-        },
-      });
+      withIdentityCapture(() =>
+        Sentry.captureMessage(eventName, {
+          level: "error",
+          ...sentryIdentityMetadata(),
+          extra: {
+            ...fullPayload,
+            ...(options.error !== undefined
+              ? {
+                  rawError: scrubLogText(
+                    safeErrorText(options.error),
+                    MAX_ERROR_TEXT_CHARS,
+                  ),
+                }
+              : {}),
+          },
+        }),
+      );
     }
   }
 

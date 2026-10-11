@@ -188,11 +188,21 @@ describe("fetchXaaDcrAuthorizedTarget", () => {
 describe("ensureXaaDcrRegistration", () => {
   it("fails before registration when persistence infrastructure is unavailable", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
-    await expect(ensureXaaDcrRegistration(base)).rejects.toThrow(
-      /persistence is not configured/i
-    );
+    await expect(ensureXaaDcrRegistration(base)).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      feature: "XAA client registration",
+    });
     expect(postMock).not.toHaveBeenCalled();
     expect(proxyMock).not.toHaveBeenCalled();
+  });
+
+  it("answers the hosted-only shape, with its reason, when CONVEX_HTTP_URL is missing", async () => {
+    delete process.env.CONVEX_HTTP_URL;
+    await expect(ensureXaaDcrRegistration(base)).rejects.toMatchObject({
+      status: 422,
+      details: { reason: "FEATURE_REQUIRES_HOSTED" },
+    });
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("reuses a matching unexpired registration without a remote POST", async () => {

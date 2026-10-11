@@ -2,6 +2,7 @@ import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
 import type {
   McpToolResultImageRenderingPolicy,
+  ModelReasoningEffort,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config";
 import type {
@@ -21,6 +22,13 @@ export interface ChatRewind {
 
 export interface ChatV2Request {
   messages: UIMessage[];
+  pluginMessage?: import("./plugin-message").PluginMessageIntent;
+  pluginContextReferences?: string[];
+  pluginWorkspace?: import("./plugin-workspace").PluginWorkspaceDescriptor;
+  /** The Playground's global extension owner, bound to this turn's chat. */
+  pluginGlobalWorkspace?: import("./plugin-workspace").PluginWorkspaceDescriptor;
+  /** Context handles of global Apps, owned by `pluginGlobalWorkspace`. */
+  pluginGlobalContextReferences?: string[];
   /**
    * WHAT this turn executes against (Project Environments — Phase 1.1). One
    * pointer, ids only; the server re-resolves the authoritative configuration.
@@ -58,6 +66,13 @@ export interface ChatV2Request {
   modelId?: string;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * Reasoning effort for this turn: the one per-request (non-saved) carrier of
+   * an effort. Wins over the selected host's saved effort for the same model;
+   * under an effort the server omits the temperature (an explicit temperature
+   * sent with it is refused on the direct route).
+   */
+  reasoningEffort?: ModelReasoningEffort;
   apiKey?: string;
   ollamaBaseUrl?: string;
   azureBaseUrl?: string;
