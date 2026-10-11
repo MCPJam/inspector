@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "../evals/types";
 import {
   TableCell,
   TableHead,
@@ -164,7 +165,7 @@ export function EvaluateHistoryRow({
   highlighted = false,
 }: {
   rows: ProjectRunRow[];
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   historyRows: Map<string, SuiteRunHistoryRow>;
   /** Current names for named hosts, so a renamed host is not shown stale. */
   hostNamesById?: ReadonlyMap<string, string | null>;
