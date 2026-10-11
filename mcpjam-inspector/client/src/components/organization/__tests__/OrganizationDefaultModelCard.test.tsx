@@ -131,7 +131,10 @@ describe("OrganizationDefaultModelCard", () => {
   it("shows one row per kind the backend supports, with no roles", () => {
     renderCard();
 
-    expect(screen.getByText("Default AI model")).toBeInTheDocument();
+    // With one kind the card's heading and the row's label read the same.
+    expect(
+      screen.getByRole("heading", { name: "Default AI model" }),
+    ).toBeInTheDocument();
     const row = screen.getByTestId("org-ai-model-default");
     expect(within(row).getByText("Default AI model")).toBeInTheDocument();
     expect(
