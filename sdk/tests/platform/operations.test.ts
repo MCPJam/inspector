@@ -7,6 +7,7 @@ import {
   createEvalSuiteOperation,
   createHostOperation,
   cancelEvalRunOperation,
+  deleteProjectOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   createTunnelOperation,
@@ -753,6 +754,41 @@ describe("listProjectsOperation", () => {
       "project-new",
       "project-old",
     ]);
+  });
+});
+
+describe("deleteProjectOperation", () => {
+  it("requires a reusable request key and returns the accepted receipt", async () => {
+    const { client } = makeClient();
+    const receipt = {
+      requestId: "request-1",
+      scope: { type: "project" as const, id: "project-new" },
+      state: "accepted" as const,
+      acceptedAt: 100,
+      purgeAfter: null,
+      statusUrl: "/api/v1/deletions/request-1",
+      canCancel: true,
+      liveDataDeletedAt: null,
+      closedAt: null,
+      attentionCode: null,
+    };
+    const request = vi
+      .spyOn(client, "requestDeletion")
+      .mockResolvedValue(receipt);
+
+    const result = await deleteProjectOperation.execute(
+      deleteProjectOperation.inputSchema.parse({
+        project: "new",
+        idempotencyKey: "reusable-key",
+      }),
+      { client }
+    );
+
+    expect(result).toEqual(receipt);
+    expect(request).toHaveBeenCalledWith(
+      { scope: { type: "project", id: "project-new" } },
+      { idempotencyKey: "reusable-key" }
+    );
   });
 });
 
@@ -2374,7 +2410,7 @@ describe("operation catalog consistency", () => {
     list_projects: {},
     create_project: { name: "p" },
     update_project: { project: "p", name: "renamed" },
-    delete_project: { project: "p" },
+    delete_project: { project: "p", idempotencyKey: "stable-key" },
     list_project_servers: {},
     create_project_server: {
       body: { name: "s", enabled: true, transportType: "http" },

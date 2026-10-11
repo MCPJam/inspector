@@ -1,3 +1,4 @@
+import { deletionResponse } from "./deletion-response.js";
 /**
  * Public v1 SECRETS surface — write-only, without exception.
  *
@@ -459,7 +460,7 @@ secrets.delete("/projects/:projectId/secrets/:secretId", async (c) => {
   const secretId = c.req.param("secretId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
 
-  let result: { deleted: true; secretId: string; name: string };
+  let result: unknown;
   try {
     result = (await client.action(
       "projectSecretsNode:deleteSecret" as never,
@@ -467,17 +468,19 @@ secrets.delete("/projects/:projectId/secrets/:secretId", async (c) => {
         projectId,
         secretId,
       } as never,
-    )) as { deleted: true; secretId: string; name: string };
+    ));
   } catch (error) {
     throw translateConvexWriteError(error, { resource: "Secret" });
   }
 
+  const response = deletionResponse(result);
+  const metadata = z.object({ secretId: z.string(), name: z.string() }).parse(result);
   return v1Resource(c, {
-    id: result.secretId,
+    id: metadata.secretId,
     projectId,
-    name: result.name,
-    deleted: true,
-  });
+    name: metadata.name,
+    ...response,
+  }, "accepted" in response ? 202 : 200);
 });
 
 export default secrets;

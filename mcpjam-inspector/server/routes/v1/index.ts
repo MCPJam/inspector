@@ -61,6 +61,7 @@ import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
 import spendBudget from "./spend-budget.js";
 import projects from "./projects.js";
+import deletions from "./deletions.js";
 import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
@@ -284,6 +285,7 @@ v1.route("/", organizations);
 v1.route("/", evalChecks);
 v1.route("/", spendBudget);
 v1.route("/", projects);
+v1.route("/", deletions);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which
 // cannot advertise a per-org beta. Guest-DENIED by default like every other

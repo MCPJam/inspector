@@ -221,6 +221,13 @@ describe("PATCH and DELETE /v1/projects/:projectId/servers/:serverId refusals", 
       headers: { "x-request-id": REQUEST_ID },
     });
 
+  it("returns 202 rather than a false completion for an accepted server deletion", async () => {
+    convex.mutation.mockResolvedValue({ accepted: true, deleted: false, requestId: "r1", state: "accepted" });
+    const response = await deleteServer("proj-mine", "srv-1");
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ id: "srv-1", deleted: false, requestId: "r1" });
+  });
+
   it("answers a PATCH to a server the caller cannot see with 404", async () => {
     convex.action.mockRejectedValue(
       masked("A(servers:updateServerWithClientSecret)"),

@@ -4906,6 +4906,31 @@
           }
         ],
         "responses": {
+          "202": {
+            "description": "Deletion accepted. The object is unavailable while cleanup runs; deleted is false until removal is verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ObjectDeletionAccepted"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "200": {
             "description": "The suite was deleted.",
             "content": {
@@ -7855,38 +7880,22 @@
       "delete": {
         "operationId": "deleteProject",
         "tags": ["Projects"],
-        "summary": "Delete a project and everything scoped to it",
-        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), and hosted tasks. Requires project admin. The request body must be empty.",
+        "summary": "Use the deletion request protocol for project deletion",
+        "description": "This legacy endpoint is mutation-free and returns `409 DELETION_PROTOCOL_REQUIRED`. Submit `POST /deletions` with an idempotency key, then follow the returned receipt and status URL.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           }
         ],
         "responses": {
-          "200": {
-            "description": "The project was deleted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProjectDeleted"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ValidationError"
+          "409": {
+            "description": "Deletion must use the versioned deletion request protocol."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
           "404": {
             "$ref": "#/components/responses/NotFound"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -7894,6 +7903,120 @@
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
           }
+        }
+      }
+    },
+    "/deletions": {
+      "post": {
+        "operationId": "requestDeletion",
+        "tags": ["Deletion"],
+        "summary": "Start an organization or project deletion",
+        "description": "Marks the scope inaccessible, records an idempotent request and returns a receipt. Destruction is asynchronous and waits for journal confirmation and any applicable hold.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["scope"],
+                "properties": {
+                  "scope": {
+                    "oneOf": [
+                      { "type": "object", "required": ["type", "id"], "properties": { "type": { "const": "organization" }, "id": { "type": "string" } } },
+                      { "type": "object", "required": ["type", "id"], "properties": { "type": { "const": "project" }, "id": { "type": "string" } } }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Deletion accepted. Follow the returned receipt status URL.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PlatformDeletionReceipt" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "A deletion is already in progress or the idempotency key was reused." },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/deletions/{requestId}": {
+      "parameters": [
+        { "name": "requestId", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "get": {
+        "operationId": "getDeletion",
+        "tags": ["Deletion"],
+        "summary": "Read deletion status",
+        "responses": {
+          "200": {
+            "description": "Current deletion receipt.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PlatformDeletionReceipt" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/deletions/{requestId}/authorize": {
+      "post": {
+        "operationId": "authorizeDeletion",
+        "tags": ["Deletion"],
+        "summary": "Refresh deletion receipt access",
+        "parameters": [
+          { "name": "requestId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Receipt access refreshed." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/deletions/{requestId}/cancel": {
+      "post": {
+        "operationId": "cancelDeletion",
+        "tags": ["Deletion"],
+        "summary": "Cancel a deletion request",
+        "description": "Requires current authorization for the owning organization or project. The body must be empty.",
+        "parameters": [
+          { "name": "requestId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Cancellation completed." },
+          "202": { "description": "Cancellation is waiting for journal confirmation." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "The deletion can no longer be cancelled." },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" }
         }
       }
     },
@@ -8022,6 +8145,31 @@
           }
         ],
         "responses": {
+          "202": {
+            "description": "Deletion accepted. The object is unavailable while cleanup runs; deleted is false until removal is verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ObjectDeletionAccepted"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "200": {
             "description": "The server was deleted.",
             "content": {
@@ -9006,6 +9154,31 @@
         "summary": "Delete a secret",
         "description": "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. Runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it.",
         "responses": {
+          "202": {
+            "description": "Deletion accepted. The object is unavailable while cleanup runs; deleted is false until removal is verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ObjectDeletionAccepted"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "200": {
             "description": "The secret was revoked.",
             "content": {
@@ -26687,6 +26860,29 @@
           }
         }
       },
+      "PlatformDeletionReceipt": {
+        "type": "object",
+        "required": ["requestId", "scope", "state", "acceptedAt", "purgeAfter", "statusUrl", "canCancel", "liveDataDeletedAt", "closedAt", "attentionCode"],
+        "properties": {
+          "requestId": { "type": "string" },
+          "scope": {
+            "type": "object",
+            "required": ["type", "id"],
+            "properties": {
+              "type": { "type": "string", "enum": ["organization", "project"] },
+              "id": { "type": "string" }
+            }
+          },
+          "state": { "type": "string", "enum": ["accepted", "waiting_to_purge", "deleting", "verifying", "live_data_deleted", "closed", "cancel_pending", "cancelled", "needs_attention"] },
+          "acceptedAt": { "type": "number" },
+          "purgeAfter": { "type": "number", "nullable": true },
+          "statusUrl": { "type": "string" },
+          "canCancel": { "type": "boolean" },
+          "liveDataDeletedAt": { "type": "number", "nullable": true },
+          "closedAt": { "type": "number", "nullable": true },
+          "attentionCode": { "type": "string", "nullable": true }
+        }
+      },
       "ProjectServerCreateRequest": {
         "type": "object",
         "description": "Creates a saved server in the project. Server names are unique per workspace — a clash responds `409`. Scope comes from the path: `projectId`, `serverId` and `workspaceId` are rejected in the body.",
@@ -26931,6 +27127,35 @@
           },
           "clearXaaConfig": {
             "type": "boolean"
+          }
+        }
+      },
+      "ObjectDeletionAccepted": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "deleted",
+          "requestId",
+          "state"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },

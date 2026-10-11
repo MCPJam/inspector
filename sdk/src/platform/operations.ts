@@ -162,6 +162,7 @@ import type {
   PlatformJourneyRunCanceled,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformDeletionReceipt,
   PlatformSecret,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
@@ -652,17 +653,20 @@ export const updateProjectOperation: PlatformOperation<
 
 const deleteProjectInput = z.object({
   project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
+  idempotencyKey: z.string().trim().min(1).max(128).describe(
+    "Stable key to reuse if the request outcome is unknown."
+  ),
 });
 export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
 
 export const deleteProjectOperation: PlatformOperation<
   DeleteProjectInput,
-  { id: string; deleted: boolean }
+  PlatformDeletionReceipt
 > = {
   name: "delete_project",
   title: "Delete an MCPJam project",
   description:
-    "Delete a project and cascade its project-owned resources. This cannot be undone.",
+    "Start project deletion. Returns an accepted request and status receipt; it does not mean deletion is complete.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: deleteProjectInput,
@@ -671,7 +675,13 @@ export const deleteProjectOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    return client.deleteProject({ projectId: project.id }, { signal });
+    return client.requestDeletion(
+      { scope: { type: "project", id: project.id } },
+      {
+        signal,
+        idempotencyKey: input.idempotencyKey,
+      }
+    );
   },
 };
 

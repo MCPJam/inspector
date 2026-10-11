@@ -208,29 +208,15 @@ projects.patch("/projects/:projectId", async (c) => {
   }
 });
 
-// DELETE /v1/projects/:projectId — cascades project-owned resources and
-// schedules asynchronous cleanup of large hosted task tables.
-projects.delete("/projects/:projectId", async (c) => {
-  const projectId = c.req.param("projectId");
-  const raw = await c.req.text();
-  if (raw.trim()) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Delete body must be empty"
-    );
-  }
-  const token = await getConvexBearerForRequest(c);
-  try {
-    // Inside the try for the same reason as the PATCH above.
-    await assertProjectWritableByCaller(c, token, projectId);
-    await convexClient(token).mutation("projects:deleteProject" as any, {
-      projectId,
-    });
-    return v1Resource(c, { id: projectId, deleted: true });
-  } catch (error) {
-    throw translateProjectWriteError(error);
-  }
+// Legacy project deletion must use the durable request protocol.
+projects.delete("/projects/:projectId", async () => {
+  // Immediate deletion bypasses the versioned request, hold, journal and
+  // receipt protocol. Keep the old path explicit and mutation-free.
+  throw new WebRouteError(
+    409,
+    ErrorCode.CONFLICT,
+    "DELETION_PROTOCOL_REQUIRED: use POST /v1/deletions and follow its receipt"
+  );
 });
 
 export default projects;

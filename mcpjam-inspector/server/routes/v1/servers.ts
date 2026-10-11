@@ -1,3 +1,4 @@
+import { deletionResponse } from "./deletion-response.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
@@ -280,7 +281,7 @@ servers.patch("/projects/:projectId/servers/:serverId", async (c) => {
   }
 });
 
-// DELETE /v1/projects/:projectId/servers/:serverId — soft-delete a server.
+// DELETE /v1/projects/:projectId/servers/:serverId — request server deletion.
 servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
   const projectId = c.req.param("projectId");
   const serverId = c.req.param("serverId");
@@ -292,8 +293,9 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
       "Delete body must be empty",
     );
   const token = await getConvexBearerForRequest(c);
+  let result: unknown;
   try {
-    await convexClient(token).mutation(
+    result = await convexClient(token).mutation(
       "servers:deleteServer" as any,
       { projectId, serverId } as any,
     );
@@ -305,7 +307,8 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
       serverId,
     );
   }
-  return v1Resource(c, { id: serverId, deleted: true });
+  const response = deletionResponse(result);
+  return v1Resource(c, { id: serverId, ...response }, "accepted" in response ? 202 : 200);
 });
 
 // POST /v1/projects/:projectId/servers/:serverId/validate

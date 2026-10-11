@@ -274,23 +274,7 @@ describe("project write routes: delegated org scope", () => {
   });
 
   describe("DELETE /v1/projects/:projectId", () => {
-    it("404s a project in a sibling org rather than deleting it", async () => {
-      stubDelegatedKeyBoundTo("org_a");
-
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/proj_in_b",
-        undefined,
-        "sk_live_secret"
-      );
-
-      expect(res.status).toBe(404);
-      expect(convexMutationMock).not.toHaveBeenCalled();
-    });
-
-    it("deletes a project inside the key's own org", async () => {
-      // The rejection above only proves the guard fires. This proves it is a
-      // GUARD and not a wall — a key must still be able to delete its own.
+    it("rejects the immediate-delete protocol before making any backend call", async () => {
       stubDelegatedKeyBoundTo("org_a");
 
       const res = await request(
@@ -300,28 +284,9 @@ describe("project write routes: delegated org scope", () => {
         "sk_live_secret"
       );
 
-      expect(res.status).toBe(200);
-      expect(convexMutationMock).toHaveBeenCalledTimes(1);
-      expect(convexMutationMock).toHaveBeenCalledWith(
-        "projects:deleteProject",
-        expect.objectContaining({ projectId: "proj_in_a" })
-      );
-    });
-
-    it("translates a failure of the scope preflight like any upstream failure", async () => {
-      stubDelegatedKeyBoundTo("org_a");
-      convexQueryMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
-
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/proj_in_a",
-        undefined,
-        "sk_live_secret"
-      );
-
-      expect(res.status).toBeGreaterThanOrEqual(500);
-      expect(((await res.json()) as { code?: string }).code).toBeTruthy();
+      expect(res.status).toBe(409);
       expect(convexMutationMock).not.toHaveBeenCalled();
+      expect(convexQueryMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -242,14 +242,16 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-      projects
+  projects
       .command("delete")
-      .description("Delete a project and its project-owned resources")
+      .description("Start deletion of a project and its project-owned resources")
+      .requiredOption("--idempotency-key <key>", "Stable key to reuse if the request outcome is unknown")
       .requiredOption("--project <id-or-name>", "Project name or ID").action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const input = deleteProjectOperation.inputSchema.parse({
       project: requireProject(command, platformOptions),
+      idempotencyKey: command.opts().idempotencyKey,
     });
     const result = await runPlatformCommand(
       platformOptions,
@@ -257,7 +259,7 @@ export function registerProjectsCommands(program: Command): void {
       ({ client, signal }) =>
         deleteProjectOperation.execute(input, { client, signal })
     );
-    writeResult(result, globalOptions.format);
+    writeResult({ accepted: true, ...result }, globalOptions.format);
   });
 
   bindOperation(

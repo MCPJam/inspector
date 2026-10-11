@@ -37,6 +37,39 @@ function requestOf(fetchMock: FetchMock, call = 0): { url: URL; init: RequestIni
 }
 
 describe("PlatformApiClient", () => {
+  it("sends deletion acceptance with a stable key and keeps cancel bodyless", async () => {
+    const receipt = {
+      requestId: "r1",
+      scope: { type: "project", id: "p1" },
+      state: "accepted",
+      acceptedAt: 1,
+      purgeAfter: null,
+      statusUrl: "/api/v1/deletions/r1",
+      canCancel: true,
+      liveDataDeletedAt: null,
+      closedAt: null,
+      attentionCode: null,
+    };
+    const fetchMock = vi.fn(async () => jsonResponse(receipt));
+    const client = makeClient(fetchMock);
+
+    await client.requestDeletion(
+      { scope: { type: "project", id: "p1" } },
+      { idempotencyKey: "stable-key" }
+    );
+    const accepted = requestOf(fetchMock);
+    expect(accepted.url.pathname).toBe("/api/v1/deletions");
+    expect(accepted.init.headers).toMatchObject({ "idempotency-key": "stable-key" });
+    expect(accepted.init.body).toBe(
+      JSON.stringify({ scope: { type: "project", id: "p1" } })
+    );
+
+    await client.cancelDeletion({ requestId: "r1" });
+    const cancelled = requestOf(fetchMock, 1);
+    expect(cancelled.url.pathname).toBe("/api/v1/deletions/r1/cancel");
+    expect(cancelled.init.body).toBeUndefined();
+  });
+
   it.each(["goal", "journey"] as const)(
     "preserves asynchronous %s cancellation acceptance",
     async (surface) => {

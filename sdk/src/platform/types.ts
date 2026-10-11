@@ -371,6 +371,32 @@ export interface PlatformProject {
   updatedAt: number | null;
 }
 
+export type PlatformObjectDeletion =
+  | { deleted: true }
+  | { accepted: true; deleted: false; requestId: string; state: string };
+
+export interface PlatformDeletionReceipt {
+  requestId: string;
+  scope: { type: "organization" | "project"; id: string };
+  state:
+    | "accepted"
+    | "waiting_to_purge"
+    | "deleting"
+    | "verifying"
+    | "live_data_deleted"
+    | "closed"
+    | "cancel_pending"
+    | "cancelled"
+    | "needs_attention";
+  acceptedAt: number;
+  purgeAfter: number | null;
+  statusUrl: string;
+  canCancel: boolean;
+  liveDataDeletedAt: number | null;
+  closedAt: number | null;
+  attentionCode: string | null;
+}
+
 export interface PlatformCatalogOauthProbe {
   probedAt?: number;
   endpointUrl?: string;
@@ -2816,10 +2842,7 @@ export interface PlatformRunCompareSkills {
   unchangedCount: number;
 }
 
-export interface PlatformEvalSuiteDeleted {
-  id: string;
-  deleted: true;
-}
+export type PlatformEvalSuiteDeleted = { id: string } & PlatformObjectDeletion;
 
 export interface PlatformEvalCaseDeleted {
   id: string;
@@ -4627,13 +4650,12 @@ export interface PlatformSecret {
  * Result of deleting a secret. A HARD delete — the row and the ciphertext both
  * go. This is the revoke button, so it must not be soft.
  */
-export interface PlatformSecretDeleted {
+export type PlatformSecretDeleted = {
   id: string;
   projectId: string;
   /** Echoed so a caller logging the revoke does not need a prior read. */
   name: string;
-  deleted: true;
-}
+} & PlatformObjectDeletion;
 
 /**
  * A TRACE DESTINATION — where an organization's traces are STREAMED.

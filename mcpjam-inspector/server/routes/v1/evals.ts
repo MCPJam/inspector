@@ -1,3 +1,4 @@
+import { deletionResponse } from "./deletion-response.js";
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import {
   captureToolSnapshotForEvalAuthoring,
@@ -9379,8 +9380,9 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   }
   requireProjectMatch(suite, projectId, "Eval suite");
   const { convexClient } = createConvexClients(token);
+  let result: unknown;
   try {
-    await convexClient.mutation("testSuites:deleteTestSuite" as any, {
+    result = await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
       // Query param, for the same reason the case delete uses one.
       ...fileSyncArg(c.req.query("declaredSuiteId")),
@@ -9388,7 +9390,8 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   } catch (error) {
     throw translateConvexWriteError(error);
   }
-  return v1Resource(c, { id: suiteId, deleted: true });
+  const response = deletionResponse(result);
+  return v1Resource(c, { id: suiteId, ...response }, "accepted" in response ? 202 : 200);
 });
 
 // PATCH /v1/projects/:projectId/eval-suites/:suiteId/schedule

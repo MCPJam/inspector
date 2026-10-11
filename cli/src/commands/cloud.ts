@@ -10,6 +10,7 @@ import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
 import { registerOrganizationsCommands } from "./organizations.js";
+import { registerDeletionCommands } from "./deletions.js";
 import { registerProjectsCommands } from "./projects.js";
 import { registerStudiesCommands } from "./studies.js";
 import { registerSecretsCommands } from "./secrets.js";
@@ -39,6 +40,7 @@ export function registerCloudCommands(program: Command): Command {
   cloud.commandsGroup("Workspace:");
   registerOrganizationsCommands(cloud);
   registerProjectsCommands(cloud);
+  registerDeletionCommands(cloud);
   registerSessionsCommands(cloud);
   registerTunnelCommands(cloud);
 

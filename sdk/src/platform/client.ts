@@ -153,6 +153,8 @@ import type {
   PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
+  PlatformDeletionReceipt,
+  PlatformObjectDeletion,
   PlatformServerConnection,
   PlatformServerConnectionCreateBody,
   PlatformProjectServer,
@@ -866,6 +868,54 @@ export class PlatformApiClient {
     );
   }
 
+  requestDeletion(
+    params: { scope: { type: "organization" | "project"; id: string } },
+    options: RequestOptions & { idempotencyKey: string }
+  ): Promise<PlatformDeletionReceipt> {
+    return this.request(
+      "POST",
+      "/deletions",
+      { body: { scope: params.scope } },
+      options
+    );
+  }
+
+  getDeletion(
+    params: { requestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformDeletionReceipt> {
+    return this.request(
+      "GET",
+      `/deletions/${encodeURIComponent(params.requestId)}`,
+      {},
+      options
+    );
+  }
+
+  authorizeDeletion(
+    params: { requestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformDeletionReceipt> {
+    return this.request(
+      "POST",
+      `/deletions/${encodeURIComponent(params.requestId)}/authorize`,
+      {},
+      options
+    );
+  }
+
+  cancelDeletion(
+    params: { requestId: string },
+    options?: RequestOptions
+  ): Promise<PlatformDeletionReceipt> {
+    return this.request(
+      "POST",
+      `/deletions/${encodeURIComponent(params.requestId)}/cancel`,
+      {},
+      options
+    );
+  }
+
   // ── Registry (directory + curated cards) ─────────────────────────────────
 
   searchRegistryDirectory(
@@ -1178,7 +1228,7 @@ export class PlatformApiClient {
   deleteProjectServer(
     params: { projectId: string; serverId: string },
     options?: RequestOptions
-  ): Promise<{ id: string; deleted: boolean }> {
+  ): Promise<{ id: string } & PlatformObjectDeletion> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(

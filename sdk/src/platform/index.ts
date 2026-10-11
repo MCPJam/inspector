@@ -360,6 +360,8 @@ export type {
   PlatformPluginSkillComponent,
   PlatformPluginVersion,
   PlatformProject,
+  PlatformDeletionReceipt,
+  PlatformObjectDeletion,
   PlatformProjectServer,
   PlatformServerGroup,
   PlatformCatalogOauthProbe,
