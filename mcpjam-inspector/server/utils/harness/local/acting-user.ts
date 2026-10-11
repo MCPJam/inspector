@@ -191,7 +191,9 @@ export async function resolveLocalHarnessActor(args: {
   }
 
   try {
-    const session = await deps.verify(token);
+    const session = await deps.verify(token, undefined, {
+      allowMcpResourceAudience: true,
+    });
     // `verifyAuthKitToken` already refuses a token with no `sub`. Checked again
     // because this is the value a filesystem grant binds to: an empty subject
     // would canonicalize to the bare namespace `authkit:`, which is not an

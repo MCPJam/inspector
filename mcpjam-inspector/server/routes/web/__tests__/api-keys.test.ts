@@ -131,6 +131,7 @@ describe("web routes — API key revoke ownership", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.mocked(removeWorkosKeyBinding).mockClear();
     vi.mocked(removeWorkosKeyBinding).mockResolvedValue(undefined);
     vi.mocked(resolveUserByExternalId).mockResolvedValue({
@@ -282,6 +283,7 @@ describe("web routes — API key mint readiness", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     mockResolveApiKeyReadiness.mockReset();
   });
 
@@ -430,6 +432,7 @@ describe("web routes — API key listing is not scoped by session org", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
   });
 
   afterEach(() => {
@@ -559,6 +562,7 @@ describe("organization API key inventory", () => {
   const { app } = createWebTestApp();
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
@@ -757,6 +761,7 @@ describe("web routes — API key expiry at mint", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
       ready: true,
       workosOrganizationId: "org_workos_1",
@@ -901,6 +906,7 @@ describe("web routes — admin-only minting policy", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.mocked(createWorkosKeyBinding).mockReset().mockResolvedValue(undefined);
   });
 
@@ -1057,6 +1063,7 @@ describe("web routes — personal key list reports expiry", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
   });
 
   afterEach(() => {
@@ -1111,6 +1118,7 @@ describe("organization API key inventory — completeness", () => {
   const { app } = createWebTestApp();
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
@@ -1323,6 +1331,7 @@ describe("organization API key revoke (owners and admins)", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
@@ -1650,6 +1659,7 @@ describe("API key revoke by id for organization owners and admins", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
@@ -1848,6 +1858,7 @@ describe("API key list for one organization", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
@@ -1999,6 +2010,7 @@ describe("API key creation eligibility", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
     mockResolveApiKeyReadiness.mockReset();
     vi.mocked(resolveUserByExternalId).mockResolvedValue({
       _id: "mcpjam_user_1",

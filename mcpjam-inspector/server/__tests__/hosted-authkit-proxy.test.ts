@@ -25,6 +25,8 @@ async function bootHostedApp(): Promise<App> {
   vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("ELECTRON_APP", "");
   vi.stubEnv("MCPJAM_WORKOS_SESSION_SECRET", "test-workos-session-secret");
+  // The proxy only serves the client id this server is configured with.
+  vi.stubEnv("WORKOS_CLIENT_ID", "client_123");
 
   const { createHonoApp } = await import("../app.js");
   return (await createHonoApp()).app;
