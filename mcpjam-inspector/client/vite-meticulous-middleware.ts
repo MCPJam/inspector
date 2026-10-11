@@ -1,26 +1,27 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import path from "node:path";
-import { transform } from "esbuild";
+import { build } from "esbuild";
 import type { Plugin } from "vite";
 
 /** Relative to the Vite root, which `vite.config.ts` sets to the client directory. */
 const SOURCE_PATH = "src/lib/meticulous-middleware.ts";
 const RECORDER_TAG = /<script\b[^>]*\bdata-recording-token=[^>]*><\/script>/;
 
-/** The middleware source as one classic script: an IIFE with no imports or exports. */
+/** The middleware and its imports as one classic script: an IIFE with no imports or exports. */
 export async function compileMeticulousMiddleware(
   sourcePath: string,
 ): Promise<string> {
-  const source = readFileSync(sourcePath, "utf8");
-  const { code } = await transform(source, {
-    loader: "ts",
+  const result = await build({
+    entryPoints: [sourcePath],
+    bundle: true,
+    write: false,
+    platform: "browser",
     format: "iife",
     target: "es2019",
     minify: true,
-    sourcemap: false,
+    logLevel: "silent",
   });
-  return code;
+  return result.outputFiles[0].text;
 }
 
 /** Places `tag` directly after the recorder's script tag, or leaves `html` alone when there is none. */
@@ -32,7 +33,7 @@ export function injectAfterRecorder(html: string, tag: string): string {
 }
 
 /**
- * Loads `src/lib/meticulous-middleware.ts` right after the Meticulous
+ * Bundles `src/lib/meticulous-middleware.ts` and loads it right after the Meticulous
  * recorder tag, so the recorder stays the first script and the middleware is
  * installed before its first upload. Built as a same-origin asset so the
  * report-only CSP's `script-src 'self'` covers it without a nonce; the dev
@@ -68,8 +69,8 @@ export function meticulousMiddleware(): Plugin {
         const tag = assetPath
           ? `<script src="${base}${assetPath}"></script>`
           : inlineSource
-          ? `<script>${inlineSource}</script>`
-          : undefined;
+            ? `<script>${inlineSource}</script>`
+            : undefined;
         return tag ? injectAfterRecorder(html, tag) : html;
       },
     },

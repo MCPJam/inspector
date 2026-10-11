@@ -1,18 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   inspectorRedactionMiddleware,
-  maskSecrets,
-  maskText,
   redactCookie,
   redactRequest,
   redactResponse,
   redactStorageEntry,
-  redactStreamingChunks,
   redactWebSocket,
 } from "../meticulous-middleware";
-
-const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
-const fromB64 = (data: string) => Buffer.from(data, "base64");
 
 const json = (body: unknown) => ({
   mimeType: "application/json",
@@ -27,76 +21,20 @@ describe("inspectorRedactionMiddleware", () => {
   });
 
   it("wires the streaming hooks so chat replies are kept, not dropped", () => {
-    const entry = { chunks: [{ offsetMs: 0, data: b64("data: hi\n\n") }] };
+    const entry = {
+      url: "/api/mcp/chat-v2",
+      method: "POST",
+      completed: true,
+      chunks: [
+        { offsetMs: 0, data: Buffer.from("data: hi\n\n").toString("base64") },
+      ],
+    };
     expect(
       inspectorRedactionMiddleware.transformStreamingFetchResponseData(entry),
     ).toBe(entry);
     expect(
       inspectorRedactionMiddleware.transformStreamingXhrResponseData(entry),
     ).toBe(entry);
-  });
-});
-
-describe("redactStreamingChunks", () => {
-  it("masks a secret field split across two chunks and keeps the boundaries", () => {
-    const sse =
-      'data: {"type":"tool-result","output":{"apiKey":"sk-abcdef"}}\n\n';
-    const cut = sse.indexOf("abc");
-    const entry = {
-      chunks: [
-        { offsetMs: 0, data: b64(sse.slice(0, cut)) },
-        { offsetMs: 10, data: b64(sse.slice(cut)) },
-      ],
-    };
-    const redacted = redactStreamingChunks(entry);
-    const joined = redacted.chunks
-      .map((c) => fromB64(c.data).toString())
-      .join("");
-    expect(joined).toBe(
-      'data: {"type":"tool-result","output":{"apiKey":"*********"}}\n\n',
-    );
-    expect(fromB64(redacted.chunks[0].data).length).toBe(cut);
-    expect(redacted.chunks[1].offsetMs).toBe(10);
-  });
-
-  it("keeps a multi-byte character split between chunks and an unfinished tail", () => {
-    const text = 'x: "é" {"token":"t"}';
-    const bytes = Buffer.from(text, "utf8");
-    const accent = Buffer.from("é", "utf8");
-    const mid = bytes.indexOf(accent) + 1;
-    const tail = accent.subarray(0, 1);
-    const entry = {
-      chunks: [
-        { offsetMs: 0, data: bytes.subarray(0, mid).toString("base64") },
-        {
-          offsetMs: 1,
-          data: Buffer.concat([bytes.subarray(mid), tail]).toString("base64"),
-        },
-      ],
-    };
-    const redacted = redactStreamingChunks(entry);
-    const out = Buffer.concat(redacted.chunks.map((c) => fromB64(c.data)));
-    expect(out.subarray(0, out.length - 1).toString()).toBe(
-      'x: "é" {"token":"*"}',
-    );
-    expect(out.subarray(out.length - 1)).toEqual(tail);
-  });
-
-  it("returns the same entry when nothing is secret", () => {
-    const entry = { chunks: [{ offsetMs: 0, data: b64('{"ok":true}') }] };
-    expect(redactStreamingChunks(entry)).toBe(entry);
-  });
-});
-
-describe("maskText", () => {
-  it("masks bearer tokens and fields escaped inside another JSON string", () => {
-    expect(maskText("Authorization: Bearer abc.def")).toBe(
-      "Authorization: Bearer *******",
-    );
-    expect(maskText('{"text":"{\\"access_token\\":\\"tok\\"}"}')).toBe(
-      '{"text":"{\\"access_token\\":\\"***\\"}"}',
-    );
-    expect(maskText('{"code":"NOT_FOUND"}')).toBe('{"code":"NOT_FOUND"}');
   });
 });
 
@@ -111,8 +49,7 @@ describe("redactRequest", () => {
         { name: "Accept", value: "application/json" },
       ],
     };
-    const redacted = redactRequest(request);
-    expect(redacted.headers).toEqual([
+    expect(redactRequest(request).headers).toEqual([
       { name: "Authorization", value: "*".repeat(bearer.length) },
       { name: "Accept", value: "application/json" },
     ]);
@@ -188,14 +125,20 @@ describe("redactRequest", () => {
     expect(redactRequest(relative).url).toBe("/cb?code=***&state=s");
   });
 
-  it("treats a text/plain JSON body as JSON", () => {
-    const request = {
-      url: "https://example.com",
-      method: "POST",
-      headers: [],
-      postData: { mimeType: "text/plain", text: '{"apiKey":"k"}' },
-    };
-    expect(redactRequest(request).postData.text).toBe('{"apiKey":"*"}');
+  it("treats a text/plain JSON body as JSON and masks other text by pattern", () => {
+    const base = { url: "https://example.com", method: "POST", headers: [] };
+    expect(
+      redactRequest({
+        ...base,
+        postData: { mimeType: "text/plain", text: '{"apiKey":"k"}' },
+      }).postData.text,
+    ).toBe('{"apiKey":"*"}');
+    expect(
+      redactRequest({
+        ...base,
+        postData: { mimeType: "text/plain", text: "x Bearer tok y" },
+      }).postData.text,
+    ).toBe("x Bearer *** y");
   });
 
   it("returns the same object when nothing is secret", () => {
@@ -238,6 +181,20 @@ describe("redactResponse", () => {
       content: { mimeType: "image/png", text: "e30=", encoding: "base64" },
     };
     expect(redactResponse(binary)).toBe(binary);
+  });
+
+  it("masks secret fields inside a server-sent event body", () => {
+    const response = {
+      status: 200,
+      headers: [],
+      content: {
+        mimeType: "text/event-stream",
+        text: 'data: {"token":"abc"}\n\n',
+      },
+    };
+    expect(redactResponse(response).content.text).toBe(
+      'data: {"token":"***"}\n\n',
+    );
   });
 });
 
@@ -282,14 +239,11 @@ describe("redactStorageEntry", () => {
   });
 });
 
-describe("redactCookie and maskSecrets", () => {
-  it("masks cookies by name and nested secrets by key", () => {
+describe("redactCookie", () => {
+  it("masks cookies by name", () => {
     expect(redactCookie({ name: "ph_session", value: "abc" }).value).toBe(
       "***",
     );
     expect(redactCookie({ name: "theme", value: "dark" }).value).toBe("dark");
-    expect(maskSecrets({ a: [{ accessToken: "x", n: 1 }] })).toEqual({
-      a: [{ accessToken: "*", n: 1 }],
-    });
   });
 });
