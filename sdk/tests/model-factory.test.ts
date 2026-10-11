@@ -52,7 +52,7 @@ vi.mock("@ai-sdk/deepseek", () => ({
 }));
 
 vi.mock("@ai-sdk/google", () => ({
-  createGoogleGenerativeAI: vi.fn(() => {
+  createGoogle: vi.fn(() => {
     const modelFn = vi.fn((modelId: string) => ({
       provider: "google",
       modelId,
@@ -132,7 +132,7 @@ vi.mock("@ai-sdk/amazon-bedrock", () => ({
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createAzure } from "@ai-sdk/azure";
 import { createMistral } from "@ai-sdk/mistral";
 import { createXai } from "@ai-sdk/xai";
@@ -494,7 +494,7 @@ describe("model-factory", () => {
       it("should create google model with api key", () => {
         createModelFromString("google/gemini-pro", defaultOptions);
 
-        expect(createGoogleGenerativeAI).toHaveBeenCalledWith({
+        expect(createGoogle).toHaveBeenCalledWith({
           apiKey: "test-api-key",
         });
       });

@@ -23,6 +23,7 @@ import { TagBadges } from "./tag-editor";
 import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   CommitGroup,
 } from "./types";
 import { classifyFailure, type FailureTag } from "./ai-insights";
@@ -45,7 +46,7 @@ interface RunBucket {
   branch: string | null;
   timestamp: number;
   result: "passed" | "failed" | "mixed" | "running" | "pending";
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   suiteIds: Set<string>;
   passedCount: number;
   failedCount: number;
@@ -299,14 +300,28 @@ export function OverviewPanel({
 
   // Tag choices must use the bucket before the selected tag narrows its suites.
   const tagOptionBucket = useMemo(
-    () => buildRunTimeline(suites).find((bucket) => bucket.id === selectedBucketId) ?? null,
+    () =>
+      buildRunTimeline(suites).find(
+        (bucket) => bucket.id === selectedBucketId,
+      ) ?? null,
     [suites, selectedBucketId],
   );
-  const availableTags = allTags.filter((tag) => tag === filterTag || suites.some((entry) =>
-    entry.suite.tags?.includes(tag) &&
-    (!tagOptionBucket || tagOptionBucket.suiteIds.has(entry.suite._id)) &&
-    (!suiteSearch || entry.suite.name.toLowerCase().includes(suiteSearch.toLowerCase())) &&
-    (!failuresOnly || entry.latestRun?.result === "failed" || !entry.latestRun)));
+  const availableTags = allTags.filter(
+    (tag) =>
+      tag === filterTag ||
+      suites.some(
+        (entry) =>
+          entry.suite.tags?.includes(tag) &&
+          (!tagOptionBucket || tagOptionBucket.suiteIds.has(entry.suite._id)) &&
+          (!suiteSearch ||
+            entry.suite.name
+              .toLowerCase()
+              .includes(suiteSearch.toLowerCase())) &&
+          (!failuresOnly ||
+            entry.latestRun?.result === "failed" ||
+            !entry.latestRun),
+      ),
+  );
 
   // Failure feed entries (also filtered by active bucket)
   const failureEntries = useMemo(() => {
@@ -869,18 +884,15 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
   const config = {
     regression: {
       label: "regression",
-      className:
-        "text-foreground bg-destructive/50 border-destructive/50",
+      className: "text-foreground bg-destructive/50 border-destructive/50",
     },
     flaky: {
       label: "flaky",
-      className:
-        "text-foreground bg-warning/50 border-warning/50",
+      className: "text-foreground bg-warning/50 border-warning/50",
     },
     new: {
       label: "new",
-      className:
-        "text-foreground bg-info/50 border-info/50",
+      className: "text-foreground bg-info/50 border-info/50",
     },
   }[tag];
 

@@ -1,3 +1,13 @@
+import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
+import {
+  useThreadAppWorkspace,
+  type WorkspaceServer,
+} from "@/components/host-workspace/ThreadAppPanel";
+import {
+  compareLaneWorkspace,
+  type ExtensionCapabilities,
+  type ExtensionOwnerIdentity,
+} from "@/components/host-workspace/extension-owners";
 import {
   useCallback,
   useEffect,
@@ -71,6 +81,12 @@ import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
+import {
+  CompareCardEffort,
+  type CompareCardEffortProps,
+} from "@/components/chat-v2/compare-card-effort";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -115,10 +131,22 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  /**
+   * This lane's client has plugin extensions on (flag, backend access and the
+   * client's own setting all passed). The lane then owns its own Apps.
+   */
+  extensionBinding?: {
+    identity: ExtensionOwnerIdentity;
+    servers: WorkspaceServer[];
+    capabilities: ExtensionCapabilities;
+    profile: "chatgpt" | "codex";
+  } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
-   * mode `compareId === String(model.id)`; in host mode it's the host id.
+   * mode it's the card's `comparisonKey` (the bare model id for a default
+   * selection, so Sonnet·Low and Sonnet·High are two columns); in host mode
+   * it's the host id.
    * The card uses `compareId` to key transcripts/summaries/`hasMessages`
    * callbacks so two columns running the same default model can't collide.
    */
@@ -133,6 +161,12 @@ interface MultiModelPlaygroundCardProps {
    */
   compareSubLabel?: string;
   model: ModelDefinition;
+  /** This column's own effort, sent on its requests (undefined = Default). */
+  reasoningEffort?: ModelReasoningEffort;
+  /** Harness the column's host runs (gates the levels the turn may send). */
+  reasoningEffortHarness?: HostConfigHarnessV2;
+  /** This card's effort chip (model mode); omitted ⇒ none. */
+  effort?: CompareCardEffortProps;
   comparisonSummaries: MultiModelCardSummary[];
   selectedServers: string[];
   broadcastRequest: BroadcastChatTurnRequest | null;
@@ -242,12 +276,16 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  extensionBinding = null,
   browserWorkspace,
   compareId,
   compareLabel,
   compareKind,
   compareSubLabel,
   model,
+  reasoningEffort,
+  reasoningEffortHarness,
+  effort,
   comparisonSummaries,
   selectedServers,
   broadcastRequest,
@@ -302,6 +340,8 @@ export function MultiModelPlaygroundCard({
   // the snapshot is meaningful ("no override; preset wins") — when the
   // snapshot itself is set, we forward the field verbatim including
   // undefined, NOT fall back to the tab-root value.
+  const showEffort =
+    !!effort && (effort.levels.length > 0 || effort.value !== undefined);
   const tabRootHostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const tabRootChatUiOverride = useScenarioChatUiOverride();
   const tabRootMcpProfile = useActiveMcpProfile();
@@ -355,6 +395,36 @@ export function MultiModelPlaygroundCard({
     ],
   );
 
+  const laneIdentityKey = extensionBinding
+    ? JSON.stringify([
+        extensionBinding.identity.actorId,
+        extensionBinding.identity.projectId,
+        extensionBinding.identity.hostId,
+      ])
+    : null;
+  const laneIdentity = useMemo(
+    () => extensionBinding?.identity ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [laneIdentityKey],
+  );
+  const laneWorkspaceForSession = useCallback(
+    (sessionId: string) =>
+      laneIdentity
+        ? compareLaneWorkspace(laneIdentity, compareKind, compareId, sessionId)
+        : undefined,
+    [laneIdentity, compareKind, compareId],
+  );
+  const laneContextRefs = useRef<{
+    workspaceId: string;
+    tokens: string[];
+  } | null>(null);
+  const currentLaneContext = useCallback(
+    (workspaceId: string) =>
+      laneContextRefs.current?.workspaceId === workspaceId
+        ? laneContextRefs.current.tokens
+        : [],
+    [],
+  );
   const {
     messages,
     setMessages,
@@ -374,6 +444,12 @@ export function MultiModelPlaygroundCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    // The lane's own extension owner: its turns carry its workspace and
+    // its Apps' context, never another lane's or the single chat's.
+    pluginWorkspace: laneWorkspaceForSession,
+    pluginContextReferences: currentLaneContext,
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     usePageTools,
     hostedContext,
@@ -385,6 +461,12 @@ export function MultiModelPlaygroundCard({
       ...executionConfig,
       modelId: String(model.id),
     },
+    // The column's own row and effort: two cards of one model send their own
+    // levels, and an OpenRouter card never resolves to the hosted row.
+    pinnedModelProvider: String(model.provider),
+    reasoningEffortEnabled: true,
+    reasoningEffortHarness,
+    fixedReasoningEffort: reasoningEffort ?? null,
     // Source the host-level toggle from the active host's resolved DTO
     // so flipping it in the host's Agent → Behavior tab takes effect on
     // the next send without remounting. `hostCapsResolver` carries the
@@ -401,6 +483,44 @@ export function MultiModelPlaygroundCard({
       setInjectedToolRenderOverrides({});
     },
   });
+
+  const laneScope = useMemo(() => {
+    const pluginWorkspace = laneWorkspaceForSession(chatSessionId);
+    return pluginWorkspace && laneIdentity
+      ? {
+          projectId: laneIdentity.projectId,
+          hostId: laneIdentity.hostId,
+          threadId: chatSessionId,
+          pluginWorkspace,
+        }
+      : null;
+  }, [laneWorkspaceForSession, chatSessionId, laneIdentity]);
+  const laneServers = useMemo(
+    () => extensionBinding?.servers ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      JSON.stringify(
+        (extensionBinding?.servers ?? []).map((server) => [
+          server.serverId,
+          server.name,
+          server.connection ?? null,
+        ]),
+      ),
+    ],
+  );
+  const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
+    capabilities: extensionBinding?.capabilities,
+    launchProfile: extensionBinding?.profile,
+  });
+  laneContextRefs.current = laneScope
+    ? {
+        workspaceId: laneScope.pluginWorkspace.workspaceId,
+        tokens: laneApps.contextReferences,
+      }
+    : null;
+  // A lane with live Apps keeps placeholder transcripts in its Trace view,
+  // so one App never has two live hosts.
+  const laneWidgetPolicy = laneScope ? "placeholder" : "live";
 
   useComparisonBrowser(
     browserWorkspace && hostedContext?.projectId
@@ -823,7 +943,17 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
         showIdentityHeader={showIdentityHeader}
         logoSrc={logoSrc}
+        titleAccessory={
+          effort && showEffort ? (
+            <CompareCardEffort model={model} {...effort} />
+          ) : null
+        }
       />
+      {effort && showEffort && !showComparisonChrome ? (
+        <div className="flex shrink-0 items-center justify-end border-b border-border/60 px-3 py-1">
+          <CompareCardEffort model={model} {...effort} />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
@@ -840,11 +970,15 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : null}
 
-        {showTraceDiagnosticsShell ? (
+        <CompareLaneWorkspace
+          apps={laneScope ? laneApps : null}
+          showDiagnostics={showTraceDiagnosticsShell}
+          diagnostics={
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
               {activeTraceViewMode === "chat" && revealedInChat ? (
                 <TraceViewer
+                  widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
@@ -882,6 +1016,7 @@ export function MultiModelPlaygroundCard({
                 />
               ) : (
                 <TraceViewer
+                  widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
@@ -908,7 +1043,8 @@ export function MultiModelPlaygroundCard({
               )}
             </div>
           </div>
-        ) : (
+          }
+        >
           <div
             className={cn(
               "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
@@ -974,7 +1110,7 @@ export function MultiModelPlaygroundCard({
               </StickToBottom>
             )}
           </div>
-        )}
+        </CompareLaneWorkspace>
       </div>
     </div>
   );

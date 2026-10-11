@@ -434,3 +434,103 @@ describe("hosted mode", () => {
     expect(packageOption.textContent).toMatch(/mcpjam readiness check/i);
   });
 });
+
+describe("muse", () => {
+  function museResult() {
+    return {
+      readinessKind: "muse-directory-readiness",
+      status: "incomplete",
+      technicalStatus: "ready",
+      summary: "submission-artifacts needs a submission profile.",
+      context: {
+        target: "https://demo.example.com/mcp",
+        capabilities: [],
+        evidenceSources: [],
+      },
+      lanes: [
+        {
+          lane: "tool-policy",
+          status: "ready",
+          coverage: {
+            lane: "tool-policy",
+            evaluated: 4,
+            notEvaluated: 0,
+            notApplicable: 0,
+            missingInputs: [],
+          },
+        },
+      ],
+      findings: [
+        {
+          id: "muse.tools.named",
+          title: "Every tool has a name and description",
+          lane: "tool-policy",
+          class: "required",
+          status: "satisfied",
+        },
+      ],
+      classificationSheet: [],
+    };
+  }
+
+  it("shows both Muse verdicts from a finished report", async () => {
+    // Muse reports its rollups as fields rather than a stage list; the
+    // section lays them out like OpenAI's so a fine server with missing
+    // paperwork reads that way at a glance.
+    mockRunLocal.mockResolvedValue({ success: true, result: museResult() });
+    render(<DirectoryReadinessSection publisher="muse" server={HTTP_SERVER} />);
+    expect(screen.getByText("Muse Directory Readiness")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /run readiness/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Technical preflight")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Submission ready")).toBeInTheDocument();
+    expect(mockRunLocal).toHaveBeenCalledWith("muse", "demo", {
+      submissionMode: undefined,
+    });
+  });
+
+  it("offers no AI observations or submission mode when hosted", async () => {
+    mockIsHosted.mockReturnValue(true);
+    mockStartHosted.mockResolvedValue({
+      runId: "run_m",
+      status: "pending",
+      deduped: false,
+      includeLlmObservations: false,
+      readinessKind: "muse",
+      projectId: "p",
+      serverId: "s",
+    });
+    mockGetRun.mockResolvedValue({
+      id: "run_m",
+      status: "running",
+      overallStatus: null,
+      lanes: [],
+      stages: [],
+      terminalReason: null,
+      errorMessage: null,
+      hasReport: false,
+      llmObservations: { status: "not-requested" },
+      includeLlmObservations: false,
+    });
+    render(<DirectoryReadinessSection publisher="muse" server={HTTP_SERVER} />);
+
+    // Muse has no observation catalogue, and the submission mode belongs to
+    // OpenAI's plugin directory.
+    expect(screen.queryByText(/uses MCPJam credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Submission$/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Meta's published Muse connector guidelines/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /run readiness/i }),
+    );
+    await waitFor(() => expect(mockStartHosted).toHaveBeenCalled());
+    expect(mockStartHosted.mock.calls[0]?.[0]).toBe("muse");
+  });
+});

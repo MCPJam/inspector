@@ -39,10 +39,15 @@
  * window has nowhere to render AND its consumer (the stream) is created by the
  * very code path it would block — buffering it would deadlock until TTL. Every
  * legitimate elicitation happens during tool execution, when the writer exists,
- * so we resolve pre-writer requests as `cancel` immediately.
+ * so ordinary chat requests raised before the writer resolve as `cancel`.
+ * An admitted plugin workspace instead delivers through the existing actor-owned
+ * pending query; it can render independently of a chat writer. Both paths reuse
+ * the same answer, poll, acknowledgement, cancellation and expiry lifecycle.
  */
 
+import { PLUGIN_LEGACY_INLINE_SCHEMA_MAX_BYTES } from "../../../shared/plugin-form-payload-limits.js";
 import { ConvexHttpClient } from "convex/browser";
+import { convexToJson, type Value } from "convex/values";
 import type { UIMessageChunk } from "ai";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import type { ElicitationCallback } from "@mcpjam/sdk";
@@ -65,6 +70,7 @@ import {
   SCOPE_STEP_UP_DATA_PART_TYPE,
   type ScopeStepUpRequiredEvent,
 } from "@/shared/scope-step-up";
+import { hasServiceCredential, requireServiceCredential } from "../../services/service-credential.js";
 
 export type ElicitationChunkWriter = {
   write: (chunk: UIMessageChunk) => void;
@@ -179,6 +185,20 @@ export interface HostedElicitationBridgeOptions {
   serverNamesById: Record<string, string>;
   /** The turn's abort signal — a closed stream must not leave a pending row. */
   abortSignal?: AbortSignal;
+  /** Owned plugin operations use the existing actor-scoped pending query for delivery. */
+  pluginWorkspaceId?: string;
+  /** Installed only by the owned execution port, never from server/app metadata. */
+  bindPluginForm?: (input: {
+    rendezvousId: string;
+    serverId: string;
+    schema: unknown;
+    expiresAt: number;
+  }) => Promise<{
+    token: string;
+    release: () => void;
+    /** Owned target delivery before presentation/source disposal, never metadata. */
+    deliver?: (result: ElicitResult) => Promise<ElicitResult>;
+  }>;
 }
 
 function stripBearer(token: string): string {
@@ -198,9 +218,7 @@ function requireConvexHttpUrl(): string {
 }
 
 function serviceToken(): string {
-  const token = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!token) throw new Error("INSPECTOR_SERVICE_TOKEN is not configured");
-  return token;
+  return requireServiceCredential("Hosted elicitation");
 }
 
 const CANCEL: ElicitResult = { action: "cancel" };
@@ -213,7 +231,10 @@ const CANCEL: ElicitResult = { action: "cancel" };
  * not invent a `content` key where the spec says there is none (URL accepts,
  * declines, cancels).
  */
-function toElicitResult(poll: PollResult, mode: HostedElicitationMode): ElicitResult {
+function toElicitResult(
+  poll: PollResult,
+  mode: HostedElicitationMode,
+): ElicitResult {
   const action = poll.action ?? "cancel";
   if (action === "accept" && mode === "form") {
     return { action: "accept", content: poll.content ?? {} } as ElicitResult;
@@ -225,6 +246,10 @@ export class HostedElicitationBridge {
   private writer: ElicitationChunkWriter | null = null;
   /** Rendezvous ids still awaiting an answer — cancelled on dispose. */
   private readonly pending = new Set<string>();
+  /** Creation can commit before its response reaches this worker. */
+  private readonly creations = new Set<Promise<void>>();
+  private readonly cancellations = new Map<string, Promise<void>>();
+  private disposal: Promise<void> | undefined;
   private disposed = false;
 
   constructor(private readonly options: HostedElicitationBridgeOptions) {}
@@ -245,7 +270,7 @@ export class HostedElicitationBridge {
 
     // Pre-writer: nothing can render this, and its consumer is the very stream
     // that hasn't been created yet. Fail fast rather than deadlock to TTL.
-    if (!this.writer || this.disposed) {
+    if ((!this.writer && !this.options.pluginWorkspaceId) || this.disposed) {
       logger.warn(
         "[elicitation] request arrived with no live stream; cancelling",
         { serverId, mode, disposed: this.disposed },
@@ -259,42 +284,108 @@ export class HostedElicitationBridge {
     const rendezvousId = crypto.randomUUID();
     const expiresAt = Date.now() + ttlMs;
 
+    let hasPrivateSchema = false;
+    let source:
+      | Awaited<
+          ReturnType<
+            NonNullable<HostedElicitationBridgeOptions["bindPluginForm"]>
+          >
+        >
+      | undefined;
+    let finishCreation!: () => void;
+    const creation = new Promise<void>((resolve) => {
+      finishCreation = resolve;
+    });
+    this.creations.add(creation);
     try {
-      await this.createRow({ rendezvousId, request, mode, ttlMs, serverId });
-    } catch (error) {
-      // A broken rendezvous must never hang a tool call: without a row there is
-      // nothing for the browser to answer, so the only honest outcome is cancel.
-      logger.error("[elicitation] failed to create rendezvous row; cancelling", {
-        error,
+      let rowAttempted = false;
+      try {
+        if (this.options.bindPluginForm) {
+          if (!this.options.pluginWorkspaceId || mode !== "form")
+            throw new Error("Unavailable plugin form source");
+          source = await this.options.bindPluginForm({
+            rendezvousId,
+            serverId,
+            schema: request.schema,
+            expiresAt,
+          });
+        }
+        if (this.disposed || this.options.abortSignal?.aborted) {
+          source?.release();
+          return CANCEL;
+        }
+        rowAttempted = true;
+        hasPrivateSchema = await this.createRow({
+          rendezvousId,
+          request,
+          mode,
+          ttlMs,
+          serverId,
+          pluginFormSourceToken: source?.token,
+        });
+      } catch (error) {
+        source?.release();
+        if (rowAttempted) await this.cancelRow(rendezvousId);
+        // A broken rendezvous must never hang a tool call: without a row there is
+        // nothing for the browser to answer, so the only honest outcome is cancel.
+        logger.error(
+          "[elicitation] failed to create rendezvous row; cancelling",
+          {
+            error,
+            serverId,
+            mode,
+          },
+        );
+        return CANCEL;
+      }
+
+      // Storage creation may settle after the request was disposed. Withdraw the
+      // newly created row rather than publishing an orphaned, answerable form.
+      if (this.disposed || this.options.abortSignal?.aborted) {
+        source?.release();
+        await this.cancelRow(rendezvousId);
+        return CANCEL;
+      }
+      this.pending.add(rendezvousId);
+      this.emit({
+        kind: "request",
+        rendezvousId,
         serverId,
+        serverName: this.options.serverNamesById[serverId],
         mode,
+        message: request.message,
+        ...(source ? { pluginFormSourceToken: source.token } : {}),
+        ...(this.options.pluginWorkspaceId
+          ? {
+              pluginWorkspaceId: this.options.pluginWorkspaceId,
+              formDialect: "openai" as const,
+            }
+          : {}),
+        ...(hasPrivateSchema
+          ? { hasPrivateSchema: true as const }
+          : mode === "form"
+            ? { requestedSchema: request.schema }
+            : {}),
+        ...(mode === "url" && request.url ? { url: request.url } : {}),
+        ...(request.elicitationId
+          ? { serverElicitationId: request.elicitationId }
+          : {}),
+        expiresAt,
+        ...(this.options.chatSessionId
+          ? { chatSessionId: this.options.chatSessionId }
+          : {}),
       });
-      return CANCEL;
+    } finally {
+      this.creations.delete(creation);
+      finishCreation();
     }
 
-    this.pending.add(rendezvousId);
-    this.emit({
-      kind: "request",
-      rendezvousId,
-      serverId,
-      serverName: this.options.serverNamesById[serverId],
-      mode,
-      message: request.message,
-      ...(mode === "form" ? { requestedSchema: request.schema } : {}),
-      ...(mode === "url" && request.url ? { url: request.url } : {}),
-      ...(request.elicitationId
-        ? { serverElicitationId: request.elicitationId }
-        : {}),
-      expiresAt,
-      ...(this.options.chatSessionId
-        ? { chatSessionId: this.options.chatSessionId }
-        : {}),
-    });
-
     try {
-      return await this.awaitAnswer({ rendezvousId, expiresAt, mode });
+      const result = await this.awaitAnswer({ rendezvousId, expiresAt, mode });
+      return source?.deliver ? await source.deliver(result) : result;
     } finally {
       this.pending.delete(rendezvousId);
+      source?.release();
     }
   };
 
@@ -306,7 +397,11 @@ export class HostedElicitationBridge {
   emitUrlRequired(info: {
     serverId: string;
     toolCallId?: string;
-    elicitations: Array<{ url: string; elicitationId: string; message?: string }>;
+    elicitations: Array<{
+      url: string;
+      elicitationId: string;
+      message?: string;
+    }>;
   }): void {
     if (info.elicitations.length === 0) return;
     this.emit({
@@ -338,14 +433,21 @@ export class HostedElicitationBridge {
    * End-of-turn cleanup. Withdraws any row still pending so a closed stream
    * can't leave an answerable prompt behind for its TTL.
    */
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     this.disposed = true;
     this.writer = null;
-    const outstanding = Array.from(this.pending);
-    this.pending.clear();
-    await Promise.all(
-      outstanding.map((rendezvousId) => this.cancelRow(rendezvousId)),
-    );
+    const creations = [...this.creations];
+    this.disposal = (async () => {
+      await Promise.all(creations);
+      const outstanding = Array.from(this.pending);
+      this.pending.clear();
+      await Promise.all([
+        ...outstanding.map((rendezvousId) => this.cancelRow(rendezvousId)),
+        ...this.cancellations.values(),
+      ]);
+    })();
+    return this.disposal;
   }
 
   // ── internals ────────────────────────────────────────────────────────────
@@ -377,32 +479,90 @@ export class HostedElicitationBridge {
     mode: HostedElicitationMode;
     ttlMs: number;
     serverId: string;
-  }): Promise<void> {
-    const client = new ConvexHttpClient(requireConvexUrl());
-    client.setAuth(stripBearer(this.options.convexBearer));
-    await client.mutation("elicitations:createElicitation" as any, {
-      rendezvousId: args.rendezvousId,
-      projectId: this.options.projectId,
-      ...(this.options.chatSessionId
-        ? { chatSessionId: this.options.chatSessionId }
-        : {}),
-      serverId: args.serverId,
-      ...(this.options.serverNamesById[args.serverId]
-        ? { serverName: this.options.serverNamesById[args.serverId] }
-        : {}),
-      mode: args.mode,
-      message: args.request.message,
-      ...(args.mode === "form"
-        ? { requestedSchema: args.request.schema ?? {} }
-        : {}),
-      ...(args.mode === "url" && args.request.url
-        ? { url: args.request.url }
-        : {}),
-      ...(args.request.elicitationId
-        ? { serverElicitationId: args.request.elicitationId }
-        : {}),
-      ttlMs: args.ttlMs,
-    });
+    pluginFormSourceToken?: string;
+  }): Promise<boolean> {
+    // Keep storage creation/body reads bounded while observing the committed
+    // response after owner close. Cancellation uses the minted rendezvous ID.
+    const controller = new AbortController();
+    const deadline = setTimeout(
+      () =>
+        controller.abort(new Error("elicitation creation deadline exceeded")),
+      ELICITATION_SERVICE_ROUTE_TIMEOUT_MS,
+    );
+    try {
+      const client = new ConvexHttpClient(requireConvexUrl(), {
+        fetch: (url, init) =>
+          fetch(url, {
+            ...init,
+            signal: init?.signal
+              ? AbortSignal.any([init.signal, controller.signal])
+              : controller.signal,
+          }),
+      });
+      client.setAuth(stripBearer(this.options.convexBearer));
+      const input = {
+        rendezvousId: args.rendezvousId,
+        projectId: this.options.projectId,
+        ...(this.options.chatSessionId
+          ? { chatSessionId: this.options.chatSessionId }
+          : {}),
+        serverId: args.serverId,
+        ...(this.options.serverNamesById[args.serverId]
+          ? { serverName: this.options.serverNamesById[args.serverId] }
+          : {}),
+        mode: args.mode,
+        message: args.request.message,
+        ...(args.pluginFormSourceToken
+          ? { pluginFormSourceToken: args.pluginFormSourceToken }
+          : {}),
+        ...(this.options.pluginWorkspaceId
+          ? {
+              pluginWorkspaceId: this.options.pluginWorkspaceId,
+              formDialect: "openai",
+            }
+          : {}),
+        ...(args.mode === "form"
+          ? { requestedSchema: args.request.schema ?? {} }
+          : {}),
+        ...(args.mode === "url" && args.request.url
+          ? { url: args.request.url }
+          : {}),
+        ...(args.request.elicitationId
+          ? { serverElicitationId: args.request.elicitationId }
+          : {}),
+        ttlMs: args.ttlMs,
+      };
+      let convexSchema = true;
+      if (args.mode === "form" && this.options.pluginWorkspaceId) {
+        try {
+          convexToJson(input.requestedSchema as Value);
+        } catch {
+          convexSchema = false;
+        }
+      }
+      const privateSchema =
+        args.mode === "form" &&
+        !!this.options.pluginWorkspaceId &&
+        (!convexSchema ||
+          new TextEncoder().encode(JSON.stringify(input.requestedSchema))
+            .length > PLUGIN_LEGACY_INLINE_SCHEMA_MAX_BYTES);
+      if (privateSchema) {
+        const {
+          mode: _mode,
+          formDialect: _dialect,
+          requestedSchema,
+          ...ownedInput
+        } = input;
+        await client.action("pluginFormSchemas:create" as any, {
+          ...ownedInput,
+          requestedSchemaJson: JSON.stringify(requestedSchema),
+        });
+      } else
+        await client.mutation("elicitations:createElicitation" as any, input);
+      return privateSchema;
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   /**
@@ -483,30 +643,36 @@ export class HostedElicitationBridge {
       "/elicitations/ack",
       { rendezvousId },
       { bindToTurn: false },
-    ).catch(
-      (error) => {
-        // Harmless: the backend's 24h cleanup is the real retention bound.
-        logger.warn("[elicitation] ack failed; payload waits for cleanup", {
-          error,
-          rendezvousId,
-        });
-      },
-    );
-  }
-
-  private async cancelRow(rendezvousId: string): Promise<void> {
-    try {
-      await this.serviceRoute(
-        "/elicitations/cancel",
-        { rendezvousId },
-        { bindToTurn: false },
-      );
-    } catch (error) {
-      logger.warn("[elicitation] cancel failed; TTL will expire the row", {
+    ).catch((error) => {
+      // Harmless: the backend's 24h cleanup is the real retention bound.
+      logger.warn("[elicitation] ack failed; payload waits for cleanup", {
         error,
         rendezvousId,
       });
-    }
+    });
+  }
+
+  private cancelRow(rendezvousId: string): Promise<void> {
+    const prior = this.cancellations.get(rendezvousId);
+    if (prior) return prior;
+    const cancellation = this.serviceRoute(
+      "/elicitations/cancel",
+      { rendezvousId },
+      { bindToTurn: false },
+    )
+      .then(() => {})
+      .catch((error) => {
+        logger.warn("[elicitation] cancel failed; TTL will expire the row", {
+          error,
+          rendezvousId,
+        });
+      })
+      .finally(() => {
+        if (this.cancellations.get(rendezvousId) === cancellation)
+          this.cancellations.delete(rendezvousId);
+      });
+    this.cancellations.set(rendezvousId, cancellation);
+    return cancellation;
   }
 
   private async awaitAnswer(args: {
@@ -608,9 +774,7 @@ export class HostedElicitationBridge {
  * and the catalog ships both `{}` and `{form:{}}`. Presence of the key — in any
  * object shape — is the toggle.
  */
-export function hostDeclaresElicitation(
-  clientCapabilities: unknown,
-): boolean {
+export function hostDeclaresElicitation(clientCapabilities: unknown): boolean {
   if (!clientCapabilities || typeof clientCapabilities !== "object") {
     return false;
   }
@@ -663,6 +827,14 @@ export function resolveElicitationGate(args: {
   bodyClientCapabilities: unknown;
   /** `hostedElicitationVersion` from the request body. */
   clientVersion: number | undefined;
+  /**
+   * Whether this server holds the service credential the rendezvous routes
+   * need. Hosted-only feature: without it the callback is never registered,
+   * so the SDK does not advertise `elicitation` and a server that elicits
+   * fails fast — instead of the bridge throwing mid-prompt. Defaults to this
+   * process's credential.
+   */
+  serviceCredentialAvailable?: boolean;
 }): {
   effectiveClientCapabilities: Record<string, unknown> | undefined;
   enabled: boolean;
@@ -676,6 +848,7 @@ export function resolveElicitationGate(args: {
   return {
     effectiveClientCapabilities: effectiveClientCapabilities ?? undefined,
     enabled:
+      (args.serviceCredentialAvailable ?? hasServiceCredential()) &&
       hostDeclaresElicitation(effectiveClientCapabilities) &&
       args.clientVersion === HOSTED_ELICITATION_VERSION,
   };
