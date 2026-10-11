@@ -203,6 +203,36 @@ describe("client sentry init", () => {
     getClient.mockReset();
   });
 
+  it("filters standalone spans, which carry the scope's raw path", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    init.mockClear();
+    const { initSentry } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    initSentry();
+    const config = init.mock.calls[0][0];
+    // An INP span, as Sentry sends it on its own.
+    const inp = () => ({
+      op: "ui.interaction.click",
+      description: "body > button",
+      data: {
+        "sentry.op": "ui.interaction.click",
+        transaction: "/servers/acme/results/tok_secret?code=abc",
+      },
+    });
+
+    setSessionPrivacy("full");
+    const full = config.beforeSendSpan(inp());
+    expect(JSON.stringify(full)).not.toContain("tok_secret");
+    expect(full.data.transaction).toContain("/servers/acme/");
+
+    setSessionPrivacy("masked");
+    const masked = config.beforeSendSpan(inp());
+    expect(JSON.stringify(masked)).not.toContain("tok_secret");
+    expect(masked.data.transaction).not.toContain("acme");
+  });
+
   it("names spans by credential template and scrubs transactions last", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");

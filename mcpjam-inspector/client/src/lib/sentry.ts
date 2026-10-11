@@ -230,6 +230,30 @@ function filterSentryTransactionContent<
 }
 
 /**
+ * A span on its own way out: a transaction's child, or a standalone span
+ * (web vitals such as INP), which passes through neither `beforeSend` nor
+ * `beforeSendTransaction`. A standalone span carries the scope's
+ * transaction name, the raw path, in `data.transaction`. Short of `full` its
+ * names come out as a transaction's spans' do; its credentials always do,
+ * and when the walker cannot finish, its description and data go.
+ */
+export function filterSentrySpan<T extends SentrySpanLike>(span: T): T {
+  const named = shouldMaskAnalytics()
+    ? {
+        ...span,
+        ...(typeof span.description === "string"
+          ? { description: scrubSpanValue("description", span.description) }
+          : {}),
+        ...(span.data ? { data: scrubSpanData(span.data) } : {}),
+      }
+    : span;
+  const clean = scrubSentryCredentials(named);
+  if (clean) return clean;
+  const { description: _description, data: _data, ...rest } = named;
+  return { ...rest, data: {} } as T;
+}
+
+/**
  * Initialize Sentry for error tracking and session replay.
  * This should be called once at app startup, before mounting React.
  *
@@ -271,6 +295,7 @@ export function initSentry() {
     },
     // Spans carry request URLs (`GET /api/web/score/runs/<token>`), so the
     // config's credential pass runs last here too.
+    beforeSendSpan: (span) => filterSentrySpan(span),
     beforeSendTransaction: (event, hint) =>
       config.beforeSendTransaction(
         filterSentryTransactionContent(
