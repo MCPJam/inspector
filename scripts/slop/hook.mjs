@@ -207,6 +207,14 @@ function runPromptSubmit(input) {
   return 0;
 }
 
+/** The line ratchet.mjs prints only when a rule went up. */
+const FINDING = "Files that added to a rising rule:";
+
+function withoutStepSummary(env) {
+  const { GITHUB_STEP_SUMMARY: _summary, ...rest } = env;
+  return rest;
+}
+
 function runStop(input) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
@@ -224,13 +232,15 @@ function runStop(input) {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // A CI job summary has no meaning here, and a bad path would crash it.
+      env: withoutStepSummary(process.env),
     });
     return 0;
   } catch (error) {
-    // Only a finished report is a finding. A crash also exits 1 (Node's code
+    // Only a failing verdict is a finding. A crash also exits 1 (Node's code
     // for an uncaught exception, as when the repo has no origin/main), and a
     // broken check must not block the turn: show why, and let it end.
-    if (error.status === 1 && error.stdout?.includes("## Slop ratchet")) {
+    if (error.status === 1 && error.stdout?.includes(FINDING)) {
       process.stderr.write(`${error.stdout}\n`);
       return 2;
     }

@@ -675,6 +675,19 @@ describe("hooks in another checkout", async () => {
     }
   });
 
+  it("ignores an unwritable GITHUB_STEP_SUMMARY", () => {
+    git("checkout", "--", "sdk/src/a.ts");
+    const result = spawnSync("node", [HOOK], {
+      input: JSON.stringify({ hook_event_name: "Stop", cwd: repo }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_STEP_SUMMARY: "/nonexistent/dir/summary.md",
+      },
+    });
+    assert.equal(result.status, 0);
+  });
+
   it("stops on tracked changes but not on someone's untracked files", () => {
     git("checkout", "--", "sdk/src/a.ts");
     writeFileSync(join(repo, "sdk/src/scratch.ts"), "p.catch(() => {});\n");
