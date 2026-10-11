@@ -44,10 +44,12 @@ vi.mock("ai", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: vi.fn(),
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -57,11 +59,13 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-      listTools: vi.fn().mockResolvedValue({ tools: [] }),
-      readResource: vi.fn().mockResolvedValue({ contents: [] }),
-    })),
+    MCPClientManager: vi.fn().mockImplementation(function () {
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        readResource: vi.fn().mockResolvedValue({ contents: [] }),
+      };
+    }),
   };
 });
 
@@ -864,6 +868,60 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     ).toBeUndefined();
   });
 
+  describe("a HOST-BACKED scenario's harness (scenario scope, no marker)", () => {
+    // No marker means no box to provision, and the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    const hostBacked = (accessKind: string) =>
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: scenarioConfig(undefined, {
+          harness: "claude-code",
+          environment: undefined,
+          accessKind,
+          executionScope: {
+            kind: "swarm",
+            swarmId: "cbx_env",
+            accessVersion: 3,
+            projectId: "project-1",
+            workspaceId: "ws_1",
+          },
+        }),
+      });
+
+    it("tells a member to republish, with a 409 and a code, before the turn starts", async () => {
+      hostBacked("project_member");
+      const { app, token } = createWebTestApp();
+      const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.code).toBe("CONFLICT");
+      expect(body.details?.reason).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.message).toMatch(
+        /claude-code harness.*Republish the scenario from an environment/
+      );
+      expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("tells a participant the study is unavailable, in words free of internals", async () => {
+      hostBacked("swarm_grant");
+      const { app, token } = createWebTestApp();
+      const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.details?.reason).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.message).toBe(
+        "This study isn't available right now. Let the person who shared it know."
+      );
+      expect(body.message).not.toMatch(
+        /harness|computer|environment|republish/i
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("REFUSES a harness turn whose image is unavailable, rather than using the personal computer", async () => {
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,
@@ -896,6 +954,177 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     expect(response.status).toBe(503);
     expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("declares it can run a participant's harness box only when it is a data plane", async () => {
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harnessBox: true })
+    );
+
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harnessBox: false })
+    );
+  });
+
+  it("a PARTICIPANT's harness (no computer in their config) runs on the conversation's box", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral", harness: true },
+        { harness: "claude-code", builtInToolIds: [], computer: undefined }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    expect(provisionScenarioSandboxMock).toHaveBeenCalledTimes(1);
+    expect(
+      handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0]
+        ?.harnessSandboxBinding
+    ).toMatchObject({ sandboxRowId: "row_1", sandboxId: "sbx_conversation_1" });
+    expect(buildBashToolMock).not.toHaveBeenCalled();
+  });
+
+  it("a PARTICIPANT past the scenario's caps gets a 429 that says which cap", async () => {
+    provisionScenarioSandboxMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      error:
+        "This scenario already has 4 of its 4 participant sessions running. Try again in a few minutes.",
+      code: "participant_cap",
+    });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral", harness: true },
+        { harness: "claude-code", builtInToolIds: [], computer: undefined }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(429);
+    expect(await response.text()).toMatch(/4 of its 4 participant sessions/);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  // A non-member participant is never shown the owner-facing detail.
+  const participantHarnessConfig = () =>
+    scenarioConfig(
+      { mode: "ephemeral", harness: true },
+      {
+        harness: "claude-code",
+        builtInToolIds: [],
+        computer: undefined,
+        accessKind: "swarm_grant",
+      },
+    );
+
+  it.each([
+    [
+      "materialized secrets",
+      {
+        status: 409,
+        code: "materialized_secrets_unsupported",
+        error:
+          "This scenario's environment selects materialized secrets, which a participant's computer can't hold. Switch them to brokered delivery, or remove them from the environment.",
+      },
+      "This study isn't set up correctly yet. Let the study owner know.",
+    ],
+    [
+      "the organization at capacity",
+      {
+        status: 503,
+        code: "at_capacity",
+        error:
+          "Too many scenario sandboxes in flight for this organization (max 12). Wait for running evals to finish.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+  ])(
+    "a PARTICIPANT refused a box for %s gets participant-safe copy",
+    async (_label, refusal, expected) => {
+      provisionScenarioSandboxMock.mockResolvedValue({ ok: false, ...refusal });
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: participantHarnessConfig(),
+      });
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        BASE_BODY,
+        token,
+      );
+
+      expect(response.status).toBe(refusal.status);
+      const text = await response.text();
+      expect(text).toContain(expected);
+      expect(text).not.toMatch(/credit|budget|organi[sz]ation|environment/i);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a MEMBER refused a box keeps the detail that names the fix", async () => {
+    provisionScenarioSandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      code: "no_pin",
+      error: "This environment pins no computer image.",
+    });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral", harness: true },
+        {
+          harness: "claude-code",
+          builtInToolIds: [],
+          accessKind: "project_member",
+        },
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toMatch(/pins no computer image/);
+  });
+
+  it("tells the harness turn it is serving a participant, and only then", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: participantHarnessConfig(),
+    });
+    const { app, token } = createWebTestApp();
+    expect(
+      (await postJson(app, "/api/web/chat-v2", BASE_BODY, token)).status,
+    ).toBe(200);
+    expect(
+      handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0]?.scenarioParticipant,
+    ).toBe(true);
+
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral", harness: true },
+        {
+          harness: "claude-code",
+          builtInToolIds: [],
+          accessKind: "project_member",
+        },
+      ),
+    });
+    expect(
+      (await postJson(app, "/api/web/chat-v2", BASE_BODY, token)).status,
+    ).toBe(200);
+    expect(
+      handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0]?.scenarioParticipant,
+    ).toBeUndefined();
   });
 
   it("REFUSES a harness turn whose box could not be provisioned — no degrade, no personal computer", async () => {

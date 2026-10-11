@@ -14,6 +14,10 @@
 
 import type { Tool } from "@modelcontextprotocol/client";
 
+import {
+  asSchema,
+  demonstrableReadWriteVerbs,
+} from "../../directory-readiness/tool-shape.js";
 import { claudePolicySource } from "../manifest.js";
 import { CLAUDE_SUBMISSION_LIMITS } from "../profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
@@ -98,30 +102,6 @@ const CATCH_ALL_FREE_STRING: ClaudeCheckDefinition = {
   intrusiveness: "passive",
 };
 
-/**
- * Verbs that read, and verbs that change things.
- *
- * Deliberately short and unambiguous. A longer list catches more real cases
- * and also more false ones, and a false "this tool does both" accuses a
- * submitter of a disqualifying design flaw they do not have.
- */
-const SAFE_VERBS = ["get", "list", "read", "search", "query", "fetch", "find"];
-const UNSAFE_VERBS = [
-  "create",
-  "update",
-  "delete",
-  "write",
-  "remove",
-  "insert",
-  "upsert",
-  "send",
-  "post",
-  "put",
-  "patch",
-  "execute",
-  "drop",
-];
-
 /** Parameter names that conventionally select an operation. */
 const DISPATCH_PARAMETER_NAMES = [
   "method",
@@ -131,71 +111,6 @@ const DISPATCH_PARAMETER_NAMES = [
   "command",
   "verb",
 ];
-
-interface SchemaLike {
-  type?: unknown;
-  enum?: unknown;
-  properties?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-function asSchema(value: unknown): SchemaLike | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as SchemaLike)
-    : undefined;
-}
-
-function matchesVerb(value: string, verbs: string[]): boolean {
-  const normalized = value.toLowerCase();
-  return verbs.some(
-    (verb) =>
-      normalized === verb ||
-      normalized.startsWith(`${verb}_`) ||
-      normalized.startsWith(`${verb}-`) ||
-      // `getUser`, `createOrder` — camelCase, but only at the START, so
-      // `budget` does not match `get` and `deleted_at` does not match
-      // `delete`. A direct character test rather than a `new RegExp` built on
-      // every comparison.
-      (normalized.startsWith(verb) &&
-        /[A-Z]/.test(value.charAt(verb.length))),
-  );
-}
-
-/**
- * A tool whose schema DEMONSTRABLY accepts both a safe and an unsafe verb.
- *
- * "Demonstrably" is the whole rule, and it is narrow on purpose. The only
- * evidence that settles this from a schema alone is an ENUMERATED set of
- * operations containing verbs from both sides: the server has itself written
- * down that this one tool does `list` and `delete`. Anything looser — a
- * free-string `method`, a name like `manage_records`, a description that
- * mentions deleting — is a guess, and a hard failure built on a guess tells a
- * submitter to redesign their API on our hunch.
- *
- * The free-string case is not dropped; it becomes an advisory (see
- * {@link CATCH_ALL_FREE_STRING}), which is where a strong smell belongs.
- */
-function demonstrableVerbs(
-  tool: Tool,
-): { parameter: string; safe: string[]; unsafe: string[] } | undefined {
-  const properties = asSchema(tool.inputSchema)?.properties;
-  if (!properties) return undefined;
-
-  for (const [parameter, rawSchema] of Object.entries(properties)) {
-    const schema = asSchema(rawSchema);
-    const values = schema?.enum;
-    if (!Array.isArray(values)) continue;
-    const strings = values.filter(
-      (value): value is string => typeof value === "string",
-    );
-    const safe = strings.filter((value) => matchesVerb(value, SAFE_VERBS));
-    const unsafe = strings.filter((value) => matchesVerb(value, UNSAFE_VERBS));
-    if (safe.length > 0 && unsafe.length > 0) {
-      return { parameter, safe, unsafe };
-    }
-  }
-  return undefined;
-}
 
 /** An unconstrained string parameter whose NAME says it selects an operation. */
 function freeStringDispatch(tool: Tool): string | undefined {
@@ -401,8 +316,12 @@ export function runClaudeToolChecks(
         ),
   );
 
+  // "Demonstrably" — an ENUMERATED operation set with verbs from both sides —
+  // is the whole rule. The detector is shared with Muse readiness, which
+  // grades the same observation under a different rule; the argument for its
+  // narrowness lives with it in `directory-readiness/tool-shape.ts`.
   const catchAll = tools
-    .map((tool) => ({ tool, evidence: demonstrableVerbs(tool) }))
+    .map((tool) => ({ tool, evidence: demonstrableReadWriteVerbs(tool) }))
     .filter(
       (entry): entry is { tool: Tool; evidence: NonNullable<typeof entry.evidence> } =>
         entry.evidence !== undefined,

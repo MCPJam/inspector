@@ -1,3 +1,5 @@
+import type { HarnessPresentation } from "../../../shared/unattended-workspace";
+import { mountHarnessWorkspace } from "./host-workspace";
 /**
  * host-page.ts — page-side MCP Apps host runtime for the eval browser harness.
  *
@@ -36,6 +38,7 @@ import { PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge"
 const WIDGET_ROOT_ID = "mcpjam-widget-root";
 
 export interface HostPageRenderOptions {
+  presentation?: HarnessPresentation;
   widgetId: string;
   /** Widget resource HTML (already OpenAI-compat-injected by Node if needed). */
   html: string;
@@ -62,6 +65,7 @@ export interface HostPageRenderResult {
 }
 
 interface ActiveWidget {
+  updatePresentation: (value: HarnessPresentation) => void;
   iframe: HTMLIFrameElement;
   dispose: () => void;
 }
@@ -85,27 +89,32 @@ declare global {
       widgetId: string;
       text: string;
     }) => Promise<void>;
+    __mcpjamHostContext?: (payload: {
+      widgetId: string;
+      params: unknown;
+    }) => Promise<{ _meta?: Record<string, unknown>; state: unknown }>;
     __mcpjamHarness: {
       renderWidget: (
         opts: HostPageRenderOptions,
       ) => Promise<HostPageRenderResult>;
       dismissWidget: (widgetId: string) => boolean;
       isBlank: (widgetId: string) => boolean;
+      updatePresentation: (value: HarnessPresentation) => void;
     };
   }
 }
 
+let workspacePanel: HTMLElement | undefined;
+let workspaceUpdate: ((presentation?: HarnessPresentation) => void) | undefined;
 function ensureRoot(): HTMLElement {
-  let root = document.getElementById(WIDGET_ROOT_ID);
-  if (!root) {
-    root = document.createElement("div");
-    root.id = WIDGET_ROOT_ID;
-    root.style.position = "fixed";
-    root.style.inset = "0";
-    root.style.margin = "0";
-    document.body.appendChild(root);
-  }
-  return root;
+  if (workspacePanel?.isConnected) return workspacePanel;
+  const root = document.createElement("div");
+  root.id = WIDGET_ROOT_ID;
+  document.body.appendChild(root);
+  const mounted = mountHarnessWorkspace(root);
+  workspacePanel = mounted.panel;
+  workspaceUpdate = mounted.update;
+  return workspacePanel;
 }
 
 /** Structural blank check: no rendered text and no painted element box.
@@ -146,13 +155,14 @@ async function renderWidget(
   dismissWidget(opts.widgetId);
 
   const root = ensureRoot();
+  workspaceUpdate?.(opts.presentation);
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", policy.sandbox);
   if (policy.allow) iframe.setAttribute("allow", policy.allow);
   iframe.style.width = "100%";
   iframe.style.height = "100%";
   iframe.style.border = "0";
-  iframe.style.background = "#ffffff";
+  iframe.style.background = "var(--background)";
   // Blank doc first so the host can attach its transport before the guest runs.
   iframe.srcdoc = "<!doctype html><html><head></head><body></body></html>";
   root.replaceChildren(iframe);
@@ -186,13 +196,23 @@ async function renderWidget(
     hostInfo: opts.hostInfo,
     hostCapabilities: opts.hostCapabilities as never,
     sandbox: {},
-    hostContext: {},
+    hostContext: {
+      ...(opts.presentation?.theme ? { theme: opts.presentation.theme } : {}),
+      "openai/modelContext": null,
+    },
   });
 
   registerHostBridgeHandlers(bridge, {
     effectiveHostCapabilities: opts.hostCapabilities as never,
     getToolCallId: () => opts.widgetId,
     callbacks: {
+      onUpdateModelContextV2: async (_id, params) => {
+        const update = window.__mcpjamHostContext;
+        if (!update) throw new Error("App context service unavailable");
+        const result = await update({ widgetId: opts.widgetId, params });
+        bridge.setHostContext({ "openai/modelContext": result.state });
+        return { _meta: result._meta };
+      },
       onAppInitialized: (b) => {
         initialized = true;
         // Deliver tool data so data-driven widgets actually paint.
@@ -257,6 +277,10 @@ async function renderWidget(
 
   activeWidgets.set(opts.widgetId, {
     iframe,
+    updatePresentation: (value) => {
+      if (value.theme === "light" || value.theme === "dark")
+        bridge.setHostContext({ theme: value.theme });
+    },
     dispose: () => {
       void bridge.close?.().catch?.(() => {});
       iframe.remove();
@@ -290,4 +314,15 @@ function isBlank(widgetId: string): boolean {
   return isDocumentBlank(w.iframe.contentDocument);
 }
 
-window.__mcpjamHarness = { renderWidget, dismissWidget, isBlank };
+// Paint host chrome before Node records its blank-screen baseline.
+ensureRoot();
+window.__mcpjamHarness = {
+  renderWidget,
+  dismissWidget,
+  isBlank,
+  updatePresentation: (value) => {
+    workspaceUpdate?.(value);
+    for (const widget of activeWidgets.values())
+      widget.updatePresentation(value);
+  },
+};

@@ -30,9 +30,14 @@ export {
   OAUTH_PROFILE_EVIDENCE_STATUSES,
   OAUTH_SCOPE_REQUEST_MODES,
   OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
+  PLUGIN_EXTENSION_CAPABILITY_KEYS,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
-export type { Harness } from "./types.js";
+export type {
+  Harness,
+  HostConfigPluginExtensionsV1,
+  PluginExtensionCapabilityKey,
+} from "./types.js";
 export {
   DEFAULT_TEMPERATURE_V2,
   resolveEffectiveMcpProtocolVersion,
@@ -68,6 +73,20 @@ export type {
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
 } from "./types.js";
+
+// Per-client OpenAI plugin extensions setting (mcpProfile.apps.pluginExtensions).
+export {
+  applyPluginExtensionsToClientCapabilities,
+  OPENAI_FORM_CLIENT_EXTENSION_KEYS,
+  pluginExtensionsDefaultEnabled,
+  readPluginExtensionsSetting,
+  resolvePluginExtensions,
+} from "./plugin-extensions.js";
+export type {
+  PluginExtensionCapabilities,
+  PluginExtensionsHostInput,
+  ResolvedPluginExtensions,
+} from "./plugin-extensions.js";
 
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.
 // Stays browser-safe — `tool-visibility.ts` is structurally typed

@@ -180,7 +180,8 @@ is resolved per caller, these are held off this surface for **everyone**
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
 - Conformance and readiness: `start_claude_readiness_run`,
-  `start_openai_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
+  `start_openai_readiness_run`, `start_muse_readiness_run`,
+  `get_readiness_run`, `list_readiness_runs`,
   `cancel_readiness_run`, `get_readiness_report`, `start_conformance_run`,
   `get_conformance_run`, `list_conformance_runs`, `get_conformance_report`
 - Unified sessions: `search_sessions`
@@ -376,10 +377,15 @@ Three things about that are deliberate:
 | Target | `AUTHKIT_DOMAIN` |
 | --- | --- |
 | Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`) | `login.mcpjam.com` |
-| Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `dynamic-echo-14-staging.authkit.app` |
-| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `dynamic-echo-14-staging.authkit.app` |
+| Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `deep-vanilla-68-test.authkit.app` |
+| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `deep-vanilla-68-test.authkit.app` |
 
-Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
+Production uses its own tenant. Staging, PR previews, and local development share
+`deep-vanilla-68-test`, matching the tenant that `backend-staging` configures in
+Convex and the staging Inspector. Keep these deployment settings aligned.
+Register both `http://localhost:8787/mcp` and
+`https://mcp-staging.mcpjam.com/mcp` as MCP Resource Indicators in that tenant;
+each preview also needs its own origin-based resource registered for OAuth.
 
 `npm run dev` uses `--env staging` so local development binds against staging.
 For developing against the **Home/MCPJam agent** locally, use `npm run dev:local`

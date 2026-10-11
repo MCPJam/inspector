@@ -170,6 +170,7 @@ describe("useEvalHandlers", () => {
     usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
     // Pinned so the wall tests can assert the exact toast the handler dismisses.
     vi.mocked(toast.success).mockReturnValue("toast-id");
+    vi.mocked(toast.loading).mockReturnValue("toast-id");
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -511,6 +512,21 @@ describe("useEvalHandlers", () => {
       expect(mockAuthFetch).not.toHaveBeenCalled();
     });
 
+    it.each([{ throwOnFailure: true }, { stayOnPage: true }])(
+      "throws a missing case as-is instead of silently resolving: %o", async (mode) => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-x", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["not-in-this-suite"], ...mode }))
+          .rejects.toThrow("That case is not in this suite.");
+      });
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(result.current.rerunningSuiteId).toBeNull();
+    });
+
     it("sends no caseIds for an ordinary full rerun", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
@@ -549,6 +565,38 @@ describe("useEvalHandlers", () => {
         suiteDescription: "Suite description",
         serverIds: ["server-1"],
       });
+    });
+
+    it("reruns a suite with no threshold at the 70% default, not the latest run's", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          latestRunBySuiteId: new Map<string, any>([
+            [
+              "suite-456",
+              {
+                _id: "run-old",
+                hasServerReplayConfig: false,
+                passCriteria: { minimumPassRate: 100 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-456",
+        name: "My Suite",
+        description: "Suite description",
+        environment: { servers: ["server-1"] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.passCriteria).toEqual({ minimumPassRate: 70 });
     });
 
     it("sends iterationOverride as a top-level field while tests[].runs preserves the persisted default", async () => {
@@ -1258,9 +1306,8 @@ describe("useEvalHandlers", () => {
     });
 
     it("opens the upgrade wall and clears the optimistic toast when the server rejects the launch on the eval-iteration cap", async () => {
-      // The "Run started successfully!" toast fires before the request
-      // resolves, so leaving it up alongside the wall would claim the run is
-      // on its way.
+      // The "Starting run…" toast fires before the request resolves, so
+      // leaving it up alongside the wall would claim the run is on its way.
       mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
 
       const { result } = renderHook(() =>
@@ -1285,6 +1332,19 @@ describe("useEvalHandlers", () => {
       });
       expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
       expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("propagates a quota wall refusal to the setup sheet", async () => {
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+      const { result } = renderHook(() => useEvalHandlers({ ...defaultProps, organizationId: "org-1" }));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["test-case-1"], throwOnFailure: true })).rejects.toThrow();
+      });
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({ kind: "evalIterations" });
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
     });
 
     it("opens the wall for a cap the replay endpoint nests under details", async () => {
@@ -1462,6 +1522,354 @@ describe("useEvalHandlers", () => {
       expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
       expect(toast.error).toHaveBeenCalled();
       expect(toast.dismiss).not.toHaveBeenCalled();
+    });
+
+    const legacySuite = {
+      _id: "suite-123",
+      name: "Test Suite",
+      description: "A test suite",
+      environment: { servers: ["server-1"] },
+    } as any;
+
+    it("turns the starting toast into the failure instead of stacking a success beside it", async () => {
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({ message: "Model unavailable" }, 500),
+      );
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(legacySuite);
+      });
+      expect(toast.loading).toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith(expect.any(String), {
+        id: "toast-id",
+      });
+    });
+
+    it("turns the starting toast into the success once the run is accepted", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(legacySuite);
+      });
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.success).toHaveBeenCalledWith("Eval run started!", {
+        id: "toast-id",
+      });
+    });
+
+    describe("with throwOnFailure (the Setup Run sheet)", () => {
+      it("throws the launch failure instead of toasting it", async () => {
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ message: "Model unavailable" }, 500),
+        );
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Model unavailable");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      });
+
+      it("throws a server that cannot connect instead of toasting it", async () => {
+        const ensureServersReady = vi.fn().mockResolvedValue({
+          readyServerNames: [],
+          missingServerNames: [],
+          failedServerNames: ["server-1"],
+          reauthServerNames: [],
+        });
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady,
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow(
+            "We couldn't connect to server-1. Try again to run this suite.",
+          );
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+      });
+
+      it("throws a replay fallback that fails instead of toasting it", async () => {
+        mockIsHostedMode.mockReturnValue(true);
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ message: "Replay unavailable" }, 500),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady: vi.fn().mockResolvedValue({
+              readyServerNames: [],
+              missingServerNames: [],
+              failedServerNames: ["server-1"],
+              reauthServerNames: [],
+            }),
+            latestRunBySuiteId: new Map<string, any>([
+              ["suite-123", { _id: "run-source", hasServerReplayConfig: true }],
+            ]),
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Replay unavailable");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+
+      it("throws why the suite is not ready instead of toasting it", async () => {
+        mockConvexQuery.mockResolvedValue([]);
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("No test cases found in this suite");
+        });
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+
+      it("throws instead of silently doing nothing while another run is starting", async () => {
+        const slow = createDeferred<Response>();
+        mockAuthFetch.mockReturnValueOnce(slow.promise);
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        let first!: Promise<unknown>;
+        act(() => {
+          first = result.current.handleRerun(legacySuite);
+        });
+        await waitFor(() =>
+          expect(result.current.rerunningSuiteId).toBe("suite-123"),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(legacySuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Another suite run is already starting.");
+        });
+        await act(async () => {
+          slow.resolve(createFetchResponse({ success: true }));
+          await first;
+        });
+      });
+
+      it("throws instead of silently doing nothing while a replay is starting", async () => {
+        const slow = createDeferred<Response>();
+        mockAuthFetch.mockReturnValueOnce(slow.promise);
+        const run = { _id: "run-source", hasServerReplayConfig: true };
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        let first!: Promise<unknown>;
+        act(() => {
+          first = result.current.handleReplayRun(legacySuite, run as any);
+        });
+        await waitFor(() =>
+          expect(result.current.replayingRunId).toBe("run-source"),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleReplayRun(legacySuite, run as any, {
+              throwOnFailure: true,
+            }),
+          ).rejects.toThrow("Another suite run is already starting.");
+        });
+        await act(async () => {
+          slow.resolve(createFetchResponse({ success: true }));
+          await first;
+        });
+      });
+
+      it("still navigates to the run it started", async () => {
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, runId: "run-1" }),
+        );
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            evalsNavigationContext: "evaluate",
+          }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(legacySuite, {
+            throwOnFailure: true,
+          });
+        });
+        expect(mockNavigateApp).toHaveBeenCalledWith(
+          "/evaluate/suite/suite-123/runs/run-1",
+        );
+      });
+    });
+
+    describe("environment suites (local pre-connect)", () => {
+      const envSuite = {
+        _id: "suite-env",
+        name: "Env suite",
+        environment: { servers: [] },
+        environmentIds: ["env-a", "env-b"],
+      } as any;
+      const launchServers: Record<string, unknown> = {
+        "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+        "env-b": { servers: [{ serverId: "srv-2", name: "crm" }] },
+      };
+      const readiness = (failedServerNames: string[] = []) => ({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames,
+        reauthServerNames: [],
+      });
+
+      beforeEach(() => {
+        mockConvexQuery.mockImplementation(
+          async (name: string, args: { environmentId?: string } = {}) => {
+            if (name === "projectEnvironments:resolveEnvironmentForLaunch")
+              return launchServers[args.environmentId ?? ""] ?? null;
+            return [
+              {
+                _id: "case-1",
+                title: "Case 1",
+                query: "Q",
+                runs: 1,
+                models: [],
+                expectedToolCalls: [],
+              },
+            ];
+          },
+        );
+      });
+
+      const runUrls = () =>
+        mockAuthFetch.mock.calls
+          .map((call) => call[0])
+          .filter((url) => String(url).endsWith("/evals/run"));
+
+      it("connects the environments' servers before launching", async () => {
+        const ensureServersReady = vi.fn().mockResolvedValue(readiness());
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(ensureServersReady).toHaveBeenCalledWith(["billing", "crm"]);
+        expect(runUrls()).toHaveLength(2);
+      });
+
+      it("launches nothing when an environment server fails to connect", async () => {
+        const ensureServersReady = vi
+          .fn()
+          .mockResolvedValue(readiness(["crm"]));
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(runUrls()).toHaveLength(0);
+        // The connect attempt runs under the launch's own toast, which then
+        // becomes the failure.
+        expect(toast.error).toHaveBeenCalledWith(
+          "We couldn't connect to crm. Try again to run this suite.",
+          { id: "toast-id" },
+        );
+      });
+
+      it("shows the launch toast while it connects", async () => {
+        const order: string[] = [];
+        vi.mocked(toast.loading).mockImplementation(() => {
+          order.push("toast");
+          return "toast-id";
+        });
+        const ensureServersReady = vi.fn(async () => {
+          order.push("connect");
+          return readiness();
+        });
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(order).toEqual(["toast", "connect"]);
+      });
+
+      it("connects nothing for a suite with nothing to run", async () => {
+        mockConvexQuery.mockImplementation(
+          async (name: string, args: { environmentId?: string } = {}) =>
+            name === "projectEnvironments:resolveEnvironmentForLaunch"
+              ? (launchServers[args.environmentId ?? ""] ?? null)
+              : [],
+        );
+        const ensureServersReady = vi.fn().mockResolvedValue(readiness());
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(ensureServersReady).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(
+          "No test cases found in this suite",
+        );
+      });
+
+      it("never reports an empty reason", async () => {
+        const ensureServersReady = vi.fn().mockRejectedValue(new Error(""));
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(envSuite, { throwOnFailure: true }),
+          ).rejects.toThrow("Failed to start eval run");
+        });
+      });
+
+      it.each([false, true])(
+        "reports a connect attempt that throws (throwOnFailure: %s)",
+        async (throwOnFailure) => {
+          const ensureServersReady = vi
+            .fn()
+            .mockRejectedValue(new Error("Connection pool unavailable"));
+          const { result } = renderHook(() =>
+            useEvalHandlers({ ...defaultProps, ensureServersReady }),
+          );
+          await act(async () => {
+            const launch = result.current.handleRerun(envSuite, {
+              throwOnFailure,
+            });
+            if (throwOnFailure)
+              await expect(launch).rejects.toThrow(
+                "Connection pool unavailable",
+              );
+            else await launch;
+          });
+          expect(runUrls()).toHaveLength(0);
+          if (throwOnFailure) expect(toast.error).not.toHaveBeenCalled();
+          else
+            expect(toast.error).toHaveBeenCalledWith(
+              "Connection pool unavailable",
+              { id: "toast-id" },
+            );
+        },
+      );
+
+      it("connects nothing in the browser in hosted mode", async () => {
+        mockIsHostedMode.mockReturnValue(true);
+        setApiContext({ projectId: "project-1", isAuthenticated: true });
+        const ensureServersReady = vi.fn();
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(ensureServersReady).not.toHaveBeenCalled();
+        expect(runUrls()).toHaveLength(2);
+      });
     });
   });
 

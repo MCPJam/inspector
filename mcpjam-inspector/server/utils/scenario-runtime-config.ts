@@ -22,6 +22,7 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type {
   RuntimeServerSource,
   RuntimeSkillChannel,
@@ -267,6 +268,74 @@ export function shouldWarnSecretsUndelivered(args: {
   return true;
 }
 
+/**
+ * The client version that can run a non-member participant's harness on the
+ * conversation's box. Pinned to the backend's literal of the same name.
+ */
+export const SCENARIO_HARNESS_BOX_VERSION = 1;
+
+/**
+ * The runtime config resolved this actor as a NON-MEMBER participant (a User
+ * Testing tester admitted by link or invite). Advisory, like every
+ * runtime-config execution field: it picks the copy they are shown, never
+ * what they may do.
+ */
+export function isScenarioParticipant(
+  config: { accessKind?: unknown } | null | undefined,
+): boolean {
+  return config?.accessKind === "swarm_grant";
+}
+
+export const PARTICIPANT_STUDY_AT_LIMIT =
+  "This study has reached its limit for now. Try again later.";
+export const PARTICIPANT_STUDY_MISCONFIGURED =
+  "This study isn't set up correctly yet. Let the study owner know.";
+
+/** Refusals only the study's owner can fix. */
+const PARTICIPANT_MISCONFIGURED_CODES = new Set([
+  "materialized_secrets_unsupported",
+  "free_tier_model_restricted",
+  "no_pin",
+  "image_unavailable",
+  "not_env_backed",
+]);
+
+/**
+ * What a participant is told when the study's box or model lease is refused.
+ * The backend's copy is written for the study's owner — add credits, raise the
+ * organization's budget, change the environment — none of which a tester can
+ * see or do, so they get one of two sentences instead. The participant-cap
+ * refusal is the exception: the backend wrote it for testers, and it says
+ * which cap and when to come back.
+ */
+export function participantSafeStudyError(refusal: {
+  status?: number;
+  code?: string;
+  error?: string;
+}): string {
+  if (refusal.code === "participant_cap" && refusal.error) {
+    return refusal.error;
+  }
+  if (refusal.code && PARTICIPANT_MISCONFIGURED_CODES.has(refusal.code)) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  if (
+    refusal.status === 429 ||
+    refusal.status === 503 ||
+    refusal.code === "spend_budget_reached"
+  ) {
+    return PARTICIPANT_STUDY_AT_LIMIT;
+  }
+  // Anything else passes through, unless it names what a tester can't see.
+  if (
+    !refusal.error ||
+    /credit|budget|organi[sz]ation|environment/i.test(refusal.error)
+  ) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  return refusal.error;
+}
+
 export interface ScenarioSandboxPlan {
   /**
    * `provision` — reserve the per-conversation box, then bind bash to it.
@@ -331,7 +400,9 @@ export function planScenarioSandbox(args: {
   if (args.mode === "unavailable") {
     return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
   }
-  // Absent marker ⇒ an older backend: today's behaviour, for a harness too.
+  // Absent marker ⇒ nothing to provision. For bash that is today's behaviour;
+  // a scenario-scoped HARNESS is left with no box, which the route refuses
+  // (`scenarioHarnessRepublishRefusal`) rather than run it anywhere else.
   if (
     args.mode !== "ephemeral" ||
     (!args.bashRequested && args.harnessRequested !== true)
@@ -382,6 +453,52 @@ export function planScenarioSandbox(args: {
   return { action: "provision" };
 }
 
+/**
+ * Machine-readable reason for a scenario harness turn with no disposable box
+ * to run on — a host-backed scenario, published before scenario harnesses
+ * moved onto the conversation's box. Only republishing it from an environment
+ * fixes that.
+ */
+export const SCENARIO_HARNESS_REPUBLISH_REQUIRED =
+  "SCENARIO_HARNESS_REPUBLISH_REQUIRED";
+
+/** What a participant sees: no harnesses, computers or environments. */
+const SCENARIO_UNAVAILABLE_TO_PARTICIPANT =
+  "This study isn't available right now. Let the person who shared it know.";
+
+/**
+ * A SCENARIO harness turn (`executionScope.kind === "swarm"`) with no box. Its
+ * harness runs on the conversation's disposable box and nowhere else: the only
+ * other machine is a persistent computer, which the backend refuses for a
+ * scenario scope. A 409, because nothing about the request is malformed — the
+ * scenario is in a state that cannot run it.
+ */
+export class ScenarioHarnessRepublishRequiredError extends WebRouteError {
+  constructor(message: string = SCENARIO_UNAVAILABLE_TO_PARTICIPANT) {
+    super(409, ErrorCode.CONFLICT, message, {
+      reason: SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+    });
+    this.name = "ScenarioHarnessRepublishRequiredError";
+  }
+}
+
+/**
+ * The refusal, worded for whoever is asking. The runtime config's advisory
+ * `accessKind` picks the copy and nothing else: a project member can republish
+ * the scenario, so they are told how; anyone else is a participant, who can do
+ * nothing about it.
+ */
+export function scenarioHarnessRepublishRefusal(args: {
+  harness: string;
+  accessKind?: unknown;
+}): ScenarioHarnessRepublishRequiredError {
+  return new ScenarioHarnessRepublishRequiredError(
+    args.accessKind === "project_member"
+      ? `This scenario runs the ${args.harness} harness, which now runs only on the disposable computer an environment-backed scenario gets. Republish the scenario from an environment, then retry.`
+      : SCENARIO_UNAVAILABLE_TO_PARTICIPANT,
+  );
+}
+
 export type ScenarioRuntimeConfigResult =
   | { ok: true; config: ScenarioRuntimeConfig }
   // `code` carries the backend's machine-readable denial reason —
@@ -408,6 +525,13 @@ export async function fetchScenarioRuntimeConfig(args: {
    * config the caller no longer has a current view of. Omitted ⇒ unchecked.
    */
   accessVersion?: number;
+  /**
+   * This caller can provision the conversation's disposable box, so a
+   * NON-MEMBER participant's harness may be granted on it. Declared by version
+   * (`SCENARIO_HARNESS_BOX_VERSION`): a caller that omits it — one that cannot
+   * provision — is told the participant has no harness, exactly as before.
+   */
+  harnessBox?: boolean;
   signal?: AbortSignal;
 }): Promise<ScenarioRuntimeConfigResult> {
   const url = new URL(
@@ -430,6 +554,9 @@ export async function fetchScenarioRuntimeConfig(args: {
         scenarioId: args.scenarioId,
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
+          : {}),
+        ...(args.harnessBox
+          ? { harnessBoxVersion: SCENARIO_HARNESS_BOX_VERSION }
           : {}),
       }),
       signal: args.signal,

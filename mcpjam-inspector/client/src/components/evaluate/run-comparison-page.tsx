@@ -17,7 +17,7 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import type { RunMetricsByRun } from "../evals/run-metrics";
-import type { EvalSuiteRun } from "../evals/types";
+import type { EvalSuiteRun, EvalSuiteRunListItem } from "../evals/types";
 import { RunContextChip } from "../evals/run-context-chip";
 import {
   RunCommitCell,
@@ -116,9 +116,7 @@ function MetricCell({
     <td className="whitespace-nowrap px-3 py-2 tabular-nums">
       {cell.value ?? "—"}
       {cell.value != null && detail ? (
-        <span className="ml-1 text-[10px] text-muted-foreground">
-          {detail}
-        </span>
+        <span className="ml-1 text-[10px] text-muted-foreground">{detail}</span>
       ) : null}
       <Delta delta={cell.delta} />
     </td>
@@ -271,7 +269,7 @@ export function RunComparisonPage({
   onOpenRun,
 }: {
   currentRun: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
+  runs: readonly EvalSuiteRunListItem[];
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
   suiteName: string;

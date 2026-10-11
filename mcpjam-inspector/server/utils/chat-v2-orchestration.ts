@@ -1,3 +1,4 @@
+import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
   type ConnectionsByServerId,
@@ -674,6 +675,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  modelToolExecutor?: ModelToolExecutor;
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -1423,7 +1425,7 @@ export async function prepareChatV2(
               mcpClientManager.getToolsForAiSdkByServer(
                 knownSelectedServers,
                 toolOptions,
-              ),
+              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
             ),
             selectedGroups,
             {
@@ -1433,7 +1435,11 @@ export async function prepareChatV2(
               },
             },
           )
-        : await listToolsWithinBudget(
+        : options.modelToolExecutor
+          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
+            ), options.modelToolExecutor)))
+          : await listToolsWithinBudget(
             mcpClientManager.getToolsForAiSdk(
               knownSelectedServers,
               toolOptions,

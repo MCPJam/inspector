@@ -34,6 +34,10 @@ import {
   type AgentAttribution,
 } from "./agent-attribution.js";
 import { assertSessionServable } from "../middleware/session-revocation.js";
+import {
+  requireServiceCredential,
+  WORKOS_API_KEY_FEATURE,
+} from "../services/service-credential.js";
 
 const MINT_TIMEOUT_MS = 10_000;
 // Re-mint when the cached token is within this window of expiry. Generous
@@ -87,14 +91,7 @@ async function mintDelegatedToken(
       "Server missing CONVEX_HTTP_URL configuration"
     );
   }
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!serviceToken) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
-    );
-  }
+  const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), MINT_TIMEOUT_MS);

@@ -277,6 +277,23 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     expect(forwardedToolOptions()).toHaveProperty("needsApproval", false);
   });
 
+  it("hands the plugin executor to the projection, and nothing without one", async () => {
+    // The native Codex turn's MCP calls run here; the executor is what puts a
+    // server's OpenAI form on the composer card and owns an App result.
+    const executor = vi.fn();
+    await runHarnessTurn(
+      baseOptions({ hostToolExecutor: executor }) as never,
+      "none"
+    );
+    const forwarded = () =>
+      (projectSpy.mock.calls as unknown as Array<[{ executor?: unknown }]>)[0]![0];
+    expect(forwarded().executor).toBe(executor);
+
+    projectSpy.mockClear();
+    await runHarnessTurn(baseOptions() as never, "none");
+    expect(forwarded()).not.toHaveProperty("executor");
+  });
+
   it("leaves a DEFAULT turn on the no-options path", async () => {
     // Byte-identity guard (it passes against the previous behaviour too, and
     // is here to keep passing): whatever the turn forwards for a host that set

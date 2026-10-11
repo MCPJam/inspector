@@ -8,7 +8,10 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 
@@ -42,6 +45,9 @@ export function useAvailableModels(options?: {
    * saves a `ModelSelection` sends it only when this is true.
    */
   modelSelectionsSupported: boolean;
+  /** Why the MCPJam rows are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 } {
   const appState = useSharedAppState();
   const scopedProjectId =
@@ -66,7 +72,9 @@ export function useAvailableModels(options?: {
   const { customProviders } = useCustomProviders();
   const { isOllamaRunning, ollamaModels } =
     useDetectedOllamaModels(getOllamaBaseUrl);
-  const outOfCredits = useOutOfCredits(organizationId);
+  // Why the MCPJam rows are locked ("… · resets in 3h"), or null.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
   const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
@@ -101,5 +109,5 @@ export function useAvailableModels(options?: {
     ]
   );
 
-  return { availableModels, modelSelectionsSupported };
+  return { availableModels, modelSelectionsSupported, outOfCreditsReason };
 }
