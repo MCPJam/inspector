@@ -8,9 +8,8 @@ on:
   pull_request:
   # The merge queue tests the merged result before it lands on main; without
   # this trigger the queue's required checks never report and entries time out.
+  # No `push: main`, for the reason in test.yml.
   merge_group:
-  push:
-    branches: [main]
 
 # A newer push to the same branch makes in-flight runs obsolete — cancel them
 # so superseded runs don't keep burning a runner. Matters more now that this
@@ -48,6 +47,9 @@ jobs:
 
       - name: Verify MCP deploy workflow path filters
         run: node --test .github/scripts/mcp-workflow-paths.test.mjs
+
+      - name: Verify the node_modules cache warmer matches its consumers
+        run: node --test .github/scripts/warm-node-modules.test.mjs
 
       # The scripts behind prepare-release.yml, release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a

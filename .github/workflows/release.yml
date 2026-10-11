@@ -183,10 +183,10 @@ jobs:
               if (!run) {
                 core.setFailed(
                   `No successful ${workflowId} run found for ${context.sha}. ` +
-                    `That workflow runs on every push to main, so this usually means ` +
-                    `it is still running, failed, or was cancelled because a newer ` +
-                    `commit superseded this one. Re-run it for this SHA, or release ` +
-                    `the newer HEAD.`
+                    `That workflow runs in the merge queue on every commit before it ` +
+                    `lands on main, so this commit either did not come through the ` +
+                    `queue or its run is older than the pages searched here. Re-run ` +
+                    `that queue run for this SHA, or release a newer HEAD.`
                 );
                 return;
               }
