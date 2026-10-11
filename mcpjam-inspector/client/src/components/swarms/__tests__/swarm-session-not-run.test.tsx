@@ -81,6 +81,22 @@ describe("SwarmSessionNotRun", () => {
     ).toHaveTextContent(/invalid identity/i);
   });
 
+  it("titles a session stopped by held credits as a wait, not an empty balance", () => {
+    // What the runner stores for a `holds_committed` refusal once its wait
+    // budget runs out: the backend's sentence under the generic code.
+    render(
+      <SwarmSessionNotRun
+        status="rate_limited"
+        errorCode="user_rate_limit"
+        errorMessage="MCPJam model limit reached for the moment: 13 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds."
+      />,
+    );
+    const reason = screen.getByTestId("swarm-session-not-run-reason");
+    expect(reason).toHaveTextContent("Credits temporarily held");
+    expect(reason).toHaveTextContent("13 in-flight request(s)");
+    expect(reason).not.toHaveTextContent("Out of MCPJam credits");
+  });
+
   it("falls back to the attempt status when no reason was recorded", () => {
     const { rerender } = render(<SwarmSessionNotRun status="rate_limited" />);
     expect(

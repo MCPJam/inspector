@@ -22,18 +22,42 @@ MCPJam is the open-source testing and evaluations platform for developers shippi
   />
 </Frame>
 
-## Four ways to get started
+## Choose your tool
 
-Get started by testing with our hosted app, or test locally on your machine.
+MCPJam comes as three tools: **Inspector**, an interactive app for testing and debugging servers by hand; the **CLI**, for your shell and CI; and the **SDK**, for your test suite.
+
+### Inspector
+
+Open the Inspector in your browser, from your terminal, as a desktop app, or in Docker. The web app needs no install but only reaches HTTPS servers; the other options also run local STDIO and HTTP servers.
+
+<Card title="Start with Inspector" icon="binoculars" href="/getting-started">
+  New to MCPJam? Open the Inspector, connect a server, and send your first prompt.
+</Card>
 
 <CardGroup cols={2}>
-  <Card title="Inspector" icon="binoculars" href="/inspector/playground">
-    **On your machine.** An IDE-style workspace for MCP development, with STDIO servers, tunneling, skills, and tasks. Tests local servers over STDIO and HTTP.
+  <Card title="Web" icon="globe" href="https://app.mcpjam.com">
+    Runs at app.mcpjam.com. No install. HTTPS servers only. Share servers with your team.
+  </Card>
+  <Card title="Terminal" icon="terminal" href="/installation#terminal">
+    Requires Node.js. HTTP/S and local STDIO servers.
     ```bash
     npx @mcpjam/inspector@latest
     ```
-    or [install the desktop app](/installation)
   </Card>
+  <Card title="macOS" icon="laptop" href="/installation#desktop-app">
+    Desktop app (`.dmg`). HTTP/S and local STDIO servers. No Node.js needed.
+  </Card>
+  <Card title="Windows" icon="monitor" href="/installation#desktop-app">
+    Desktop app (`.exe` installer). HTTP/S and local STDIO servers. No Node.js needed.
+  </Card>
+  <Card title="Docker" icon="container" href="/installation#docker">
+    Build the image from source. Reach host servers through `host.docker.internal`.
+  </Card>
+</CardGroup>
+
+### CLI and SDK
+
+<CardGroup cols={2}>
   <Card title="CLI" icon="terminal" href="/cli/overview">
     **In your shell or CI.** Connectivity, OAuth, conformance, and tool runs with JUnit/JSON output. Tests local servers over STDIO (`--command`) and HTTP (`--url`).
     ```bash
@@ -45,9 +69,6 @@ Get started by testing with our hosted app, or test locally on your machine.
     ```bash
     npm install @mcpjam/sdk
     ```
-  </Card>
-  <Card title="Hosted" icon="globe" href="https://app.mcpjam.com">
-    **In your browser.** Open [app.mcpjam.com](https://app.mcpjam.com), click **Add server**, and enter your server's URL. HTTPS only — STDIO and localhost servers need the Inspector.
   </Card>
 </CardGroup>
 

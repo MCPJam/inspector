@@ -138,6 +138,8 @@ export type GoalJudgeConfigOverride = {
 export type GoalJudgeRunOverride = {
   goalCompletion?: {
     judgeModel?: string;
+    /** The judge's selection for this run (effort included). */
+    judgeSelection?: ModelSelection;
     threshold?: number;
   };
 };
