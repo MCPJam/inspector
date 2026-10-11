@@ -156,22 +156,46 @@ const ORG_PROVIDER_LABELS: Record<HarnessOrgUpstream["provider"], string> = {
   openai: "OpenAI",
 };
 
+/**
+ * The organization's AI key policy, as harness copy reads it. When the
+ * organization requires its own provider keys ("Use your keys for all AI
+ * features"), MCPJam-provided models are off, so a brokered harness runs only
+ * on the organization's key for its own vendor.
+ */
+export type HarnessKeyPolicy = { requireOrgKeys?: boolean };
+
 /** The refusal copy for an org connection the harness cannot run on. */
-export function harnessOrgProviderUnsupportedReason(harnessId: string): string {
+export function harnessOrgProviderUnsupportedReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): string {
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
-  return upstream
-    ? `the ${name} harness runs MCPJam-provided models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key`
-    : `the ${name} harness does not run on an organization's provider key`;
+  if (!upstream) {
+    return `the ${name} harness does not run on an organization's provider key`;
+  }
+  const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  return policy.requireOrgKeys
+    ? `the ${name} harness runs only on your organization's ${vendor} key`
+    : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;
 }
 
-/** Why a harness host's picker has no row it can run, and what fixes it. */
-export function harnessNoRunnableModelReason(harnessId: string): string {
+/**
+ * Why a harness host's picker has no row it can run, and what fixes it. Under
+ * the key policy the picker adds the fix itself ("Add a provider", or ask an
+ * admin), so the sentence names only the vendor.
+ */
+export function harnessNoRunnableModelReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): string {
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
-  return upstream
-    ? `${name} runs MCPJam models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key. Add one in Organization models.`
-    : `${name} has no model it can run here.`;
+  if (!upstream) return `${name} has no model it can run here.`;
+  const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  return policy.requireOrgKeys
+    ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider.`
+    : `${name} runs MCPJam models or your organization's ${vendor} key. Add one in Organization models.`;
 }
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */
