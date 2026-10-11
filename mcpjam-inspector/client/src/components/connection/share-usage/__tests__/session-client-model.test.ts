@@ -3,6 +3,7 @@ import {
   clientLabelForSession,
   modelLabelForSession,
   sessionClientModelLabel,
+  sessionModelLabel,
 } from "../session-client-model";
 
 /**
@@ -98,5 +99,34 @@ describe("sessionClientModelLabel", () => {
     );
     expect(sessionClientModelLabel("Claude", null)).toBe("Claude");
     expect(sessionClientModelLabel(null, null)).toBeNull();
+  });
+});
+
+describe("sessionModelLabel", () => {
+  const selection = (effort?: "high") => ({
+    modelId: "openai/gpt-5.4-nano",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+
+  it("adds the effort the session's last turn ran at", () => {
+    expect(
+      sessionModelLabel({
+        modelId: "openai/gpt-5.4-nano",
+        modelSelection: selection("high"),
+      }),
+    ).toMatch(/ · High$/);
+  });
+
+  it("reads as the model alone without an effort or a recorded selection", () => {
+    const plain = sessionModelLabel({ modelId: "openai/gpt-5.4-nano" });
+    expect(plain).not.toContain("·");
+    expect(
+      sessionModelLabel({
+        modelId: "openai/gpt-5.4-nano",
+        modelSelection: selection(),
+      }),
+    ).toBe(plain);
   });
 });

@@ -52,6 +52,10 @@ it.each([
       level: "info",
       tags: expect.objectContaining({ update_notification: "outcome" }),
       contexts: {
+        update_diagnostics: expect.objectContaining({
+          byte_progress: "unavailable",
+          history: "partial",
+        }),
         update: expect.objectContaining({
           attempt_id: a.id,
           failure_event_id: eventId,

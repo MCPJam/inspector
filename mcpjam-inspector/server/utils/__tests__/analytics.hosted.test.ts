@@ -13,7 +13,9 @@ const captureMock = vi.fn();
 const shutdownMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => ({ capture: captureMock, shutdown: shutdownMock })),
+  PostHog: vi.fn(function () {
+    return { capture: captureMock, shutdown: shutdownMock };
+  }),
 }));
 
 import { captureServerEvent, shutdownAnalytics } from "../analytics.js";

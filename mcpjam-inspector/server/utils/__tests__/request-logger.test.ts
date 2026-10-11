@@ -8,10 +8,12 @@ vi.mock("@sentry/node", () => ({
 }));
 
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: vi.fn(),
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 function makeContext(ctx?: Partial<RequestLogContext>): Context {

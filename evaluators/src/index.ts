@@ -5,6 +5,7 @@ export * from "./contract/evaluator-types.js";
 export * from "./contract/evaluator-derive.js";
 export * from "./predicates/index.js";
 export * from "./matchers.js";
+export * from "./tool-expectations/index.js";
 export {
   buildEvaluationConfigSnapshot,
   finalizeScoreResult,
