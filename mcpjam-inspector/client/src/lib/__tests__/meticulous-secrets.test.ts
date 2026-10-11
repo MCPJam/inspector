@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   maskOpenSecret,
   maskSecrets,
+  maskSplitKey,
   maskText,
+  openKeyAtEnd,
   openSecretAtEnd,
 } from "../meticulous-secrets";
 
@@ -53,6 +55,29 @@ describe("openSecretAtEnd and maskOpenSecret", () => {
     });
     expect(maskOpenSecret("cd end", "bearer")).toEqual({
       text: "** end",
+      open: null,
+    });
+  });
+});
+
+describe("openKeyAtEnd and maskSplitKey", () => {
+  it("joins a key split across batches before deciding whether it is secret", () => {
+    expect(openKeyAtEnd('{"n":1,"api')).toEqual({
+      partial: "api",
+      escaped: false,
+    });
+    expect(openKeyAtEnd('{"a":"')).toBeNull();
+    const key = { partial: "api", escaped: false };
+    expect(maskSplitKey('Key":"sk-1"}', key)).toEqual({
+      text: 'Key":"****"}',
+      open: null,
+    });
+    expect(maskSplitKey('Key":"sk-', key)).toEqual({
+      text: 'Key":"***',
+      open: "json",
+    });
+    expect(maskSplitKey('Name":"x"}', key)).toEqual({
+      text: 'Name":"x"}',
       open: null,
     });
   });

@@ -181,3 +181,37 @@ export function maskText(text: string): string {
       (_match, prefix: string, token: string) => `${prefix}${mask(token)}`,
     );
 }
+
+/** A JSON key the text ends inside of, with its quote style; the rest arrives in a later batch. */
+export type OpenKey = { partial: string; escaped: boolean };
+const OPEN_KEY = /(?:[{,[]|^)\s*(\\?)"([A-Za-z0-9_.-]*)$/;
+const KEY_REST = /^([A-Za-z0-9_.-]*)"\s*:\s*"((?:[^"\\]|\\.)*)("?)/;
+const ESCAPED_KEY_REST =
+  /^([A-Za-z0-9_.-]*)\\"\s*:\s*\\"((?:[^"\\]|\\[^"])*)(\\"|)/;
+
+export function openKeyAtEnd(text: string): OpenKey | null {
+  const match = OPEN_KEY.exec(text);
+  return match ? { partial: match[2], escaped: match[1] === "\\" } : null;
+}
+
+/**
+ * Masks the value of a field whose key began in an earlier batch, when the
+ * two halves of the key name a secret. Other batches may have arrived in
+ * between, so the halves are joined here rather than through the carried
+ * tail. Reports an unterminated value as open.
+ */
+export function maskSplitKey(
+  text: string,
+  key: OpenKey,
+): { text: string; open: OpenSecret | null } {
+  const match = (key.escaped ? ESCAPED_KEY_REST : KEY_REST).exec(text);
+  if (!match || !isSecretKey(key.partial + match[1])) {
+    return { text, open: null };
+  }
+  const [whole, , value, closing] = match;
+  const head = whole.slice(0, whole.length - value.length - closing.length);
+  return {
+    text: head + mask(value) + closing + text.slice(whole.length),
+    open: closing ? null : key.escaped ? "escaped" : "json",
+  };
+}

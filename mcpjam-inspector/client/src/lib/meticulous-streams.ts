@@ -1,7 +1,10 @@
 import {
   maskOpenSecret,
+  maskSplitKey,
   maskText,
+  openKeyAtEnd,
   openSecretAtEnd,
+  type OpenKey,
   type OpenSecret,
 } from "./meticulous-secrets";
 
@@ -12,13 +15,16 @@ import {
  * boundary would otherwise reach neither call whole.
  *
  * Per URL and method the redactor keeps whether a batch ended inside a
- * secret, and a short masked tail so a key cut mid-name is still seen. URL
- * and method do not identify a stream: concurrent streams to one endpoint
- * share an entry, and a batch from one cannot be told from the next batch
- * of another. So once an entry is open, every batch on that endpoint is
- * masked up to the secret's terminator, and the entry stays open until a
- * batch completes there. That over-masks concurrent streams and the rest of
- * the stream that held the secret, and it never leaks the secret's end.
+ * secret value or inside a key, plus a short masked tail. URL and method do
+ * not identify a stream: concurrent streams to one endpoint share an entry,
+ * and no batch, completion included, can be attributed to one of them. So
+ * nothing ever clears an entry. Once an endpoint has ended inside a secret,
+ * every later batch on it is masked up to the secret's terminator; once it
+ * has ended inside a key, every later batch that completes that key into a
+ * secret one has its value masked. That over-masks whatever else arrives on
+ * the endpoint, and it never leaks the secret's end. An entry is a few
+ * hundred bytes and a page hits few streaming endpoints, so the table is
+ * not bounded.
  */
 
 type StreamingChunk = { offsetMs: number; data: string };
@@ -26,13 +32,10 @@ export type StreamBatch = {
   url: string;
   method: string;
   chunks: StreamingChunk[];
-  completed: boolean;
 };
 
 /** Masked tail kept so a key cut mid-name is seen whole; values rely on `open`. */
 const CARRY_CHARS = 128;
-/** Streams that never report `completed` must not grow the table forever. */
-const MAX_OPEN_STREAMS = 32;
 
 function decodeBase64(data: string): Uint8Array {
   const binary = atob(data);
@@ -69,8 +72,18 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-type Carry = { text: string; bytes: Uint8Array; open: OpenSecret | null };
-const EMPTY_CARRY: Carry = { text: "", bytes: new Uint8Array(0), open: null };
+type Carry = {
+  text: string;
+  bytes: Uint8Array;
+  open: OpenSecret | null;
+  key: OpenKey | null;
+};
+const EMPTY_CARRY: Carry = {
+  text: "",
+  bytes: new Uint8Array(0),
+  open: null,
+  key: null,
+};
 
 /**
  * Masks one batch in the context of what the same stream carried before.
@@ -85,20 +98,23 @@ export function redactStreamBatch<T extends StreamBatch>(
   if (bytes.length === 0) return { entry, carry };
   const keep = incompleteUtf8Tail(bytes);
   const text = new TextDecoder().decode(bytes.subarray(0, bytes.length - keep));
-  const resumed = carry.open
-    ? maskOpenSecret(text, carry.open)
-    : { text, open: null };
-  const combined = carry.text + resumed.text;
+  let resumed = text;
+  let open = carry.open;
+  if (carry.open) resumed = maskOpenSecret(resumed, carry.open).text;
+  if (carry.key) {
+    const split = maskSplitKey(resumed, carry.key);
+    resumed = split.text;
+    open = split.open ?? open;
+  }
+  const combined = carry.text + resumed;
   const masked = maskText(combined);
-  const endsOpen = openSecretAtEnd(masked);
   const nextCarry: Carry = {
     text: masked.slice(-CARRY_CHARS),
     bytes: bytes.subarray(bytes.length - keep),
-    // Finding a terminator proves nothing about which stream this batch
-    // belongs to, so only completion closes an open secret.
-    open: entry.completed ? endsOpen : (endsOpen ?? carry.open),
+    open: openSecretAtEnd(masked) ?? open,
+    key: openKeyAtEnd(masked) ?? carry.key,
   };
-  if (masked === combined && resumed.text === text) {
+  if (masked === combined && resumed === text) {
     return { entry, carry: nextCarry };
   }
   const encoded = new TextEncoder().encode(masked.slice(carry.text.length));
@@ -124,20 +140,11 @@ export function redactStreamBatch<T extends StreamBatch>(
 
 /** One redactor per hook, so fetch and XHR streams keep separate tables. */
 export function createStreamRedactor() {
-  const open = new Map<string, Carry>();
+  const endpoints = new Map<string, Carry>();
   return <T extends StreamBatch>(entry: T): T => {
     const key = `${entry.method} ${entry.url}`;
-    const { entry: redacted, carry } = redactStreamBatch(entry, open.get(key));
-    open.delete(key);
-    // A completed batch that still ends inside a secret is malformed; its
-    // entry stays so whatever follows on the endpoint is masked too.
-    if (!entry.completed || carry.open) {
-      open.set(key, carry);
-      if (open.size > MAX_OPEN_STREAMS) {
-        const oldest = open.keys().next().value;
-        if (oldest !== undefined) open.delete(oldest);
-      }
-    }
-    return redacted;
+    const result = redactStreamBatch(entry, endpoints.get(key));
+    endpoints.set(key, result.carry);
+    return result.entry;
   };
 }

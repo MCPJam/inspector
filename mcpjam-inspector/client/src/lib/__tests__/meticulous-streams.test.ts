@@ -3,14 +3,9 @@ import { createStreamRedactor } from "../meticulous-streams";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 const fromB64 = (data: string) => Buffer.from(data, "base64");
-const batch = (
-  texts: string[],
-  completed = false,
-  url = "/api/mcp/chat-v2",
-) => ({
+const batch = (texts: string[], url = "/api/mcp/chat-v2") => ({
   url,
   method: "POST",
-  completed,
   chunks: texts.map((text, index) => ({
     offsetMs: index * 10,
     data: b64(text),
@@ -55,12 +50,12 @@ describe("createStreamRedactor", () => {
     expect(joined(redact(batch(["cd\n"])))).toBe("**\n");
   });
 
-  it("keeps streams apart by url and closes an open secret only on completion", () => {
+  it("keeps streams apart by url and never closes an open secret", () => {
     const redact = createStreamRedactor();
-    redact(batch(['{"token":"t-'], false, "/a"));
-    expect(joined(redact(batch(['plain"}'], false, "/b")))).toBe('plain"}');
-    expect(joined(redact(batch(['1"}'], true, "/a")))).toBe('*"}');
-    expect(joined(redact(batch(['2"}'], false, "/a")))).toBe('2"}');
+    redact(batch(['{"token":"t-'], "/a"));
+    expect(joined(redact(batch(['plain"}'], "/b")))).toBe('plain"}');
+    expect(joined(redact(batch(['1"}'], "/a")))).toBe('*"}');
+    expect(joined(redact(batch(['2"}'], "/a")))).toBe('*"}');
   });
 
   it("keeps a multi-byte character split between batches when the second masks", () => {
@@ -69,7 +64,6 @@ describe("createStreamRedactor", () => {
     const first = {
       url: "/x",
       method: "POST",
-      completed: false,
       chunks: [
         {
           offsetMs: 0,
@@ -114,13 +108,31 @@ describe("createStreamRedactor", () => {
     );
   });
 
-  it("over-masks a concurrent batch on the same endpoint rather than let the secret's end through", () => {
+  it("masks the continuation even when another stream on the endpoint completes first", () => {
     const redact = createStreamRedactor();
     redact(batch(['{"token":"ab']));
     expect(joined(redact(batch(['{"ok":1}'])))).toBe('*"ok":1}');
-    expect(joined(redact(batch(['cd","n":1}'])))).toBe('**","n":1}');
-    expect(joined(redact(batch(['{"done":1}'], true)))).toBe('*"done":1}');
-    expect(joined(redact(batch(['{"fresh":1}'])))).toBe('{"fresh":1}');
+    expect(joined(redact(batch(['cd"}'])))).toBe('**"}');
+  });
+
+  it("masks a value whose key was split by another stream's batch", () => {
+    const redact = createStreamRedactor();
+    redact(batch(['{"api']));
+    expect(joined(redact(batch(['{"ok":1}'])))).toBe('{"ok":1}');
+    expect(joined(redact(batch(['Key":"sk-1"}'])))).toBe('Key":"****"}');
+    const escaped = createStreamRedactor();
+    escaped(batch(['{"text":"{\\"api']));
+    escaped(batch(['{"ok":1}']));
+    expect(joined(escaped(batch(['Key\\":\\"s\\"}"}'])))).toBe(
+      'Key\\":\\"*\\"}"}',
+    );
+  });
+
+  it("does not forget an open secret when many other endpoints stream", () => {
+    const redact = createStreamRedactor();
+    redact(batch(['{"token":"ab'], "/a"));
+    for (let i = 0; i < 40; i++) redact(batch(['{"n":' + i + "}"], `/e${i}`));
+    expect(joined(redact(batch(['cd"}'], "/a")))).toBe('**"}');
   });
 
   it("returns the same entry when nothing is secret", () => {

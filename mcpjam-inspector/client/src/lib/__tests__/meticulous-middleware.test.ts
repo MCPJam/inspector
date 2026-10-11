@@ -24,7 +24,6 @@ describe("inspectorRedactionMiddleware", () => {
     const entry = {
       url: "/api/mcp/chat-v2",
       method: "POST",
-      completed: true,
       chunks: [
         { offsetMs: 0, data: Buffer.from("data: hi\n\n").toString("base64") },
       ],
