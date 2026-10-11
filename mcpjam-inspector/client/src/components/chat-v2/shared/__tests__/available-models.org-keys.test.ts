@@ -6,10 +6,14 @@ import type { ModelDefinition } from "@/shared/types";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
   composeAvailableModels,
+  isJudgeEligibleModel,
   isOrgKeysDisallowedRow,
+  judgeModelOptions,
+  JUDGE_INELIGIBLE_REASON,
   ORG_KEYS_MODEL_REASON,
   ORG_POLICY_LOADING_REASON,
   orgKeysDisallowedNotice,
+  savedModelRow,
 } from "../available-models";
 import {
   buildAvailableModelsFromOrgConfig,
@@ -410,5 +414,133 @@ describe("composeAvailableModels under the policy", () => {
     const models = compose({ providers: [], unresolved: true });
     expect(models.length).toBeGreaterThan(0);
     expect(models).toEqual(compose(undefined));
+  });
+});
+
+describe("judge rows with organization providers", () => {
+  const orgRow: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
+    judgeEligible: true,
+  };
+  const routerRow: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "openai/gpt-4o",
+    provider: "openrouter",
+    hosted: false,
+    orgProvider: { providerKey: "openrouter", id: "orgprov_openrouter" },
+  };
+
+  it("admits org rows from eligible connections as judges", () => {
+    expect(isJudgeEligibleModel(orgRow)).toBe(true);
+    expect(isJudgeEligibleModel(routerRow)).toBe(false);
+    expect(
+      isJudgeEligibleModel({
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        hosted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("offers hosted and eligible org rows off the policy", () => {
+    const { models } = judgeModelOptions([hostedHaiku, orgRow, routerRow], {
+      currentModelId: "",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(models.map((model) => String(model.id))).toEqual([
+      "anthropic/claude-haiku-4.5",
+      "claude-sonnet-4-5",
+    ]);
+  });
+
+  it("offers only org rows under the policy, with no default judge", () => {
+    const { models, current } = judgeModelOptions([orgRow, routerRow], {
+      currentModelId: "",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+      requireOrgKeys: true,
+    });
+    expect(models.map((model) => model.name)).toEqual(["Claude Sonnet 4.5"]);
+    expect(current).toBeUndefined();
+  });
+
+  it("reads the managed default's id as no judge under the policy", () => {
+    const { models, current, currentIneligible } = judgeModelOptions([orgRow], {
+      currentModelId: "anthropic/claude-haiku-4.5",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+      requireOrgKeys: true,
+    });
+    expect(models).toEqual([orgRow]);
+    expect(current).toBeUndefined();
+    expect(currentIneligible).toBe(false);
+  });
+
+  it("keeps the managed default row off the policy", () => {
+    const { models } = judgeModelOptions([orgRow], {
+      currentModelId: "",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(models.map((model) => String(model.id))).toEqual([
+      "claude-sonnet-4-5",
+      "anthropic/claude-haiku-4.5",
+    ]);
+  });
+
+  it("shows a saved hosted judge only as the current value under the policy, never as a row", () => {
+    const { models, currentIneligible, current } = judgeModelOptions(
+      [orgRow, { ...hostedHaiku, id: "openai/gpt-5-mini", name: "GPT-5 mini" }],
+      {
+        currentModelId: "openai/gpt-5-mini",
+        managedDefaultModelId: "anthropic/claude-haiku-4.5",
+        requireOrgKeys: true,
+      },
+    );
+    expect(currentIneligible).toBe(true);
+    expect(current).toMatchObject({
+      name: "GPT-5 mini",
+      disabled: true,
+      disabledReason: ORG_KEYS_MODEL_REASON,
+    });
+    expect(isOrgKeysDisallowedRow(current)).toBe(true);
+    expect(models).toEqual([orgRow]);
+  });
+
+  it("names a saved hosted judge from the hosted catalog, not its raw id", () => {
+    // The org-only list has no row for it at all.
+    const { current } = judgeModelOptions([orgRow], {
+      currentModelId: "anthropic/claude-haiku-4.5",
+      managedDefaultModelId: "openai/gpt-5-mini",
+      requireOrgKeys: true,
+    });
+    expect(current?.name).toBe("Claude Haiku 4.5");
+    expect(savedModelRow("acme/unknown").name).toBe("acme/unknown");
+  });
+
+  it("keeps the old reason for an ineligible judge off the policy", () => {
+    const { current } = judgeModelOptions([hostedHaiku, routerRow], {
+      currentModelId: "openai/gpt-4o",
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(current?.disabledReason).toBe(JUDGE_INELIGIBLE_REASON);
+  });
+
+  it("resolves an org judge saved under its canonical id through its selection", () => {
+    const { current, currentIneligible } = judgeModelOptions([orgRow], {
+      currentModelId: "anthropic/claude-sonnet-4.5",
+      currentSelection: {
+        modelId: "anthropic/claude-sonnet-4.5",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_anthropic" },
+        nativeModelId: "claude-sonnet-4-5",
+        fallback: { provider: "none", model: "none" },
+      },
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+    });
+    expect(currentIneligible).toBe(false);
+    expect(current).toBe(orgRow);
   });
 });
