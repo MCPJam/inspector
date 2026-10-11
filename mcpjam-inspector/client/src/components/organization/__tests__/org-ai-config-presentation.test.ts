@@ -10,6 +10,9 @@ import {
   featureGuidance,
   listedBlockers,
   orderedFeatures,
+  orgAiModelCheckPresentation,
+  orgProviderLabel,
+  selectionModelLabel,
 } from "../org-ai-config-presentation";
 
 function feature(
@@ -231,6 +234,74 @@ describe("degradationSentence", () => {
     expect(degradationSentence("evals", "text_analysis", "unsupported")).toBe(
       "Automatic findings not supported yet; runs and grading still complete",
     );
+  });
+});
+
+describe("the default model editor's helpers", () => {
+  it("reads a test's result", () => {
+    expect(orgAiModelCheckPresentation({ ok: true, checkedAt: 1 })).toEqual({
+      label: "Passed",
+      tone: "success",
+    });
+    expect(
+      orgAiModelCheckPresentation({
+        ok: false,
+        code: "provider_auth_failed",
+        checkedAt: 1,
+      }).label,
+    ).toBe("Credentials rejected");
+    for (const code of ["provider_unavailable", "timeout", "http_429"]) {
+      expect(
+        orgAiModelCheckPresentation({ ok: false, code, checkedAt: 1 }).label,
+      ).toBe("Provider unavailable");
+    }
+    expect(
+      orgAiModelCheckPresentation({
+        ok: false,
+        code: "invalid_model",
+        checkedAt: 1,
+      }).label,
+    ).toBe("Refused");
+    expect(orgAiModelCheckPresentation({ ok: false, checkedAt: 1 }).label).toBe(
+      "Failed",
+    );
+  });
+
+  it("names connections the way the provider list does", () => {
+    expect(
+      orgProviderLabel({
+        providerKey: "azure",
+        enabled: true,
+        hasSecret: true,
+      }),
+    ).toBe("Azure OpenAI");
+    expect(
+      orgProviderLabel({
+        providerKey: "custom:acme",
+        displayName: "Acme Gateway",
+        enabled: true,
+        hasSecret: true,
+      }),
+    ).toBe("Acme Gateway");
+  });
+
+  it("shows the provider's own id only when it differs", () => {
+    expect(
+      selectionModelLabel({
+        modelId: "anthropic/claude-sonnet-4.5",
+        source: "org",
+        nativeModelId: "claude-sonnet-4-5",
+        fallback: { provider: "none", model: "none" },
+      }),
+    ).toBe("anthropic/claude-sonnet-4.5 (claude-sonnet-4-5)");
+    expect(
+      selectionModelLabel({
+        modelId: "openai/gpt-5",
+        source: "org",
+        nativeModelId: "gpt-5",
+        fallback: { provider: "none", model: "none" },
+      }),
+    ).toBe("openai/gpt-5");
   });
 });
 
