@@ -45,6 +45,14 @@ const lastSeenScopeByProject = new Map<string, string>();
  */
 const pendingRecycleScopeByProject = new Map<string, string>();
 
+/**
+ * The client-switch reconnect batch still running per project, and the toast
+ * it reports on. A switch made before it settles takes the toast over, and
+ * only the newest batch reports — so rapid switching shows one toast that ends
+ * on the latest outcome, never one per switch.
+ */
+const recycleBatchByProject = new Map<string, { toastId: string | number }>();
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -102,14 +110,23 @@ function isAttempted(
  * future "Retry all" affordance.
  */
 export function resetAutoConnectAttempts(projectId?: string): void {
+  // A dropped batch can no longer report, so close its loading toast now.
+  // Sonner loading toasts never close on their own.
   if (projectId === undefined) {
+    for (const batch of recycleBatchByProject.values()) {
+      toast.dismiss(batch.toastId);
+    }
     attemptedByProject.clear();
     lastSeenScopeByProject.clear();
     pendingRecycleScopeByProject.clear();
+    recycleBatchByProject.clear();
   } else {
+    const batch = recycleBatchByProject.get(projectId);
+    if (batch) toast.dismiss(batch.toastId);
     attemptedByProject.delete(projectId);
     lastSeenScopeByProject.delete(projectId);
     pendingRecycleScopeByProject.delete(projectId);
+    recycleBatchByProject.delete(projectId);
   }
 }
 
@@ -289,9 +306,15 @@ export function useAutoConnectProjectServers({
     // "Reconnected" (or a failure message) once the batch settles. Reusing the
     // same toast id keeps the loading → result transition on a single toast
     // instead of stacking a second one.
-    const toastId = toast.loading(
-      reconnectingToastMessage(connectedNow.length),
-    );
+    const running = recycleBatchByProject.get(projectId);
+    const loadingMessage = reconnectingToastMessage(connectedNow.length);
+    const batch = {
+      toastId: running
+        ? toast.loading(loadingMessage, { id: running.toastId })
+        : toast.loading(loadingMessage),
+    };
+    const toastId = batch.toastId;
+    recycleBatchByProject.set(projectId, batch);
 
     serverCheckQueue.markAutomatic(projectId, connectedNow);
     void Promise.allSettled(
@@ -300,6 +323,9 @@ export function useAutoConnectProjectServers({
         return name;
       }),
     ).then((results) => {
+      // Superseded by a later switch: that batch owns the toast and reports.
+      if (recycleBatchByProject.get(projectId) !== batch) return;
+      recycleBatchByProject.delete(projectId);
       const failures = results.flatMap((result, index) => {
         if (result.status === "fulfilled") return [];
         return [

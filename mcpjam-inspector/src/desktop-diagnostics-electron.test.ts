@@ -6,6 +6,7 @@ const sdk = vi.hoisted(() => ({
   scopeProcessor: undefined as any,
   context: {} as any,
   capture: vi.fn(),
+  user: { email: "secret" } as { id?: string; email?: string },
 }));
 vi.mock("@sentry/electron/main", () => ({
   setContext: (_name: string, context: any) => {
@@ -24,7 +25,7 @@ vi.mock("@sentry/electron/main", () => ({
     sdk.capture(
       sdk.scopeProcessor({
         ...event,
-        user: { email: "secret" },
+        user: sdk.user,
         request: { url: "secret" },
         extra: { token: "secret" },
         breadcrumbs: [{ message: "secret" }],
@@ -51,6 +52,7 @@ beforeEach(() => {
   sdk.enabled = true;
   sdk.capture.mockClear();
   sdk.processors = [];
+  sdk.user = { email: "secret" };
 });
 afterEach(() => {
   app.removeAllListeners();
@@ -127,4 +129,13 @@ it("preserves previous-run context and ignores disabled transport", () => {
   app.emit("child-process-gone", {}, exit);
   app.emit("will-quit");
   expect(sdk.capture).not.toHaveBeenCalled();
+});
+
+it("keeps only the opaque ID in the privacy-filtered observation", () => {
+  setup();
+  sdk.user = { id: "user_A", email: "secret" };
+  app.emit("child-process-gone", {}, exit);
+  app.emit("will-quit");
+  expect(sdk.capture.mock.calls[0][0].user).toEqual({ id: "user_A" });
+  expect(JSON.stringify(sdk.capture.mock.calls[0][0])).not.toContain("secret");
 });

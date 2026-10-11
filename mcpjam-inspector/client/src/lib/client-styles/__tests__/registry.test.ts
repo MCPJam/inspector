@@ -141,15 +141,38 @@ describe("host-styles registry", () => {
       downloadFile: {},
     });
     // ChatGPT keeps serverResources / logging, but the probe reports no
-    // downloadFile support.
+    // downloadFile support. Model context and messages advertise every
+    // content type in OpenAI's Supported Content table, not just text.
     expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
       openLinks: {},
       serverTools: {},
       serverResources: {},
       logging: {},
-      updateModelContext: { text: {} },
-      message: { text: {} },
+      updateModelContext: {
+        text: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
+      message: { text: {}, image: {}, resourceLink: {}, resource: {} },
     });
+  });
+
+  it("gives Codex the same OpenAI App content types as ChatGPT", () => {
+    const codex = getHostCapabilitiesForStyle("codex");
+    const chatgpt = getHostCapabilitiesForStyle("chatgpt");
+    expect(codex.updateModelContext).toEqual(chatgpt.updateModelContext);
+    expect(codex.message).toEqual(chatgpt.message);
+  });
+
+  it("keeps the text-only default for other ChatGPT-family styles", () => {
+    expect(getHostCapabilitiesForStyle("copilot").message).toEqual({
+      text: {},
+    });
+    expect(getHostCapabilitiesForStyle("mistral").updateModelContext).toEqual(
+      getHostCapabilitiesForStyle("claude").updateModelContext
+    );
   });
 
   it("falls back to the spec-default capabilities for unknown ids (NOT claude)", () => {
