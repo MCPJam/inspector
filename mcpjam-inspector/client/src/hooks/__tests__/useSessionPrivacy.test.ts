@@ -23,7 +23,6 @@ vi.mock("@/lib/sentry", () => ({ syncSentryReplay }));
 
 import {
   MASKED_TO_FULL_SETTLE_MS,
-  PRIVACY_PENDING_TIMEOUT_MS,
   useSessionPrivacy,
 } from "../useSessionPrivacy";
 
@@ -75,27 +74,23 @@ describe("useSessionPrivacy", () => {
     );
   });
 
-  it("holds the recorders while pending, and fails closed to masked", () => {
+  it("holds the recorders while the first answer is pending, however long", () => {
+    // Only an answer can say an organization has replay off, so no timeout
+    // ever starts a replay on its own.
     render("pending");
-    expect(applied()).toEqual(["pending"]);
-
     act(() => {
-      vi.advanceTimersByTime(PRIVACY_PENDING_TIMEOUT_MS - 1);
+      vi.advanceTimersByTime(60 * 60 * 1000);
     });
-    expect(applied()).toEqual(["pending"]);
 
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(applied()).toEqual(["pending", "masked"]);
+    expect(applied()).toEqual(["pending"]);
   });
 
-  it("an answer that arrives in time is applied as is", () => {
+  it("applies the first answer as is, whenever it arrives", () => {
     const { rerender } = render("pending");
-    rerender({ level: "full" });
     act(() => {
-      vi.advanceTimersByTime(PRIVACY_PENDING_TIMEOUT_MS);
+      vi.advanceTimersByTime(60_000);
     });
+    rerender({ level: "full" });
 
     expect(applied()).toEqual(["pending", "full"]);
   });

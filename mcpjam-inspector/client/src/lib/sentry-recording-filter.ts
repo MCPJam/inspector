@@ -1,32 +1,108 @@
-import { scrubNamesFromUrl } from "../../../shared/telemetry-privacy";
+import {
+  maskReplayAttribute,
+  maskReplayStyle,
+  scrubNamesFromUrl,
+} from "../../../shared/telemetry-privacy";
 
 /**
  * Sentry Replay's rrweb events cannot be edited as they are recorded —
  * `beforeAddRecordingEvent` sees only Sentry's own frames — and Sentry has
- * no relay. The rrweb event that carries the page URL is the Meta event
- * written at every checkout (`{ type: 4, data: { href } }`), so it is
- * scrubbed here instead, in Sentry's transport, on each `replay_recording`
- * item about to be sent: the recording is decompressed, its Meta hrefs lose
- * their names (`scrubNamesFromUrl`), and it is compressed again. A recording
- * that cannot be read is not sent. This runs at every level, as Sentry
- * Replay's own masking does.
+ * no relay. So the DOM it records is cleaned here instead, in Sentry's
+ * transport, on each `replay_recording` item about to be sent: the recording
+ * is decompressed, cleaned, and compressed again. A recording that cannot be
+ * read is not sent. This runs at every level, as Sentry Replay's own text
+ * masking does.
+ *
+ * Cleaning means two things. The page URL in Meta events (written at every
+ * checkout) loses its names (`scrubNamesFromUrl`). And element attributes, in
+ * full snapshots and in later mutations, keep only what a masked PostHog
+ * replay keeps (`maskReplayAttribute`): ids, `name`, `data-testid` and other
+ * data attributes are built from customer data (`prompt-arg-${name}`,
+ * `repo-row-${repoFullName}`), and Sentry's own `maskAttributes` is a fixed
+ * list that cannot cover them.
  */
 
+const FULL_SNAPSHOT_EVENT = 2;
+const INCREMENTAL_EVENT = 3;
 const META_EVENT = 4;
+const MUTATION_SOURCE = 0;
 
-/** rrweb events with every Meta event's `href` scrubbed of names. */
+// Local rather than `host-capabilities`' copy, which would pull the SDK into
+// Sentry's init path.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+// rrweb's own bookkeeping on a serialized node, not page data: the size of a
+// blocked element, scroll offsets, media state, and a stylesheet's text.
+function isRrwebAttribute(name: string): boolean {
+  return name.startsWith("rr_") || name === "_cssText";
+}
+
+function maskAttributeValue(name: string, value: unknown): unknown {
+  if (isRrwebAttribute(name)) return value;
+  if (typeof value === "string") return maskReplayAttribute(name, value);
+  // A style mutation can arrive as a diff: `{ property: value | false }`.
+  if (name.toLowerCase() === "style" && isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([property, entry]) => [
+        property,
+        typeof entry === "string" ? maskReplayStyle(entry) : entry,
+      ]),
+    );
+  }
+  // `null` removes the attribute; anything else carries no text.
+  return value;
+}
+
+function maskAttributes(attributes: unknown): void {
+  if (!isRecord(attributes)) return;
+  for (const [name, value] of Object.entries(attributes)) {
+    attributes[name] = maskAttributeValue(name, value);
+  }
+}
+
+/** Masks the attributes of `root` and every node under it, in place. */
+function maskNodeTree(root: unknown): void {
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!isRecord(node)) continue;
+    maskAttributes(node.attributes);
+    if (Array.isArray(node.childNodes)) stack.push(...node.childNodes);
+  }
+}
+
+function cleanEvent(event: unknown): void {
+  if (!isRecord(event) || !isRecord(event.data)) return;
+  const data = event.data;
+  if (event.type === META_EVENT && typeof data.href === "string") {
+    data.href = scrubNamesFromUrl(data.href);
+  } else if (event.type === FULL_SNAPSHOT_EVENT) {
+    maskNodeTree(data.node);
+  } else if (
+    event.type === INCREMENTAL_EVENT &&
+    data.source === MUTATION_SOURCE
+  ) {
+    if (Array.isArray(data.adds)) {
+      for (const add of data.adds) if (isRecord(add)) maskNodeTree(add.node);
+    }
+    if (Array.isArray(data.attributes)) {
+      for (const change of data.attributes) {
+        if (isRecord(change)) maskAttributes(change.attributes);
+      }
+    }
+  }
+}
+
+/**
+ * rrweb events, cleaned as described above. Edits `events` in place: it is
+ * always a recording this module has just parsed.
+ */
 export function scrubRecordingEvents(events: unknown): unknown {
   if (!Array.isArray(events)) return events;
-  return events.map((event) => {
-    const meta = event as { type?: unknown; data?: { href?: unknown } };
-    if (meta?.type !== META_EVENT || typeof meta.data?.href !== "string") {
-      return event;
-    }
-    return {
-      ...meta,
-      data: { ...meta.data, href: scrubNamesFromUrl(meta.data.href) },
-    };
-  });
+  for (const event of events) cleanEvent(event);
+  return events;
 }
 
 // Sentry compresses a recording as zlib, which is the format the Compression

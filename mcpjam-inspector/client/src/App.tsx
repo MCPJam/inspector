@@ -4771,9 +4771,10 @@ export default function App() {
       setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
     }
   }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
-  // Replay `off` is remembered per person, so someone the backend last
-  // answered `off` for stays unrecorded while the next answer is slow,
-  // failing or not asked yet, instead of falling back to masked.
+  // Only the backend's own answer can permit recording: a query that fails
+  // or never answers leaves the level `pending`, which records nothing. Replay
+  // `off` is also remembered per person, so someone last answered `off` stays
+  // unrecorded while the next answer is slow, failing or not asked yet.
   const answeredRecording = telemetryPrivacy.answered
     ? telemetryPrivacy.policy?.recording
     : undefined;
@@ -4784,9 +4785,7 @@ export default function App() {
   }, [answeredRecording, telemetryPrivacy.actor]);
   const telemetryRecording =
     answeredRecording ??
-    (replayOffRemembered(telemetryActor)
-      ? "off"
-      : telemetryPrivacy.policy?.recording);
+    (replayOffRemembered(telemetryActor) ? "off" : undefined);
   // The session privacy level (lib/session-privacy.ts) for both recorders.
   // Full replay needs the backend to have verified a non-private context and
   // the destination to have finished loading; until it answers, nothing

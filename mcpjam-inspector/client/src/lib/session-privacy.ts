@@ -22,10 +22,11 @@
  * (`syncSentryReplay`) — from the same module state, so the two cannot
  * disagree. `docs/session-replay-masking.md` has the table.
  *
- * Fail closed. Nothing records until the level is known; an answer that does
- * not arrive becomes `masked` (`useSessionPrivacy`), never `full` — unless
- * this browser's current person was last answered `off`
- * (`replayOffRemembered`), in which case it stays `off`. The PostHog relay
+ * Fail closed. Nothing records until the backend has answered: an answer that
+ * fails or never arrives keeps both recorders stopped (`useSessionPrivacy`),
+ * and a person this browser last saw answered `off` stays `off`
+ * (`replayOffRemembered`). After an answer has let the session record, a
+ * navigation whose answer is still on its way records `masked`. The PostHog relay
  * enforces the same policy again on the server: it drops replay the backend
  * says is `off`, and restricted replay the client did not declare masked.
  */
@@ -337,6 +338,39 @@ export interface PostHogRecorder {
 
 let posthogProfile: PostHogProfile | null = null;
 let posthogRecording = false;
+// Stopping the recorder flushes its buffer through `before_send` — after the
+// level has already tightened, so those frames would be stamped with the new,
+// stricter label. Set only while a tightening stop runs.
+let discardingReplayBuffer = false;
+// When the recorder last started on the masked profile: older frames were
+// recorded under another profile and arrive here only through a late flush.
+let maskedReplayStartedAt: number | null = null;
+
+interface ReplayFrameLike {
+  timestamp?: unknown;
+}
+
+/**
+ * The `$snapshot_data` frames a `$snapshot` captured now may carry, or `null`
+ * to drop the event. Frames recorded before privacy tightened are dropped:
+ * the stop's synchronous flush outright, and any later flush (posthog-js
+ * defers it while compression drains) by timestamp against the masked
+ * recorder's start. A full-profile frame must never leave under a masked
+ * label, because the relay passes a masked-labelled replay as it is.
+ */
+export function replayFramesToSend(frames: unknown): unknown[] | null {
+  if (discardingReplayBuffer) return null;
+  if (!Array.isArray(frames)) return null;
+  if (posthogProfile !== "masked" || maskedReplayStartedAt === null) {
+    return frames;
+  }
+  const startedAt = maskedReplayStartedAt;
+  const kept = frames.filter((frame: ReplayFrameLike) => {
+    const timestamp = frame?.timestamp;
+    return typeof timestamp === "number" && timestamp >= startedAt;
+  });
+  return kept.length > 0 ? kept : null;
+}
 
 /**
  * Bring PostHog in line with the level in effect and the current path.
@@ -368,7 +402,12 @@ export function syncSessionRecording(
     const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
-        client.stopSessionRecording?.();
+        discardingReplayBuffer = profile === "masked";
+        try {
+          client.stopSessionRecording?.();
+        } finally {
+          discardingReplayBuffer = false;
+        }
         posthogRecording = false;
       }
       client.set_config?.(posthogPrivacyConfig(profile));
@@ -379,6 +418,7 @@ export function syncSessionRecording(
       privacy !== "off" &&
       !isCredentialBearingPath(pathname);
     if (shouldRecord && !posthogRecording) {
+      if (profile === "masked") maskedReplayStartedAt = Date.now();
       client.startSessionRecording?.();
       posthogRecording = true;
     } else if (!shouldRecord && posthogRecording) {

@@ -16,10 +16,125 @@ const HEADER = '{"segment_id":3}\n';
 
 describe("scrubRecordingEvents", () => {
   it("scrubs the page URL of every Meta event and leaves the rest", () => {
-    expect(scrubRecordingEvents(events)).toEqual([
+    expect(scrubRecordingEvents(structuredClone(events))).toEqual([
       { ...events[0], data: { ...events[0].data, href: SCRUBBED } },
       events[1],
     ]);
+  });
+
+  it("masks customer-derived attributes in full snapshots and keeps layout", () => {
+    const snapshot = {
+      type: 2,
+      timestamp: 3,
+      data: {
+        node: {
+          type: 0,
+          id: 1,
+          childNodes: [
+            {
+              type: 2,
+              id: 2,
+              tagName: "div",
+              attributes: {
+                class: "flex gap-2",
+                id: "repo-row-acme/billing",
+                "data-testid": "prompt-arg-customer_email",
+                "data-owner": "ada@example.test",
+                name: "acme-billing",
+                role: "row",
+              },
+              childNodes: [
+                {
+                  type: 2,
+                  id: 3,
+                  tagName: "img",
+                  attributes: { rr_width: "32px", rr_height: "32px" },
+                  childNodes: [],
+                },
+                {
+                  type: 2,
+                  id: 4,
+                  tagName: "style",
+                  attributes: { _cssText: ".a { color: red; }" },
+                  childNodes: [],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const [out] = scrubRecordingEvents([snapshot]) as [typeof snapshot];
+    const row = out.data.node.childNodes[0];
+    expect(row.attributes).toEqual({
+      class: "flex gap-2",
+      id: "***",
+      "data-testid": "***",
+      "data-owner": "***",
+      name: "***",
+      role: "row",
+    });
+    expect(row.childNodes[0].attributes).toEqual({
+      rr_width: "32px",
+      rr_height: "32px",
+    });
+    expect(row.childNodes[1].attributes).toEqual({
+      _cssText: ".a { color: red; }",
+    });
+  });
+
+  it("masks attributes that mutations add or change", () => {
+    const mutation = {
+      type: 3,
+      timestamp: 4,
+      data: {
+        source: 0,
+        texts: [],
+        removes: [],
+        adds: [
+          {
+            parentId: 2,
+            nextId: null,
+            node: {
+              type: 2,
+              id: 9,
+              tagName: "span",
+              attributes: { "data-email": "ada@example.test", class: "x" },
+              childNodes: [],
+            },
+          },
+        ],
+        attributes: [
+          { id: 2, attributes: { id: "prompt-arg-ada", hidden: null } },
+          {
+            id: 3,
+            attributes: {
+              style: {
+                "--label": '"Ada Lovelace"',
+                color: "red",
+                width: false,
+              },
+            },
+          },
+        ],
+      },
+    };
+    const json = JSON.stringify(scrubRecordingEvents([mutation]));
+    expect(json).not.toContain("ada");
+    expect(json).not.toContain("Ada");
+    const [out] = JSON.parse(json);
+    expect(out.data.adds[0].node.attributes).toEqual({
+      "data-email": "***",
+      class: "x",
+    });
+    expect(out.data.attributes[0].attributes).toEqual({
+      id: "***",
+      hidden: null,
+    });
+    expect(out.data.attributes[1].attributes.style).toMatchObject({
+      color: "red",
+      width: false,
+    });
   });
 });
 

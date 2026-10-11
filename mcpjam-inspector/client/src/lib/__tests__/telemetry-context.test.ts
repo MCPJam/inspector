@@ -146,6 +146,17 @@ describe("stampPostHogEvent", () => {
     ).toEqual({ api_host: "/tlm" });
   });
 
+  it("drops a $snapshot whose frames it cannot vouch for", () => {
+    // `replayFramesToSend` (session-privacy) decides which frames may leave;
+    // an event it refuses is dropped rather than sent under a label.
+    expect(
+      stampPostHogEvent({
+        event: "$snapshot",
+        properties: { $snapshot_data: "not frames" },
+      }),
+    ).toBeNull();
+  });
+
   it("passes a dropped event through", () => {
     expect(stampPostHogEvent(null)).toBeNull();
   });

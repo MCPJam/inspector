@@ -30,7 +30,11 @@ import {
   type TelemetryRecording,
   withoutIdentifyingProperties,
 } from "../../../shared/telemetry-privacy";
-import { currentSessionPrivacy, recordingSurface } from "./session-privacy";
+import {
+  currentSessionPrivacy,
+  recordingSurface,
+  replayFramesToSend,
+} from "./session-privacy";
 
 // ── Identity grant ─────────────────────────────────────────────────────
 
@@ -165,7 +169,9 @@ interface PostHogCaptureEvent {
 /**
  * posthog-js `before_send`: stamp the event with the context it was captured
  * under, keep names off it unless the current actor is granted them, and keep
- * the relay bearer out of replay data. Never drops an event and never throws.
+ * the relay bearer out of replay data. Drops only replay frames recorded
+ * under a laxer profile than the one in effect (`replayFramesToSend`); never
+ * throws.
  */
 export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
   event: T,
@@ -181,9 +187,9 @@ export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
     // included, into the replay as `$posthog_config`. The relay strips it
     // again.
     if (event.event === "$snapshot" && "$snapshot_data" in properties) {
-      properties.$snapshot_data = stripPostHogConfigHeaders(
-        properties.$snapshot_data,
-      );
+      const frames = replayFramesToSend(properties.$snapshot_data);
+      if (frames === null) return null as T;
+      properties.$snapshot_data = stripPostHogConfigHeaders(frames);
     }
     const next: PostHogCaptureEvent = { ...event, properties };
     if (context.policy.identity !== "full") {

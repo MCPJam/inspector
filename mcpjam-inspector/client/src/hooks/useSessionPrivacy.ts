@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { usePostHog } from "posthog-js/react";
 import {
   setSessionPrivacy,
@@ -6,9 +6,6 @@ import {
   type SessionPrivacy,
 } from "@/lib/session-privacy";
 import { syncSentryReplay } from "@/lib/sentry";
-
-/** A level still `pending` after this long is applied as `masked`. */
-export const PRIVACY_PENDING_TIMEOUT_MS = 10_000;
 
 /**
  * How long `masked` → `full` waits. Switching away from an organization with
@@ -21,12 +18,15 @@ export const MASKED_TO_FULL_SETTLE_MS = 3_000;
  * Apply the session's privacy level (`resolveSessionPrivacy`) to both
  * recorders, and re-apply it whenever it changes.
  *
- * - `pending` at startup holds both recorders off. If it is still `pending`
- *   after `PRIVACY_PENDING_TIMEOUT_MS` — the backend never answered — the
- *   session is recorded `masked`. It never falls back to `full`.
- * - `pending` after something has recorded — navigating to a context whose
- *   answer has not arrived — records `masked` at once rather than stopping:
- *   the destination is unknown, so it is treated as private.
+ * - `pending` at startup holds both recorders off for as long as it lasts:
+ *   a backend that never answers, or fails, never starts a replay. Only an
+ *   answer can permit recording, because only an answer can say the
+ *   organization has replay `off`.
+ * - `pending` after an answer has let the session record — navigating to a
+ *   context whose answer has not arrived — records `masked` at once rather
+ *   than stopping: the destination is unknown, so it is treated as private.
+ *   Replay `off` follows membership, so on an organization's own pages
+ *   anyone it applies to was already answered `off`.
  * - Toward MORE privacy (`full` → `masked`, anything → `pending`) the change
  *   lands in a layout effect: in the same commit that rendered the content
  *   the new level is for, before rrweb's mutation observer reports that
@@ -42,28 +42,15 @@ export function useSessionPrivacy(
 ): void {
   const contextReady = options.contextReady ?? true;
   const posthog = usePostHog();
-  const [pendingTimedOut, setPendingTimedOut] = useState(false);
   // The last level that let anything record. `pending` does not count, so
   // masked → pending → full still waits out the settle period.
   const lastRecordingLevelRef = useRef<SessionPrivacy | null>(null);
-
-  useEffect(() => {
-    if (resolved !== "pending") {
-      setPendingTimedOut(false);
-      return;
-    }
-    const timer = setTimeout(
-      () => setPendingTimedOut(true),
-      PRIVACY_PENDING_TIMEOUT_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [resolved]);
 
   const hasRecorded =
     lastRecordingLevelRef.current === "masked" ||
     lastRecordingLevelRef.current === "full";
   let effective: SessionPrivacy = resolved;
-  if (resolved === "pending" && (pendingTimedOut || hasRecorded)) {
+  if (resolved === "pending" && hasRecorded) {
     effective = "masked";
   } else if (resolved === "full" && !contextReady) {
     effective = "masked";

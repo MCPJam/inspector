@@ -79,7 +79,11 @@ describe("resolveSessionPrivacy", () => {
   it("is masked on packaged desktop for everyone else, once answered", async () => {
     const { resolveSessionPrivacy } = await load();
     expect(
-      resolveSessionPrivacy({ ...base, surface: "desktop", recording: undefined }),
+      resolveSessionPrivacy({
+        ...base,
+        surface: "desktop",
+        recording: undefined,
+      }),
     ).toBe("pending");
     for (const recording of ["full", "masked"] as const) {
       expect(
@@ -432,6 +436,82 @@ describe("syncSessionRecording", () => {
         "/servers",
       ),
     ).not.toThrow();
+  });
+});
+
+describe("replayFramesToSend", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("drops the buffer that a full → masked stop flushes", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    // posthog-js flushes its buffer synchronously from inside stop().
+    let flushed: unknown[] | null | undefined;
+    client.stopSessionRecording.mockImplementation(() => {
+      flushed = mod.replayFramesToSend([{ type: 2, timestamp: Date.now() }]);
+      return client.log.push("stop");
+    });
+
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+
+    expect(client.log).toContain("stop");
+    expect(flushed).toBeNull();
+  });
+
+  it("drops frames older than the masked recorder from a later flush", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    vi.setSystemTime(5_000);
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+
+    // A deferred flush of the full buffer, then the masked recorder's own.
+    expect(mod.replayFramesToSend([{ timestamp: 4_999 }])).toBeNull();
+    expect(
+      mod.replayFramesToSend([
+        { timestamp: 4_000 },
+        { timestamp: 5_000 },
+        { timestamp: 5_001 },
+      ]),
+    ).toEqual([{ timestamp: 5_000 }, { timestamp: 5_001 }]);
+  });
+
+  it("passes frames through on the full profile, and refuses a non-array", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+
+    const frames = [{ timestamp: 1 }];
+    expect(mod.replayFramesToSend(frames)).toBe(frames);
+    expect(mod.replayFramesToSend("not frames")).toBeNull();
+  });
+
+  it("keeps what a masked → full stop flushes: it was recorded masked", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+    let flushed: unknown[] | null | undefined;
+    const frames = [{ timestamp: Date.now() + 1 }];
+    client.stopSessionRecording.mockImplementation(() => {
+      flushed = mod.replayFramesToSend(frames);
+      return client.log.push("stop");
+    });
+
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+
+    expect(flushed).toEqual(frames);
   });
 });
 

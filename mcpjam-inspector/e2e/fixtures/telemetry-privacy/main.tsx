@@ -8,10 +8,12 @@
  *
  * `?privacy=masked` is a member viewing an organization with enterprise
  * privacy; `?privacy=off` is one viewing an organization with session replay
- * off; `?privacy=full` is a verified non-private context, the positive
- * control that proves the recorders were capturing all along.
+ * off; `?privacy=pending` is a first visit whose policy never arrives;
+ * `?privacy=full` is a verified non-private context, the positive control
+ * that proves the recorders were capturing all along. `__harness.tighten()`
+ * moves a running page to a private context, as a navigation would.
  */
-import { StrictMode, type CSSProperties } from "react";
+import { StrictMode, useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
@@ -36,18 +38,33 @@ import {
   HARNESS_PRIVATE_ORG,
   HARNESS_PUBLIC_ORG,
   HARNESS_RELAY_TOKEN,
+  HARNESS_UNMASKED_MARKER,
 } from "./constants";
 
 const requested = new URLSearchParams(window.location.search).get("privacy");
-const mode: "full" | "masked" | "off" =
-  requested === "full" || requested === "off" ? requested : "masked";
+const mode: "full" | "masked" | "off" | "pending" =
+  requested === "full" || requested === "off" || requested === "pending"
+    ? requested
+    : "masked";
+
+type HarnessRecording = "full" | "masked" | "off" | undefined;
+let setRecordingFromSpec: (next: HarnessRecording) => void = () => undefined;
 
 function Harness() {
+  // The backend's answer as the app would hold it; `undefined` = none yet.
+  const [recording, setRecording] = useState<HarnessRecording>(
+    mode === "pending" ? undefined : mode,
+  );
+  // Set by the button: an attribute that changes after the first snapshot.
+  const [customer, setCustomer] = useState<string>();
+  useEffect(() => {
+    setRecordingFromSpec = setRecording;
+  }, []);
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
       sharedLink: false,
-      recording: mode,
+      recording,
     }),
   );
   return (
@@ -58,6 +75,15 @@ function Harness() {
         </h1>
       </header>
       <section className="harness-card" data-state="open">
+        {/* Ids and data attributes built from customer data, as the app's
+            `prompt-arg-${name}` and `repo-row-${repoFullName}` are. */}
+        <div
+          className="harness-row"
+          id={`repo-row-${SYNTHETIC_PII.serverName}`}
+          data-testid={`prompt-arg-${SYNTHETIC_PII.projectName}`}
+          data-owner={SYNTHETIC_PII.email}
+          data-customer={customer}
+        />
         <p className="harness-org">{SYNTHETIC_PII.organizationName}</p>
         <a
           className="harness-link"
@@ -107,6 +133,7 @@ function Harness() {
           className="harness-button"
           data-testid="harness-button"
           aria-label={`Open invoices for ${SYNTHETIC_PII.name}`}
+          onClick={() => setCustomer(SYNTHETIC_PII.name)}
         >
           Open invoices for {SYNTHETIC_PII.name}
         </button>
@@ -184,6 +211,21 @@ async function boot() {
       syncSessionRecording(posthog, path);
       syncSentryReplay(path);
       posthog.capture("harness_navigated", { step: "navigated" });
+    },
+    // Unmasked text recorded into the buffer that is still unflushed when
+    // the page tightens.
+    appendMarker: () => {
+      const marker = document.createElement("p");
+      marker.className = "harness-marker";
+      marker.textContent = HARNESS_UNMASKED_MARKER;
+      document.querySelector(".harness-card")?.append(marker);
+    },
+    tighten: () => {
+      setTelemetryCaptureContext({
+        projectIds: [],
+        organizationIds: [HARNESS_PRIVATE_ORG],
+      });
+      setRecordingFromSpec("masked");
     },
   };
   (window as unknown as { __harness: typeof harness }).__harness = harness;

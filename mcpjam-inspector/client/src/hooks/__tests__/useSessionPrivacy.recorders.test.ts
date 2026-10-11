@@ -121,17 +121,17 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).toEqual(["stop", "full", "start"]);
   });
 
-  it("a backend that never answers is recorded masked", async () => {
+  it("a backend that never answers is never recorded", async () => {
+    // It could be an organization with replay off: only an answer can say.
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({
       level: levelFor("org_plain", { recording: undefined }),
     });
-    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
-
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(60 * 60 * 1000);
     });
-    expect(posthog.log.at(-1)).toBe("start");
+
+    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
     expect(posthog.log).not.toContain("full");
   });
 

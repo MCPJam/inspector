@@ -16,6 +16,7 @@ import {
   HARNESS_PUBLIC_ORG,
   HARNESS_RELAY_TOKEN,
   HARNESS_RESULT_TOKEN,
+  HARNESS_UNMASKED_MARKER,
 } from "./fixtures/telemetry-privacy/constants";
 
 /**
@@ -411,6 +412,90 @@ test.describe("telemetry privacy in the browser", () => {
       sentryItems(captured, "event")[0].payload.toString("utf8"),
     );
     expect(errorEvent.user).toEqual({ id: HARNESS_ACTOR_ID });
+  });
+
+  test("a first visit whose policy never arrives records nothing, while analytics and errors still arrive", async ({
+    page,
+  }) => {
+    const captured = await intercept(page);
+    await page.goto("/?privacy=pending");
+    await exercise(page);
+    await expect
+      .poll(
+        () =>
+          sentryItems(captured, "event").length > 0 &&
+          captured.posthog
+            .flatMap((r) => posthogEvents(r.json))
+            .some((e) => e.event === "$exception"),
+        { timeout: 45_000, intervals: [500] },
+      )
+      .toBe(true);
+    // Well past any timeout that could have started a recorder on its own,
+    // then another error that would flush a buffered Sentry replay.
+    await page.waitForTimeout(11_000);
+    await page.evaluate(() => (window as any).__harness.fail());
+    await page.waitForTimeout(3_000);
+
+    expect(snapshotEvents(captured)).toEqual([]);
+    expect(sentryItems(captured, "replay_recording")).toEqual([]);
+    expect(sentryItems(captured, "replay_event")).toEqual([]);
+    expect(findSyntheticPii(allPayloadText(captured))).toEqual([]);
+    for (const event of captured.posthog.flatMap((r) =>
+      posthogEvents(r.json),
+    )) {
+      expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
+        r: "masked",
+        i: "id_only",
+      });
+    }
+  });
+
+  test("full → masked never sends the full buffer under a masked label", async ({
+    page,
+  }) => {
+    const captured = await intercept(page);
+    await page.goto("/?privacy=full");
+    await page.waitForFunction(() => (window as any).__harness?.ready === true);
+    await page.waitForTimeout(1_500);
+    // An interaction, so posthog-js ships this epoch's buffer rather than
+    // holding it, then unmasked text left unflushed as the page tightens.
+    await page.getByTestId("harness-button").click();
+    await page.evaluate(() => (window as any).__harness.appendMarker());
+    // Long enough for posthog-js to compress the marker into its buffer,
+    // short of its flush timer: the stop then flushes that buffer
+    // synchronously, after the level has already turned masked.
+    await page.waitForTimeout(400);
+    await page.evaluate(() => (window as any).__harness.tighten());
+    await page.waitForTimeout(500);
+    await page.getByTestId("harness-button").click();
+
+    const masked = () =>
+      captured.posthog
+        .flatMap((r) => posthogEvents(r.json))
+        .filter(
+          (e) =>
+            e.event === "$snapshot" &&
+            e.properties[TELEMETRY_CONTEXT_PROPERTY]?.r === "masked",
+        );
+    // The masked recorder's own fresh snapshot arrives: masking, not silence.
+    await expect
+      .poll(
+        () =>
+          masked().some((e) =>
+            (e.properties.$snapshot_data as unknown[])
+              .map(inflateSnapshot)
+              .some((frame: any) => frame.type === 2),
+          ),
+        { timeout: 30_000, intervals: [500] },
+      )
+      .toBe(true);
+    const maskedText = JSON.stringify(
+      masked().map((e) =>
+        (e.properties.$snapshot_data as unknown[]).map(inflateSnapshot),
+      ),
+    );
+    expect(maskedText).not.toContain(HARNESS_UNMASKED_MARKER);
+    expect(maskedText).not.toContain(SYNTHETIC_PII.domText);
   });
 
   test("a credential URL is redacted by the shared credential sanitizer and never recorded", async ({

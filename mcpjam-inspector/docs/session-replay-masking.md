@@ -48,9 +48,8 @@ Three layers enforce the same policy:
 | Hosted, share link of a published study (the tester chat), once answered      | `masked`  |
 | Hosted, the backend answered `masked` for the contexts in view                | `masked`  |
 | Hosted, no context in view, or no session to verify one with                  | `masked`  |
-| Hosted, no answer within 10 seconds (unless last answered `off`)              | `masked`  |
 | Hosted, every context in view verified non-private, viewer in no private org  | `full`    |
-| Hosted or desktop, waiting for the first answer                               | `pending` |
+| Hosted or desktop, waiting for the first answer, or it failed                 | `pending` |
 
 `resolveSessionPrivacy` encodes this table, and its tests walk every row.
 **Full replay requires a verified non-private context.** A visitor with no
@@ -133,10 +132,12 @@ for a previous actor is therefore never read as the current actor's.
 - **`pending` records nothing at startup.** A hosted session waits for the
   backend's first answer. The cost is roughly the first second of each page
   load.
-- **An answer that never comes is `masked`.** If the level is still `pending`
-  after 10 seconds (`PRIVACY_PENDING_TIMEOUT_MS`), the session records `masked`.
-  It never falls back to `full`, and for a person last answered `off` it stays
-  `off`.
+- **An answer that never comes records nothing.** Only the backend's own
+  answer can permit replay, because only it can say the organization has
+  replay `off`. A query that fails or never answers leaves the level
+  `pending`, with both recorders stopped; analytics and errors still go out,
+  masked and id-only. A person last answered `off` stays `off`, and a
+  remembered answer can only ever restrict.
 
 ## Changing level mid-session
 
@@ -144,19 +145,31 @@ Navigating to another organization or project changes the contexts in view,
 and the backend has to answer for the new ones.
 
 **Navigation** (`full` → `pending`) records `masked` at once, rather than
-stopping: the destination is unknown, so it is treated as private.
+stopping: the destination is unknown, so it is treated as private. This
+applies only after an answer has let the session record. Replay `off`
+follows membership, so on an organization's own pages anyone it applies to
+was already answered `off`.
 
 **`full` → `masked`** is applied in a layout effect, in the same React commit
 that rendered the new organization. That is before rrweb's mutation observer
 reports the new DOM.
 
-1. PostHog's recorder stops. Pending mutation records are discarded.
+1. PostHog's recorder stops. Its buffer of frames recorded at `full` is
+   discarded, not sent.
 2. The masked profile is set.
 3. Recording restarts with a fresh, fully masked snapshot.
 
 posthog-js reads its masking options only when the recorder starts, so stop →
 `set_config` → start is the only correct order. `syncSessionRecording` enforces
 it. Nothing recorded after the stop uses the old profile.
+
+Stopping makes posthog-js flush its buffer through `before_send`, after the
+level has already turned masked, and the relay passes a masked-labelled
+replay as it is. So `replayFramesToSend` drops that flush outright, and drops
+any later flush (posthog-js defers it while compression drains) of frames
+older than the masked recorder's start. The telemetry browser test fills the
+buffer with unmasked text before tightening and checks that none of it
+leaves under a masked label.
 
 **`masked` → `full`** needs the destination to have resolved to `full` AND
 finished loading (`contextReady`: Convex auth, the organization list and the
@@ -220,7 +233,15 @@ For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 
 - `maskAllText`, `maskAllInputs` and `blockAllMedia` are `true`.
 - `maskAttributes` masks `title`, `placeholder`, `aria-label`,
-  `aria-description`, `alt`, `action`, `formaction` and `poster`.
+  `aria-description`, `alt`, `action`, `formaction` and `poster` as they
+  are recorded.
+- Every other attribute is masked in Sentry's transport
+  (`sentry-recording-filter.ts`), in full snapshots and in later mutations,
+  down to what a masked PostHog replay keeps (`maskReplayAttribute`). Ids,
+  `name`, `data-testid` and other data attributes are built from customer data
+  (`prompt-arg-${name}`, `repo-row-${repoFullName}`), and Sentry's fixed list
+  cannot name them. rrweb's own `rr_*` and `_cssText` stay. The same filter
+  scrubs names from the page URL in Meta events.
 - `block` covers `a[href]`, `area[href]`, `iframe`, `source`, `track`, and
   any element whose inline `style` holds a `url(`, `image-set(` or a quoted
   string. Sentry's rrweb never passes `href`, `src` or `style` through
@@ -453,15 +474,18 @@ and the outbound filters above.
   the test intercepts PostHog and Sentry transports, decodes every payload to
   its last compressed field, and asserts that none of it leaves under a
   private context — while a useful layout and interaction recording, and an
-  error linked to its replay, do. An `off` run proves neither recorder sends
-  anything while analytics and errors still arrive. A `full` run is the
-  positive control.
+  error linked to its replay, do. An `off` run, and a first visit whose policy
+  never arrives, prove neither recorder sends anything while analytics and
+  errors still arrive. A `full` → masked run fills the recorder's buffer
+  with unmasked text before tightening and checks none of it leaves under a
+  masked label. A `full` run is the positive control.
 
 ## Known gaps
 
-- **Sentry's DOM events.** Sentry offers no hook to edit rrweb events, only
-  its own frames, so its DOM masking is fixed at init and applies at every
-  level.
+- **Sentry's DOM events.** Sentry offers no hook to edit rrweb events as
+  they are recorded, only its own frames, so its DOM masking is fixed at init
+  and applies at every level. Attributes and the page URL are cleaned later,
+  in its transport.
 - **Stylesheet URLs in a masked replay.** Both recorders record stylesheets
   (CSS-in-JS rules included) as written, so a `url(...)` in a rule — an
   icon drawn as a CSS mask — keeps its host. Inline `style` attributes are
