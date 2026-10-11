@@ -60,6 +60,22 @@ describe("org-keys refusal helpers", () => {
     );
   });
 
+  it("reads the code an Error carries even when its message is generic", () => {
+    expect(
+      orgKeysRefusalCodeFromError(
+        Object.assign(new Error("Request failed"), {
+          code: "org_keys_required",
+        }),
+      ),
+    ).toBe("org_keys_required");
+    // An Error's unrelated code (a Node errno) is still not a refusal.
+    expect(
+      orgKeysRefusalCodeFromError(
+        Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" }),
+      ),
+    ).toBe(undefined);
+  });
+
   it("describes by audience, with no admin detail for visitors", () => {
     expect(
       describeOrgKeysRefusal("provider_auth_failed", "admin").body,
