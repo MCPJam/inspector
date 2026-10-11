@@ -971,8 +971,15 @@ export function TestCasesOverview({
                     </div>
                   );
 
+                  // Disabled with a reason, the wrapper takes focus so keyboard
+                  // users can reach the tooltip (the button cannot).
                   const runButton = (
-                    <span className="inline-flex shrink-0">
+                    <span
+                      className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                      tabIndex={
+                        runDisabled && disconnectedRunTooltip ? 0 : undefined
+                      }
+                    >
                       <Button
                         type="button"
                         variant="ghost"

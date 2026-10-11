@@ -102,10 +102,11 @@ export function allModelsOutOfCredits(
       const rows = availableModels.filter((row) =>
         ids.includes(String(row.id))
       );
-      const sameProvider = provider
+      // A named provider with no row of its own is not one of these rows, so
+      // nothing here can say it is locked.
+      const candidates = provider
         ? rows.filter((row) => row.provider === provider)
-        : [];
-      const candidates = sameProvider.length > 0 ? sameProvider : rows;
+        : rows;
       return (
         candidates.length > 0 &&
         candidates.every(

@@ -167,6 +167,15 @@ describe("allModelsOutOfCredits", () => {
     ).toBe(true);
   });
 
+  it("never blocks a provider that has no row of its own", () => {
+    expect(
+      allModelsOutOfCredits(
+        [{ model: "anthropic/claude-haiku-4.5", provider: "bedrock" }],
+        models
+      )
+    ).toBe(false);
+  });
+
   it("matches an older case's model saved without its provider prefix", () => {
     expect(
       allModelsOutOfCredits(

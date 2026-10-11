@@ -98,7 +98,10 @@ function DisabledReasonTooltip({
     <Tooltip>
       <TooltipTrigger asChild>
         {reason ? (
-          <span className="inline-flex" tabIndex={0}>
+          <span
+            className="inline-flex rounded-md outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            tabIndex={0}
+          >
             {children}
           </span>
         ) : (
