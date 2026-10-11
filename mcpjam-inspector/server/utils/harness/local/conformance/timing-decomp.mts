@@ -3,10 +3,17 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
+import { ensureInspectorLayer } from "../inspector-layer.js";
 import { computeTreeDigest } from "../runtime-identity.js";
 
 const ROOT = process.env.CONFORMANCE_ROOT!;
 const B = join(ROOT, "runtime", "claude-code");
+// The launcher (and the bridge it imports) is the Inspector layer's, not the
+// pack's: a pack is vendor bytes only. Launched the way a session launches it,
+// with the pack as the vendor root its SDK import resolves from.
+const layer = await ensureInspectorLayer("claude-code");
+if (!layer.ok) throw new Error(layer.message);
+const LAUNCHER = layer.layer.launcherPath;
 /** A bridge that has not listened by now is not slow, it is broken. */
 const LISTEN_TIMEOUT_MS = 60_000;
 
@@ -105,7 +112,9 @@ for (let i = 0; i < 3; i++) {
   const child = spawn(
     join(B, "bin", "node"),
     [
-      join(B, "launcher.mjs"),
+      LAUNCHER,
+      "--mcpjam-vendor-root",
+      B,
       "--workdir",
       dir,
       "--bridge-state-dir",

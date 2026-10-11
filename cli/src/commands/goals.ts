@@ -249,6 +249,10 @@ export function registerGoalsCommands(program: Command): Command {
       collectRepeatable,
       [] as string[]
     )
+    .option(
+      "--expected-sponsored <n>",
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's allowance instead of your organization's credits). If the split differs the launch is refused with nothing created."
+    )
     .action(
       async (
         options: PlatformOptions & {
@@ -259,10 +263,22 @@ export function registerGoalsCommands(program: Command): Command {
           swarmRun?: string;
           wave?: string;
           environment?: string[];
+          expectedSponsored?: string;
         },
         command
       ) => {
         const globalOptions = getGlobalOptions(command);
+        let expectedSponsored: number | undefined;
+        if (options.expectedSponsored !== undefined) {
+          // Digits only: Number("") and Number("  ") are 0, "0x5" is 5.
+          const raw = options.expectedSponsored.trim();
+          expectedSponsored = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+          if (!Number.isSafeInteger(expectedSponsored)) {
+            throw usageError(
+              `--expected-sponsored must be a whole number, 0 or more (got "${options.expectedSponsored}")`
+            );
+          }
+        }
         const result = await runPlatformCommand(
           platformOptionsOf(command),
           globalOptions.timeout,
@@ -282,6 +298,9 @@ export function registerGoalsCommands(program: Command): Command {
                   : {}),
                 ...(options.environment?.length
                   ? { environmentIds: options.environment }
+                  : {}),
+                ...(expectedSponsored !== undefined
+                  ? { expectedSponsored }
                   : {}),
               },
               { client, signal }
