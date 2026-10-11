@@ -25,6 +25,17 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

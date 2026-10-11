@@ -3,12 +3,15 @@ import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import meticulous from "@alwaysmeticulous/recorder-plugin/vite";
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { meticulousMiddleware } from "./vite-meticulous-middleware";
+import { shouldRecordWithMeticulous } from "./vite-meticulous-recorder";
 import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
@@ -151,6 +154,16 @@ export default defineConfig(({ mode }) => {
   // `dist/client` are accepted; the Electron renderer has its own config.
   const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
 
+  // Meticulous session recorder: staging and preview hosted web builds only.
+  // See `vite-meticulous-recorder.ts` for which builds record and why.
+  const meticulousRecordingToken = env.METICULOUS_RECORDING_TOKEN;
+  const recordWithMeticulous = shouldRecordWithMeticulous({
+    recordingToken: meticulousRecordingToken,
+    environment: env.VITE_ENVIRONMENT,
+    hostedMode: env.VITE_MCPJAM_HOSTED_MODE,
+    buildSurface,
+  });
+
   return {
     root: clientDir,
     envDir,
@@ -164,6 +177,25 @@ export default defineConfig(({ mode }) => {
       env.CLIENT_CACHE_DIR || "node_modules/.vite",
     ),
     plugins: [
+      // The plugin prepends its script as the first child of <head> from a
+      // post-order `transformIndexHtml` hook, so its place in this list does
+      // not matter.
+      ...(recordWithMeticulous
+        ? [
+            meticulous({
+              recordingToken: meticulousRecordingToken,
+              // The plugin's default records only under the dev server.
+              enabled: "always",
+              // `vite build` always runs in mode "production", which the plugin
+              // would report as a production session, but only staging and
+              // preview builds get here.
+              attributes: { "data-is-production-environment": "false" },
+            }),
+            // Masks credentials before a recording leaves the browser. See
+            // `src/lib/meticulous-middleware.ts` for what it covers.
+            meticulousMiddleware(),
+          ]
+        : []),
       react(),
       tailwindcss(),
       lexerSafeMinify(),

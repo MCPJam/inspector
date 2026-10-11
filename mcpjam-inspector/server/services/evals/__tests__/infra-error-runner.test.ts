@@ -68,7 +68,7 @@ import {
   codexProviderEvidenceFromNotification,
   harnessFailureEvidenceOf,
 } from "../../../utils/harness/harness-provider-error";
-import { HARNESS_PROXY_REFUSAL_STATUS } from "../infra-error-classification";
+import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
 
 type Turn = (opts: any) => Promise<unknown>;
 
