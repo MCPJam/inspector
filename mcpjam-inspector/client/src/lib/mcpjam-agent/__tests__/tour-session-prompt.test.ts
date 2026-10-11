@@ -69,6 +69,8 @@ describe("tour-session-prompt", () => {
   it("does not rewrite storage when the entry is already at the front", () => {
     writeTourSystemPrompt("sess-1", { tourId: "tour-a", systemPrompt: "p" });
     const setItem = vi.spyOn(window.localStorage, "setItem");
+    // spyOn returns the setup's existing mock, which saw the write above.
+    setItem.mockClear();
     expect(readTourSystemPrompt("sess-1")).toBe("p");
     expect(setItem).not.toHaveBeenCalled();
   });

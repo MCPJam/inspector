@@ -67,6 +67,29 @@ const projectServersMock = vi.hoisted(() => ({
 
 // The harness × model picker locks read each host's config; these tests have
 // no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/components/evaluate/suite-run-review", () => ({
+  SuiteRunReview: (props: any) => {
+    const [error, setError] = useState<string>();
+    return (
+      <div role="dialog" aria-label="Setup Run">
+        <span>{props.caseTitle}</span>
+        <output data-testid="suite-run-cases">{JSON.stringify(props.cases.map((item: any) => item._id))}</output>
+        <output data-testid="case-run-client-names">{JSON.stringify(Array.from(props.hostNamesById.entries()))}</output>
+        <output data-testid="case-run-block">{props.disabledReason}</output>
+        <button onClick={async () => {
+          try {
+            await props.onStart({ ...props.suite, environmentIds: ["one-run", "second-client"] }, {
+              iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+            });
+            props.onClose();
+          } catch (failure) { setError((failure as Error).message); }
+        }}>Run test case</button>
+        {error && <p role="alert">{error}</p>}
+      </div>
+    );
+  },
+}));
+
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
@@ -1031,6 +1054,89 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it("uses the parent launch data while its suite query is loading, including client names", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase, launchReview: {
+      suite: { _id: "suite-1", environment: { servers: ["srv"] }, environmentIds: ["env-1"] },
+      environments: [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" }],
+      hostNamesById: new Map([["client-a1b2c3", "Claude"]]),
+    } });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("case-run-client-names")).toHaveTextContent("Claude");
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", expect.objectContaining({
+      suiteOverride: expect.objectContaining({ _id: "suite-1" }), throwOnFailure: true,
+    }));
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for suite launch data instead of opening quick run", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    renderGoldenCase({ onRunCase: vi.fn() });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run test case" })).toBeNull();
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["Eval iteration limit reached.", "Cloud sandboxes are unavailable."])(
+    "passes the shared block to case setup and refuses its launch: %s", async (evalRunsDisabledReason) => {
+      const user = userEvent.setup();
+      activeCaseDoc = goldenCaseDoc;
+      const onRunCase = vi.fn();
+      renderGoldenCase({ onRunCase, evalRunsDisabledReason });
+      await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+      expect(screen.getByTestId("case-run-block")).toHaveTextContent(evalRunsDisabledReason);
+      // The mock intentionally calls onStart even while blocked to exercise the callback guard.
+      await user.click(screen.getByRole("button", { name: "Run test case" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(evalRunsDisabledReason);
+      expect(onRunCase).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    },
+  );
+
+  it.each([false, true])("launches case setup through the suite's ephemeral launcher with observeFirst=%s", async (observeFirst) => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase, observeFirst });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", {
+      iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      skipJudge: false,
+      suiteOverride: expect.objectContaining({ _id: "suite-1", environmentIds: ["one-run", "second-client"] }),
+    });
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
+  });
+
+  it("saves case edits before an ephemeral suite launch and keeps launch errors visible", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn().mockRejectedValue(new Error("Client is disconnected"));
+    renderGoldenCase({ onRunCase, observeFirst: true });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    await user.clear(prompt);
+    await user.type(prompt, "Find my current account");
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await screen.findByText("Client is disconnected");
+    expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(onRunCase.mock.invocationCallOrder[0]);
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+  });
 
   it.each([
     { source: "recent blob", trace: { blob: "trace-blob" } },

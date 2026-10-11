@@ -231,6 +231,14 @@ export interface WidgetSurfaceInfo {
    * input because `minimalMode` is per-instance).
    */
   playgroundCspMode: CspMode;
+  /**
+   * The one display mode the host presents this App in, chosen by the host
+   * rather than negotiated: a plugin extension entrypoint opens `fullscreen`,
+   * the way ChatGPT presents every entrypoint. A resource's or App's
+   * display-mode declaration cannot select another mode here, so it never
+   * refuses the App either. Absent: modes are negotiated as usual.
+   */
+  fixedDisplayMode?: DisplayMode;
 }
 
 // --- Instrumentation ---------------------------------------------------------

@@ -157,11 +157,21 @@ describe("web hosted rpc logs", () => {
                       role: "member",
                       accessLevel: "project_member",
                       permissions: { chatOnly: false },
+                      // An explicit-OAuth server with no token, and one whose
+                      // token another request is refreshing.
+                      ...(serverId === "srv-refreshing"
+                        ? {
+                            oauthUnavailableReason: "refresh_in_progress",
+                            oauthRetryAfterMs: 2500,
+                          }
+                        : {}),
                       serverConfig: {
                         transportType: "http",
                         url: "https://server.example.com/mcp",
                         headers: {},
-                        useOAuth: false,
+                        useOAuth:
+                          serverId === "srv-oauth" ||
+                          serverId === "srv-refreshing",
                       },
                     },
               ])
@@ -363,7 +373,7 @@ describe("web hosted rpc logs", () => {
     });
   });
 
-  it("names the server whose authorization refused the tools batch", async () => {
+  it("answers a server whose authorization was refused inside the tools batch", async () => {
     const app = createRpcLogsTestApp();
 
     const response = await postJson(
@@ -378,16 +388,98 @@ describe("web hosted rpc logs", () => {
     );
 
     const { status, data } = await expectJson<{
-      details?: Record<string, unknown>;
+      results: Record<string, { tools: Array<{ name: string }> }>;
+      errors: Record<
+        string,
+        {
+          status: number;
+          code: string;
+          message: string;
+          details?: Record<string, unknown>;
+        }
+      >;
+      _rpcLogs: Array<{ serverId: string }>;
     }>(response);
 
-    // The batch is authorized as a whole, so one refusal answers the request.
-    // It names its server, which is what lets the client keep the refusal
-    // for that server and ask again for the rest.
-    expect(status).toBe(403);
-    expect(data.details).toEqual({
-      serverId: "srv-denied",
-      serverName: "Denied",
+    // The connection records the refusal per server instead of failing the
+    // batch on it, and the route answers it the way its own request would
+    // have been answered, next to the servers it did list.
+    expect(status).toBe(200);
+    expect(Object.keys(data.results)).toEqual(["srv-1"]);
+    expect(data.errors).toEqual({
+      "srv-denied": {
+        status: 403,
+        code: "FORBIDDEN",
+        message: "Access denied",
+        details: { serverId: "srv-denied", serverName: "Denied" },
+      },
+    });
+    expect(data._rpcLogs.every((log) => log.serverId === "srv-1")).toBe(true);
+  });
+
+  it("answers a tools batch whose every server was refused", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-denied"],
+        serverNames: ["Denied"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      results: Record<string, unknown>;
+      errors: Record<string, { status: number }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data.results).toEqual({});
+    expect(data.errors).toEqual({
+      "srv-denied": expect.objectContaining({ status: 403 }),
+    });
+  });
+
+  it("keeps the details and retry delay a refused server's own request carries", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-oauth", "srv-refreshing"],
+        serverNames: ["Notion", "Linear", "Asana"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      errors: Record<
+        string,
+        {
+          status: number;
+          details?: Record<string, unknown>;
+          retryAfterSeconds?: number;
+        }
+      >;
+    }>(response);
+
+    // `details.oauthRequired` is what tells the client to send the user to
+    // reconnect, and the delay is the `Retry-After` the 429 would have sent.
+    expect(status).toBe(200);
+    expect(data.errors["srv-oauth"]).toMatchObject({
+      status: 401,
+      details: { oauthRequired: true, serverId: "srv-oauth" },
+    });
+    expect(data.errors["srv-oauth"]).not.toHaveProperty("retryAfterSeconds");
+    expect(data.errors["srv-refreshing"]).toMatchObject({
+      status: 429,
+      details: { serverId: "srv-refreshing" },
+      retryAfterSeconds: 3,
     });
   });
 

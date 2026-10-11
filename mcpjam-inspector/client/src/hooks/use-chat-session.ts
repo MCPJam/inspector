@@ -52,7 +52,13 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
-import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
+import {
+  autoResumeStopReason,
+  describeAutoResumeStop,
+  lastStepHasPendingApproval,
+  type AutoResumeStopReason,
+} from "@/lib/chat-auto-resume";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   useAppToolsRegistryApi,
   recordAppToolInvocation,
@@ -99,6 +105,8 @@ import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -111,7 +119,10 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -275,7 +286,16 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
-import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type {
+  HiddenEnvironmentRecovery,
+  HostedRuntimeContext,
+} from "@/lib/hosted-runtime-context";
+import {
+  hiddenEnvironmentServerOverride,
+  plainHiddenEnvironmentFailure,
+  readRecoverableHiddenEnvironmentCode,
+  retargetHiddenEnvironmentBody,
+} from "@/lib/plugins/hidden-environment";
 import type { HostedExecutionTarget } from "@/shared/execution-target";
 import {
   buildResolvedServerBatchRequest,
@@ -299,7 +319,7 @@ import { fetchArtifact } from "@/lib/artifact-urls";
 // attempted) and intentionally maps to no toast.
 const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "sandbox-replaced":
-    "Started a new session — the project computer was reset, so earlier context isn't available.",
+    "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
@@ -718,6 +738,11 @@ export interface UseChatSessionReturn {
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
+  /**
+   * One line when a browser-fulfilled tool step was NOT resumed on its own —
+   * the reply was cut off, or the turn spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
   chatSessionId: string;
 
   // Model state
@@ -740,6 +765,9 @@ export interface UseChatSessionReturn {
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
+  /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -925,7 +953,22 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+  /**
+   * The surface supplied a hidden environment and this chat's turns carry it
+   * (see `HostedHiddenEnvironment`). False when none was supplied.
+   */
+  hiddenEnvironmentActive: boolean;
+  /**
+   * A hidden environment was supplied, but this turn has to stay on this
+   * machine's own chat route, which cannot run it — so it runs as the plain
+   * client turn it would have been. Null otherwise.
+   */
+  hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null;
 }
+
+/** Why a supplied hidden environment does not carry this chat's turns. */
+export type HiddenEnvironmentOffReason =
+  "local_harness" | "local_server" | "local_model" | "local_tools";
 
 /**
  * Provider for a locked (guest / host-pinned) model id.
@@ -1835,6 +1878,8 @@ type HostedSessionScope = {
   targetKey?: string;
 };
 
+const EMPTY_SERVER_IDS: string[] = [];
+
 /** Build the {@link HostedSessionScope} target key. Exported for tests. */
 export function hostedTargetKey(input: {
   projectId?: string | null;
@@ -1958,6 +2003,12 @@ export function useChatSession(
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
+  // A hidden environment rides a CLIENT-turn context: it needs the client it
+  // was composed for, and nothing else may already be saying what to run.
+  const hostedHiddenEnvironment =
+    hostedHostId && !hostedScenarioId && !hostedContext?.executionTarget
+      ? hostedContext?.hiddenEnvironment
+      : undefined;
   // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
   // added to a request body or to `hostedTargetKey`: the execution target must
   // stay a single statement.
@@ -2005,7 +2056,9 @@ export function useChatSession(
   // Published-scenario runtime sessions must use the org-aware web engine
   // on every platform — their servers resolve by Convex id, which the
   // local /api/mcp engine can't connect. See HostedRuntimeContext.
-  const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
+  // The surface's own statement. The effective flag, which also counts a
+  // hidden environment this chat carries, is `hostedRequiresWebChatApi` below.
+  const explicitRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
   const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
@@ -2139,6 +2192,26 @@ export function useChatSession(
    * false), so a finished turn always overwrites a stopped predecessor.
    */
   const turnAbortedRef = useRef(false);
+  /**
+   * How the last response ended, from the same `onFinish`, and in which
+   * session. A finish reason reaches the browser nowhere else — it is not
+   * stored on the message — and the SDK runs `onFinish` before it asks
+   * `sendAutomaticallyWhen`, so the auto-resume bound below always weighs the
+   * response it is deciding about.
+   */
+  const lastFinishRef = useRef<{
+    chatSessionId: string;
+    finishReason: string | undefined;
+  } | null>(null);
+  /**
+   * What the latest auto-resume decision held back, and for which session.
+   * Recorded by `sendAutomaticallyWhen` itself — the SDK makes that decision
+   * before the settled response renders — and read at render for the notice.
+   */
+  const autoResumeHeldBackRef = useRef<{
+    chatSessionId: string;
+    reason: AutoResumeStopReason;
+  } | null>(null);
   const [, setHydrationTick] = useState(0);
   const [resumedVersionState, setResumedVersion] = useState<{
     sessionId: string;
@@ -2845,7 +2918,8 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
-  const outOfCredits = useOutOfCredits();
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -2944,7 +3018,11 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all (a harness host none of the rows runs on):
+      // a disabled stand-in, never `undefined`, which every reader below
+      // dereferences. The chat refuses to send on it (`submitBlocked`).
+      noRunnableHarnessModel(harnessId ?? "");
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -3171,6 +3249,46 @@ export function useChatSession(
       return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
+  // ── Hidden environment (a Playground chat's plugins) ────────────────────
+  //
+  // Only the web chat route resolves an environment, so a chat carries its
+  // hidden environment only where that route can run the turn. In the hosted
+  // app it always can. On this machine, a turn that has to stay on the local
+  // route — a client run here, a local-only server, a model keyed on this
+  // machine, this machine's browser or shell — runs as the plain client turn
+  // it would have been, and the surface says the plugins were off.
+  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
+    !hostedHiddenEnvironment || HOSTED_MODE
+      ? null
+      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+        ? "local_harness"
+        : hasLocalOnlySelectedServer
+          ? "local_server"
+          : !(isMcpJamModel || selectedModelUsesOrgRuntime)
+            ? "local_model"
+            : localBrowserRequested ||
+                (resolvedLocalEngine && Boolean(localConsentToken))
+              ? "local_tools"
+              : null;
+  const hiddenEnvironmentActive =
+    !!hostedHiddenEnvironment && hiddenEnvironmentOffReason === null;
+  // What this turn actually sends against: set only once the environment is
+  // composed. Until then a hidden-environment chat holds sends (see
+  // `hostedContextNotReady`) rather than racing a client turn out without
+  // its plugins.
+  const hiddenEnvironmentId = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.environmentId ?? null)
+    : null;
+  const hiddenPluginServerIds = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.pluginServerIds ?? EMPTY_SERVER_IDS)
+    : EMPTY_SERVER_IDS;
+  const hiddenEnvironmentRecover = hiddenEnvironmentActive
+    ? hostedHiddenEnvironment?.recover
+    : undefined;
+  // Like an environment target, a hidden environment's turn can only run on
+  // `/api/web/chat-v2`.
+  const hostedRequiresWebChatApi =
+    explicitRequiresWebChatApi || hiddenEnvironmentActive;
   const localMcpRuntimeRequired =
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
@@ -3279,6 +3397,44 @@ export function useChatSession(
         }
       }
 
+      // Hidden environment recovery. A plugin this chat's composition pins
+      // was disabled, uninstalled or replaced after it was composed, and the
+      // route refused the turn PRE-STREAM. Re-read the plugins, recompose,
+      // and replay ONCE — onto the new composition, or as a plain client turn
+      // when nothing is runnable any more. A second refusal, or a recovery
+      // that cannot finish, is restated in plain words: the route's own
+      // message names an environment the member never chose.
+      if (
+        !response.ok &&
+        hiddenEnvironmentRecover &&
+        hostedHostId &&
+        typeof init?.body === "string" &&
+        (await readRecoverableHiddenEnvironmentCode(response))
+      ) {
+        const refused = response;
+        const recovery: HiddenEnvironmentRecovery =
+          await hiddenEnvironmentRecover();
+        const replayBody = recovery.ok
+          ? retargetHiddenEnvironmentBody(
+              init.body,
+              recovery.environmentId === null
+                ? { environmentId: null, hostId: hostedHostId }
+                : {
+                    environmentId: recovery.environmentId,
+                    pluginServerIds: recovery.pluginServerIds,
+                  },
+            )
+          : null;
+        if (replayBody !== null) {
+          response = await authFetch(input, { ...init, body: replayBody });
+          if (await readRecoverableHiddenEnvironmentCode(response)) {
+            response = plainHiddenEnvironmentFailure(response);
+          }
+        } else {
+          response = plainHiddenEnvironmentFailure(refused);
+        }
+      }
+
       // Stash on every outcome, including ok: a stream that fails partway
       // through still wants the request id that opened it.
       lastChatResponseRef.current = readChatResponseMeta(response);
@@ -3300,6 +3456,8 @@ export function useChatSession(
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
+      hiddenEnvironmentRecover,
+      hostedHostId,
     ],
   );
 
@@ -3510,14 +3668,35 @@ export function useChatSession(
                 ? { environmentOverrides: hostedEnvironmentOverrides }
                 : {}),
             }
-          : // Host-bound direct preview: forward the saved host id so the server
-            // re-resolves the host's authoritative runtime config (harness /
-            // computer included). Only on the direct path — scenario sessions own
-            // their host via scenarioId and the server ignores hostId when
-            // scenarioId is set.
-            isHostedDirectChat && hostedHostId
-            ? { hostId: hostedHostId }
-            : {}),
+          : hiddenEnvironmentId
+            ? {
+                // Hidden environment (a Playground chat's plugins): the
+                // composed environment INSTEAD of `hostId`. Its server set is
+                // always an explicit override — the chat's own resolved
+                // servers plus its plugins' — because an override replaces
+                // the environment's set, and the composition stores none.
+                executionTarget: {
+                  kind: "environment" as const,
+                  environmentId: hiddenEnvironmentId,
+                },
+                environmentOverrides: {
+                  serverIds: hiddenEnvironmentServerOverride(
+                    resolvedServerIds,
+                    hiddenPluginServerIds,
+                  ),
+                },
+                // The project's skills reach this turn as they reach a client
+                // turn, alongside the plugins' own.
+                includeProjectSkills: true,
+              }
+            : // Host-bound direct preview: forward the saved host id so the server
+              // re-resolves the host's authoritative runtime config (harness /
+              // computer included). Only on the direct path — scenario sessions own
+              // their host via scenarioId and the server ignores hostId when
+              // scenarioId is set.
+              isHostedDirectChat && hostedHostId
+              ? { hostId: hostedHostId }
+              : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3780,6 +3959,8 @@ export function useChatSession(
     hostedExecutionTarget,
     hostedEnvironmentId,
     hostedEnvironmentOverrides,
+    hiddenEnvironmentId,
+    hiddenPluginServerIds,
     hostedAccessVersion,
     hostedScenarioSurface,
     getOllamaBaseUrl,
@@ -3841,8 +4022,12 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort, message }) => {
+    onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
+      lastFinishRef.current = {
+        chatSessionId: chatSessionIdRef.current,
+        finishReason,
+      };
       baseSetMessages((current) =>
         timestampMessageById(current, message.id, Date.now()),
       );
@@ -4037,8 +4222,11 @@ export function useChatSession(
     // already have their result in this response; posting them again would
     // create a redundant turn and can reuse a one-shot scope continuation.
     // Preserve main's BUG-4 guard: a pending approval must never be answered
-    // by an automatic follow-up.
+    // by an automatic follow-up. Bounded like the agent surface: never past a
+    // cut-off reply or a spent step budget, or a turn the server can no
+    // longer serve is re-posted indefinitely (`autoResumeStopReason`).
     sendAutomaticallyWhen: (options) => {
+      autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
         shouldAutoSendCompletedClientToolCalls(
@@ -4046,7 +4234,22 @@ export function useChatSession(
           scopeStepUpResumeInFlightRef.current,
         )
       ) {
-        return true;
+        const lastFinish = lastFinishRef.current;
+        const reason = autoResumeStopReason({
+          ...options,
+          finishReason:
+            lastFinish?.chatSessionId === chatSessionIdRef.current
+              ? lastFinish.finishReason
+              : undefined,
+          maxSteps: DEFAULT_TURN_MAX_STEPS,
+        });
+        if (reason && chatSessionIdRef.current) {
+          autoResumeHeldBackRef.current = {
+            chatSessionId: chatSessionIdRef.current,
+            reason,
+          };
+        }
+        return reason === null;
       }
       return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
@@ -5774,13 +5977,16 @@ export function useChatSession(
   // `servers:getProjectServers`, so they can never appear in the browser's
   // name-keyed catalog and the gate would never open.
   const hostedContextNotReady =
-    orgOrHostedContextRequired &&
-    (!hostedProjectId ||
-      (!hostedEnvironmentId &&
-        selectedServerIdsRequired &&
-        selectedServers.length > 0 &&
-        !hostedEnsureServerIds &&
-        hostedSelectedServerIds.length !== selectedServers.length));
+    (orgOrHostedContextRequired &&
+      (!hostedProjectId ||
+        (!hostedEnvironmentId &&
+          selectedServerIdsRequired &&
+          selectedServers.length > 0 &&
+          !hostedEnsureServerIds &&
+          hostedSelectedServerIds.length !== selectedServers.length))) ||
+    // A hidden environment still being composed: a send now would go out as a
+    // client turn without the chat's plugins.
+    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,
@@ -5845,8 +6051,17 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    isNoRunnableHarnessModel(selectedModel);
   const inputDisabled = submitBlocked;
+
+  // Only once the response has settled, and only for the session it was
+  // recorded on — the ref outlives a switch to another conversation.
+  const heldBack = autoResumeHeldBackRef.current;
+  const autoResumeNotice =
+    status === "ready" && heldBack && heldBack.chatSessionId === chatSessionId
+      ? describeAutoResumeStop(heldBack.reason)
+      : null;
 
   return {
     // Chat state
@@ -5857,6 +6072,7 @@ export function useChatSession(
     stop: stopChat,
     status,
     error,
+    autoResumeNotice,
     chatSessionId,
 
     // Model state
@@ -5869,6 +6085,7 @@ export function useChatSession(
     setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
+    outOfCreditsReason,
 
     // Auth state
     isAuthenticated,
@@ -5947,5 +6164,7 @@ export function useChatSession(
     disableForAuthentication,
     submitBlocked,
     inputDisabled,
+    hiddenEnvironmentActive,
+    hiddenEnvironmentOffReason,
   };
 }

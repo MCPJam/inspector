@@ -19,6 +19,7 @@ import {
   toolApprovalClaimKey,
 } from "../tool-approval-token";
 import { logger } from "../logger";
+import { STEP_LIMIT_REFUSAL_MESSAGE } from "@/shared/turn-step-budget";
 
 /**
  * An approval id the engine itself would have minted for this call (MJ-008).
@@ -3555,6 +3556,168 @@ describe("mcpjam-stream-handler", () => {
       });
     });
 
+
+    describe("a continuation that arrives with its step budget already spent", () => {
+      // Six steps already bought by the current user message, ceiling six:
+      // the loop can take no step. This is the request a browser kept
+      // re-posting every few seconds, because the answer used to be a
+      // SUCCESSFUL `length` finish that changed nothing in its last step.
+      const spentHistory = () =>
+        [
+          { role: "user", content: "go" },
+          ...Array.from({ length: 6 }).map((_, index) => ({
+            role: "assistant",
+            content: [{ type: "text", text: `s${index + 1}` }],
+          })),
+        ] as any;
+
+      it("fails a browser-sent one without a model call or a persisted turn", async () => {
+        const onConversationComplete = vi.fn();
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          clientSuppliedHistory: true,
+          onConversationComplete,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        // An error ends the browser's automatic resend; a finish did not.
+        expect(writtenChunks).toContainEqual({
+          type: "error",
+          errorText: STEP_LIMIT_REFUSAL_MESSAGE,
+        });
+        expect(writtenChunks.some((c: any) => c?.type === "finish")).toBe(
+          false,
+        );
+        expect(onConversationComplete).not.toHaveBeenCalled();
+      });
+
+      it("still processes an answered approval on the budget's last step", async () => {
+        // The model asked for approval on its final allowed step; the user's
+        // click must still be honored. Answering it costs no model call.
+        vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: [
+            { role: "user", content: "go" },
+            ...Array.from({ length: 5 }).map((_, index) => ({
+              role: "assistant",
+              content: [{ type: "text", text: `s${index + 1}` }],
+            })),
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-last",
+                  toolName: "ui_execute_tool",
+                  input: {},
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId: "approval-last",
+                  toolCallId: "call-last",
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-approval-response",
+                  approvalId: "approval-last",
+                  approved: false,
+                },
+              ],
+            },
+          ] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: { ui_execute_tool: { needsApproval: true } } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          clientSuppliedHistory: true,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+        expect(
+          writtenChunks.filter((c: any) => c.type === "tool-output-denied"),
+        ).toMatchObject([{ toolCallId: "call-last" }]);
+      });
+
+      it("keeps the quiet `length` finish for history the server built itself", async () => {
+        // Eval / swarm / durable callers never re-post on their own; their
+        // behavior at the ceiling is unchanged.
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+        expect(
+          writtenChunks.find((c: any) => c?.type === "finish"),
+        ).toMatchObject({ finishReason: "length" });
+      });
+
+      it("still runs a browser-sent continuation that has steps left", async () => {
+        global.fetch = vi.fn().mockResolvedValue(
+          createSseResponse([
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "Done." },
+            { type: "text-end", id: "t1" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        );
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 7,
+          clientSuppliedHistory: true,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+      });
+    });
 
     it("emits the aggregated turn usage via messageMetadata (preserving #2213)", async () => {
       // Single-step turn with non-trivial usage. Must surface as

@@ -198,6 +198,7 @@ export function ClientConfigEditor({
         catalogHasComputerBackedTool(builtInToolCatalog),
       computerAttached: value.computer !== undefined,
       disallowed: computerToolsDisallowed,
+      hasHarness: value.harness !== undefined,
     });
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);

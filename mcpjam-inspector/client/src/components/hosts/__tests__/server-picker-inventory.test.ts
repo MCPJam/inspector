@@ -72,9 +72,10 @@ const ALLOWED: Record<string, string> = {
     "server whose App discovery failed, with a Retry button that re-runs " +
     "discovery. Nothing is selected and no serverAttachmentId is written.",
 
-  "components/plugins/PluginGroupCard.tsx":
-    "A plugin version's declared components, listed with their setup state. " +
-    "The rows open a requirement editor, they do not attach a server.",
+  "components/plugins/PluginSettingsSection.tsx":
+    "A plugin version's declared server components, listed with their setup " +
+    "state in the plugin's Settings. The rows open a requirement editor, they " +
+    "do not attach a server.",
 };
 
 /** Walked as a tree: a `.map(` node has an exact extent, so nothing lies. */

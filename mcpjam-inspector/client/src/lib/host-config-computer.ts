@@ -54,7 +54,7 @@ export function computerBackedToolIds(
 
 /**
  * The catalog rows an editor should actually RENDER, honoring the
- * `computers-enabled` rollout flag: when the flag is off for this user,
+ * machine rollout flag: when the flag is off for this user,
  * computer-backed rows are hidden — the backend `bash` row can be enabled
  * deployment-wide without leaking a dead "requires a computer" checkbox to
  * users who can't see the (flag-gated) computer toggle it points at. A row
@@ -147,14 +147,18 @@ export function setComputerWorkdirPatch(
  * the catalog exposes a computer-backed tool (so the `bash` row stays hidden
  * until launch) OR when a computer is already attached — so an existing
  * attachment is always DETACHABLE even if no computer-backed tool is currently
- * in the catalog. Never on surfaces that disallow computers (eval suites).
+ * in the catalog. Never on surfaces that disallow computers (eval suites), and
+ * never for a HARNESS client (Claude Code / Codex / Cursor): it runs on a
+ * throwaway box and has no computer settings, attached or not.
  */
 export function shouldShowComputerToggle(opts: {
   catalogHasComputerBackedTool: boolean;
   computerAttached: boolean;
   disallowed?: boolean;
+  /** The client runs a harness. */
+  hasHarness?: boolean;
 }): boolean {
-  if (opts.disallowed) return false;
+  if (opts.disallowed || opts.hasHarness) return false;
   return opts.catalogHasComputerBackedTool || opts.computerAttached;
 }
 

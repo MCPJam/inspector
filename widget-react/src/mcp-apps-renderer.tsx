@@ -1136,14 +1136,39 @@ export function MCPAppsRendererSurface({
   ]);
   const hostAvailableDisplayModesRef = useRef(hostAvailableDisplayModes);
   hostAvailableDisplayModesRef.current = hostAvailableDisplayModes;
+  // A host that fixes the mode (an entrypoint) shows the App in it whatever
+  // the resource or App declares, as long as the client allows that mode at
+  // all; negotiation applies everywhere else.
+  const fixedDisplayMode = host.surface.fixedDisplayMode;
+  const fixedDisplayModeRef = useRef(fixedDisplayMode);
+  fixedDisplayModeRef.current = fixedDisplayMode;
+  const displayModesFor = useCallback(
+    (
+      hostModes: readonly DisplayMode[],
+      hints: ResourceDisplayHints | undefined,
+      appModes?: readonly string[]
+    ): DisplayMode[] => {
+      const fixed = fixedDisplayModeRef.current;
+      return fixed && hostModes.includes(fixed)
+        ? [fixed]
+        : negotiateResourceDisplayModes([...hostModes], hints, appModes);
+    },
+    []
+  );
   const effectiveAvailableDisplayModes = useMemo(
     () =>
-      negotiateResourceDisplayModes(
+      displayModesFor(
         hostAvailableDisplayModes as DisplayMode[],
         resourceDisplayHints,
         appSupportedDisplayModes
       ),
-    [hostAvailableDisplayModes, resourceDisplayHints, appSupportedDisplayModes]
+    [
+      displayModesFor,
+      fixedDisplayMode,
+      hostAvailableDisplayModes,
+      resourceDisplayHints,
+      appSupportedDisplayModes,
+    ]
   );
   const advertisedAvailableDisplayModes = effectiveAvailableDisplayModes;
 
@@ -2012,8 +2037,8 @@ export function MCPAppsRendererSurface({
       // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
       hasRenderedLiveRef.current = true;
       liveRenderIdentityRef.current = liveRenderIdentityKey;
-      const allowed = negotiateResourceDisplayModes(
-        hostAvailableDisplayModesRef.current,
+      const allowed = displayModesFor(
+        hostAvailableDisplayModesRef.current as DisplayMode[],
         resourceHints
       );
       if (allowed.length === 0) {
@@ -3387,8 +3412,8 @@ export function MCPAppsRendererSurface({
             // up the new intersection and the post-init `setHostContext`
             // effect will publish `host-context-changed` with the updated
             // `availableDisplayModes` (matrix-gated by hostContextChanged).
-            const negotiated = negotiateResourceDisplayModes(
-              hostAvailableDisplayModesRef.current,
+            const negotiated = displayModesFor(
+              hostAvailableDisplayModesRef.current as DisplayMode[],
               resourceDisplayHintsRef.current,
               declaredAppModes
             );

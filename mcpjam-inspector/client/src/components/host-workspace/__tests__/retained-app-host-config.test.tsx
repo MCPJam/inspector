@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // stand-ins that count constructions, teardowns and guest document loads.
 const f = vi.hoisted(() => {
   const bridges: Array<Record<string, any>> = [];
-  const ctor = vi.fn().mockImplementation(() => {
+  const ctor = vi.fn().mockImplementation(function () {
     const bridge: Record<string, any> = {
       sendToolInput: vi.fn(),
       sendToolInputPartial: vi.fn(),
