@@ -89,6 +89,13 @@ export type TurnSkillProvenance = {
 };
 
 /**
+ * Which kind of environment row a spec was resolved from: one a member named,
+ * or an ad-hoc composition a surface made on their behalf (the backend's
+ * `environmentOrigin(row)`).
+ */
+export type EnvironmentOrigin = "named" | "adhoc";
+
+/**
  * The inspector-side mirror of the backend's `ResolvedEnvironmentRuntimeSpec`.
  *
  * `host.runtimeConfig` is typed as an open record on purpose: it is the same
@@ -106,6 +113,13 @@ export interface ResolvedEnvironmentRuntime {
     name: string;
     revision: number;
   };
+  /**
+   * Named or ad-hoc, as the backend read it from the row in the same resolve.
+   * Optional for deploy skew: an older backend omits it. Absent means "not
+   * known to be ad-hoc" and must never be read as ad-hoc. A value other than
+   * the two known ones is dropped when the spec is parsed.
+   */
+  environmentOrigin?: EnvironmentOrigin;
   host: {
     hostId: string;
     hostName?: string;
@@ -300,7 +314,17 @@ function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
   if (!isRecord(servers) || !Array.isArray(servers.effectiveServerIds)) {
     return fail("missing effective server set");
   }
-  return raw as unknown as ResolvedEnvironmentRuntime;
+  const spec = raw as unknown as ResolvedEnvironmentRuntime;
+  const origin = (raw as { environmentOrigin?: unknown }).environmentOrigin;
+  if (origin === undefined || origin === "named" || origin === "adhoc") {
+    return spec;
+  }
+  // Additive, so an unknown value is not a reason to stop the turn. It is
+  // dropped rather than passed on, so nothing downstream can read it as
+  // either kind.
+  const known = { ...spec };
+  delete known.environmentOrigin;
+  return known;
 }
 
 /**

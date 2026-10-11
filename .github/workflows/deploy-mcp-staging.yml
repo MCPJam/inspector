@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - "mcp/**"
+      # Workspace packages mcp builds against (mcp -> design-system, sdk; sdk -> evaluators)
+      - "design-system/**"
+      - "sdk/**"
+      - "evaluators/**"
       - "package.json"
       - "package-lock.json"
       - ".changeset/config.json"

@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./types";
 import { Fragment, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { TableCell, TableRow } from "@mcpjam/design-system/table";
@@ -30,7 +31,7 @@ import {
 
 export function groupProjectRuns(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ) {
   const suites = new Map<string, ProjectRunRow[]>();
   for (const row of [...rows].sort(
@@ -43,7 +44,8 @@ export function groupProjectRuns(
   return [...suites].map(([suiteId, suiteRows]) => {
     const launches = new Map<string, ProjectRunRow[]>();
     for (const row of suiteRows) {
-      const groupId = details.get(row._id)?.run.runGroupId;
+      const groupId =
+        row.runSummary?.runGroupId ?? details.get(row._id)?.run.runGroupId;
       const key = groupId ? `group:${groupId}` : `run:${row._id}`;
       const launch = launches.get(key) ?? [];
       launch.push(row);
@@ -66,14 +68,14 @@ export function groupProjectRuns(
  */
 export function suiteRollupRows(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ): ProjectRunRow[] {
   return rows.filter((row) => !isSubsetRerunRun(details.get(row._id)?.run));
 }
 
 export function projectRunRollup(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ) {
   if (rows.some((row) => !details.has(row._id))) return null;
   if (rows.some((row) => details.get(row._id)!.metrics !== undefined)) {
@@ -109,7 +111,7 @@ export function projectRunRollup(
 /** `projectRunRollup` for details that carry per-run metrics, not iterations. */
 function projectRunRollupFromMetrics(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ) {
   const entries = rows.map((row) => details.get(row._id)!);
   if (entries.some((entry) => !entry.metrics)) return null;
@@ -144,7 +146,7 @@ function projectRunRollupFromMetrics(
 
 type Group = ReturnType<typeof groupProjectRuns>[number];
 type SharedProps = {
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   historyRows: Map<string, SuiteRunHistoryRow>;
   showGitContext: boolean;
 };
@@ -172,8 +174,14 @@ export function ProjectRunSuiteGroup({
     ...new Set(
       group.rows.flatMap(
         (row) =>
-          shared.details.get(row._id)?.run.configSnapshot?.environment
-            ?.servers ?? [],
+          ("environment" in
+          (shared.details.get(row._id)?.run.configSnapshot ?? {})
+            ? (
+                shared.details.get(row._id)?.run.configSnapshot as {
+                  environment?: { servers?: string[] };
+                }
+              )?.environment?.servers
+            : []) ?? [],
       ),
     ),
   ];

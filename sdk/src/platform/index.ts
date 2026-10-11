@@ -10,14 +10,30 @@
 export {
   PLATFORM_V1_ERROR_CODES,
   PlatformApiError,
+  SWARM_FUNDING_CHANGED_CODE,
   describePlatformRefusal,
+  describeSwarmFundingChange,
+  isFeatureUnavailable,
   isPlatformApiError,
   platformRefusalHint,
   type PlatformApiErrorCode,
   type PlatformApiErrorOptions,
   type PlatformRefusal,
   type PlatformV1ErrorCode,
+  type SwarmFundingChange,
 } from "./errors.js";
+
+export {
+  OPERATION_FEATURES,
+  PLATFORM_FEATURES,
+  PLATFORM_FEATURE_KEYS,
+  disabledOperations,
+  isOperationAvailable,
+  operationFeature,
+  type FeatureAvailability,
+  type OperationFeature,
+  type PlatformFeatureKey,
+} from "./features.js";
 
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
@@ -135,6 +151,7 @@ export type {
   PlatformEvalReplayVideoMeta,
   PlatformEvalInfraError,
   PlatformEvalIteration,
+  PlatformMuseReadinessStartBody,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
   PlatformReadinessLaneCoverage,
@@ -494,6 +511,7 @@ export {
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -651,6 +669,7 @@ export {
   type CheckHostCompatibilityResult,
   type StartClaudeReadinessInput,
   type StartOpenAIReadinessInput,
+  type StartMuseReadinessInput,
   type StartReadinessResult,
   type ReadinessRunScopedInput,
   type GetReadinessRunResult,

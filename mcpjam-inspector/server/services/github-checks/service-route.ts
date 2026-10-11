@@ -6,6 +6,7 @@
  * is how a timeout policy or an auth header ends up applied on one path and not
  * the other.
  */
+import { getServiceCredential } from "../service-credential";
 
 export const GITHUB_CHECKS_SERVICE_BASE = "/internal/v1/github-checks";
 
@@ -27,7 +28,7 @@ export function githubChecksServiceEnv(): {
   serviceToken: string;
 } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }

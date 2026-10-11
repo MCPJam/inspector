@@ -412,6 +412,11 @@ export type EvalSuite = {
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
   /**
+   * The skills a suite WITHOUT environments runs with. An environment suite's
+   * skills live on its environments; the read sends this raw field either way.
+   */
+  selectedSkillIds?: string[];
+  /**
    * Attach-ordered project environments (`projectEnvironments` docs). When
    * non-empty, Run all fans out ONE run per environment (replacing
    * hostAttachments as the fan-out axis — env pointers win over the legacy
@@ -1565,7 +1570,7 @@ export type CommitGroup = {
    * and renders as "All runs passed".
    */
   status: "passed" | "failed" | "running" | "mixed" | "inconclusive";
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   suiteMap: Map<string, string>; // suiteId → suite name
   summary: {
     total: number;
@@ -1574,4 +1579,70 @@ export type CommitGroup = {
     running: number;
     inconclusive: number;
   };
+};
+
+/** A history row is deliberately not a full run: snapshots are fetched on selection. */
+export type EvalSuiteRunListItem = Pick<
+  EvalSuiteRun,
+  | "_id"
+  | "_creationTime"
+  | "suiteId"
+  | "createdBy"
+  | "projectId"
+  | "runNumber"
+  | "configRevision"
+  | "name"
+  | "tags"
+  | "runMetadata"
+  | "status"
+  | "result"
+  | "summary"
+  | "metrics"
+  | "passCriteria"
+  | "verdictPolicyVersion"
+  | "createdAt"
+  | "completedAt"
+  | "isActive"
+  | "stoppedAt"
+  | "stopReason"
+  | "expectedIterations"
+  | "runGroupId"
+  | "namedHostId"
+  | "client"
+  | "effectiveModelId"
+  | "targetKey"
+  | "modelSource"
+  | "source"
+  | "launcher"
+  | "attribution"
+  | "ciMetadata"
+  | "replayedFromRunId"
+  | "rerunOfRunId"
+  | "rerunScope"
+  | "hasServerReplayConfig"
+  | "framework"
+  | "externalRunId"
+  | "runInsightsStatus"
+  | "serverQualityStatus"
+  | "goalCompletionStatus"
+> & {
+  configSnapshot: Pick<
+    EvalSuiteRun["configSnapshot"],
+    "environmentRef" | "executionEngine" | "executionVenue"
+  >;
+  runInsightsJobId?: string | number;
+  runInsightsErrorCode?: string;
+  runInsights?: { summary: string; generatedAt: number };
+  judgeScore?: number | null;
+  judgeThreshold?: number;
+  judgeOffConfig?: boolean;
+};
+
+/** One-case suite launch, with the same transient setup as the suite sheet. */
+export type CaseRunLaunchOptions = {
+  iterationOverride?: number;
+  skipJudge?: boolean;
+  ephemeralEnvironment?: boolean;
+  throwOnFailure?: boolean;
+  suiteOverride?: EvalSuite;
 };

@@ -70,6 +70,14 @@ async function write(state: { authorizations: LocalHarnessAuthorization[] }) {
 export async function readLocalHarnessAuthorization(userId: string, machineId: string, projectId: string, harnessId: AuthorizedHarnessId = "claude-code") {
   return (await read()).authorizations.find(a => a.userId === userId && a.machineId === machineId && a.projectId === projectId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION) ?? null;
 }
+/**
+ * Has anybody durably authorized this harness on this machine (at the current
+ * policy version)? What boot asks before fetching a runtime nobody is waiting
+ * for: a machine where nobody chose to run a harness downloads nothing for it.
+ */
+export async function hasLocalHarnessAuthorizationOnMachine(machineId: string, harnessId: AuthorizedHarnessId = "claude-code"): Promise<boolean> {
+  return (await read()).authorizations.some(a => a.machineId === machineId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION);
+}
 export async function authorizeLocalHarness(args: Pick<LocalHarnessAuthorization, "userId" | "machineId" | "projectId" | "workspaceGrantId"> & { harnessId?: AuthorizedHarnessId }) {
   return lock(async () => {
     const state = await read();

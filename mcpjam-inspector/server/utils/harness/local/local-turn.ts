@@ -29,11 +29,12 @@ import { readLocalHarnessAuthorization } from "./authorization.js";
  */
 import { logger } from "../../logger.js";
 import type { HarnessAuth, HarnessId } from "../registry.js";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import {
   revokeHarnessModelBroker,
   startLoopbackModelBroker,
 } from "../harness-model-broker.js";
+import type { HarnessOrgLeaseUpstream } from "../harness-org-lease.js";
 import {
   resolveLocalHarnessAvailability,
   type LocalHarnessActor,
@@ -44,7 +45,7 @@ import {
   startLocalModelGateway,
   type LocalModelGateway,
 } from "./model-gateway.js";
-import { readRuntimeInstallStatus } from "./runtime-install.js";
+import { noteRuntimeLaunch, readRuntimeInstallStatus } from "./runtime-install.js";
 import {
   reserveRuntimeUse,
   type RuntimeOperationKey,
@@ -131,10 +132,22 @@ export interface PreparedLocalHarnessTurn {
   sandboxWorkDir: string;
   /** Adapter-facing path under the session's synthetic HOME. */
   skillsBaseDir: string;
+  /**
+   * Where this session's composer attachments land: the session's own state
+   * directory, never the workspace (the user's real checkout, reached through
+   * the `project` symlink). `writeDir` is the file API's spelling, `agentDir`
+   * the native path the agent is told to read; they differ only on Windows.
+   */
+  attachmentsDir: { writeDir: string; agentDir: string };
   /** Observed before preparation creates the directory; a sidecar alone is insufficient. */
   sessionStateExists: boolean;
   permissionMode: "allow-reads" | "allow-edits" | "allow-all";
   brokerRunId: string;
+  /**
+   * Present when the turn's lease runs on the organization's own provider
+   * key, as the backend recorded it (profile + hashed credential revision).
+   */
+  orgUpstream?: HarnessOrgLeaseUpstream;
   /** Fields for the turn's timing telemetry. Durations, never paths. */
   timings: {
     localRuntimeVerifyMs: number;
@@ -226,6 +239,11 @@ export interface PrepareLocalHarnessTurnArgs {
   maxOutputTokens?: number;
   /** The turn's reasoning effort, carried on the lease start. */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved selection; an org selection makes the lease run on the
+   * organization's own key (and is refused, never downgraded, when it can't).
+   */
+  modelSelection?: ModelSelection | null;
   signal?: AbortSignal;
 }
 
@@ -310,7 +328,14 @@ export async function prepareLocalHarnessTurn(
   // The pack's install root is where availability looks for a runtime. Reading
   // it from the installer rather than a constant means the Electron override
   // and the npx default cannot disagree.
-  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
+  // SELECTED per build (desired, or the permitted previous while an update is
+  // in flight or after a rollback), preferring the runtime this target's grant
+  // names while it is still selectable — so an update that activated in the
+  // background does not refuse this turn; the client renews onto it.
+  const runtimeStatus = await readRuntimeInstallStatus({
+    harnessId,
+    preferRuntimeId: args.target.runtimeId,
+  });
   if (runtimeStatus.state !== "ready") {
     return {
       ok: false,
@@ -318,7 +343,9 @@ export async function prepareLocalHarnessTurn(
       message:
         runtimeStatus.state === "absent"
           ? `The local ${displayName} runtime is not installed on this machine yet.`
-          : `The local ${displayName} runtime is not usable (${runtimeStatus.state}).`,
+          : runtimeStatus.state === "revoked"
+            ? runtimeStatus.message
+            : `The local ${displayName} runtime is not usable (${runtimeStatus.state}).`,
     };
   }
 
@@ -459,6 +486,7 @@ async function prepareWithReservedRuntime(outer: {
     projectId: args.projectId,
     grantToken: args.target.grantToken,
     runtimeRoot: runtimeStatus.runtimeRoot,
+    runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
       (await readInstalledAdapterVersion(harnessId)),
@@ -509,6 +537,7 @@ async function prepareWithReservedRuntime(outer: {
       ? { maxOutputTokens: args.maxOutputTokens }
       : {}),
     ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
     bearer: args.bearer,
     ...(args.signal ? { signal: args.signal } : {}),
   });
@@ -588,11 +617,17 @@ async function prepareWithReservedRuntime(outer: {
       workspacePath: plan.workspacePath,
       workspaceGrantId: plan.target.workspaceGrantId,
       sessionStateDir,
-      ...(args.onSecretEnvDelivered && Object.keys(args.scopedEnv ?? {}).length
-        ? {
-            onBridgeStarted: async () => { args.onSecretEnvDelivered?.(); },
-          }
-        : {}),
+      onBridgeStarted: async () => {
+        void noteRuntimeLaunch({ harnessId, status: runtimeStatus, outcome: { ok: true } });
+        if (Object.keys(args.scopedEnv ?? {}).length) args.onSecretEnvDelivered?.();
+      },
+      onBridgeFailed: ({ phase, message }) => {
+        void noteRuntimeLaunch({
+          harnessId,
+          status: runtimeStatus,
+          outcome: { ok: false, reason: `${phase}: ${message.slice(0, 300)}` },
+        });
+      },
       targetKind: "local-native",
       bridgePort,
       scopedEnv: {
@@ -703,9 +738,14 @@ async function prepareWithReservedRuntime(outer: {
       skillsBaseDir: toAdapterPath(
         join(sessionStateDir, "home", ...LOCAL_SKILLS_SUBDIR[harnessId]),
       ),
+      attachmentsDir: {
+        writeDir: toAdapterPath(join(sessionStateDir, "attachments")),
+        agentDir: join(sessionStateDir, "attachments"),
+      },
       sessionStateExists,
       permissionMode,
       brokerRunId: broker.runId,
+      ...(broker.orgUpstream ? { orgUpstream: broker.orgUpstream } : {}),
       timings: { localRuntimeVerifyMs, localGatewayReadyMs },
       teardown: teardownOnce,
       discardState: onceAsync(async () => {
@@ -806,7 +846,10 @@ async function adoptParkedLocalTurn(
   };
   const verifyStartedAt = Date.now();
 
-  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
+  const runtimeStatus = await readRuntimeInstallStatus({
+    harnessId,
+    preferRuntimeId: args.target.runtimeId,
+  });
   if (runtimeStatus.state !== "ready") {
     return fail(
       "authorization-revoked",
@@ -831,6 +874,7 @@ async function adoptParkedLocalTurn(
     projectId: args.projectId,
     grantToken: args.target.grantToken,
     runtimeRoot: runtimeStatus.runtimeRoot,
+    runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
       (await readInstalledAdapterVersion(harnessId)),
@@ -889,11 +933,28 @@ async function adoptParkedLocalTurn(
     ...(args.maxOutputTokens !== undefined
       ? { maxOutputTokens: args.maxOutputTokens }
       : {}),
+    // The re-adopted runtime keeps running on the same organization key it
+    // started on; a key replaced while the approval waited fails the
+    // renewal rather than silently switching accounts under a live session.
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
     bearer: args.bearer,
     ...(args.signal ? { signal: args.signal } : {}),
   });
   if (!broker.ok) {
     return fail("renewal-failed", "broker-unavailable", broker.error);
+  }
+  if (
+    live.prepared?.orgUpstream &&
+    broker.orgUpstream?.credentialRevision !==
+      live.prepared.orgUpstream.credentialRevision
+  ) {
+    await revokeLease(broker.runId, args.bearer);
+    return fail(
+      "renewal-failed",
+      "byok-connection-changed",
+      "The organization's provider key was replaced while the approval was " +
+        "waiting; the pending action will not run.",
+    );
   }
   // The awaits above are a window in which the parked tree can die or a Stop
   // can land. Re-check before binding the fresh lease: delivering the decision
@@ -930,6 +991,7 @@ async function adoptParkedLocalTurn(
       plan,
       sessionStateExists: true,
       brokerRunId: broker.runId,
+      ...(broker.orgUpstream ? { orgUpstream: broker.orgUpstream } : {}),
       timings: {
         localRuntimeVerifyMs: gatewayStartedAt - verifyStartedAt,
         localGatewayReadyMs: Date.now() - gatewayStartedAt,

@@ -10,6 +10,7 @@ import {
   EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
   type PackDigestRecord,
+  PERMITTED_PACK_RECORDS,
 } from "../pack-digests.generated.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import type { LocalPackTarget } from "../targets.js";
@@ -396,6 +397,8 @@ describe("the release script and this module read the same committed facts", () 
           PACK_RECORDS[harnessId][target as LocalPackTarget],
         );
       }
+      // The permitted previous pack, read the same way by both.
+      expect(harness.permitted).toEqual(PERMITTED_PACK_RECORDS[harnessId]);
     }
   });
 });

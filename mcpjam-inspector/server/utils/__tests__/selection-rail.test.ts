@@ -28,6 +28,7 @@ import {
 import {
   decideTurnRail,
   forwardableSelection,
+  harnessTurnRail,
   readRoutingSelection,
   readSelectionOrigin,
   readStoredLegacySelection,
@@ -286,5 +287,77 @@ describe("withSelectionRouting / forwardableSelection", () => {
     expect(forwardableSelection(all.local)).toBeUndefined();
     expect(forwardableSelection(all.legacy)).toBeUndefined();
     expect(forwardableSelection(undefined)).toBeUndefined();
+  });
+});
+
+describe("harnessTurnRail — one decision for both chat routes", () => {
+  const orgSel = selections("anthropic/claude-sonnet-4.5").org;
+  const anthropicRow = {
+    id: "claude-sonnet-4-5",
+    provider: "anthropic",
+    hosted: false,
+  };
+  const rail = (
+    harness: string | undefined,
+    overrides: Partial<Parameters<typeof harnessTurnRail>[0]> = {},
+  ) =>
+    harnessTurnRail({
+      harness,
+      model: anthropicRow,
+      selection: orgSel,
+      mcpjamProvided: false,
+      stepUpResume: false,
+      ...overrides,
+    });
+
+  it("an org connection on the harness's vendor runs the harness on the org's key", () => {
+    expect(rail("claude-code")).toEqual({
+      externalAccount: false,
+      orgSelection: orgSel,
+      orgStepUpResume: false,
+      usesFreePath: true,
+      modelSource: "byok",
+    });
+  });
+
+  it("a step-up resume on that turn leaves the free path and stays the org's spend", () => {
+    expect(rail("claude-code", { stepUpResume: true })).toMatchObject({
+      orgStepUpResume: true,
+      usesFreePath: false,
+      modelSource: "byok",
+    });
+  });
+
+  it("an org connection on another vendor is not an org-key harness turn", () => {
+    expect(rail("codex")).toMatchObject({
+      orgSelection: undefined,
+      usesFreePath: false,
+      modelSource: "mcpjam",
+    });
+  });
+
+  it("an org selection without an org connection is not narrowed", () => {
+    const { connectionRef: _dropped, ...unbound } = orgSel;
+    expect(
+      rail("claude-code", { selection: unbound as RequestedModelSelection }),
+    ).toMatchObject({ orgSelection: undefined, modelSource: "mcpjam" });
+  });
+
+  it("an external-account harness pays on the customer's account, whatever the selection", () => {
+    expect(rail("cursor")).toEqual({
+      externalAccount: true,
+      orgSelection: undefined,
+      orgStepUpResume: false,
+      usesFreePath: true,
+      modelSource: "external-account",
+    });
+  });
+
+  it("without a harness only an MCPJam-provided model takes the free path", () => {
+    expect(rail(undefined).usesFreePath).toBe(false);
+    expect(rail(undefined, { mcpjamProvided: true })).toMatchObject({
+      usesFreePath: true,
+      modelSource: "mcpjam",
+    });
   });
 });

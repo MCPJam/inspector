@@ -1,3 +1,5 @@
+import { useRunGroupSummaries } from "../evals/use-run-group-summaries";
+import type { EvalSuiteRunListItem } from "@/components/evals/types";
 import {
   dependentFilterOptions,
   selectedFilter,
@@ -88,7 +90,7 @@ import {
   suiteRunBlockedReason,
   runTimestamp,
 } from "./suite-detail-model";
-import type { EvalCase, EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { EvalCase, EvalSuite } from "../evals/types";
 import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
@@ -127,8 +129,10 @@ export function SuiteDetailOverview({
   runReviewRequested = false,
   onRunReviewClose,
   cases,
-  runs,
+  runs: listedRuns,
   runsLoading,
+  runHistoryStatus,
+  onLoadMoreRuns,
   metricsByRun,
   hostNamesById,
   environments,
@@ -165,8 +169,14 @@ export function SuiteDetailOverview({
   runReviewRequested?: boolean;
   onRunReviewClose?: () => void;
   cases: EvalCase[];
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   runsLoading: boolean;
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
   hostNamesById: Map<string, string | null>;
@@ -200,7 +210,7 @@ export function SuiteDetailOverview({
    */
   onDeleteRun?: (runId: string) => Promise<void>;
   /** Per-run permission; every run in a row must pass for its button. */
-  canDeleteRun?: (run: EvalSuiteRun) => boolean;
+  canDeleteRun?: (run: EvalSuiteRunListItem) => boolean;
   /**
    * Stops runs that are still going. Takes every cancellable id at once — the
    * header cancels the whole suite, a history row cancels its whole launch.
@@ -250,12 +260,23 @@ export function SuiteDetailOverview({
     state: { exit: () => void; label?: string } | null,
   ) => void;
 }) {
+  const { runs, loadGroup, forgetRuns } = useRunGroupSummaries(
+    suite._id,
+    listedRuns,
+  );
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const showDeleteColumn = onDeleteRun != null;
-  const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
+  const deleteLaunch = useDeleteRunLaunch(
+    onDeleteRun
+      ? async (id) => {
+          await onDeleteRun(id);
+          forgetRuns([id]);
+        }
+      : undefined,
+  );
   const runsById = useMemo(
     () => new Map(runs.map((run) => [run._id, run])),
     [runs],
@@ -327,7 +348,10 @@ export function SuiteDetailOverview({
     hiddenRunCount,
     filteredRunIds,
   } = useMemo(() => {
-    const details = new Map<string, ProjectRunHistoryDetail>(
+    const details = new Map<
+      string,
+      ProjectRunHistoryDetail<EvalSuiteRunListItem>
+    >(
       runs.map((run) => [
         run._id,
         {
@@ -446,11 +470,10 @@ export function SuiteDetailOverview({
    * to be held for a suite that has runs rather than popped in under the
    * reader.
    */
-  const showRunHistory = runs.length > 0 || runsLoading;
+  const showRunHistory = runs.length > 0 || runsLoading || runHistoryStatus === "CanLoadMore" || runHistoryStatus === "LoadingMore";
   const hasRuns = runs.length > 0;
   // Waiting drafts are not cases: until one is added the suite is still empty,
   // and the way out of empty is the same three choices either way.
-
 
   /**
    * Imported drafts get their OWN surface, the way generation does. They are
@@ -497,10 +520,10 @@ export function SuiteDetailOverview({
       generation?.authoringSource === "markdown");
   const reviewingImport = Boolean(
     projectId &&
-      (importedDrafts.length || importRunning) &&
-      (Boolean(importJobId) ||
-        importRunning ||
-        generation?.reviewRequestId !== generation?.reviewSeenId),
+    (importedDrafts.length || importRunning) &&
+    (Boolean(importJobId) ||
+      importRunning ||
+      generation?.reviewRequestId !== generation?.reviewSeenId),
   );
   // Declared here, not beside `hasCases`, because it depends on the import
   // surface below.
@@ -831,8 +854,8 @@ export function SuiteDetailOverview({
               {runsLoading
                 ? "Loading runs…"
                 : hasRuns
-                ? "No runs match these filters."
-                : "No runs yet."}
+                  ? "No runs match these filters."
+                  : "No runs yet."}
             </div>
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
@@ -857,15 +880,37 @@ export function SuiteDetailOverview({
                           showDeleteColumn &&
                           launch.runs.every((row) => {
                             const run = runsById.get(row._id);
-                            return (
-                              run != null && (canDeleteRun?.(run) ?? true)
-                            );
+                            return run != null && (canDeleteRun?.(run) ?? true);
                           })
-                            ? () =>
-                                deleteLaunch.request({
-                                  runIds: launch.runs.map((row) => row._id),
-                                  runNumber: representative.runNumber,
-                                })
+                            ? async () => {
+                                try {
+                                  const groupId = details.get(
+                                    representative._id,
+                                  )?.run.runGroupId;
+                                  const members = groupId
+                                    ? await loadGroup(groupId)
+                                    : launch.runs;
+                                  if (
+                                    members.some(
+                                      (row) =>
+                                        !(
+                                          canDeleteRun?.(
+                                            row as EvalSuiteRunListItem,
+                                          ) ?? true
+                                        ),
+                                    )
+                                  )
+                                    return;
+                                  deleteLaunch.request({
+                                    runIds: members.map((row) => row._id),
+                                    runNumber: representative.runNumber,
+                                  });
+                                } catch {
+                                  toast.error(
+                                    "Could not load the complete run group",
+                                  );
+                                }
+                              }
                             : undefined
                         }
                         onOpen={() => onRunClick(representative._id)}
@@ -877,6 +922,18 @@ export function SuiteDetailOverview({
             </div>
           )}
 
+          {(runHistoryStatus === "CanLoadMore" ||
+            runHistoryStatus === "LoadingMore") && (
+            <div className={runHistoryFooterClass}>
+              <Button
+                variant="outline"
+                disabled={runHistoryStatus === "LoadingMore"}
+                onClick={onLoadMoreRuns}
+              >
+                {runHistoryStatus === "LoadingMore" ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          )}
           {hiddenRunCount > 0 ? (
             <div className={runHistoryFooterClass}>
               <button
@@ -1106,16 +1163,16 @@ export function SuiteEmptyCasesHero({
               action.id === "describe"
                 ? !onDescribe
                 : action.id === "generate"
-                ? !onGenerate || !canGenerate || isGenerating
-                : !onImport;
+                  ? !onGenerate || !canGenerate || isGenerating
+                  : !onImport;
             const generateTooltip =
               action.id === "generate"
                 ? isGenerating
                   ? "Generating test cases…"
                   : !canGenerate
-                  ? generateDisabledReason ??
-                    "Configure suite servers before generating cases."
-                  : null
+                    ? (generateDisabledReason ??
+                      "Configure suite servers before generating cases.")
+                    : null
                 : null;
             const button = (
               <button

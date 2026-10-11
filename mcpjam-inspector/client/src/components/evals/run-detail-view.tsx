@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./types";
 import { RunMetadataDisplay } from "./run-metadata-display";
 import {
   useCallback,
@@ -180,7 +181,7 @@ interface RunDetailViewProps {
    * through to {@link RunAccuracyHeroBand} for future re-surfacing; no
    * header UI consumes it today.
    */
-  compareBaseRun?: EvalSuiteRun | null;
+  compareBaseRun?: EvalSuiteRunListItem | null;
   onCompareWithRun?: (baseRunId: string) => void;
   /**
    * `namedHostId` → client display name. When the run was triggered against
@@ -310,7 +311,7 @@ export function RunIterationsSidebar({
   onSelectIteration?: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
   /** When set, shows run overview row above the iteration list (CI sidebar + inline run detail). */
-  runForOverview?: EvalSuiteRun | null;
+  runForOverview?: EvalSuiteRunListItem | null;
   /** Optional row below overview (e.g. link to full runs table). */
   runOverviewExtra?: ReactNode;
   /** Opens run-level insights in the main pane (no iteration). */
@@ -547,13 +548,13 @@ export function RunDetailView({
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
   const runEnvironments = useSandboxImages(
-    runComputerEnvId ? selectedRunDetails.projectId ?? null : null,
+    runComputerEnvId ? (selectedRunDetails.projectId ?? null) : null,
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
   // the only durable identifier once the environment is deleted).
   const runComputerEnvLabel = runComputerEnvId
-    ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
-        ?.name ?? runComputerEnvId
+    ? (runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
+        ?.name ?? runComputerEnvId)
     : null;
   // Project-environment provenance frozen at run start (name + revision) —
   // renders the "Environment" chip. Distinct from the sandbox-image pin
@@ -561,7 +562,7 @@ export function RunDetailView({
   // kill-switch hides env names/revisions on retained historical runs too.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const runProjectEnvironmentRef = projectEnvironmentsEnabled
-    ? selectedRunDetails.configSnapshot?.environmentRef ?? null
+    ? (selectedRunDetails.configSnapshot?.environmentRef ?? null)
     : null;
   // OpenAI submission evidence (INS-5). Offered only when the run pinned a
   // plugin: the document's value is naming the exact bundle it is evidence
@@ -825,7 +826,11 @@ export function RunDetailView({
 
   const runClient = useMemo(() => {
     const identity = runClientIdentity(selectedRunDetails, hostNamesById);
-    return { hostId: identity.namedHostId, displayName: identity.name, logoSrc: runClientLogo(selectedRunDetails) };
+    return {
+      hostId: identity.namedHostId,
+      displayName: identity.name,
+      logoSrc: runClientLogo(selectedRunDetails),
+    };
   }, [selectedRunDetails, hostNamesById]);
 
   const accuracyHero = showAccuracyHero ? (

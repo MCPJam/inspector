@@ -67,8 +67,9 @@ export interface EnvironmentLabelContext {
    * lookup on surfaces that list ad-hoc rows for real.
    */
   hostName?: (hostId: string) => string | undefined;
-  /** Absent when the computers flag is off or no loaded row pins an image. */
+  /** Absent when the images flag is off or no loaded row pins an image. */
   imageName?: (imageId: string) => string | undefined;
+  /** The image chip's flag: `sandbox-images-enabled`. */
   computersEnabled?: boolean;
   /** Catalog display name for a stored model override. Omit when unused. */
   modelName?: (modelId: string) => string | undefined;

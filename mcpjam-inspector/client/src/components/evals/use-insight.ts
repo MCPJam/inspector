@@ -10,11 +10,11 @@ import { signInRequiredMessage } from "@/lib/sign-in-required";
 
 export type InsightStatus = "pending" | "completed" | "failed" | undefined;
 
-export interface InsightConfig<TResult> {
+export interface InsightConfig<TResult, TRun = EvalSuiteRun> {
   /** Read the insight status from the run document. */
-  getStatus: (run: EvalSuiteRun) => InsightStatus;
+  getStatus: (run: TRun) => InsightStatus;
   /** Read the insight result from the run document. */
-  getResult: (run: EvalSuiteRun) => TResult | undefined;
+  getResult: (run: TRun) => TResult | undefined;
   /** Convex mutation path for requesting generation, e.g. "runInsights:requestRunInsights". */
   requestMutation: string;
   /** Convex mutation path for cancelling generation, e.g. "runInsights:cancelRunInsights". */
@@ -158,9 +158,12 @@ function classifyInsightError(err: unknown): {
   return { unavailable, permanent, message: raw };
 }
 
-export function useInsight<TResult extends { summary?: string }>(
-  run: EvalSuiteRun | null,
-  config: InsightConfig<TResult>,
+export function useInsight<
+  TResult extends { summary?: string },
+  TRun extends Pick<EvalSuiteRun, "_id" | "status"> = EvalSuiteRun,
+>(
+  run: TRun | null,
+  config: InsightConfig<TResult, TRun>,
   options?: { autoRequest?: boolean },
 ): InsightHookResult<TResult> {
   const autoRequest = options?.autoRequest !== false;

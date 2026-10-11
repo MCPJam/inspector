@@ -593,9 +593,9 @@ describe("checkEvalExecutionAdmission", () => {
   });
 
   // ── The single-case surface ──────────────────────────────────────────────
-  // Quick and streamed one-offs pass `runId: null`, and BOTH sandbox-
-  // provisioning sites require `runId !== null` — so no box is ever booted for
-  // them and a pinned image changes nothing. The rule is the surface itself.
+  // Quick and streamed one-offs pass `runId: null` and boot a box only for a
+  // HARNESS (keyed to the iteration). Anything else boots nothing, and a
+  // pinned image changes nothing. The rule is the surface itself.
 
   it("refuses a computer-backed built-in on a single-case run, image or not", () => {
     for (const pinnedComputerImageId of [null, "env-1"]) {
@@ -622,26 +622,24 @@ describe("checkEvalExecutionAdmission", () => {
     ).toBe(true);
   });
 
-  it("REFUSES a harness on the single-case surface, whatever tools it grants", () => {
-    // The gap this closes: a single-case run boots no box, so `runHarnessTurn`
-    // would fall through to `resolveHarnessSandbox` — the acting member's
-    // PERSONAL computer. That is the one fallback eval execution must never
-    // take, and it was reachable here because this surface never ran the
-    // harness gate at all.
-    for (const hostConfig of [
-      { harness: "claude-code" },
-      { harness: "claude-code", builtInToolIds: [] },
-      { harness: "claude-code", builtInToolIds: ["bash"] },
-    ]) {
-      const verdict = checkEvalExecutionAdmission({
-        hostConfig,
-        pinnedComputerImageId: "env-1",
-        surface: "single-case",
-      });
-      expect(verdict.ok).toBe(false);
-      if (verdict.ok) throw new Error("unreachable");
-      expect(verdict.reason).toContain("as part of a suite");
-      expect(verdict.reason).toContain("personal computer");
+  it("ADMITS a harness on the single-case surface: it boots its own box there too", () => {
+    // A single-case harness run gets a disposable box keyed to the iteration,
+    // so it never reaches the acting member's personal computer — and a shell
+    // it grants has a machine to run on.
+    for (const pinnedComputerImageId of [null, "env-1"]) {
+      for (const hostConfig of [
+        { harness: "claude-code" },
+        { harness: "claude-code", builtInToolIds: [] },
+        { harness: "claude-code", builtInToolIds: ["bash"] },
+      ]) {
+        expect(
+          checkEvalExecutionAdmission({
+            hostConfig,
+            pinnedComputerImageId,
+            surface: "single-case",
+          }).ok
+        ).toBe(true);
+      }
     }
   });
 
@@ -888,10 +886,14 @@ describe("local harness admission", () => {
     })).toEqual({ ok: true, harness: "claude-code" });
   });
 
-  it("does not admit cloud single-case execution just because a local pack exists", () => {
-    nativeVenue.enabled = true;
-    expect(checkEvalExecutionAdmission({
-      hostConfig: harnessHost(), localExecution: false, surface: "single-case",
-    }).ok).toBe(false);
+  it("admits cloud single-case execution on its own disposable box, local pack or not", () => {
+    // A cloud single-case harness run boots a box keyed to its iteration, so
+    // a local pack is not what admits it, and its absence would not refuse it.
+    for (const enabled of [true, false]) {
+      nativeVenue.enabled = enabled;
+      expect(checkEvalExecutionAdmission({
+        hostConfig: harnessHost(), localExecution: false, surface: "single-case",
+      }).ok).toBe(true);
+    }
   });
 });

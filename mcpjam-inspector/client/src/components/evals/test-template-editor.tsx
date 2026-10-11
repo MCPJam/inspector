@@ -1,3 +1,10 @@
+import type { EvalSuite, CaseRunLaunchOptions } from "./types";
+import {
+  SuiteRunReview,
+  type SuiteRunReviewProps,
+} from "../evaluate/suite-run-review";
+import { useSelectedRun } from "./use-selected-run";
+import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -49,6 +56,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -95,6 +103,10 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
   createInspectorCommandClientError,
@@ -396,7 +408,7 @@ interface TestTemplateEditorProps {
    * Suite runs for the current suite — used by the Runs tab to show which
    * host produced each batch (via `namedHostId` on suite runs).
    */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   /**
    * Renders the case as a SPINE — numbered actions with their checks nested
    * under the action each one follows — instead of the form plus the Steps
@@ -405,6 +417,17 @@ interface TestTemplateEditorProps {
    * without a flag mock.
    */
   observeFirst?: boolean;
+  /** The suite view owns launch targets, client names, and shared run blocks. */
+  launchReview?: Omit<
+    SuiteRunReviewProps,
+    "cases" | "caseTitle" | "initialIterations" | "onClose" | "onStart"
+  >;
+  /** Shared quota, sandbox, or launch-in-progress block from the suite view. */
+  evalRunsDisabledReason?: string | null;
+  /** The org's out-of-credits wording, with its reset time, from the suite view. */
+  outOfCreditsReason?: string | null;
+  /** Why the saved case's own run is off for credits; see `TestCasesOverview`. */
+  runTestCaseOutOfCreditsReason?: (testCase: EvalCase) => string | null;
   /**
    * Launch a run of THIS case only, as a suite run.
    *
@@ -414,7 +437,7 @@ interface TestTemplateEditorProps {
    */
   onRunCase?: (
     caseId: string,
-    opts?: { iterationOverride?: number; skipJudge?: boolean },
+    opts?: CaseRunLaunchOptions,
   ) => void | Promise<void>;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -1013,7 +1036,7 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   suiteIterations,
-  suiteRuns = [],
+  suiteRuns: listedSuiteRuns = [],
   onExportDraft,
   onContinueInChat,
   onSelectTab,
@@ -1023,6 +1046,10 @@ export function TestTemplateEditor({
   simpleCaseEditor = false,
   observeFirst = false,
   onRunCase,
+  launchReview,
+  evalRunsDisabledReason: evalRunsDisabledReasonProp,
+  outOfCreditsReason = null,
+  runTestCaseOutOfCreditsReason,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -1280,10 +1307,31 @@ export function TestTemplateEditor({
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
-  const suite = useQuery(
+  const tracedRunId = [
+    replayIteration,
+    routeCompareAnchorIteration,
+    ...recentIterations,
+    lastSavedIteration,
+  ].find(
+    (iteration): iteration is EvalIteration =>
+      !!iteration && !!(iteration.blob || iteration.chatSessionId),
+  )?.suiteRunId;
+  const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
+  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  const suiteRuns = useMemo(
+    () => detailRun
+      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
+      : listedSuiteRuns,
+    [detailRun, listedSuiteRuns],
+  );
+
+  const queriedSuite = useQuery(
     "testSuites:getTestSuite" as any,
     canQuerySuite ? ({ suiteId } as any) : "skip",
   ) as any;
+  const suite = launchReview?.suite ?? queriedSuite;
+  const evalRunsDisabledReason =
+    launchReview?.disabledReason ?? evalRunsDisabledReasonProp;
 
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
@@ -1540,24 +1588,9 @@ export function TestTemplateEditor({
    * traced iteration the drill-in would fall back to.
    */
   const openTrialRun = useMemo(() => {
-    const runId =
-      replayIteration?.suiteRunId ??
-      [
-        routeCompareAnchorIteration,
-        ...recentIterations,
-        lastSavedIteration,
-      ].find(
-        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-      )?.suiteRunId;
-    if (!runId) return null;
-    return suiteRuns.find((run) => run._id === runId) ?? null;
-  }, [
-    replayIteration,
-    routeCompareAnchorIteration,
-    recentIterations,
-    lastSavedIteration,
-    suiteRuns,
-  ]);
+    if (!tracedRunId) return null;
+    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
+  }, [tracedRunId, suiteRuns]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -1659,13 +1692,17 @@ export function TestTemplateEditor({
   const suiteHostLabel = getScenarioHostLabel(suiteHostStyle);
   const suiteHostLogoSrc = getScenarioHostLogo(suiteHostStyle);
 
+  // Keyed on the suite view's memoized map, not `launchReview` itself: that
+  // object is a fresh literal on every parent render.
+  const launchHostNamesById = launchReview?.hostNamesById;
   const hostNamesById = useMemo(() => {
+    if (launchHostNamesById) return new Map(launchHostNamesById);
     const map = new Map<string, string | null>();
     for (const attachment of suite?.hostAttachments ?? []) {
       map.set(attachment.namedHostId, attachment.hostName);
     }
     return map;
-  }, [suite?.hostAttachments]);
+  }, [launchHostNamesById, suite?.hostAttachments]);
   const hasHostAttachments = (suite?.hostAttachments?.length ?? 0) > 0;
 
   // ── Harness system tools (assertable built-ins) ──────────────────────────
@@ -2126,34 +2163,51 @@ export function TestTemplateEditor({
    * while the pane showed the latest. A ref always holds the current one.
    */
   const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const runTest = useCallback(async () => {
-    const caseId = currentTestCase?._id;
-    if (!onRunCase || !caseId || isDraft) return;
-    setRunTestPending(true);
-    try {
-      if (hasUnsavedChanges) {
-        // A refused save (an unset tool question, an invalid step list) must
-        // not launch: the run executes the PERSISTED case, so it would grade
-        // a version of the case the author is not looking at.
-        const saved = await handleSaveRef.current?.();
-        if (!saved) return;
+  const runTest = useCallback(
+    async (launch?: {
+      suite: EvalSuite;
+      options: {
+        iterationOverride: number;
+        ephemeralEnvironment?: boolean;
+        throwOnFailure?: boolean;
+      };
+    }) => {
+      const caseId = currentTestCase?._id;
+      if (!onRunCase || !caseId || isDraft) return;
+      if (launch && evalRunsDisabledReason)
+        throw new Error(evalRunsDisabledReason);
+      setRunTestPending(true);
+      try {
+        if (hasUnsavedChanges) {
+          // A refused save (an unset tool question, an invalid step list) must
+          // not launch: the run executes the PERSISTED case, so it would grade
+          // a version of the case the author is not looking at.
+          const saved = await handleSaveRef.current?.();
+          if (!saved) {
+            if (launch) throw new Error("Save the test case before running.");
+            return;
+          }
+        }
+        await onRunCase(caseId, {
+          iterationOverride,
+          ...(launch ? { ...launch.options, suiteOverride: launch.suite } : {}),
+          skipJudge:
+            editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
+        });
+      } finally {
+        setRunTestPending(false);
       }
-      await onRunCase(caseId, {
-        iterationOverride,
-        skipJudge:
-          editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
-      });
-    } finally {
-      setRunTestPending(false);
-    }
-  }, [
-    onRunCase,
-    currentTestCase?._id,
-    isDraft,
-    hasUnsavedChanges,
-    iterationOverride,
-    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
-  ]);
+    },
+    [
+      onRunCase,
+      evalRunsDisabledReason,
+      currentTestCase?._id,
+      isDraft,
+      hasUnsavedChanges,
+      iterationOverride,
+      editForm?.judgeConfigOverride?.goalCompletion?.enabled,
+    ],
+  );
 
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
@@ -2262,6 +2316,24 @@ export function TestTemplateEditor({
     return { promptChars, stepCount: Math.max(1, stepCount) };
   }, [editForm?.steps]);
 
+  // Out of credits, a run of only locked MCPJam models could only be refused.
+  // Quick Run asks about the models it will run; a Retry about its own model;
+  // Run test about the saved case it launches (unsaved edits, which it saves
+  // first, are not judged here).
+  const creditsReason = outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON;
+  const runOutOfCredits = allModelsOutOfCredits(
+    draftRunEstimateModels,
+    availableModels,
+  );
+  const retryOutOfCreditsReason = (modelValue: string) =>
+    allModelsOutOfCredits([parseModelValue(modelValue)], availableModels)
+      ? creditsReason
+      : null;
+  const runTestOutOfCreditsReason =
+    currentTestCase && !hasUnsavedChanges
+      ? (runTestCaseOutOfCreditsReason?.(currentTestCase) ?? null)
+      : null;
+
   const runPrimaryDisabled =
     isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
@@ -2269,6 +2341,7 @@ export function TestTemplateEditor({
     // Run for it with an explanatory tooltip instead of letting it fail.
     casePinnedOnly ||
     selectedModelValues.length === 0 ||
+    runOutOfCredits ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid ||
@@ -2287,6 +2360,9 @@ export function TestTemplateEditor({
     }
     if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
+    }
+    if (runOutOfCredits) {
+      return creditsReason;
     }
     if (!canRun) {
       return "Configure suite servers before running.";
@@ -2324,6 +2400,8 @@ export function TestTemplateEditor({
     ensureServersReady,
     isDraft,
     simpleToolsBlock,
+    runOutOfCredits,
+    creditsReason,
   ]);
 
   // Bulk replace of all steps — the flat StepListEditor edits the `TestStep[]`
@@ -4116,9 +4194,9 @@ export function TestTemplateEditor({
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
-        (run) =>
-          run._id ===
-          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+        (run): run is EvalSuiteRun =>
+          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          "tests" in run.configSnapshot,
       ) ?? null)
     : null;
 
@@ -4477,7 +4555,34 @@ export function TestTemplateEditor({
                     }}
                   />
                 ) : null}
-                {useWorkspace ? (
+                {useWorkspace && onRunCase && !isDirectGuest ? (
+                  // Opens once the suite is known; never the quick-run sheet.
+                  runSetupOpen &&
+                  suite && (
+                    <SuiteRunReview
+                      {...(launchReview ?? {
+                        projectId,
+                        suite,
+                        environments: projectEnvironmentViews,
+                        hostNamesById,
+                      })}
+                      cases={[currentTestCase]}
+                      caseTitle={editForm?.title || currentTestCase.title}
+                      initialIterations={
+                        editForm?.runs ?? DEFAULTS.RUNS_PER_TEST
+                      }
+                      disabledReason={
+                        evalRunsDisabledReason ??
+                        saveDisabledTooltip ??
+                        (isDraft ? "Save the test case before running." : null)
+                      }
+                      onClose={() => setRunSetupOpen(false)}
+                      onStart={(launchSuite, options) =>
+                        runTest({ suite: launchSuite, options })
+                      }
+                    />
+                  )
+                ) : useWorkspace ? (
                   <CaseRunSetup
                     open={runSetupOpen}
                     onOpenChange={setRunSetupOpen}
@@ -5052,21 +5157,27 @@ export function TestTemplateEditor({
                       runControl={
                         onRunCase ? (
                           <div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8"
-                              data-testid="case-run-test"
-                              disabled={
-                                isDraft ||
-                                runTestPending ||
-                                Boolean(simpleToolsBlock)
-                              }
-                              onClick={() => void runTest()}
+                            <DisabledReasonTooltip
+                              reason={runTestOutOfCreditsReason}
+                              variant="muted"
                             >
-                              <Play className="size-3.5 fill-current" />
-                              Run test
-                            </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8"
+                                data-testid="case-run-test"
+                                disabled={
+                                  isDraft ||
+                                  runTestPending ||
+                                  Boolean(simpleToolsBlock) ||
+                                  runTestOutOfCreditsReason !== null
+                                }
+                                onClick={() => void runTest()}
+                              >
+                                <Play className="size-3.5 fill-current" />
+                                Run test
+                              </Button>
+                            </DisabledReasonTooltip>
                           </div>
                         ) : null
                       }
@@ -5179,6 +5290,9 @@ export function TestTemplateEditor({
                       "Untitled test case"
                     }
                     suiteName={suite?.name}
+                    defaultHostLabel={
+                      hostConfigBaseline?.hostStyle ? suiteHostLabel : undefined
+                    }
                     liveVerdict={
                       workspaceLiveRecord && workspaceSelectedTrial
                         ? trialVerdict(workspaceSelectedTrial).word
@@ -5328,6 +5442,9 @@ export function TestTemplateEditor({
                       <RunColumn
                         record={workspaceLiveRecord}
                         testCase={currentTestCase}
+                        retryDisabledReason={retryOutOfCreditsReason(
+                          workspaceLiveRecord.modelValue,
+                        )}
                         authoredSteps={editForm?.steps ?? currentSteps}
                         trialChainSlot={trialChainSlotFor(
                           workspaceLiveRecord.iteration ?? null,
@@ -5699,6 +5816,9 @@ export function TestTemplateEditor({
                         <RunColumn
                           record={previewRecord}
                           testCase={currentTestCase}
+                          retryDisabledReason={retryOutOfCreditsReason(
+                            previewRecord.modelValue,
+                          )}
                           authoredSteps={editForm?.steps ?? currentSteps}
                           trialChainSlot={trialChainSlotFor(
                             previewRecord.iteration ?? null,
@@ -5956,6 +6076,9 @@ export function TestTemplateEditor({
                       <RunColumn
                         record={record}
                         testCase={currentTestCase}
+                        retryDisabledReason={retryOutOfCreditsReason(
+                          record.modelValue,
+                        )}
                         authoredSteps={editForm?.steps ?? currentSteps}
                         serverNames={connectedServerList}
                         projectId={projectId}
@@ -6037,6 +6160,7 @@ function RunColumn({
   activeTab,
   onTabChange,
   onRetry,
+  retryDisabledReason = null,
   baselineHostStyle,
   syncedStepId,
   onSyncStep,
@@ -6063,6 +6187,8 @@ function RunColumn({
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
+  /** Why Retry is off: its model is out of credits. */
+  retryDisabledReason?: string | null;
   /** Left↔right Steps sync (shared with the editor's step list). */
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
@@ -6576,29 +6702,35 @@ function RunColumn({
           actionsSlot={
             <>
               {/* Continue in Chat is temporarily hidden while guest playground testing is in progress. */}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 shrink-0 px-2 text-[11px]"
-                onClick={onRetry}
-                disabled={
-                  record.status === "running" &&
-                  record.iteration == null &&
-                  !hasStreamingTrace
-                }
+              <DisabledReasonTooltip
+                reason={retryDisabledReason}
+                variant="muted"
               >
-                <RotateCw
-                  className={cn(
-                    "mr-1 h-3 w-3",
-                    record.status === "running" &&
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  onClick={onRetry}
+                  disabled={
+                    retryDisabledReason !== null ||
+                    (record.status === "running" &&
                       record.iteration == null &&
-                      !hasStreamingTrace &&
-                      "animate-spin",
-                  )}
-                />
-                Retry
-              </Button>
+                      !hasStreamingTrace)
+                  }
+                >
+                  <RotateCw
+                    className={cn(
+                      "mr-1 h-3 w-3",
+                      record.status === "running" &&
+                        record.iteration == null &&
+                        !hasStreamingTrace &&
+                        "animate-spin",
+                    )}
+                  />
+                  Retry
+                </Button>
+              </DisabledReasonTooltip>
             </>
           }
         />

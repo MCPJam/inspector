@@ -62,8 +62,9 @@
     "preview": {
       "workers_dev": true,
       "vars": {
-        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
+        // Must track the tenant backend-staging writes into Convex.
+        "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
         // Staging Inspector API: the worker's AuthKit JWTs are staging-tenant
         // tokens, which the production app would reject with 401.
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
@@ -87,8 +88,9 @@
         }
       ],
       "vars": {
-        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
+        // Must track the tenant backend-staging writes into Convex.
+        "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
         // Where a HUMAN opens a permalink this worker returns. Separate from
         // PLATFORM_API_URL because one is a request target and the other is a
