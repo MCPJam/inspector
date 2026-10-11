@@ -4,12 +4,11 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpV2PackageVersion = "2.0.0";
-const expectedMcpV2Packages = [
-  "@modelcontextprotocol/client",
-  "@modelcontextprotocol/node",
-  "@modelcontextprotocol/server",
-];
+const expectedMcpV2PackageVersions = {
+  "@modelcontextprotocol/client": "2.2.0",
+  "@modelcontextprotocol/node": "2.0.0",
+  "@modelcontextprotocol/server": "2.2.0",
+};
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const packageSpecs = {
@@ -133,7 +132,9 @@ function readExpectedMcpV2Versions(packages) {
       readFileSync(path.join(rootDir, pkg.dir, "package.json"), "utf8"),
     );
 
-    for (const packageName of expectedMcpV2Packages) {
+    for (const [packageName, expectedMcpV2PackageVersion] of Object.entries(
+      expectedMcpV2PackageVersions,
+    )) {
       for (const [section, runtime] of [
         ["dependencies", true],
         ["peerDependencies", false],
