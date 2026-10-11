@@ -280,9 +280,14 @@ type NotAnalyzedCopy = {
   fix?: Readonly<Record<NotAnalyzedAudience, string>>;
 };
 
-const ADD_PROVIDER_FIX = {
-  admin: "Add an organization provider in Organization → AI providers.",
-  member: "Ask an organization admin to add an organization provider.",
+/**
+ * The reader can't tell from a skipped analysis whether the organization
+ * lacks a provider or a model that can run it, so the step points at the
+ * page that has both.
+ */
+const CHECK_PROVIDERS_FIX = {
+  admin: "Check its providers in Organization → AI providers.",
+  member: "Ask an organization admin to check its AI providers.",
 } as const;
 
 /**
@@ -295,7 +300,7 @@ const NOT_ANALYZED_BY_CODE: Readonly<Record<NotAnalyzedCode, NotAnalyzedCopy>> =
     org_keys_required: {
       cause:
         "Not analyzed: this organization requires its own provider keys for AI features.",
-      fix: ADD_PROVIDER_FIX,
+      fix: CHECK_PROVIDERS_FIX,
     },
     org_model_unconfigured: {
       cause:
@@ -303,7 +308,7 @@ const NOT_ANALYZED_BY_CODE: Readonly<Record<NotAnalyzedCode, NotAnalyzedCopy>> =
     },
     org_model_unavailable: {
       cause:
-        "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+        "Not analyzed: this organization requires its own provider keys and has no model that can run this analysis.",
     },
     org_runtime_unsupported: {
       cause:
@@ -341,10 +346,7 @@ const NOT_ANALYZED_BY_CODE: Readonly<Record<NotAnalyzedCode, NotAnalyzedCopy>> =
 const NOT_ANALYZED_FALLBACK: NotAnalyzedCopy = {
   cause:
     "Not analyzed: this organization's AI settings don't allow this analysis.",
-  fix: {
-    admin: "Check its providers in Organization → AI providers.",
-    member: "Ask an organization admin to check its AI providers.",
-  },
+  fix: CHECK_PROVIDERS_FIX,
 };
 
 function notAnalyzedText(

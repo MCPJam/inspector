@@ -880,7 +880,7 @@ describe("analysis the organization's AI key policy stopped", () => {
     expect(
       screen.getByTestId("unified-findings-analysis-failed").textContent,
     ).toBe(
-      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+      "Not analyzed: this organization requires its own provider keys and has no model that can run this analysis.",
     );
   });
 

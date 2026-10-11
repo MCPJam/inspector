@@ -93,7 +93,7 @@ describe("org-keys refusal helpers", () => {
 
   it("words a skipped analysis as Not analyzed", () => {
     expect(notAnalyzedReason("org_model_unavailable")).toBe(
-      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+      "Not analyzed: this organization requires its own provider keys and has no model that can run this analysis.",
     );
     expect(notAnalyzedReason("org_runtime_unsupported")).toBe(
       "Not analyzed: this analysis can't run on the organization's providers yet.",
@@ -104,10 +104,10 @@ describe("org-keys refusal helpers", () => {
 
   it("adds the next step for the reader, and none where there is nothing to do", () => {
     expect(notAnalyzedReason("org_keys_required", "admin")).toBe(
-      "Not analyzed: this organization requires its own provider keys for AI features. Add an organization provider in Organization → AI providers.",
+      "Not analyzed: this organization requires its own provider keys for AI features. Check its providers in Organization → AI providers.",
     );
     expect(notAnalyzedReason("org_keys_required")).toBe(
-      "Not analyzed: this organization requires its own provider keys for AI features. Ask an organization admin to add an organization provider.",
+      "Not analyzed: this organization requires its own provider keys for AI features. Ask an organization admin to check its AI providers.",
     );
     expect(notAnalyzedReason("provider_auth_failed", "admin")).toBe(
       "Not analyzed: the organization's provider rejected its API key. Update the key in Organization → AI providers.",
@@ -176,7 +176,7 @@ describe("orgKeysRefusalSentence", () => {
 describe("notAnalyzedLine", () => {
   it("is the colon form for refusals and the findings skip, else undefined", () => {
     expect(notAnalyzedLine("org_model_unavailable")).toBe(
-      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+      "Not analyzed: this organization requires its own provider keys and has no model that can run this analysis.",
     );
     expect(notAnalyzedLine("credential_missing")).toMatch(/^Not analyzed: /);
     expect(notAnalyzedLine(" ORG_RUNTIME_UNSUPPORTED ")).toMatch(
