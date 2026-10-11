@@ -1068,9 +1068,9 @@ describe("scrubSentryBreadcrumb", () => {
       "https://app.mcpjam.test:8443/tenants/42",
     ]) {
       const expected = new URL(url, APP_ORIGIN).origin;
-      expect(
-        scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data,
-      ).toEqual({ url: expected });
+      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data).toEqual(
+        { url: expected },
+      );
     }
 
     // No app origin known: every absolute URL is someone else's.
@@ -1082,8 +1082,10 @@ describe("scrubSentryBreadcrumb", () => {
     ).toEqual({ url: APP_ORIGIN });
     // An opaque origin never matches, even its own.
     expect(
-      scrubClientSentryBreadcrumb(crumb("file:///Users/jane/notes.txt"), "null")!
-        .data,
+      scrubClientSentryBreadcrumb(
+        crumb("file:///Users/jane/notes.txt"),
+        "null",
+      )!.data,
     ).toEqual({ url: "null" });
   });
 
