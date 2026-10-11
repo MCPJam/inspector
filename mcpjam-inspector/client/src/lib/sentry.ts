@@ -1,7 +1,15 @@
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
-import { buildClientSentryConfig } from "../../../shared/sentry-config";
-import type { LocationLike } from "../../../shared/credential-urls";
+import {
+  buildClientSentryConfig,
+  scrubSentryCredentials,
+} from "../../../shared/sentry-config";
+import {
+  credentialRouteTemplate,
+  scrubCredentialUrl,
+  URL_BEARING_FIELDS,
+  type LocationLike,
+} from "../../../shared/credential-urls";
 import { HOSTED_MODE } from "./config";
 import {
   desktopSentryFallback,
@@ -57,6 +65,39 @@ export function resolveClientSentryConfig() {
     documentOrigin:
       typeof window === "undefined" ? undefined : window.location.origin,
   });
+}
+
+/**
+ * The name a pageload or navigation span gets. Sentry's default is
+ * `location.pathname`, which puts a share token (`/results/<token>`) into
+ * the transaction name, the most indexed, most widely shown field Sentry has.
+ * A credential route is named by its template (`/results/:runToken`) from
+ * the registry; any other path keeps its words and loses only credentials.
+ * Names come out short of `full` on the way out
+ * (`filterSentryTransactionContent`).
+ */
+export function sentryTransactionName(pathname: string): string {
+  return credentialRouteTemplate(pathname) ?? scrubCredentialUrl(pathname);
+}
+
+/**
+ * Credentials out of an event a hook cannot drop (a replay event, which
+ * never reaches `beforeSend`), in place. When the walker cannot finish, its
+ * URL-bearing fields go.
+ */
+function scrubSentryCredentialsInPlace(event: Record<string, unknown>): void {
+  const scrubbed = scrubSentryCredentials(event) as Record<
+    string,
+    unknown
+  > | null;
+  if (!scrubbed) {
+    for (const field of URL_BEARING_FIELDS) delete event[field];
+    return;
+  }
+  for (const key of Object.keys(event)) {
+    if (!(key in scrubbed)) delete event[key];
+  }
+  Object.assign(event, scrubbed);
 }
 
 /**
@@ -189,12 +230,37 @@ function filterSentryTransactionContent<
 }
 
 /**
+ * A span on its own way out: a transaction's child, or a standalone span
+ * (web vitals such as INP), which passes through neither `beforeSend` nor
+ * `beforeSendTransaction`. A standalone span carries the scope's
+ * transaction name, the raw path, in `data.transaction`. Short of `full` its
+ * names come out as a transaction's spans' do; its credentials always do,
+ * and when the walker cannot finish, its description and data go.
+ */
+export function filterSentrySpan<T extends SentrySpanLike>(span: T): T {
+  const named = shouldMaskAnalytics()
+    ? {
+        ...span,
+        ...(typeof span.description === "string"
+          ? { description: scrubSpanValue("description", span.description) }
+          : {}),
+        ...(span.data ? { data: scrubSpanData(span.data) } : {}),
+      }
+    : span;
+  const clean = scrubSentryCredentials(named);
+  if (clean) return clean;
+  const { description: _description, data: _data, ...rest } = named;
+  return { ...rest, data: {} } as T;
+}
+
+/**
  * Initialize Sentry for error tracking and session replay.
  * This should be called once at app startup, before mounting React.
  *
  * Identity starts id-only: the initial scope carries at most the desktop
  * installation id, and `setSentryActor` adds name and email only under the
- * current actor's grant. Every outbound event is filtered again here.
+ * current actor's grant. Every outbound event is filtered again here, and
+ * every credential comes out of it last (`scrubSentryCredentials`).
  */
 export function initSentry() {
   const config = resolveClientSentryConfig();
@@ -213,30 +279,40 @@ export function initSentry() {
       const processed = processQueryEvent(filtered, hint);
       // `browserTracingIntegration` names the scope's transaction after the
       // raw path on every pageload and navigation, so an error event carries
-      // it in `transaction` as well as in `request.url`.
+      // it in `transaction` as well as in `request.url`. The credential walker
+      // runs last, so nothing added above can bring a credential back.
       return processed === null
         ? null
-        : filterSentryTransactionContent(
-            filterSentryEventUrl(
-              filterSentryEventIdentity(processed, allowNamesFor(hint)),
+        : scrubSentryCredentials(
+            filterSentryTransactionContent(
+              filterSentryEventUrl(
+                filterSentryEventIdentity(processed, allowNamesFor(hint)),
+                hint,
+              ),
               hint,
             ),
-            hint,
           );
     },
+    // Spans carry request URLs (`GET /api/web/score/runs/<token>`), so the
+    // config's credential pass runs last here too.
+    beforeSendSpan: (span) => filterSentrySpan(span),
     beforeSendTransaction: (event, hint) =>
-      filterSentryTransactionContent(
-        filterSentryEventUrl(
-          filterSentryEventIdentity(event, allowNamesFor(hint)),
+      config.beforeSendTransaction(
+        filterSentryTransactionContent(
+          filterSentryEventUrl(
+            filterSentryEventIdentity(event, allowNamesFor(hint)),
+            hint,
+          ),
           hint,
         ),
-        hint,
       ),
     // The config's content scrub first (`shared/sentry-config.ts`: console
     // arguments and request URLs keep their shape, not their values), then
     // the privacy level's filter.
-    beforeBreadcrumb: (breadcrumb) =>
-      filterSentryBreadcrumb(config.beforeBreadcrumb(breadcrumb)),
+    beforeBreadcrumb: (breadcrumb) => {
+      const scrubbed = config.beforeBreadcrumb(breadcrumb);
+      return scrubbed === null ? null : filterSentryBreadcrumb(scrubbed);
+    },
     // Replay recordings' rrweb events cannot be edited as they are recorded;
     // the page URL in their Meta events is scrubbed on the way out.
     transport: (options) =>
@@ -246,7 +322,18 @@ export function initSentry() {
     // `pending`, never on `/results/<token>`. Starting it at init and stopping
     // it later would not do: `replay.stop()` FLUSHES the buffered segment,
     // which is exactly the content that had to stay out.
-    integrations: [Sentry.browserTracingIntegration()],
+    integrations: [
+      Sentry.browserTracingIntegration({
+        // Named at the source, so a credential path never becomes a span
+        // name. `options.name` is the target pathname for both pageload and
+        // navigation (the window still shows the old one when a navigation
+        // span starts).
+        beforeStartSpan: (options) => ({
+          ...options,
+          name: sentryTransactionName(options.name),
+        }),
+      }),
+    ],
   });
   // Capture-time identity, for every event type. `postprocessEvent` runs
   // after the scope's user is applied — replay events included, which never
@@ -259,43 +346,68 @@ export function initSentry() {
   Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
     filterSentryEventIdentity(event, allowNamesFor(hint));
   });
-  // The replay event lists every URL the replay visited. Short of `full`,
-  // names come out of those like everywhere else.
+  // The replay event lists every URL the replay visited. They lose their
+  // credentials at every level, and short of `full` their names too, like
+  // everywhere else.
   Sentry.getClient()?.on?.("preprocessEvent", (event) => {
-    if (event.type !== "replay_event" || !shouldMaskAnalytics()) return;
+    if (event.type !== "replay_event") return;
+    const scrubUrl = shouldMaskAnalytics()
+      ? scrubNamesFromUrl
+      : scrubCredentialUrl;
     const replayEvent = event as { urls?: unknown };
     if (Array.isArray(replayEvent.urls)) {
       replayEvent.urls = replayEvent.urls.map((url: unknown) =>
-        typeof url === "string" ? scrubNamesFromUrl(url) : url,
+        typeof url === "string" ? scrubUrl(url) : url,
       );
     }
   });
   // The scope adds the page URL and transaction name to the replay event
   // after that; replay events never reach `beforeSend`, so they are scrubbed
-  // here, on the same terms as an error event's.
+  // here, on the same terms as an error event's, credentials last. A segment
+  // the guard's `stop()` flushes can leave after the address bar has moved
+  // onto a credential page.
   Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
     if (event.type !== "replay_event") return;
     filterSentryTransactionContent(filterSentryEventUrl(event, hint), hint);
+    scrubSentryCredentialsInPlace(event as Record<string, unknown>);
   });
 }
 
 /**
  * The Sentry half of `syncSessionRecording` (lib/session-privacy.ts): bring
- * Sentry Replay in line with the session's privacy level and the current path.
+ * Sentry Replay in line with the session's privacy level and the current
+ * location.
  *
  * Sentry Replay records DOM and text exactly like rrweb, so gating only
- * PostHog would still leave `/results/<token>` — or a `pending` session — in a
- * Sentry replay. The integration is added at the first moment recording is
- * allowed, stopped while it is not, and resumed on the way out.
+ * PostHog would still leave a credential page, or a `pending` session, in a
+ * Sentry replay. It records at `full` and `masked` (its options are the same
+ * at both, `SENTRY_REPLAY_OPTIONS`; the masked-only extras are applied frame
+ * by frame and in its transport), and is held off:
  *
- * Its options are the same at `full` and `masked` (`SENTRY_REPLAY_OPTIONS`
- * masks text, inputs and media at every level), so a level change needs no
- * restart here; the masked-only extras are applied frame by frame.
+ *  - while `pending` and at `off`;
+ *  - on a credential location (`isCredentialBearingPath`: path, query or
+ *    fragment), at any level. `installRecorderNavigationGuard` stops it
+ *    BEFORE a navigation onto one; this keeps it stopped and resumes it on
+ *    the way out.
+ *
+ * The integration is added at the first moment recording is allowed. A
+ * replay this guard stopped resumes in the mode it was in: a buffering
+ * (error-sampled) replay keeps buffering rather than turning into a full
+ * session recording.
  *
  * Never throws: this runs on a render path.
  */
 let sentryReplayStoppedByGuard = false;
+let sentryReplayResumeMode: "session" | "buffer" = "session";
 let sentryReplayAdded = false;
+/** The guard's `stop()` calls still flushing, as one promise. */
+let pendingSentryStop: Promise<unknown> | null = null;
+/** Whether the latest sync found the location blocked. */
+let lastSyncBlocked = false;
+
+type ReplayControls = ReturnType<typeof Sentry.replayIntegration> & {
+  getRecordingMode?: () => "session" | "buffer" | undefined;
+};
 
 export function syncSentryReplay(location: string | LocationLike): void {
   try {
@@ -305,11 +417,9 @@ export function syncSentryReplay(location: string | LocationLike): void {
       privacy === "off" ||
       privacy === "pending" ||
       isCredentialBearingPath(location);
+    lastSyncBlocked = blocked;
     const client = Sentry.getClient();
-    const replay =
-      client?.getIntegrationByName?.<
-        ReturnType<typeof Sentry.replayIntegration>
-      >("Replay");
+    const replay = client?.getIntegrationByName?.<ReplayControls>("Replay");
     if (!replay) {
       // Constructed once, lazily. The sample rates set at init apply as it
       // sets up, exactly as if it had been there from the start.
@@ -326,21 +436,73 @@ export function syncSentryReplay(location: string | LocationLike): void {
       // the replay id, so navigating `/results/a` → `/results/b` would
       // otherwise forget that this guard is what stopped the recording, and
       // the eventual exit would never resume it.
-      if (replay.getReplayId?.()) sentryReplayStoppedByGuard = true;
-      replay.stop?.();
+      if (replay.getReplayId?.()) {
+        sentryReplayStoppedByGuard = true;
+        sentryReplayResumeMode =
+          replay.getRecordingMode?.() === "buffer" ? "buffer" : "session";
+      }
+      const stopping: unknown = replay.stop?.();
+      if (
+        stopping &&
+        typeof (stopping as Promise<unknown>).then === "function"
+      ) {
+        const current = Promise.resolve(stopping).catch(() => {
+          // A stop that failed to flush is still over; the resume only waits
+          // for it to settle.
+        });
+        // A second `stop()` while the first is still flushing returns at
+        // once (the replay is already stopping), so it must not stand in for
+        // the first: a resume waits for every stop still in flight.
+        const settled = pendingSentryStop
+          ? Promise.all([pendingSentryStop, current])
+          : current;
+        pendingSentryStop = settled;
+        void settled.then(() => {
+          if (pendingSentryStop === settled) pendingSentryStop = null;
+        });
+      }
       return;
     }
 
     // `start()` bypasses `replaysSessionSampleRate` outright, so calling it on
     // every navigation would record 100% of the sessions that ever touched a
-    // results link. Resume only the replay this guard interrupted.
+    // results link. Resume only the replay this guard interrupted, in the mode
+    // it was in.
     if (sentryReplayStoppedByGuard) {
       sentryReplayStoppedByGuard = false;
-      replay.start?.();
+      const mode = sentryReplayResumeMode;
+      const resume = () => {
+        if (mode === "buffer") replay.startBuffering?.();
+        else replay.start?.();
+      };
+      // `stop()` flushes asynchronously, and a `start()` issued while it is
+      // still in flight is ignored — a quick in-and-out of a credential page
+      // would otherwise leave the replay stopped for good. Wait for it, then
+      // resume only if nothing has blocked the location since.
+      afterPendingSentryStops(() => {
+        if (lastSyncBlocked) {
+          sentryReplayStoppedByGuard = true;
+          return;
+        }
+        resume();
+      });
     }
   } catch {
     // See doc comment — a failed guard must not break the render.
   }
+}
+
+/**
+ * Runs `then` once no guard `stop()` is flushing: now if none is, otherwise
+ * after the pending ones settle — and after any stop issued meanwhile.
+ */
+function afterPendingSentryStops(then: () => void): void {
+  const stopping = pendingSentryStop;
+  if (!stopping) {
+    then();
+    return;
+  }
+  void stopping.then(() => afterPendingSentryStops(then));
 }
 
 /**

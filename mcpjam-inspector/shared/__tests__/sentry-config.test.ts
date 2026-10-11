@@ -16,8 +16,10 @@ import {
   type ScrubbableBreadcrumb,
   type ScrubbableEvent,
   scrubClientSentryBreadcrumb,
+  scrubSentryCredentials,
   scrubServerSentryBreadcrumb,
   scrubServerSentryEvent,
+  sentryTransactionTemplate,
   SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
@@ -986,7 +988,7 @@ describe("scrubSentryBreadcrumb", () => {
           data: { arguments: [new Error("for jane@acme.com")] },
         },
         APP_ORIGIN,
-      ).message,
+      )!.message,
     ).toBe("Error: for [redacted-email]");
     expect(
       scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
@@ -995,7 +997,7 @@ describe("scrubSentryBreadcrumb", () => {
           data: { arguments: [{ toolArgs: { city: "Lisbon" } }] },
         },
         APP_ORIGIN,
-      ).message,
+      )!.message,
     ).toBe("{toolArgs: {city: string(6)}}");
   });
 
@@ -1013,7 +1015,7 @@ describe("scrubSentryBreadcrumb", () => {
       },
     };
 
-    expect(scrubServerSentryBreadcrumb(crumb).data).toEqual({
+    expect(scrubServerSentryBreadcrumb(crumb)!.data).toEqual({
       url: "https://mcp.acme.com",
       "http.method": "POST",
       status_code: 401,
@@ -1031,7 +1033,7 @@ describe("scrubSentryBreadcrumb", () => {
           },
         },
         APP_ORIGIN,
-      ).data,
+      )!.data,
     ).toEqual({ url: "/api/web/servers/srv_1/tools", method: "GET" });
 
     expect(
@@ -1041,7 +1043,7 @@ describe("scrubSentryBreadcrumb", () => {
           data: { url: `${APP_ORIGIN}/api/web/servers/srv_1?cursor=abc` },
         },
         APP_ORIGIN,
-      ).data,
+      )!.data,
     ).toEqual({ url: `${APP_ORIGIN}/api/web/servers/srv_1` });
 
     expect(
@@ -1051,7 +1053,7 @@ describe("scrubSentryBreadcrumb", () => {
           data: { from: "/oauth/callback?code=c0de&state=s", to: "/servers" },
         },
         APP_ORIGIN,
-      ).data,
+      )!.data,
     ).toEqual({ from: "/oauth/callback", to: "/servers" });
   });
 
@@ -1066,9 +1068,9 @@ describe("scrubSentryBreadcrumb", () => {
       "https://app.mcpjam.test:8443/tenants/42",
     ]) {
       const expected = new URL(url, APP_ORIGIN).origin;
-      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN).data).toEqual({
-        url: expected,
-      });
+      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data).toEqual(
+        { url: expected },
+      );
     }
 
     // No app origin known: every absolute URL is someone else's.
@@ -1076,12 +1078,14 @@ describe("scrubSentryBreadcrumb", () => {
       scrubClientSentryBreadcrumb(
         crumb(`${APP_ORIGIN}/api/web/servers/srv_1`),
         undefined,
-      ).data,
+      )!.data,
     ).toEqual({ url: APP_ORIGIN });
     // An opaque origin never matches, even its own.
     expect(
-      scrubClientSentryBreadcrumb(crumb("file:///Users/jane/notes.txt"), "null")
-        .data,
+      scrubClientSentryBreadcrumb(
+        crumb("file:///Users/jane/notes.txt"),
+        "null",
+      )!.data,
     ).toEqual({ url: "null" });
   });
 
@@ -1091,7 +1095,7 @@ describe("scrubSentryBreadcrumb", () => {
         category: "child_process",
         message:
           "Child process errored with 'connect https://db.acme.com/x?password=p'",
-      }).message,
+      })!.message,
     ).toBe("Child process errored with 'connect https://db.acme.com/…'");
   });
 
@@ -1102,12 +1106,112 @@ describe("scrubSentryBreadcrumb", () => {
       documentOrigin: APP_ORIGIN,
     });
     const scrub = (url: string) =>
-      config.beforeBreadcrumb({ category: "fetch", data: { url } }).data;
+      config.beforeBreadcrumb({ category: "fetch", data: { url } })!.data;
     expect(scrub(`${APP_ORIGIN}/api/web/servers/srv_1?x=1`)).toEqual({
       url: `${APP_ORIGIN}/api/web/servers/srv_1`,
     });
     expect(scrub("https://mcp.acme.com/tenants/42/mcp")).toEqual({
       url: "https://mcp.acme.com",
     });
+  });
+});
+
+describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
+  const SECRET = "SENTINELs3ntry";
+
+  it("server events: request path, transaction, exception text", () => {
+    const event = scrubSentryCredentials(
+      scrubServerSentryEvent({
+        transaction: `GET /api/web/score/runs/${SECRET}`,
+        request: {
+          url: `https://app.mcpjam.com/api/web/score/runs/${SECRET}?x=1`,
+          query_string: `code=${SECRET}`,
+        },
+        exception: {
+          values: [
+            {
+              type: "Error",
+              value: `upstream refused /api/web/bench/results/${SECRET}`,
+            },
+          ],
+        },
+        tags: { route: `/results/${SECRET}` },
+      }),
+    );
+    expect(event).not.toBeNull();
+    expect(JSON.stringify(event)).not.toContain(SECRET);
+    expect(event?.transaction).toBe("GET /api/web/score/runs/:token");
+    expect(event?.request?.url).toBe(
+      "https://app.mcpjam.com/api/web/score/runs/[redacted]",
+    );
+    expect(event?.exception?.values?.[0]?.type).toBe("Error");
+  });
+
+  it("transactions and spans", () => {
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    });
+    const transaction = config.beforeSendTransaction({
+      type: "transaction",
+      transaction: "/results/:runToken",
+      spans: [
+        { description: `GET /api/web/score/runs/${SECRET}`, op: "http" },
+        { description: "GET /api/web/projects", op: "http" },
+      ],
+    });
+    expect(JSON.stringify(transaction)).not.toContain(SECRET);
+    expect(transaction?.spans).toHaveLength(2);
+    expect(transaction?.spans?.[1]?.description).toBe("GET /api/web/projects");
+  });
+
+  it("the browser beforeSend, last", () => {
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    }).beforeSend;
+    const out = beforeSend({
+      exception: { values: [{ type: "Error", value: "boom" }] },
+      request: { url: `https://app.mcpjam.com/evals/shared/${SECRET}` },
+    } as never);
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+  });
+
+  it("breadcrumbs of every category, Electron's included", () => {
+    for (const crumb of [
+      { category: "navigation", data: { from: `/results/${SECRET}`, to: "/" } },
+      { category: "fetch", data: { url: `/api/web/score/runs/${SECRET}` } },
+      {
+        category: "electron",
+        data: { url: `mcpjam://oauth/callback?code=${SECRET}` },
+      },
+      { category: "ui.click", message: `a[href="/connect/server/${SECRET}"]` },
+    ]) {
+      const client = scrubClientSentryBreadcrumb(
+        structuredClone(crumb),
+        "https://app.mcpjam.com",
+      );
+      const server = scrubServerSentryBreadcrumb(structuredClone(crumb));
+      expect(JSON.stringify(client)).not.toContain(SECRET);
+      expect(JSON.stringify(server)).not.toContain(SECRET);
+      expect(client?.category).toBe(crumb.category);
+    }
+  });
+
+  it("drops an event it cannot show clean", () => {
+    let deep: unknown = "x";
+    for (let i = 0; i < 100; i++) deep = { d: deep };
+    expect(
+      scrubSentryCredentials({ extra: { deep }, tags: { deep } }),
+    ).toBeNull();
+  });
+
+  it("names a transaction by template", () => {
+    expect(
+      sentryTransactionTemplate(`POST /api/web/bench/results/${SECRET}`),
+    ).toBe("POST /api/web/bench/results/:secret");
+    expect(sentryTransactionTemplate("GET /api/web/projects")).toBe(
+      "GET /api/web/projects",
+    );
   });
 });

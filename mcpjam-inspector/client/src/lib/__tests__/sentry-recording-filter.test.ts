@@ -138,6 +138,70 @@ describe("scrubRecordingEvents", () => {
   });
 });
 
+describe("scrubRecordingEvents, credentials", () => {
+  const TOKEN = "kd7a8f9g0h1j2k3l4m5n6p7q8r9s";
+  const SHARE = `https://app.mcpjam.com/results/${TOKEN}`;
+
+  it("scrubs credential URLs out of stylesheet text, which no Sentry option masks", () => {
+    const snapshot = {
+      type: 2,
+      timestamp: 3,
+      data: {
+        node: {
+          type: 0,
+          id: 1,
+          childNodes: [
+            {
+              type: 2,
+              id: 2,
+              tagName: "style",
+              attributes: { _cssText: `.hero { background: url(${SHARE}); }` },
+              childNodes: [
+                {
+                  type: 3,
+                  id: 3,
+                  isStyle: true,
+                  textContent: `.card { background: url(${SHARE}); }`,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const rule = {
+      type: 3,
+      timestamp: 4,
+      data: {
+        source: 8,
+        id: 2,
+        adds: [{ rule: `.x { background: url(${SHARE}); }`, index: 0 }],
+      },
+    };
+    const out = scrubRecordingEvents([snapshot, rule]);
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+    expect(JSON.stringify(out)).toContain("/results/[redacted]");
+  });
+
+  it("scrubs credentials out of custom events at every level", () => {
+    const breadcrumb = {
+      type: 5,
+      timestamp: 5,
+      data: {
+        tag: "breadcrumb",
+        payload: { category: "navigation", data: { to: `/results/${TOKEN}` } },
+      },
+    };
+    expect(JSON.stringify(scrubRecordingEvents([breadcrumb]))).not.toContain(
+      TOKEN,
+    );
+  });
+
+  it("refuses a recording with an event type it does not understand", () => {
+    expect(scrubRecordingEvents([{ type: 99, data: {} }])).toBeNull();
+  });
+});
+
 describe("filterReplayRecordingPayload", () => {
   it("filters an uncompressed recording", async () => {
     const out = await filterReplayRecordingPayload(
