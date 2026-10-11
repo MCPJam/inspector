@@ -1154,6 +1154,20 @@ describe("organization AI-key policy refusals", () => {
     },
   );
 
+  it.each(CASES)(
+    "reads %s off a wrapped error's cause before its 403",
+    (code, slug) => {
+      // The wrapper's own fields and message name no code; the 403 is found
+      // through the cause chain, so the code must be too.
+      const wrapped = new Error("Request failed", {
+        cause: { code, status: 403, message: "Forbidden" },
+      });
+      const result = describeError(wrapped);
+      expect(result.slug).toBe(slug);
+      expect(result.rawCode).toBe(code);
+    },
+  );
+
   it("reads a distinctive code out of a stored refusal sentence", () => {
     expect(
       describeError(

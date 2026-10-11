@@ -779,8 +779,14 @@ The MCP server answered the request with an HTTP error status. The message names
 ## Organization provider refusals
 
 These codes mean an AI request was refused because it could not run on one of
-the organization's own model providers. They are configuration, not outages:
-they are never retried automatically and never count against MCPJam credits.
+the organization's own model providers. None of them count against MCPJam
+credits.
+
+Most are configuration: the request won't run until someone changes its model
+or the organization's providers, so trying again doesn't help. Two are
+temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
+organization's AI settings) and `org/provider_unavailable` (the provider is
+rate-limiting or failing). Try those again in a moment.
 
 ### Organization provider required
 
