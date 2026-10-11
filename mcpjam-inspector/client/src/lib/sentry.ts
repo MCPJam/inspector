@@ -1,6 +1,7 @@
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
+import type { LocationLike } from "../../../shared/credential-urls";
 import { HOSTED_MODE } from "./config";
 import {
   desktopSentryFallback,
@@ -296,14 +297,14 @@ export function initSentry() {
 let sentryReplayStoppedByGuard = false;
 let sentryReplayAdded = false;
 
-export function syncSentryReplay(pathname: string): void {
+export function syncSentryReplay(location: string | LocationLike): void {
   try {
     if (!isErrorCaptureSurface()) return;
     const privacy = currentSessionPrivacy();
     const blocked =
       privacy === "off" ||
       privacy === "pending" ||
-      isCredentialBearingPath(pathname);
+      isCredentialBearingPath(location);
     const client = Sentry.getClient();
     const replay =
       client?.getIntegrationByName?.<

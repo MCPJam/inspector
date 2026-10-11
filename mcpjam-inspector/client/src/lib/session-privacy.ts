@@ -30,6 +30,11 @@
  * enforces the same policy again on the server: it drops replay the backend
  * says is `off`, and restricted replay the client did not declare masked.
  */
+import {
+  isReplayBlockedLocation,
+  scrubCredentialsInText,
+  type LocationLike,
+} from "../../../shared/credential-urls";
 import { HOSTED_MODE } from "./config";
 import {
   MASKED_REPLAY_BLOCKED_TAGS,
@@ -44,6 +49,16 @@ export {
   maskReplayAttribute,
   scrubNamesFromUrl,
 } from "../../../shared/telemetry-privacy";
+import {
+  maskReplayRequest,
+  maskReplayRequestFull,
+} from "./session-privacy/replay-network";
+
+export {
+  maskReplayRequest,
+  maskReplayRequestFull,
+  REPLAY_PLACEHOLDER_HREF,
+} from "./session-privacy/replay-network";
 
 export type PrivacyLevel = "off" | "masked" | "full";
 
@@ -85,22 +100,29 @@ function isPackagedDesktop(): boolean {
 }
 
 /**
- * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
- * already redact it out of event properties (`scrubSensitiveUrl`), but a
- * replay of that page would capture the address bar's contents in the DOM
- * snapshot regardless. Don't record there at all, at any level.
+ * Whether neither recorder may run on this location, at any level: a
+ * credential URL (`/results/<token>`, a tester link, an OAuth callback, any
+ * secret query or fragment key — the registry in `shared/credential-urls.ts`
+ * decides). A replay of such a page would capture the address bar, the DOM
+ * that renders the secret and the requests that send it. Scrubbing those
+ * afterwards is not a guarantee; not recording is.
+ *
+ * Takes a pathname (the old signature) or a whole location. With no argument
+ * it reads the window's current location, search and fragment included.
  */
 export function isCredentialBearingPath(
-  pathname: string | undefined = typeof window === "undefined"
-    ? undefined
-    : window.location?.pathname,
+  location: string | LocationLike | undefined = currentLocation(),
 ): boolean {
-  return (
-    !!pathname &&
-    (pathname.startsWith("/results/") ||
-      pathname.startsWith("/conformance/shared/") ||
-      pathname.startsWith("/evals/shared/"))
+  if (!location) return false;
+  return isReplayBlockedLocation(
+    typeof location === "string" ? { pathname: location } : location,
   );
+}
+
+function currentLocation(): LocationLike | undefined {
+  if (typeof window === "undefined" || !window.location) return undefined;
+  const { pathname, search, hash } = window.location;
+  return { pathname, search, hash };
 }
 
 export type RecordingSurface = "off" | "desktop" | "hosted";
@@ -242,6 +264,8 @@ export function shouldMaskAnalytics(): boolean {
 
 // ── PostHog profiles ───────────────────────────────────────────────────
 
+export type PostHogProfile = "full" | "masked";
+
 /**
  * Replay masking at `full`.
  *
@@ -249,17 +273,65 @@ export function shouldMaskAnalytics(): boolean {
  * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
  * key reveal, the SDK quickstart snippet — which no input-level masking can
  * reach. Those already carry this repo's `ph-no-capture rr-block` +
- * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
- * points at the SAME attribute rather than introducing a second thing to
- * remember: annotate a credential surface once and it is opted out of
- * autocapture AND masked in replay.
+ * `data-ph-no-capture` convention for autocapture, so text under the SAME
+ * attribute is masked in replay too: annotate a credential surface once and
+ * it is opted out of autocapture AND masked in replay.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
+
+function isUnderSecretSurface(element: Element | null | undefined): boolean {
+  try {
+    return !!element?.closest?.(`[${SECRET_SURFACE_ATTRIBUTE}]`);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * `maskTextFn` at `full`. rrweb calls it only for text its `maskTextSelector`
+ * matches, so the full profile matches every node (`*`) and decides here:
+ * text under a secret surface is masked as before, and every other text node
+ * keeps its words but loses any credential URL in it — a share link shown on
+ * the page is a credential whatever the level.
+ */
+export function maskReplayTextFull(text: string, element?: Element): string {
+  if (isUnderSecretSurface(element)) return maskReplayText(text);
+  // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
+  // a narrower copy let `encodeURIComponent("/results/<token>")` through.
+  return scrubCredentialsInText(text);
+}
+
+/** `maskTextFn` at `masked`: every text node, as `maskTextSelector: "*"` did. */
+export function maskReplayTextMasked(text: string): string {
+  return maskReplayText(text);
+}
+
+/**
+ * `maskAttributeFn` at `full`: attribute values keep their content, minus any
+ * credential URL — the Preview iframe's `src`, a share button's `href` or
+ * `title`.
+ */
+export function maskReplayAttributeFull(_name: string, value: string): string {
+  return scrubCredentialsInText(value);
+}
 
 export const SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
-  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
+  // Every text node goes through `maskTextFn`; see `maskReplayTextFull`.
+  maskTextSelector: "*",
+  maskTextFn: maskReplayTextFull,
+  maskAttributeFn: maskReplayAttributeFull,
+  // Explicit at every level: `false` wins over the project's remote network
+  // settings, so a dashboard toggle can never widen what is captured.
+  recordHeaders: false,
+  recordBody: false,
+  maskCapturedNetworkRequestFn: maskReplayRequestFull,
+  // DOM events reach `before_send` as plain JSON, not gzip strings, so its
+  // pass can scrub the stylesheet text rrweb masks nowhere
+  // (`scrubCaptureEvent` in lib/PosthogUtils.ts). posthog-js still gzips
+  // the request body by default.
+  compress_events: false,
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
@@ -267,34 +339,12 @@ export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
   .map((tag) => (tag === "image" ? "svg image" : tag))
   .join(", ");
 
-/**
- * posthog-js routes BOTH the recorded page URL (rrweb meta and URL-change
- * events) and every captured network request through this callback. At
- * `masked`: names scrubbed from the URL, headers and bodies dropped.
- */
-export function maskReplayRequest<T extends { name?: string; url?: string }>(
-  request: T,
-): T {
-  return {
-    ...request,
-    ...(typeof request.name === "string"
-      ? { name: scrubNamesFromUrl(request.name) }
-      : {}),
-    ...(typeof request.url === "string"
-      ? { url: scrubNamesFromUrl(request.url) }
-      : {}),
-    requestHeaders: undefined,
-    responseHeaders: undefined,
-    requestBody: undefined,
-    responseBody: undefined,
-  };
-}
-
 export const MASKED_SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
   // `*` masks every text node; rrweb leaves `<style>` text alone.
   maskTextSelector: "*",
+  maskTextFn: maskReplayTextMasked,
   blockSelector: MASKED_BLOCK_SELECTOR,
   maskAttributeFn: maskReplayAttribute,
   // `false` wins over the project's remote network settings.
@@ -304,9 +354,9 @@ export const MASKED_SESSION_RECORDING_OPTIONS = {
   captureJsonLd: false,
   recordCrossOriginIframes: false,
   maskCapturedNetworkRequestFn: maskReplayRequest,
+  // See SESSION_RECORDING_OPTIONS.
+  compress_events: false,
 } as const;
-
-export type PostHogProfile = "full" | "masked";
 
 /**
  * Everything posthog-js reads for one profile, as a `set_config` argument.
@@ -342,6 +392,14 @@ export interface PostHogRecorder {
 
 let posthogProfile: PostHogProfile | null = null;
 let posthogRecording = false;
+/** The client `syncSessionRecording` last drove, for the navigation guard. */
+let lastPostHogClient: PostHogRecorder | null = null;
+
+/** The PostHog client the recorders were last synced with, if any. */
+export function lastSyncedPostHogClient(): PostHogRecorder | null {
+  return lastPostHogClient;
+}
+
 // Stopping the recorder flushes its buffer through `before_send` — after the
 // level has already tightened, so those frames would be stamped with the new,
 // stricter label. Set only while a tightening stop runs.
@@ -388,16 +446,18 @@ export function replayFramesToSend(frames: unknown): unknown[] | null {
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
- * declined. `pending`, `off` and credential paths hold the recorder stopped;
- * an `off` surface never configures it at all.
+ * declined. `pending`, `off` and credential locations
+ * (`isCredentialBearingPath`: path, query and fragment) hold the recorder
+ * stopped; an `off` surface never configures it at all.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
  */
 export function syncSessionRecording(
   client: PostHogRecorder,
-  pathname: string,
+  location: string | LocationLike,
 ): void {
+  lastPostHogClient = client;
   try {
     if (recordingSurface() === "off") return;
     const privacy = currentSessionPrivacy();
@@ -420,7 +480,7 @@ export function syncSessionRecording(
     const shouldRecord =
       privacy !== "pending" &&
       privacy !== "off" &&
-      !isCredentialBearingPath(pathname);
+      !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
       if (profile === "masked") maskedReplayStartedAt = Date.now();
       client.startSessionRecording?.();

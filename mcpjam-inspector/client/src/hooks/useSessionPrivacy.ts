@@ -74,9 +74,12 @@ export function useSessionPrivacy(
       setSessionPrivacy(level);
       // BOTH recorders, and the Sentry half even without a PostHog client:
       // PostHog is routinely ad-blocked, Sentry Replay is not gated on it.
-      const pathname = window.location.pathname;
-      if (posthog) syncSessionRecording(posthog, pathname);
-      syncSentryReplay(pathname);
+      // The whole location: a secret in the query or fragment blocks
+      // recording as much as one in the path.
+      const { pathname, search, hash } = window.location;
+      const location = { pathname, search, hash };
+      if (posthog) syncSessionRecording(posthog, location);
+      syncSentryReplay(location);
     };
     const leavingRestricted =
       lastRecordingLevelRef.current === "masked" ||
