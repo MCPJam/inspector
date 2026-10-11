@@ -5,10 +5,17 @@ vi.mock("@/lib/config", () => ({ HOSTED_MODE: true }));
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
+  composeAvailableModels,
+  isOrgKeysDisallowedRow,
+  ORG_KEYS_MODEL_REASON,
+  orgKeysDisallowedNotice,
+} from "../available-models";
+import {
   buildAvailableModelsFromOrgConfig,
   type OrgVisibleConfig,
 } from "../model-helpers";
 import { isUsableOrgConnection } from "../org-ai-policy";
+import { harnessPickerModels } from "@/lib/harness-model-locks";
 
 const hostedHaiku: ModelDefinition = {
   id: "anthropic/claude-haiku-4.5",
@@ -64,6 +71,13 @@ const anthropicNoVerdict: OrgModelProvider = {
   enabled: true,
   hasSecret: true,
 };
+const openAi: OrgModelProvider = {
+  id: "orgprov_openai",
+  providerKey: "openai",
+  enabled: true,
+  hasSecret: true,
+  policyEligibility: { eligible: true },
+};
 
 function policyConfig(
   providers: OrgModelProvider[],
@@ -74,6 +88,26 @@ function policyConfig(
     aiKeyPolicy: { requireOrgKeys: true, revision: 2 },
     ...extra,
   };
+}
+
+function compose(
+  orgConfig: OrgVisibleConfig | undefined,
+  extra: Partial<Parameters<typeof composeAvailableModels>[0]> = {},
+) {
+  return composeAvailableModels({
+    orgConfig,
+    isAuthenticated: true,
+    isOllamaRunning: true,
+    ollamaModels: [
+      { id: "local-llama", name: "local-llama", provider: "ollama" },
+    ],
+    hasToken: () => true,
+    getOpenRouterSelectedModels: () => ["openai/gpt-4o"],
+    getAzureBaseUrl: () => "",
+    customProviders: [],
+    hostedCatalog: [hostedHaiku],
+    ...extra,
+  });
 }
 
 describe("org connection eligibility comes from the backend", () => {
@@ -97,6 +131,7 @@ describe("org connection eligibility comes from the backend", () => {
         hostedHaiku,
       ]),
     ).toEqual([]);
+    expect(compose(policyConfig([anthropicNoVerdict]))).toEqual([]);
   });
 
   it("off the policy, offers a connection without a verdict but never as a judge", () => {
@@ -143,6 +178,44 @@ describe("org connection eligibility comes from the backend", () => {
       buildAvailableModelsFromOrgConfig(
         policyConfig([{ ...anthropic, enabled: false }]),
         [hostedHaiku],
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("a harness host under the policy", () => {
+  it("offers only connections the backend calls eligible AND on the harness's vendor", () => {
+    const rows = buildAvailableModelsFromOrgConfig(
+      policyConfig([anthropic, openAi, openRouter]),
+      [hostedHaiku],
+    );
+    const claudeCode = harnessPickerModels(
+      rows,
+      { harnessId: "claude-code" },
+      { requireOrgKeys: true },
+    );
+    expect(claudeCode.length).toBeGreaterThan(0);
+    expect(
+      claudeCode.every((row) => row.orgProvider?.id === "orgprov_anthropic"),
+    ).toBe(true);
+  });
+
+  it("offers nothing when the vendor's connection is not eligible", () => {
+    const rows = buildAvailableModelsFromOrgConfig(
+      policyConfig([
+        {
+          ...anthropic,
+          policyEligibility: { eligible: false, code: "org_keys_required" },
+        },
+        openAi,
+      ]),
+      [hostedHaiku],
+    );
+    expect(
+      harnessPickerModels(
+        rows,
+        { harnessId: "claude-code" },
+        { requireOrgKeys: true },
       ),
     ).toEqual([]);
   });
@@ -226,5 +299,93 @@ describe("buildAvailableModelsFromOrgConfig under the policy", () => {
           row.judgeEligible === undefined,
       ),
     ).toBe(true);
+  });
+});
+
+describe("composeAvailableModels under the policy", () => {
+  it("drops hosted rows, personal keys and local runtimes, with no hosted floor", () => {
+    const models = compose(policyConfig([anthropic, openRouter, localOllama]));
+    expect(models.length).toBeGreaterThan(0);
+    expect(
+      models.every((model) => model.orgProvider?.id === "orgprov_anthropic"),
+    ).toBe(true);
+    expect(models.some((model) => String(model.id) === "local-llama")).toBe(
+      false,
+    );
+  });
+
+  it("returns an empty list when no eligible provider is configured", () => {
+    expect(compose(policyConfig([]))).toEqual([]);
+    expect(compose(policyConfig([openRouter, localOllama]))).toEqual([]);
+  });
+
+  it("keeps a saved selection the policy no longer offers, disabled", () => {
+    const models = compose(policyConfig([anthropic]), {
+      savedModelIds: ["anthropic/claude-haiku-4.5", null, ""],
+    });
+    const saved = models.find(
+      (model) => String(model.id) === "anthropic/claude-haiku-4.5",
+    );
+    expect(saved).toMatchObject({
+      name: "Claude Haiku 4.5",
+      hosted: true,
+      disabled: true,
+      disabledReason: ORG_KEYS_MODEL_REASON,
+    });
+    expect(models.filter((model) => model.disabled)).toHaveLength(1);
+  });
+
+  it("names a saved hosted id from the hosted catalog when the composition has no row for it", () => {
+    // Under the policy the composition's own hosted catalog is not loaded
+    // into the list; the snapshot still names the model.
+    const models = compose(policyConfig([anthropic]), {
+      hostedCatalog: [],
+      savedModelIds: ["anthropic/claude-haiku-4.5"],
+    });
+    const saved = models.find(
+      (model) => String(model.id) === "anthropic/claude-haiku-4.5",
+    );
+    expect(saved?.name).toBe("Claude Haiku 4.5");
+    expect(isOrgKeysDisallowedRow(saved)).toBe(true);
+    expect(orgKeysDisallowedNotice(saved!)).toBe(
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+  });
+
+  it("keeps an unknown saved id as a synthetic disabled row even when nothing else is offered", () => {
+    expect(compose(policyConfig([]), { savedModelIds: ["acme/old"] })).toEqual([
+      {
+        id: "acme/old",
+        name: "acme/old",
+        provider: "acme",
+        disabled: true,
+        disabledReason: ORG_KEYS_MODEL_REASON,
+      },
+    ]);
+  });
+
+  it("does not lock a saved selection that is still offered", () => {
+    const offered = compose(policyConfig([anthropic]));
+    const id = String(offered[0]!.id);
+    const models = compose(policyConfig([anthropic]), { savedModelIds: [id] });
+    expect(models.filter((model) => model.disabled)).toHaveLength(0);
+  });
+
+  it("is unchanged when the policy is off", () => {
+    const models = compose({
+      providers: [anthropic],
+      aiKeyPolicy: { requireOrgKeys: false, revision: 1 },
+    });
+    expect(models.some((model) => model.hosted)).toBe(true);
+    expect(models.every((model) => !model.disabled)).toBe(true);
+  });
+
+  it("composes a project no organization owns as today", () => {
+    // No organization's policy applies to it, so nothing is locked: the
+    // backend runs it unless an organization that requires its own keys is
+    // involved, and then refuses it.
+    const models = compose({ providers: [], unresolved: true });
+    expect(models.length).toBeGreaterThan(0);
+    expect(models).toEqual(compose(undefined));
   });
 });

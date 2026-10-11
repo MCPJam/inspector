@@ -216,3 +216,32 @@ export const ASK_ORG_ADMIN = "Ask an organization admin";
 
 /** The admin's action: Organization → AI providers. */
 export const MANAGE_AI_PROVIDERS = "Manage AI providers";
+
+/**
+ * A saved model the organization's AI key policy no longer allows (a hosted
+ * or personal model saved before the organization required its own keys).
+ * Pickers never list it: it shows only on the trigger, as a warning, so the
+ * saved choice is never silently switched.
+ */
+export const ORG_KEYS_MODEL_REASON =
+  "Choose a model from an organization provider.";
+
+/**
+ * Shown on every picker row while the organization's AI settings are still
+ * loading: until the policy is known, no row may become a usable default.
+ */
+export const ORG_POLICY_LOADING_REASON =
+  "Loading your organization's AI settings…";
+
+/**
+ * A row locked by the organization's AI key policy. A saved selection locked
+ * this way stays selected (shown on the trigger) rather than switching to
+ * another model, and the chat does not send until another model is chosen.
+ */
+export function isOrgPolicyLockReason(
+  reason: string | null | undefined,
+): boolean {
+  return (
+    reason === ORG_KEYS_MODEL_REASON || reason === ORG_POLICY_LOADING_REASON
+  );
+}
