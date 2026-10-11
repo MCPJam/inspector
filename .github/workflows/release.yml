@@ -404,12 +404,11 @@ jobs:
   # action does not depend on either.
   evals-action-smoke:
     needs: preflight
-    # The repo variables are what make the live smoke possible. While they are
-    # unset, the smoke SKIPS instead of failing the whole release. Set both
-    # variables to turn the gate back on.
-    if: >-
-      needs.preflight.outputs.evals_action_changed == 'true' &&
-      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
+    # Runs whenever the action changed, including when the repo variables are
+    # unset — the called workflow fails loudly on empty inputs, which is the
+    # point. Skipping here instead meant the gate quietly became a no-op and
+    # `evals-v1` shipped untested while the README said the smoke gated it.
+    if: needs.preflight.outputs.evals_action_changed == 'true'
     uses: ./.github/workflows/evals-action-smoke.yml
     with:
       project: ${{ vars.EVALS_SMOKE_PROJECT }}
@@ -418,18 +417,19 @@ jobs:
 
   publish-evals-action:
     needs: [preflight, evals-action-smoke]
-    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
-    # variables are unset) still lets the tag ship, while a FAILED smoke still
-    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
-    # job along with it — but that also stops a FAILED `needs` from skipping
-    # it, so `preflight` is re-asserted by hand. It must be: the change
-    # detection runs before preflight's green-CI gate, so a preflight that
-    # fails later still reports `evals_action_changed: true`.
+    # The tag moves only on a smoke that actually PASSED. It used to move on
+    # anything that was not a failure, which included `skipped` — so with the
+    # smoke's repo variables unset, every published tag was untested.
+    #
+    # `!cancelled()` is kept so a cancelled run does not read as success, and
+    # `preflight` is re-asserted by hand because the change detection runs
+    # before preflight's green-CI gate: a preflight that fails later still
+    # reports `evals_action_changed: true`.
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
-      needs.evals-action-smoke.result != 'failure'
+      needs.evals-action-smoke.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     concurrency:

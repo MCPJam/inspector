@@ -406,6 +406,29 @@ const formatMCPJamModelLimit = (
     : {}),
 });
 
+function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
+  const sentinel =
+    "Backend step returned no content (stream error or empty response)";
+  if (
+    typeof message !== "string" ||
+    !message.startsWith(sentinel) ||
+    (message !== sentinel &&
+      (!message.includes(
+        "the model emitted no text, no reasoning and no tool call",
+      ) ||
+        !/\(finishReason: (?:none reported|stop|tool-calls|error|other|unknown)\)/.test(
+          message,
+        )))
+  )
+    return null;
+  return {
+    message: "The model returned no response. Please try again.",
+    code: "provider_empty_response",
+    isRetryable: true,
+    details: JSON.stringify({ message }),
+  };
+}
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -472,6 +495,17 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         );
       }
 
+      const emptyResponse = summarizeEmptyModelResponse(message);
+      if (emptyResponse)
+        return {
+          ...emptyResponse,
+          ...(typeof code === "string" ? { code } : {}),
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+          details: preserveServerMessageInDetails(message, parsed.details),
+        };
+
       // Connection failures get human copy; the server's own wording stays
       // reachable under "More details" rather than leading the banner. Copy
       // A hosted chat failure arrives as a JSON envelope, and this branch
@@ -533,6 +567,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
 
   const protocolPin = summarizeProtocolVersionPin(errorString);
   if (protocolPin) return protocolPin;
+
+  const emptyResponse = summarizeEmptyModelResponse(errorString);
+  if (emptyResponse) return emptyResponse;
 
   const opaque = summarizeOpaquePayload(errorString);
   if (opaque) return opaque;

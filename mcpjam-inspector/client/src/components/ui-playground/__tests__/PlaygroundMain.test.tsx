@@ -11,11 +11,16 @@ import {
 import { PlaygroundMain } from "../PlaygroundMain";
 import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
+import {
+  resetShownPluginNotices,
+  showPluginNotice,
+} from "@/lib/plugins/plugin-notice-display";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -187,6 +192,29 @@ vi.mock("posthog-js/react", () => ({
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// COMP-14 composer upload. Off (the real flag, which PostHog above reports
+// off) for every test but the attachment ones, which turn it on.
+const mockComputersFlag = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/useComputersEnabled", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/useComputersEnabled")
+  >();
+  return {
+    ...actual,
+    useComputersEnabled: () => {
+      const real = actual.useComputersEnabled();
+      return mockComputersFlag.enabled || real;
+    },
+  };
+});
+const mockUploadAttachments = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/useComputerAttachmentUpload", () => ({
+  useComputerAttachmentUpload: () => ({
+    available: true,
+    uploadAttachments: mockUploadAttachments,
+  }),
+}));
+
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
@@ -205,6 +233,35 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
+}));
+
+// The project's installed plugins, as the hidden environment reads them.
+// Nothing installed unless a test installs one.
+const mockHiddenEnvironment = vi.hoisted(() => ({
+  calls: [] as any[],
+  state: {
+    plugins: [] as any[],
+    pluginServers: [] as any[],
+    wanted: false,
+    environmentId: null as string | null,
+    pluginServerIds: [] as string[],
+    failed: false,
+    recover: async () => ({ ok: false as const }),
+  },
+}));
+// Spied, not replaced: the real dedupe decides what is said.
+vi.mock("@/lib/plugins/plugin-notice-display", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/plugins/plugin-notice-display")
+    >();
+  return { ...actual, showPluginNotice: vi.fn(actual.showPluginNotice) };
+});
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: (input: unknown) => {
+    mockHiddenEnvironment.calls.push(input);
+    return mockHiddenEnvironment.state;
+  },
 }));
 
 // Mock convex/react
@@ -324,6 +381,8 @@ const mockUseChatSession = {
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
+  hiddenEnvironmentActive: false,
+  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -858,6 +917,283 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+  });
+
+  describe("installed plugins (hidden environment)", () => {
+    const bitsServer = {
+      serverId: "srv_bits",
+      name: "bits-cad",
+      pluginId: "plg_bits",
+      pluginLabel: "Bits & Bolts",
+    };
+    const bitsRow = {
+      pluginId: "plg_bits",
+      pluginVersionId: "ver_bits",
+      name: "bits-and-bolts",
+      displayName: "Bits & Bolts",
+      status: "active",
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-cad",
+          componentKey: "cad",
+          placement: "remote",
+        },
+      ],
+      skills: [],
+    };
+    const nothing = { ...mockHiddenEnvironment.state };
+    const recover = vi.fn(async () => ({ ok: false as const }));
+
+    function installBits(environmentId: string | null = "env_hidden") {
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [bitsRow],
+        pluginServers: [bitsServer],
+        wanted: true,
+        environmentId,
+        pluginServerIds: ["srv_bits"],
+        recover,
+      };
+    }
+
+    afterEach(() => {
+      mockHiddenEnvironment.state = { ...nothing };
+      mockHiddenEnvironment.calls = [];
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = null;
+      resetShownPluginNotices();
+    });
+
+    it("composes for the previewed client only while the environments UI is hidden", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(mockHiddenEnvironment.calls.at(-1)).toMatchObject({
+        eligible: true,
+      });
+    });
+
+    it("hands the chat hook the composition beside the ordinary client-turn context", () => {
+      installBits();
+      render(<PlaygroundMain {...defaultProps} />);
+      const hosted = capturedChatSessionOptions.hostedContext;
+      expect(hosted.hiddenEnvironment).toEqual({
+        environmentId: "env_hidden",
+        pluginServerIds: ["srv_bits"],
+        recover,
+      });
+      // Not an explicit environment: the chat hook decides per turn whether
+      // the web route can carry it, so the client-turn fields stay.
+      expect(hosted).not.toHaveProperty("executionTarget");
+      expect(hosted).not.toHaveProperty("environmentOverrides");
+      // The plugin's server never enters the chat's own selection.
+      expect(capturedChatSessionOptions.selectedServers).not.toContain(
+        "bits-cad",
+      );
+      expect(hosted.selectedServerIds).not.toContain("srv_bits");
+    });
+
+    it("leaves the chat-hook context exactly as it was without a runnable plugin", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      const plain = capturedChatSessionOptions.hostedContext;
+      expect(plain).not.toHaveProperty("hiddenEnvironment");
+      expect(plain.requiresWebChatApi).toBeUndefined();
+    });
+
+    it("shows the plugin's servers as on and read-only while the chat carries them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = true;
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([bitsServer]);
+      // No environment chrome: the environments UI is hidden.
+      expect(composer.environmentServers).toBeUndefined();
+      expect(composer.executionTarget).toBeUndefined();
+    });
+
+    it("says once per chat, when a message is sent, which plugins were skipped and why", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      // Opening a chat says nothing.
+      expect(showPluginNotice).not.toHaveBeenCalled();
+
+      // Two sends: the status enters "submitted" each time.
+      for (let send = 0; send < 2; send += 1) {
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "ready";
+        rerender(<PlaygroundMain {...defaultProps} />);
+      }
+
+      const skipped = {
+        kind: "skipped",
+        plugins: [
+          {
+            pluginId: "plg_bits",
+            name: "bits-and-bolts",
+            displayName: "Bits & Bolts",
+            reason: "needs_auth",
+          },
+        ],
+      };
+      // Asked on each send; the real dedupe says it once for the chat.
+      expect(showPluginNotice).toHaveBeenCalledTimes(2);
+      expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", skipped);
+      expect(
+        vi.mocked(showPluginNotice).mock.results.map((r) => r.value),
+      ).toEqual([true, false]);
+    });
+
+    it("names a plugin it did not start because it runs on this computer", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [
+          {
+            ...bitsRow,
+            status: "skipped",
+            reason: "placement",
+            componentKey: "cad",
+            servers: [{ ...bitsRow.servers[0], placement: "local" }],
+          },
+        ],
+      };
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", {
+          kind: "skipped",
+          plugins: [
+            {
+              pluginId: "plg_bits",
+              name: "bits-and-bolts",
+              displayName: "Bits & Bolts",
+              reason: "placement",
+              placement: "local",
+            },
+          ],
+        });
+      } finally {
+        mockUseChatSession.status = "ready";
+      }
+    });
+
+    it("says nothing when a restored chat is opened, however many turns it has", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const userTurn = (id: string) => ({
+        id,
+        role: "user",
+        parts: [{ type: "text", text: id }],
+      });
+      mockUseChatSession.messages = [userTurn("u1")];
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        // Another session opens: its id changes first, then its transcript
+        // (more user turns than the last one) lands. Neither is a send.
+        mockUseChatSession.chatSessionId = "chat-session-restored";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.messages = [
+          userTurn("r1"),
+          userTurn("r2"),
+          userTurn("r3"),
+        ];
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).not.toHaveBeenCalled();
+
+        // A send in it does.
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith(
+          "chat-session-restored",
+          expect.objectContaining({ kind: "skipped" }),
+        );
+      } finally {
+        mockUseChatSession.status = "ready";
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.messages = [];
+      }
+    });
+
+    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+      vi.mocked(showPluginNotice).mockClear();
+      installBits();
+      const models = [
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      ];
+      mockUseChatSession.availableModels = models as any;
+      mockUseChatSession.multiModelEnabled = true;
+      try {
+        const props = { ...defaultProps, enableMultiModelChat: true };
+        // Through the composer's own handlers: in compare mode there is one
+        // input per column.
+        const compareSend = async (text: string) => {
+          await act(async () => {
+            (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onChange(text);
+          });
+          await act(async () => {
+            await (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onSubmit({
+              preventDefault: () => {},
+            });
+          });
+        };
+        const { rerender } = render(<PlaygroundMain {...props} />);
+        // Entering a comparison says nothing; its first send does.
+        expect(showPluginNotice).not.toHaveBeenCalled();
+        await compareSend("first");
+        const compare = { kind: "off", reason: "compare" };
+        expect(showPluginNotice).toHaveBeenCalledTimes(1);
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-1"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+        // Not again in the same comparison.
+        await compareSend("second");
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          false,
+        );
+
+        // A later comparison in the same tab is a new chat: it says so again.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        rerender(<PlaygroundMain {...props} />);
+        await compareSend("third");
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-2"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
+    it("shows no plugin servers on a turn that runs without them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([]);
+    });
   });
 
   describe("rendering", () => {
@@ -2851,6 +3187,50 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toBeDisabled();
     });
 
+    it("turns Send off, saying why, for a model locked by credits", async () => {
+      const selectedModel = mockUseChatSession.selectedModel;
+      try {
+        Object.assign(mockUseChatSession, {
+          selectedModel: {
+            ...selectedModel,
+            disabled: true,
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+          },
+          outOfCreditsReason: "Out of MCPJam credits · resets in 3h",
+        });
+
+        render(<PlaygroundMain {...defaultProps} />);
+
+        expect(mockChatInputProps).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            submitDisabled: true,
+            submitDisabledReason: "Out of MCPJam credits · resets in 3h",
+          })
+        );
+        // The shared send gate refuses it too, not only the button.
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "hello" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      } finally {
+        Object.assign(mockUseChatSession, {
+          selectedModel,
+          outOfCreditsReason: undefined,
+        });
+      }
+    });
+
+    it("leaves Send alone for a model credits do not lock", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockChatInputProps).not.toHaveBeenLastCalledWith(
+        expect.objectContaining({ submitDisabledReason: expect.anything() })
+      );
+    });
+
     it("shows correct placeholder", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -4249,4 +4629,101 @@ describe("multi-model columns", () => {
     }
   });
 });
+
+  describe("composer attachments on a computer host", () => {
+    // Convex-shaped, so the real `useHost` queries it (see the edit tests).
+    const HOST_ID = "hlk3m9x2q7v5b8n1t4r6s0dc";
+    const UPLOADED_PATH = "/home/user/attachments/ab12cd34-report.csv";
+
+    function previewComputerHost(extra: Record<string, unknown>) {
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": HOST_ID })
+      );
+      mockHostQueryState.result = {
+        hostId: HOST_ID,
+        name: "Computer host",
+        config: {
+          id: "config-1",
+          modelId: "",
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+          serverIds: [],
+          optionalServerIds: [],
+          computer: { kind: "personal" },
+          ...extra,
+        },
+      };
+    }
+
+    async function sendWithAttachment() {
+      render(<PlaygroundMain {...defaultProps} activeProjectId="project-1" />);
+      const file = new File(["region,total\nwest,12\n"], "report.csv", {
+        type: "text/csv",
+      });
+      await act(async () => {
+        (
+          mockChatInputProps.mock.calls.at(-1)?.[0] as {
+            onChangeFileAttachments: (next: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([{ id: "attachment-1", file }]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "how many rows?" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1)
+      );
+      return mockUseChatSession.sendMessage.mock.calls[0]![0] as {
+        text: string;
+        files?: unknown[];
+      };
+    }
+
+    beforeEach(() => {
+      mockConvexAuthState.isAuthenticated = true;
+      mockComputersFlag.enabled = true;
+      mockUploadAttachments.mockResolvedValue([
+        { name: "report.csv", path: UPLOADED_PATH },
+      ]);
+    });
+
+    afterEach(() => {
+      mockComputersFlag.enabled = false;
+    });
+
+    it("a harness host never uploads to the personal computer and sends the file as a file part", async () => {
+      // The harness runs on the conversation's own box; the server writes the
+      // file there from this part.
+      mockHarnessState.harnessId = "claude-code";
+      previewComputerHost({ harness: "claude-code" });
+
+      const sent = await sendWithAttachment();
+
+      expect(mockUploadAttachments).not.toHaveBeenCalled();
+      expect(sent.text).toBe("how many rows?");
+      expect(sent.files).toEqual([
+        expect.objectContaining({
+          type: "file",
+          mediaType: "text/csv",
+          filename: "report.csv",
+          url: expect.stringMatching(/^data:text\/csv;base64,/),
+        }),
+      ]);
+    });
+
+    it("a non-harness computer host still uploads and notes the path, as before", async () => {
+      previewComputerHost({});
+
+      const sent = await sendWithAttachment();
+
+      expect(mockUploadAttachments).toHaveBeenCalledTimes(1);
+      expect(sent.text).toContain(`- report.csv: ${UPLOADED_PATH}`);
+      expect(sent.files).toHaveLength(1);
+    });
+  });
 });

@@ -133,14 +133,6 @@ jobs:
           args=(cloud eval run
             --file "$file"
             --project "$MCPJAM_PROJECT"
-            # The CLI's per-request timeout is a GLOBAL option defaulting to
-            # 30s, and it is not listed in `eval run --help`. Syncing a suite
-            # file is not one quick call — it resolves the project, negotiates
-            # capabilities, validates every tool reference live, writes the
-            # cases and then launches — and that exceeded 30s on a cold runner,
-            # failing the gate with exit 4 and a bare TIMEOUT. Distinct from
-            # --wait-timeout, which bounds waiting for the RUN to finish.
-            --timeout 180000
             --wait
             --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, $file)"
             --out "$RUNNER_TEMP/eval-report.json"
@@ -179,7 +171,6 @@ jobs:
           npx -y "@mcpjam/cli@$CLI_VERSION" cloud eval gate \
             --run "${{ steps.run.outputs.run_id }}" \
             --project "$MCPJAM_PROJECT" \
-            --timeout 180000 \
             --wait \
             --min-pass-rate-percent 80 \
             --reporter junit-xml \

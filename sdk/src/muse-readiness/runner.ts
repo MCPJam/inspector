@@ -171,6 +171,7 @@ export function gradeMuseReadiness(
   const status = rollUpMuseStage(lanes, "submission-ready");
 
   return {
+    readinessKind: "muse-directory-readiness",
     status,
     technicalStatus: rollUpMuseStage(lanes, "technical-preflight"),
     summary: buildRunSummary(status, lanes),

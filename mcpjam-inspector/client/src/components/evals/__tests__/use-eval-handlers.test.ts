@@ -512,6 +512,21 @@ describe("useEvalHandlers", () => {
       expect(mockAuthFetch).not.toHaveBeenCalled();
     });
 
+    it.each([{ throwOnFailure: true }, { stayOnPage: true }])(
+      "throws a missing case as-is instead of silently resolving: %o", async (mode) => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-x", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["not-in-this-suite"], ...mode }))
+          .rejects.toThrow("That case is not in this suite.");
+      });
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(result.current.rerunningSuiteId).toBeNull();
+    });
+
     it("sends no caseIds for an ordinary full rerun", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
@@ -550,6 +565,38 @@ describe("useEvalHandlers", () => {
         suiteDescription: "Suite description",
         serverIds: ["server-1"],
       });
+    });
+
+    it("reruns a suite with no threshold at the 70% default, not the latest run's", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          latestRunBySuiteId: new Map<string, any>([
+            [
+              "suite-456",
+              {
+                _id: "run-old",
+                hasServerReplayConfig: false,
+                passCriteria: { minimumPassRate: 100 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-456",
+        name: "My Suite",
+        description: "Suite description",
+        environment: { servers: ["server-1"] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.passCriteria).toEqual({ minimumPassRate: 70 });
     });
 
     it("sends iterationOverride as a top-level field while tests[].runs preserves the persisted default", async () => {
@@ -1285,6 +1332,19 @@ describe("useEvalHandlers", () => {
       });
       expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
       expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("propagates a quota wall refusal to the setup sheet", async () => {
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+      const { result } = renderHook(() => useEvalHandlers({ ...defaultProps, organizationId: "org-1" }));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["test-case-1"], throwOnFailure: true })).rejects.toThrow();
+      });
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({ kind: "evalIterations" });
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
     });
 
     it("opens the wall for a cap the replay endpoint nests under details", async () => {

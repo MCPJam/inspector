@@ -41,7 +41,8 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { AddPluginModal } from "./plugins/AddPluginModal";
-import { PluginsSection } from "./plugins/PluginsSection";
+import { InstalledPluginServerCards } from "./plugins/InstalledPluginServerCards";
+import { useServersTabPlugins } from "./plugins/use-servers-tab-plugins";
 import {
   permalinkUnavailableMessage,
   resolvePermalinkTarget,
@@ -818,6 +819,12 @@ export function ServersTab({
   // in-flight import survives closing the dialog and resumes on reopen.
   const isPluginsEnabled = usePluginsEnabled();
   const [isAddingPlugin, setIsAddingPlugin] = useState(false);
+  // Installed plugins: their servers render as cards in the grid below, and
+  // their lifecycle lives in each server's Settings.
+  const pluginParts = useServersTabPlugins({
+    projectId: sharedProjectIdForHostScope,
+    routePluginId: routePluginId ?? null,
+  });
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
@@ -986,7 +993,7 @@ export function ServersTab({
     !!pendingDashboardOAuth &&
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
     pendingDashboardOAuthServer?.connectionStatus !== "failed";
-  const hasAnyServers = connectedCount > 0;
+  const hasAnyServers = connectedCount > 0 || pluginParts.hasPluginCards;
   const shouldShowServerActionsInChrome =
     !!selectedProject && !isLoadingProjects && !isBillingContextPending;
   const showServerActionsInHostsHeader =
@@ -1896,26 +1903,11 @@ export function ServersTab({
     );
   };
 
-  // Installed plugin GROUP cards, above the standalone server grid. Plugin
-  // component servers never appear in that grid (the backend excludes
-  // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
-  // this section is the only place their health is visible on Connect.
-  const renderPluginsSection = () => {
-    if (isPluginsEnabled) {
-      return (
-        <PluginsSection
-          projectId={sharedProjectIdForHostScope}
-          expandedPluginId={routePluginId ?? null}
-        />
-      );
-    }
-    // The flag is a per-viewer PostHog rollout, and `list_project_plugins` is
-    // NOT flag-gated — so an agent working for someone inside the rollout can
-    // hand a `/servers/plugins/:pluginId` link to someone outside it. Dropping
-    // the section silently would render ordinary Connect and never mention
-    // that the link went nowhere. Same message as a missing plugin: whether
-    // the resource exists is not something this screen should disclose.
-    if (!routePluginId) return null;
+  // A `/servers/plugins/:pluginId` permalink to a plugin this viewer cannot
+  // see (gone, or outside the plugins rollout) says so above the collection.
+  // A found one opens its first server's Settings (see `useServersTabPlugins`).
+  const renderPluginPermalinkNotice = () => {
+    if (!pluginParts.routeUnavailable) return null;
     return (
       <div
         role="status"
@@ -1937,10 +1929,7 @@ export function ServersTab({
    * followed did not land.
    */
   const renderPermalinkNotice = () => {
-    // The PLUGIN half of the same question is answered inside
-    // `PluginsSection`, which is where the plugin list lives — duplicating
-    // that query here to render one sentence would put two sources of truth
-    // behind one message.
+    // The PLUGIN half of the same question is `renderPluginPermalinkNotice`.
     if (routeServerState.kind !== "unavailable") return null;
     return (
       <div
@@ -1988,7 +1977,7 @@ export function ServersTab({
 
           {renderQuickConnectSection()}
 
-          {renderPluginsSection()}
+          {renderPluginPermalinkNotice()}
 
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
           <DndContext
@@ -2036,6 +2025,17 @@ export function ServersTab({
                     />
                   );
                 })}
+                {/* Servers the project's installed plugins add. Same card,
+                    not reorderable: they belong to the plugin's version. */}
+                {pluginParts.plugins.map((plugin) => (
+                  <InstalledPluginServerCards
+                    key={plugin.pluginId}
+                    plugin={plugin}
+                    row={pluginParts.rowFor(plugin.pluginId)}
+                    canManage={pluginParts.canManage}
+                    onOpenSettings={pluginParts.setDetail}
+                  />
+                ))}
               </div>
             </SortableContext>
             <DragOverlay>
@@ -2130,7 +2130,7 @@ export function ServersTab({
 
       {renderQuickConnectSection()}
 
-      {renderPluginsSection()}
+      {renderPluginPermalinkNotice()}
 
       {/* Empty State */}
       <Card className="p-12 text-center">
@@ -2315,6 +2315,29 @@ export function ServersTab({
             }
           />
         )}
+
+        {pluginParts.detail ? (
+          <ServerDetailModal
+            key={`plugin:${pluginParts.detail.pluginId}:${pluginParts.detail.serverId ?? ""}`}
+            isOpen
+            plugin={pluginParts.detail}
+            onClose={() => pluginParts.setDetail(null)}
+            projectId={hostedProjectId}
+            extensionSettingsScope={
+              extensionSettingsEnabled && hostedProjectId && previewedHostId
+                ? {
+                    projectId: hostedProjectId,
+                    hostId: previewedHostId,
+                    threadId: `settings:plugin:${pluginParts.detail.pluginId}`,
+                    pluginWorkspace: {
+                      version: 1,
+                      workspaceId: `connect-settings:plugin:${pluginParts.detail.pluginId}`,
+                    },
+                  }
+                : null
+            }
+          />
+        ) : null}
 
         {showServerActionsInHostsHeader && hostsConnectAddServerSlot
           ? createPortal(

@@ -423,6 +423,12 @@ function assertGolden(name: string, actual: unknown) {
   expect(JSON.parse(text)).toEqual(JSON.parse(readFileSync(path, "utf8")));
 }
 
+/** A command's live output arrives in timing-dependent pieces; goldens
+ *  pin the stream without them (the full output is the tool result). */
+function goldenChunks<C extends { type: string }>(chunks: C[]): C[] {
+  return chunks.filter((c) => c.type !== "data-harness-tool-output");
+}
+
 const TERMINAL = new Set(["finish", "error", "abort"]);
 
 describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
@@ -652,7 +658,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           expect(await leftovers()).toEqual([]);
           const normalize = normalizer();
           assertGolden(`${harness}.native-tool`, {
-            stream: normalize(result.chunks),
+            stream: normalize(goldenChunks(result.chunks)),
             evidence: normalize({
               toolCalls: result.toolCalls,
               toolResults: result.toolResults,
@@ -698,7 +704,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           expect(await leftovers()).toEqual([]);
           const normalize = normalizer();
           assertGolden(`${harness}.mcp-tool`, {
-            stream: normalize(result.chunks),
+            stream: normalize(goldenChunks(result.chunks)),
             evidence: normalize({
               toolCalls: result.toolCalls,
               toolResults: result.toolResults,

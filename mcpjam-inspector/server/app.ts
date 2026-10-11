@@ -94,6 +94,7 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import {
   applyHostedPartition,
   mountHostedOpenRoutes,
@@ -277,6 +278,7 @@ export async function createHonoApp() {
   // session auth, 403s from origin validation, and hosted-mode 410 partition
   // responses are still observed in Axiom — those are exactly the requests
   // SREs want to see during an outage or attack).
+  app.use("/api/*", sentryRequestIdentityMiddleware);
   app.use("/api/*", requestLogContextMiddleware);
 
   // ===== SECURITY MIDDLEWARE STACK =====

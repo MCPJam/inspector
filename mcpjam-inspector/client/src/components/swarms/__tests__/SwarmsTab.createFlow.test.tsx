@@ -244,6 +244,8 @@ vi.mock("convex/react", () => ({
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
   useConvex: () => ({ query: convexQueryMock }),
+  // The credit balance (Continue's out-of-credits gate): not loaded here.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/useViews", () => ({

@@ -2509,6 +2509,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
+  /** The selection `extraBodyFields` forwards, typed for a harness turn. */
+  modelSelection?: ModelSelection;
   /** See {@link RunEvalSuiteOptions.extraHeaders}. */
   extraHeaders?: Record<string, string>;
 };
@@ -3770,6 +3772,7 @@ const executeTestCase = async (params: {
                 ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
               }
             : undefined,
+        ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
@@ -3846,6 +3849,7 @@ const executeTestCase = async (params: {
           ...orgByokRuntime.target,
           ...(orgSelection ? { modelSelection: orgSelection } : {}),
         },
+        ...(orgSelection ? { modelSelection: orgSelection } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
@@ -6215,6 +6219,7 @@ const runHostedIterationWithBrowser = async (
     orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
+    modelSelection,
     extraHeaders,
     convexClient,
     runId,
@@ -7150,6 +7155,7 @@ const runHostedIterationWithBrowser = async (
     evalAuthContext,
     endpointPath,
     extraBodyFields: evalAttributedBodyFields,
+    ...(modelSelection ? { modelSelection } : {}),
     ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,

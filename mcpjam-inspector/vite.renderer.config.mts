@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { defineConfig, loadEnv, type Plugin } from "vite";
-import react from "@vitejs/plugin-react";
+import react from "@vitejs/plugin-react-electron";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
@@ -114,12 +115,13 @@ export default defineConfig(({ command, mode }) => {
           target: serverOrigin,
           changeOrigin: true,
         },
-        // Proxy WorkOS API calls during Electron local dev to avoid browser CORS
-        // issues and match the web client Vite config behavior.
+        // Keep AuthKit on the embedded server's session proxy, matching web dev.
+        // It stores refresh tokens in local HttpOnly cookies and restores them
+        // for subsequent refresh requests from AuthKit.
         "/user_management": {
-          target: "https://api.workos.com",
+          target: serverOrigin,
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
         // PostHog same-origin relay (server/routes/relay.ts) — matches the
         // web client Vite config; without it Electron dev requests to /relay
@@ -138,6 +140,19 @@ export default defineConfig(({ command, mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SHA__: JSON.stringify(
+        (() => {
+          try {
+            return execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: fileURLToPath(new URL(".", import.meta.url)),
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim();
+          } catch {
+            return "unknown";
+          }
+        })(),
+      ),
       // Sentry `dist`, matching the `--dist` that forge.config.ts's
       // packageAfterCopy hook uploads `.vite/renderer` under. This config only
       // ever builds the Electron renderer, and forge builds it on the machine

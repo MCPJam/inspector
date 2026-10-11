@@ -48,6 +48,7 @@ import {
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
+import { isNoRunnableHarnessModel } from "@/lib/harness-model-locks";
 
 interface ModelSelectorProps {
   /** Alternate trigger for embedded surfaces such as eval tables. */
@@ -1162,6 +1163,9 @@ export function ModelSelector({
                 showTabs &&
                 providerTab === "configured" &&
                 visibleSections.configured.length === 0;
+              // A harness host with no row it can run: its stand-in says why.
+              const harnessEmpty =
+                !isSearching && isNoRunnableHarnessModel(currentModel);
 
               return (
                 <>
@@ -1196,13 +1200,15 @@ export function ModelSelector({
                     {/* cmdk renders Empty whenever no rows are mounted, which
                         the empty providers tab below would otherwise inherit —
                         and "No matching models" reads as a failed search. */}
-                    {showConfiguredEmpty ? null : (
+                    {showConfiguredEmpty || harnessEmpty ? null : (
                       <CommandEmpty>No matching models.</CommandEmpty>
                     )}
 
-                    {showConfiguredEmpty ? (
+                    {showConfiguredEmpty || harnessEmpty ? (
                       <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
-                        No provider keys yet.
+                        {harnessEmpty
+                          ? currentModel.disabledReason
+                          : "No provider keys yet."}
                       </p>
                     ) : null}
 
@@ -1294,7 +1300,7 @@ export function ModelSelector({
                       rows are a transient mix of both sections. */}
                   {onManageOrgProviders &&
                   !isSearching &&
-                  (showConfigured || showConfiguredEmpty) ? (
+                  (showConfigured || showConfiguredEmpty || harnessEmpty) ? (
                     <div className="border-t px-2 py-1.5">
                       <button
                         type="button"

@@ -93,6 +93,15 @@ describe("LoginInitiationRoute", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
+  it("lets a standalone entry reload the app for an existing session", async () => {
+    authState = { user: { id: "user_1" }, isLoading: false };
+    const onAlreadySignedIn = vi.fn();
+    render(<LoginInitiationRoute onAlreadySignedIn={onAlreadySignedIn} />);
+    await waitFor(() => expect(onAlreadySignedIn).toHaveBeenCalledOnce());
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
   it("preserves the organization when retrying a failed sign-in", async () => {
     signInMock.mockRejectedValueOnce(new Error("authorize failed"));
     window.history.replaceState(

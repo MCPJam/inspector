@@ -15,6 +15,7 @@ import {
   findListingMetaForUri,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
+import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 
 const refuse = (): never => {
   throw new PluginInvocationError("FORM_PREVIEW_UNAVAILABLE");
@@ -75,7 +76,7 @@ export async function openPluginFormAppPreview(
     };
     if (
       !widgetContent.mimeTypeValid ||
-      Buffer.byteLength(widgetContent.html, "utf8") > 1024 * 1024
+      Buffer.byteLength(widgetContent.html, "utf8") > PLUGIN_APP_UI_MAX_BYTES
     )
       return refuse();
     const fresh = (await service.authorizeTools([options.target.name])).get(

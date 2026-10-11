@@ -11405,6 +11405,70 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/muse": {
+      "post": {
+        "operationId": "startMuseReadinessRun",
+        "tags": ["Directory readiness"],
+        "summary": "Start a Muse connector readiness run",
+        "description": "Grades the saved server against Meta's Muse connector guidelines and returns `202` with a run id. Free: Muse readiness has no AI observations, so the body has no field that can spend, and no submission mode, which belongs to the OpenAI plugin directory. The submission-ready verdict stays `incomplete` on a hosted run, because Muse's submission requirements are declared by the submitter and only the CLI accepts a submission profile. Meta reviews every submission by hand, so `ready` is a preflight, not a prediction of approval.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key (including `includeLlmObservations`, which Muse does not offer), or the server uses a transport no directory can list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/readiness-runs": {
       "get": {
         "operationId": "listReadinessRuns",
@@ -11420,9 +11484,9 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": ["claude", "openai"]
+              "enum": ["claude", "openai", "muse"]
             },
-            "description": "Narrow to one publisher. Omitted lists both, newest first."
+            "description": "Narrow to one publisher. Omitted lists all, newest first."
           },
           {
             "name": "serverId",
@@ -30588,9 +30652,10 @@
               "submission-artifacts",
               "experience-insights",
               "plugin-package",
-              "release-contract"
+              "release-contract",
+              "tool-policy"
             ],
-            "description": "Anthropic defines five lanes and OpenAI seven, overlapping on four. Which subset applies is decided by the run's `readinessKind`."
+            "description": "Anthropic defines five lanes, OpenAI seven and Muse four. Which subset applies is decided by the run's `readinessKind`."
           },
           "status": {
             "type": "string",
@@ -30641,7 +30706,8 @@
                 "submission-artifacts",
                 "experience-insights",
                 "plugin-package",
-                "release-contract"
+                "release-contract",
+                "tool-policy"
               ]
             },
             "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
@@ -30717,7 +30783,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "serverId": {
             "type": "string",
@@ -30839,7 +30905,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "status": {
             "type": "string",
