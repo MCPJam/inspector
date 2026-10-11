@@ -187,11 +187,46 @@ export function marker({ path, text }) {
   return `<!-- ui-copy ${createHash("sha1").update(`${path}\n${text}`).digest("hex").slice(0, 12)} -->`;
 }
 
+/** The `${...}` expressions in a string, sorted, so two strings can be compared. */
+export function placeholders(text) {
+  return (text.match(/\$\{[^}]*\}/g) ?? []).sort();
+}
+
+/**
+ * Findings by id, or an error when the model answered with an id that was not
+ * in the batch or answered one twice. Dropping such an answer could turn a
+ * flagged string into a pass, so it fails the check instead.
+ */
+export function matchFindings(items, answers) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set();
+  const findings = [];
+  for (const answer of answers) {
+    if (!byId.has(answer.id) || seen.has(answer.id)) {
+      throw new Error(`${MODELS.classify.id} answered with id ${answer.id}, which is ${seen.has(answer.id) ? "a duplicate" : "not in the batch"}.`);
+    }
+    seen.add(answer.id);
+    findings.push({ ...byId.get(answer.id), pattern: answer.pattern, note: answer.note });
+  }
+  return findings;
+}
+
+/**
+ * A rewrite is only offered when it keeps the original's placeholders: one
+ * added or dropped would change what the code renders, not just the words.
+ */
+export function acceptRewrite(original, rewritten) {
+  if (typeof rewritten !== "string" || !rewritten.trim()) return null;
+  const same = JSON.stringify(placeholders(original)) === JSON.stringify(placeholders(rewritten));
+  return same ? rewritten : null;
+}
+
 export function commentBody(finding) {
-  const fix = suggestion(finding.source, finding.text, finding.rewrite);
+  const fix = finding.rewrite ? suggestion(finding.source, finding.text, finding.rewrite) : null;
   const lines = [`**${finding.pattern}**: ${finding.note}`, ""];
   if (fix) lines.push("```suggestion", fix, "```");
-  else lines.push(`Suggested copy: ${finding.rewrite}`);
+  else if (finding.rewrite) lines.push(`Suggested copy: ${finding.rewrite}`);
+  else lines.push("No rewrite is offered for this one; adjust the copy by hand.");
   lines.push("", marker(finding));
   return lines.join("\n");
 }
@@ -246,7 +281,7 @@ export function report({ items, findings, usd, waived, posted }) {
   else if (!findings.length) lines.push(`${items.length} new strings, none matched a pattern.`);
   else {
     lines.push(`${findings.length} of ${items.length} new strings matched a pattern.`, "", "| Where | Pattern | Copy | Suggested |", "|---|---|---|---|");
-    for (const f of findings) lines.push(`| \`${f.path}:${f.line}\` | ${f.pattern} | ${f.text} | ${f.rewrite} |`);
+    for (const f of findings) lines.push(`| \`${f.path}:${f.line}\` | ${f.pattern} | ${f.text} | ${f.rewrite ?? "(by hand)"} |`);
     lines.push("", waived ? "Waived by the `slop-waiver` label." : `${posted} suggestions posted on the PR. Accept them, or a CODEOWNER can apply \`slop-waiver\` with a reason.`);
   }
   if (items.length) {
@@ -271,13 +306,12 @@ export async function main(argv, call = callClaude) {
   const text = rubric();
   const classified = await classify(items, text, call);
   let usd = cost(classified.usage, MODELS.classify);
-  const byId = new Map(items.map((item) => [item.id, item]));
-  let findings = classified.items.filter((f) => byId.has(f.id)).map((f) => ({ ...byId.get(f.id), pattern: f.pattern, note: f.note }));
+  let findings = matchFindings(items, classified.items);
   if (findings.length) {
     const rewritten = await rewrite(findings, text, call);
     usd += cost(rewritten.usage, MODELS.rewrite);
     const rewrites = new Map(rewritten.items.map((r) => [r.id, r.text]));
-    findings = findings.map((f) => ({ ...f, rewrite: rewrites.get(f.id) ?? f.text }));
+    findings = findings.map((f) => ({ ...f, rewrite: acceptRewrite(f.text, rewrites.get(f.id)) }));
   }
   const posted = findings.length && !dryRun && process.env.PR_NUMBER ? await postReview(findings) : 0;
   return report({ items, findings, usd, waived, posted });

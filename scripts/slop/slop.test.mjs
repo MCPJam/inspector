@@ -17,12 +17,14 @@ import { addedCopy, extractUiStrings, isUiFile } from "./ui-strings.mjs";
 import {
   BATCH,
   MODELS,
+  acceptRewrite,
   callClaude,
   classify,
   collectAdded,
   commentBody,
   main as reviewCopy,
   marker,
+  matchFindings,
   report,
   suggestion,
 } from "./copy-review.mjs";
@@ -308,6 +310,23 @@ describe("copy review", () => {
     const body = commentBody(finding);
     assert.match(body, /```suggestion\ntoast\.error\("Could not save\."\);\n```/);
     assert.ok(body.endsWith(marker(finding)));
+  });
+
+  it("fails on an answer whose id is not in the batch or repeats one", () => {
+    const items = [{ id: 1, path: ui, text: "a b", source: "" }, { id: 2, path: ui, text: "c d", source: "" }];
+    assert.equal(matchFindings(items, [{ id: 2, pattern: "p", note: "n" }])[0].text, "c d");
+    assert.throws(() => matchFindings(items, [{ id: 3, pattern: "p", note: "n" }]), /not in the batch/);
+    assert.throws(() => matchFindings(items, [{ id: 1, pattern: "p", note: "n" }, { id: 1, pattern: "q", note: "n" }]), /duplicate/);
+  });
+
+  it("offers a rewrite only when it keeps the placeholders", () => {
+    assert.equal(acceptRewrite("Saved ${name}", "${name} saved."), "${name} saved.");
+    assert.equal(acceptRewrite("Saved ${name}", "Saved."), null);
+    assert.equal(acceptRewrite("Saved.", "Saved ${name}."), null);
+    assert.equal(acceptRewrite("Saved.", "   "), null);
+    const finding = { path: ui, line: 2, text: "Saved ${name}", source: "t(`Saved ${name}`)", pattern: "p", note: "n", rewrite: null };
+    assert.match(commentBody(finding), /adjust the copy by hand/);
+    assert.doesNotMatch(commentBody(finding), /```suggestion/);
   });
 
   it("classifies every string, in batches, and lists them all in the report", async () => {
