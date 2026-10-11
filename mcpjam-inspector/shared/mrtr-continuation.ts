@@ -75,6 +75,8 @@ export interface MrtrInputRequestDisplay {
   message: string;
   /** Form mode: the MCP `requestedSchema` (flat-object subset). Capped. */
   requestedSchema?: unknown;
+  /** Owned plugin original-operation link; absent in ordinary elicitation. */
+  pluginFormSourceToken?: string;
   /** URL mode: the URL the user is asked to open. Never pre-fetched. */
   url?: string;
 }
@@ -109,6 +111,32 @@ export interface MrtrInputRequiredEvent {
   /** Epoch ms after which the continuation expires and resolves as cancel. */
   expiresAt: number;
   chatSessionId?: string;
+  /** Issued only by original model dispatch. Neither field grants execution. */
+  pluginModelOperation?: MrtrOwnedModelOperation;
+  pluginFormProfile?: import("./plugin-extensions/form-plan").PluginFormProfile;
+  pluginFormServiceScope?: { projectId: string; workspaceId: string };
+}
+
+export interface MrtrOwnedModelOperation {
+  instanceToken: string;
+  toolCallId: string;
+  toolName: string;
+}
+export function isMrtrOwnedModelOperation(
+  value: unknown,
+): value is MrtrOwnedModelOperation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.instanceToken === "string" &&
+    /^[A-Za-z0-9_-]{43}$/.test(v.instanceToken) &&
+    typeof v.toolCallId === "string" &&
+    v.toolCallId.length > 0 &&
+    v.toolCallId.length <= 128 &&
+    typeof v.toolName === "string" &&
+    v.toolName.length > 0 &&
+    v.toolName.length <= 4096
+  );
 }
 
 /**
@@ -117,6 +145,7 @@ export interface MrtrInputRequiredEvent {
  * that completed the operation, a cancel from elsewhere).
  */
 export interface MrtrResolvedEvent {
+  pluginModelOperation?: MrtrOwnedModelOperation;
   kind: "resolved";
   version: number;
   continuationId: string;
@@ -151,6 +180,37 @@ export interface MrtrResumeSubmission {
   round: number;
   /** One response per embedded request key from the round's display. */
   responses: Record<string, MrtrElicitationResponse>;
+}
+
+/** Private upload receipt; the store revalidates actor, parent and round. */
+export interface MrtrPrivateResumeSubmission {
+  continuationId: string;
+  round: number;
+  responsesBlobId: string;
+}
+
+export type MrtrResumePayload =
+  | MrtrResumeSubmission
+  | MrtrPrivateResumeSubmission;
+
+export function isMrtrPrivateResumeSubmission(
+  value: unknown,
+): value is MrtrPrivateResumeSubmission {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.continuationId === "string" &&
+    v.continuationId.length > 0 &&
+    v.continuationId.length <= 4096 &&
+    Number.isSafeInteger(v.round) &&
+    (v.round as number) >= 0 &&
+    typeof v.responsesBlobId === "string" &&
+    v.responsesBlobId.length > 0 &&
+    v.responsesBlobId.length <= 512 &&
+    v.responsesBlobId.trim() === v.responsesBlobId &&
+    v.responses === undefined
+  );
 }
 
 /**
@@ -245,6 +305,13 @@ function isInputRequestDisplay(
   if (typeof value.key !== "string" || typeof value.message !== "string") {
     return false;
   }
+  if (
+    value.pluginFormSourceToken !== undefined &&
+    (typeof value.pluginFormSourceToken !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(value.pluginFormSourceToken) ||
+      value.mode !== "form")
+  )
+    return false;
   if (value.mode === "url") return isNavigableUrl(value.url);
   if (value.mode === "form") return true;
   return false;
@@ -278,6 +345,8 @@ export function isMrtrContinuationEvent(
       typeof value.expiresAt === "number" &&
       Number.isFinite(value.expiresAt) &&
       isOptionalString(value.chatSessionId) &&
+      (value.pluginModelOperation === undefined ||
+        isMrtrOwnedModelOperation(value.pluginModelOperation)) &&
       Array.isArray(value.inputRequests) &&
       value.inputRequests.length > 0 &&
       value.inputRequests.every(isInputRequestDisplay)
@@ -286,6 +355,8 @@ export function isMrtrContinuationEvent(
 
   if (value.kind === "resolved") {
     return (
+      (value.pluginModelOperation === undefined ||
+        isMrtrOwnedModelOperation(value.pluginModelOperation)) &&
       (value.outcome === "completed" ||
         value.outcome === "failed" ||
         value.outcome === "cancelled" ||
@@ -329,6 +400,7 @@ export function isMrtrResumeSubmission(
   value: unknown,
 ): value is MrtrResumeSubmission {
   if (!isRecord(value)) return false;
+  if (value.responsesBlobId !== undefined) return false;
   if (typeof value.continuationId !== "string") return false;
   // A round is a discrete counter the store fences on, so a fractional value
   // is as malformed as a string one — `Number.isInteger` also implies finite.
@@ -346,4 +418,63 @@ export function isMrtrResumeSubmission(
       isAction(r.action) &&
       (r.content === undefined || isRecord(r.content)),
   );
+}
+
+export function parseMrtrChatResumeRequest(value: unknown): {
+  toolCallId: string;
+  serverId: string;
+  continuationId: string;
+  round: number;
+  responses?: Record<string, MrtrElicitationResponse>;
+  owned?: MrtrOwnedModelOperation & { submission: MrtrPrivateResumeSubmission };
+} | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.toolCallId !== "string" ||
+    !v.toolCallId ||
+    v.toolCallId.length > 128
+  )
+    return null;
+  if (typeof v.serverId !== "string" || !v.serverId || v.serverId.length > 512)
+    return null;
+  if (v.pluginModelOperation !== undefined) {
+    const submission = {
+      continuationId: v.continuationId,
+      round: v.round,
+      responsesBlobId: v.responsesBlobId,
+    };
+    if (
+      !isMrtrOwnedModelOperation(v.pluginModelOperation) ||
+      !isMrtrPrivateResumeSubmission(submission) ||
+      v.responses !== undefined ||
+      v.toolCallId !== v.pluginModelOperation.toolCallId
+    )
+      return null;
+    return {
+      toolCallId: v.toolCallId,
+      serverId: v.serverId,
+      continuationId: submission.continuationId,
+      round: submission.round,
+      owned: { ...v.pluginModelOperation, submission },
+    };
+  }
+  if (v.responsesBlobId !== undefined) return null;
+  const submissionCandidate = {
+    continuationId: v.continuationId,
+    round: v.round,
+    responses: v.responses,
+  };
+  if (!isMrtrResumeSubmission(submissionCandidate)) return null;
+  return {
+    toolCallId: v.toolCallId,
+    serverId: v.serverId,
+    continuationId: submissionCandidate.continuationId as string,
+    round: submissionCandidate.round as number,
+    responses: submissionCandidate.responses as Record<
+      string,
+      MrtrElicitationResponse
+    >,
+  };
 }

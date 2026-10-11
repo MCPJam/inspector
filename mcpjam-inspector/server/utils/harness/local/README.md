@@ -32,7 +32,7 @@ a mode gets a user-facing name.
 | ----------------------------- | ----------------- | -------------------------------- | -------------------------------------- |
 | Runs on the user's machine    | No                | Yes                              | Yes                                    |
 | Outer host containment        | Cloud sandbox     | **No**                           | Backend-dependent, verified            |
-| Vendor permission controls    | Adapter-dependent | Required                         | Required where compatible              |
+| Vendor permission controls    | Adapter-dependent | Attended: always ask mode; Off pre-approves native requests after separate consent | Required where compatible |
 | Inspector process supervision | Cloud provider    | Required                         | Required                               |
 | Workspace path restriction    | Cloud mount       | Inspector file API + policy only | OS/backend enforced                    |
 | Network restriction           | Cloud policy      | **No Inspector guarantee**       | Backend policy + gateway allowlist     |
@@ -51,8 +51,8 @@ Per harness:
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
-| codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.121` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
+| codex       | Eligible (darwin-arm64, linux-x64), dark until conformance is recorded | Only on MCPJam's app-server adapter (`codex-appserver/`), never `@ai-sdk/harness-codex` (which refuses every mode but `allow-all`). Attended: `allow-reads`/`allow-edits` → Codex `untrusted`, real approval requests. Unattended: `allow-all` only inside Codex's own command sandbox with the explicit D2 policy, and only on targets in `unattendedSandboxTargets` (none yet). |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
@@ -67,10 +67,23 @@ native.**
 | `compatibility.ts`       | The Inspector-owned manifest. An adapter cannot self-assert local compatibility                                              |
 | `argv-policy.ts`         | Structural + capability checks on every argument the supervisor passes                                                       |
 | `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever**                                               |
-| `runtime-identity.ts`    | Managed-bundle tree digests, system-install discovery, and re-verification before spawn                                      |
+| `runtime-identity.ts`    | Managed-bundle resolution, the launch identity (`runtimeId`), system-install discovery, and re-verification before spawn     |
+| `tree-digest.ts`         | The canonical tree digest every pack and layer is identified by. A SHARED pack input, so it holds nothing else               |
+| `runtime-compat.ts`      | The generated record of which packs this build may select: desired and at most one permitted previous, per harness and target |
+| `inspector-layer.ts`     | The Inspector layer: MCPJam's bridge and launcher, written content-addressed and read-only, re-hashed before every exec       |
+| `layer/launcher.mjs`     | The layer's launcher: loopback listeners, and module resolution limited to the layer, builtins and the verified pack           |
 | `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
 | `local-state-lock.ts`    | Reusable cross-process lock for security-sensitive local state mutations                                                     |
-| `runtime-install.ts`     | Downloads, verifies (signature → archive hash → tree digest), extracts, activates. Only from an explicit gesture              |
+| `runtime-install.ts`     | Selects the runtime a build runs, and the candidate flow: disk space → download → verify → probe → activate                  |
+| `runtime-selection.ts`   | The pure selection rule: desired, else permitted previous; never revoked; healthy first; the grant's own pack while usable   |
+| `runtime-probe.ts`       | The candidate's startup probe: the layer started on the staged pack, and the vendor binary's version handshake               |
+| `runtime-health.ts`      | Per-pack health beside it: the probe, launch outcomes, and the failure threshold that rolls an update back                   |
+| `runtime-revocation.ts`  | The signed revocation list: fetched with update checks, cached for offline use, never replayed backwards                     |
+| `runtime-update-policy.ts` | The administrator's `updates: auto \| manual` policy, from a managed config file                                          |
+| `runtime-gc.ts`          | Liveness records and GC: removes only what no live Inspector may select and no session holds                                 |
+| `runtime-metrics.ts`     | Content-free lifecycle events (install, probe, activation, rollback, time to first usable turn)                              |
+| `runtime-fetch.ts`       | The installer's network: `HTTPS_PROXY`/`NO_PROXY` through undici's `EnvHttpProxyAgent`; `NODE_EXTRA_CA_CERTS` for TLS proxies |
+| `runtime-doctor.ts`      | `harness doctor` (and its redacted `--export`) and the repair suggestions; `repairRuntime` is in `runtime-install.ts`       |
 | `runtime-lifecycle.ts`   | Who is installing and who is USING a runtime, across processes. Owner-recorded state on top of the lock above                |
 | `release-gate.ts`        | What this build may OFFER: manifest ∩ committed digests ∩ conformance evidence. Not a runtime health check                   |
 | `acting-user.ts`         | The one accepted credential class and the canonical id a grant binds to, shared by the consent route and the turn route      |
@@ -126,13 +139,16 @@ path under the bootstrap directory into exactly three outcomes:
 
 | Path                                                 | Outcome                                                                                                                |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| a file the manifest lists in `adapterBootstrapFiles` | served from the verified bundle; a write is **compared** against the bundle's bytes and fails closed on any difference |
+| a file the manifest lists in `adapterBootstrapFiles` | served from the verified Inspector layer (or a legacy pack's copy); a write is **compared** against those bytes and fails closed on any difference |
 | the framework's `.bootstrap-<identity>.ok` marker    | written to session-owned state, so nothing is left behind in the workspace                                             |
 | anything else                                        | rejected — the recipe changed and the manifest needs re-review                                                         |
 
-Comparing rather than writing is the point: if the adapter's `bridge.mjs`
-differs from the bundle's, the session would be running bytes the adapter did
-not bootstrap. That is a bundle rebuild, not something to paper over.
+Comparing rather than writing is the point: if the recipe's `bridge.mjs`
+differs from the layer's, the session would be running bytes the recipe did
+not name. A local session's recipe is built from the same constants the layer
+is written from (`pack-bootstrap.ts`), so the two agree by construction, and the
+adapter's sandbox install files (`package.json`, the lockfile, `.npmrc`) are
+not in it at all: a recipe that names them fails closed.
 
 Every Inspector file operation is capped at 16 MiB by default. Reads stream
 through the cap (and detect a file that grows after its initial `stat`), while
@@ -354,6 +370,79 @@ CI runs — orphaned zombies persist indefinitely. `process-identity.ts` reads t
 state field and treats `Z`/`X`/`x` as gone, on both the Linux `/proc` path and
 the macOS `ps` path, and both parsers are pure and directly tested.
 
+## Dependable updates: the runtime contract
+
+A local runtime is two things from two places, and nothing else ever runs.
+These five rules are what make an update routine rather than a risk; each is
+enforced in code, not by convention.
+
+1. **Two trusted sources only.** Every executable component comes either from a
+   verified vendor pack (signature, archive sha and tree digest —
+   `runtime-install.ts`, re-checked by `revalidateRuntime`; and, before any
+   release may select it, build provenance from `local-harness-pack.yml` on main
+   — `check-local-harness-release.mjs --verify-attestations`) or from the Inspector
+   distribution itself (the layer, `inspector-layer.ts`, re-hashed against the
+   digest compiled into the build before every exec). `resolveManagedBundle`
+   takes the launcher from the layer and `bin/node` (and the Windows job
+   launcher) from the pack, and `layer/launcher.mjs` refuses any module
+   resolution from the layer that lands outside the layer, Node's builtins or
+   the pack.
+2. **One identity per launch.** The launch identity is vendor pack digest +
+   Inspector layer digest + platform + policy version, folded into `runtimeId`
+   (`runtime-identity.ts`), plus the permission profile, which the grant binds
+   beside it (`HarnessGrantBinding` in `grants.ts`). Grants bind to the whole
+   tuple; a mismatch is refused (`availability.ts`), as `consent-context-changed`
+   already is in the local-harness route.
+3. **Updates never widen permissions.** A pack or bridge update changes
+   `runtimeId`, and a fresh grant is minted under the existing durable
+   authorization at the SAME profile (`readiness.ts`). A change to policy version
+   or profile needs consent through its own path (`authorization.ts` keys durable
+   authorization by policy version).
+4. **Runtimes are selected per Inspector build.** A build runs only its
+   *desired* pack, or the one *permitted previous* pack it was tested against
+   (`runtime-compat.generated.json`, generated, never hand-typed). A release
+   proves it: conformance evidence for the build's layer digest × each pack it
+   may select × every advertised target (`check-local-harness-release.mjs
+   --evidence`), attested as `runtime-contract.json`. A pack becomes desired
+   only through the version PR that pins it: `prepare-release.yml` runs
+   `local-harness-pack-pipeline.yml` per harness and writes the pin once this
+   layer passed conformance on the pack; the pack being replaced
+   stays permitted only if it passed too and its provenance verifies. On the
+   machine, selection is per build with no shared pointer (`runtime-selection.ts`),
+   a revoked digest is never selected — not even as a fallback — and the
+   availability gate refuses any digest that is not this build's desired or
+   permitted pack (`isSelectablePack`).
+5. **No automatic replay.** Falling back to a previous runtime changes which
+   runtime NEW sessions select (`noteRuntimeLaunch` marks a pack unhealthy;
+   `chooseRuntime` skips it). It never replays a turn that may already have
+   changed files: nothing in the launch path retries a turn.
+
+Where each failure path is proven (the plan's acceptance tests):
+
+| Failure path                                                          | Test                                                                 |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Download cut off mid-way; active runtime usable; clean retry          | `runtime-acceptance.test.ts`                                         |
+| Disk exhausted → stage `disk-space`; candidate fails its probe        | `runtime-updates.test.ts` (install and update failures)              |
+| Crash between activation's renames is recovered                       | `runtime-updates.test.ts`, `runtime-install.test.ts`                 |
+| Bad activation rolls back to the permitted pack; no replay            | `runtime-updates.test.ts` (rollback)                                 |
+| Two Inspector versions on one root; GC deletes neither's packs        | `runtime-updates.test.ts` (cleanup), with a real second process      |
+| Revoked digest never selected, not even as a fallback                 | `runtime-updates.test.ts` (revocation), `runtime-selection.test.ts`  |
+| An update never widens permission scope                               | `readiness.test.ts`                                                  |
+| Tampered layer or pack file fails closed before exec                  | `inspector-layer.test.ts`, `runtime-identity.test.ts`                |
+| A session running during activation and GC keeps its tree             | `runtime-updates.test.ts` (cleanup)                                  |
+| Publication re-run after each stage adopts the same version           | `pack-publication.test.ts`                                           |
+| Workflow-only change publishes nothing; release passes on equivalence | `pack-publication.test.ts`                                           |
+| Install behind a CONNECT proxy with a custom CA                       | `runtime-acceptance.test.ts` (fresh process, `NODE_EXTRA_CA_CERTS`)  |
+| `--from` pre-provisioning with no network; `doctor --export` redacted | `runtime-supportability.test.ts`                                     |
+
+The layer lives at `<runtimeRoot>/inspector-layer/<digest>/`: content-addressed
+(two Inspector versions with different bridges get two directories), read-only,
+outside every session root, and named in every session's denied roots
+(`session-env.ts`). A session whose runtime sits inside a directory it may write
+is refused (`supervised-provider.ts`). A layer that does not match when it is
+ENSURED is rewritten from the compiled bytes; one that changed between
+resolution and exec is REFUSED — never healed under a session.
+
 ## Invariants, and where each is enforced
 
 1. Local processes launch only through `LocalHarnessSupervisor` — `supervisor.ts`.
@@ -386,12 +475,61 @@ Windows is included in the native target matrix and requires its verified
 Job Object launcher and recorded conformance. The flag
 enables the feature; it does not certify it.
 
-## Installing, and who else is holding the door
+## Installing, updating, and who else is holding the door
 
-`runtime-install.ts` downloads on an explicit gesture and nowhere else. The
-argument it was written around was against fetching UNASKED — at boot, on a
-poll, on a remount, on the way into a turn — and that argument is unchanged. A
-user clicking **Install & allow** is not that.
+**When a pack is downloaded.** Updates are routine and happen in the
+background, under the administrator's update policy (`runtime-update-policy.ts`,
+a managed config file; default `auto`):
+
+- at server boot (`startLocalHarnessRuntimeMaintenance`), only on a machine
+  where somebody durably authorized that harness — a machine where nobody chose
+  to run one downloads nothing for it;
+- from the Playground's readiness check, when the runtime a session would run is
+  not this build's desired pack (`startBackgroundRuntimeUpdate`, never awaited);
+- on the **Install & allow** gesture and `mcpjam-inspector harness install`.
+
+Under `updates: manual` only `harness install` and pre-provisioning install;
+the gesture and every background trigger are refused with a message naming the
+policy. A turn never waits on a download it does not need: only a first-time
+install (nothing selectable on disk) waits, with progress.
+
+**Which pack runs** is a per-build SELECTION (`runtime-selection.ts`), never a
+shared pointer: the desired pack if installed, healthy and not revoked, else the
+one permitted previous pack under the same conditions, else — degraded — an
+unhealthy one when it is all there is. A revoked digest is never selected
+(`runtime-revocation.ts`: a list signed with the pack key, fetched with update
+checks and cached for offline use). A turn whose grant names a pack that is
+still selectable keeps running on it (`preferRuntimeId`), and the client renews
+the grant onto the new selection under the same durable authorization.
+
+**The candidate flow** (`performInstall`), each stage named so a failure says
+where it stopped (`install_failed{stage}`):
+
+1. `disk-space` — the signed manifest first, then free space against its size;
+2. `download` — the archive, streamed and hashed;
+3. `verify` — signature → archive sha → extracted tree digest;
+4. `probe` — this build's Inspector layer started on the staged pack by the
+   pack's own Node in `--mcpjam-probe` mode (the bridge's vendor import resolved
+   through the launcher's hook), and the vendor binary's `--version` handshake
+   (`runtime-probe.ts`). No port, no model call;
+5. `activate` — one rename, with the probe recorded in the pack's health record
+   (`runtime-health.ts`). Only now is it selectable.
+
+A candidate that fails any stage is never activated, so never selected; sessions
+keep using the permitted previous pack. Background triggers back off after a
+failure (hours after a bad candidate, minutes after a network or disk failure);
+an explicit retry does not.
+
+**Rollback.** Every bridge start is recorded against the pack it ran on
+(`onBridgeStarted` / `onBridgeFailed` → `noteRuntimeLaunch`). Repeated
+runtime-attributable launch failures with no success between them mark the pack
+unhealthy and selection falls back to the permitted previous pack for NEW
+sessions. The failed turn is never replayed (invariant 5). The mark is not
+permanent, because the failures may have been the machine's. An install
+request re-runs the startup probe on the installed pack (background triggers
+at most hourly), as does `harness repair`. A pass clears the mark and the pack
+is selected again, with nothing downloaded. A session that starts on a degraded
+pack (nothing healthier installed) clears it too.
 
 `startRuntimeInstall` reserves in-process synchronously and awaits only the
 short cross-process reservation and the on-disk lookup, never the download, so
@@ -400,37 +538,56 @@ its HTTP adapter can acknowledge in milliseconds (202) and let the client poll.
 both go through the same coordination, so `mcpjam-inspector harness install`
 JOINS a window's install rather than starting a competing extraction.
 
-Three processes reach one runtime root — two Inspector windows and the install
-CLI — and `runtime-lifecycle.ts` is what makes that safe:
+Several processes reach one runtime root — Inspector windows (possibly two
+different Inspector versions), the install CLI — and `runtime-lifecycle.ts` is
+what makes that safe:
 
 - an install ATTEMPT is claimed per `(root, harness, target, pack identity)`,
-  so two builds expecting different packs are two operations rather than one
-  wrong one;
+  with one operation record per identity, so two builds expecting different
+  packs are two operations that cannot overwrite each other;
 - a runtime USE is reserved before verification and held through process-tree
-  teardown, and activation refuses to replace a directory that has one;
+  teardown — reserved INSIDE the install root's lifecycle lock, the same lock
+  activation and GC check reservations and rename under, so a reservation can
+  never land between their check and their rename;
 - ownership is re-checked immediately BEFORE the rename, not only before the
   download — a download takes minutes;
 - only ESRCH proves an owner gone. Anything else is busy, never permission.
-  The staging sweep asks the owner record; a `.mcpjam-tmp-` prefix cannot tell
-  a live extraction from a dead one's leftovers.
 
 Activation moves the previous version aside instead of deleting it, so a crash
 between the two renames leaves something to put back — `recoverInterruptedActivation`
 does that on the next status read, rather than re-downloading 500 MB.
 
-**No version deletion.** `sweepOtherVersions` used to run after every
-activation and deleted the tree a running session in another process had
-already verified and was executing from. Verified versions now sit side by side
-and cost disk; reclaiming them safely needs an ownership answer spanning more
-than one install, which is not in this pass.
+**Cleanup** (`runtime-gc.ts`), after every activation and at boot (after the
+janitor reclaimed orphaned sessions): every running Inspector writes a LIVENESS
+record naming the pack digests it may select and the layers it runs; GC removes,
+for its own target only, version directories no live record names and no
+session holds (claimed by a rename inside the lifecycle lock), orphaned
+`.mcpjam-previous` directories, provably ownerless staging, and Inspector layers
+nobody names. Two Inspector versions on one root therefore never delete each
+other's packs.
 
 `readRuntimeInstallStatus` is cheap and marker-based, for polling.
 `readVerifiedRuntimeStatus` is the one that proves a tree — through
 `resolveManagedBundle` and its per-process verification cache — because the
 marker records what was true at install time, so a pack whose bytes changed
 afterwards reports `ready` from its own marker forever. `corrupt` means exactly
-that case and leads to a repair; `failed` means a download that never landed
-and leads to Retry.
+that case and leads to a repair; `failed` means a candidate that never landed
+and leads to Retry; `revoked` means MCPJam withdrew the only pack this build
+could run.
+
+**Supportability.** `harness doctor` reports the selection and why, each
+pack's install/health/revocation state, the last attempt's stage, disk, proxy
+and CA, and the update policy, with the repair to run; `--export` redacts it.
+`harness repair` clears abandoned staging, re-verifies byte for byte,
+reinstalls a pack that no longer matches, and re-probes an unhealthy one.
+`harness install --from <archive>` pre-provisions with no network and the same
+checks (an unsigned archive is refused). Installer requests honour
+`HTTPS_PROXY`/`NO_PROXY` (`runtime-fetch.ts`).
+
+**Metrics** (server events, `runtime-metrics.ts`): `local_runtime_install_started`,
+`_install_succeeded`, `_install_failed{stage}`, `_candidate_probe_failed`,
+`_update_activated`, `_launch_failed_after_update`, `_rolled_back_to_previous`,
+`_time_to_first_usable_turn`. Content-free: enums, versions, durations.
 
 ## What is not here yet
 
@@ -450,5 +607,17 @@ Deliberately out of scope for this change, and none of it is faked:
 - cancelling a download in flight (cancelling AUTHORIZATION already works: the
   transfer may finish into the cache, but it can no longer mint consent or run
   a turn for the cancelled flow);
-- reclaiming old verified runtime versions;
 - **I8's** rollout gating and the full cross-platform conformance run.
+
+## Attended Tool Approval
+
+On pauses for native commands (including `ls` and `pwd`), file changes and MCP
+calls. Off requires a separate **Run without asking** confirmation per signed-in
+user, machine, project, harness and current policy. MCPJam then answers native
+approval requests through the runtime's normal approval control. The runtime
+keeps `allow-reads`; switching the toggle preserves the conversation and any
+pending user decision. Host-executed `always` tools still ask.
+
+The attended grant lasts 15 minutes and renews automatically. Forgetting the
+local authorization clears Off consent. Unattended eval and swarm profiles
+retain their existing behavior.

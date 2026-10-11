@@ -21,7 +21,13 @@ describe("buildPreludeTraceEnvelope", () => {
 
     expect(toolMessage.content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -53,7 +59,13 @@ describe("buildPreludeTraceEnvelope", () => {
 
     expect(toolMessage.content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -76,7 +88,13 @@ describe("buildPreludeTraceEnvelope", () => {
 
     expect(toolMessage.content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -170,7 +188,13 @@ describe("buildPreludeTraceEnvelope", () => {
         },
         modelOutput: {
           type: "content",
-          value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+          value: [
+            {
+              type: "file",
+              mediaType: "image/png",
+              data: { type: "data", data: "aGVsbG8=" },
+            },
+          ],
         },
       },
     ]);
@@ -181,7 +205,13 @@ describe("buildPreludeTraceEnvelope", () => {
 
     expect(toolMessage.content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 });

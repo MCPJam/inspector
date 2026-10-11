@@ -118,52 +118,80 @@ describe("mcp-tools-api hosted mode", () => {
     expect(Object.keys(result.results).sort()).toEqual(["Notion", "srv-same"]);
   });
 
-  it("keeps a refused server's error and asks again for the rest", async () => {
-    // The route authorizes the batch as a whole and one server's refusal
-    // answers the request, naming that server.
-    const refusal = new WebApiError(
-      403,
-      "FORBIDDEN",
-      "Access denied",
-      undefined,
-      { serverId: "srv-b" },
-    );
-    listHostedToolsMultiMock
-      .mockRejectedValueOnce(refusal)
-      .mockResolvedValueOnce({
-        results: { "srv-a": { tools: [{ name: "a" }], toolsMetadata: {} } },
-      });
-
-    const result = await listToolsForServers(["A", "B"]);
-
-    expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(2);
-    expect(listHostedToolsMultiMock).toHaveBeenLastCalledWith({
-      serverNamesOrIds: ["A"],
-      modelId: undefined,
+  it("keeps a server's authorization refusal with the rest of the batch", async () => {
+    // The route authorizes each server on its own and answers a refusal in
+    // `errors`, next to the servers that failed while listing, so the batch
+    // is one request however many servers are refused.
+    listHostedToolsMultiMock.mockResolvedValueOnce({
+      results: { "srv-a": { tools: [{ name: "a" }], toolsMetadata: {} } },
+      errors: {
+        "srv-b": {
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: 'Server "B" requires OAuth authentication.',
+        },
+        "srv-c": {
+          status: 409,
+          code: "XAA_CONNECTION_NOT_CONFIGURED",
+          message: 'Server "C" has no XAA client registration configured.',
+        },
+      },
     });
-    expect(Object.keys(result.results)).toEqual(["A"]);
-    expect(result.errors.B).toBe(refusal);
-  });
 
-  it("fails the batch on a refusal that names a server outside it", async () => {
-    const refusal = new WebApiError(
-      403,
-      "FORBIDDEN",
-      "Access denied",
-      undefined,
-      { serverId: "srv-elsewhere" },
-    );
-    listHostedToolsMultiMock.mockRejectedValueOnce(refusal);
+    const result = await listToolsForServers(["A", "B", "C"]);
 
-    await expect(listToolsForServers(["A", "B"])).rejects.toBe(refusal);
     expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.results)).toEqual(["A"]);
+    expect(result.errors.B).toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+    });
+    expect(result.errors.C).toMatchObject({
+      status: 409,
+      code: "XAA_CONNECTION_NOT_CONFIGURED",
+    });
   });
 
-  it("fails the batch on a refusal that names no server", async () => {
-    const refusal = new WebApiError(401, "UNAUTHORIZED", "Session expired");
-    listHostedToolsMultiMock.mockRejectedValueOnce(refusal);
+  it("rebuilds a refused server's error with its details and retry delay", async () => {
+    listHostedToolsMultiMock.mockResolvedValueOnce({
+      results: {},
+      errors: {
+        "srv-b": {
+          status: 429,
+          code: "RATE_LIMITED",
+          message: 'Credentials for "B" are being refreshed.',
+          details: { serverId: "srv-b", serverName: "B" },
+          retryAfterSeconds: 3,
+        },
+        "srv-c": {
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: 'Server "C" requires OAuth authentication.',
+          details: { oauthRequired: true, serverId: "srv-c" },
+        },
+      },
+    });
 
-    await expect(listToolsForServers(["A", "B"])).rejects.toBe(refusal);
+    const result = await listToolsForServers(["B", "C"]);
+
+    expect(result.errors.B).toBeInstanceOf(WebApiError);
+    expect(result.errors.B).toMatchObject({
+      status: 429,
+      details: { serverId: "srv-b", serverName: "B" },
+      retryAfterMs: 3000,
+    });
+    expect(result.errors.C).toMatchObject({
+      status: 401,
+      details: { oauthRequired: true, serverId: "srv-c" },
+    });
+    expect((result.errors.C as WebApiError).retryAfterMs).toBeUndefined();
+  });
+
+  it("fails the batch when the request itself fails", async () => {
+    const failure = new WebApiError(401, "UNAUTHORIZED", "Session expired");
+    listHostedToolsMultiMock.mockRejectedValueOnce(failure);
+
+    await expect(listToolsForServers(["A", "B"])).rejects.toBe(failure);
     expect(listHostedToolsMultiMock).toHaveBeenCalledTimes(1);
   });
 

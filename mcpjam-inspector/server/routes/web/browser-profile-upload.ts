@@ -25,6 +25,7 @@ import {
 } from "../../utils/upload-receipt.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, handleRoute } from "./auth.js";
+import { hostedOnlyRouteError } from "./errors.js";
 
 export const MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
 
@@ -69,6 +70,9 @@ function declaredLength(header: string | undefined): number | null {
 export const BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE =
   "Saving browser profiles isn't available on this server.";
 
+/** The feature name the shared hosted-only answer uses for this route. */
+export const BROWSER_PROFILE_SAVE_FEATURE = "Saving browser profiles";
+
 /**
  * Where to store one archive, asked for on the caller's behalf: the backend's
  * internal route checks the caller's bearer against the project and answers.
@@ -87,11 +91,7 @@ async function requestArchiveDestination(
           ErrorCode.INTERNAL_ERROR,
           "Server missing INSPECTOR_SERVICE_TOKEN configuration",
         )
-      : new WebRouteError(
-          503,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
-        );
+      : hostedOnlyRouteError(BROWSER_PROFILE_SAVE_FEATURE);
   }
   const bearer = await getConvexBearerForRequest(c);
   const path = "/internal/v1/browser-profiles/upload-url";
@@ -183,11 +183,7 @@ function limitedBody(
 export function handleBrowserProfileUpload(c: Context) {
   return handleRoute(c, async () => {
     if (!HOSTED_MODE && !getConfiguredInspectorServiceToken()) {
-      throw new WebRouteError(
-        503,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
-      );
+      throw hostedOnlyRouteError(BROWSER_PROFILE_SAVE_FEATURE);
     }
     const projectId = c.req.query("projectId")?.trim();
     if (!projectId) {

@@ -57,12 +57,12 @@ describe("server-evaluated feature flags", () => {
         JSON.stringify({ distinct_id: "anon-device-1" }),
       );
       vi.mocked(fetch).mockResolvedValueOnce(
-        flagsResponse({ "computers-enabled": true, "unlisted-flag": true }),
+        flagsResponse({ "sandbox-images-enabled": true, "unlisted-flag": true }),
       );
 
       const flags = await loadBootstrapFeatureFlags();
 
-      expect(flags).toEqual({ "computers-enabled": true });
+      expect(flags).toEqual({ "sandbox-images-enabled": true });
       const url = requestedUrl();
       expect(url.pathname).toBe("/api/web/flags");
       expect(url.searchParams.get("distinct_id")).toBe("anon-device-1");
