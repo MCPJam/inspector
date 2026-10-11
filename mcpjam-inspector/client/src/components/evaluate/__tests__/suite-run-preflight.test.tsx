@@ -1120,9 +1120,9 @@ describe("an organization model chosen for an environment or matrix cell, under 
   });
 });
 
-// Claude Code and Codex run on the organization's own key for their vendor
-// (#6135), so under the policy a harness client is a problem only when its
-// model isn't an organization model on that vendor.
+// Claude Code and Codex run on the organization's own key for their vendor,
+// so under the policy a harness client is a problem only when its model
+// isn't an organization model on that vendor.
 describe("a harness client under the policy", () => {
   const fallback = { provider: "none", model: "none" } as const;
   const strict = {
