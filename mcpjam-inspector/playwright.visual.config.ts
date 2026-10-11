@@ -8,6 +8,7 @@ export default defineConfig<ChromaticConfig>({
     "product.spec.ts",
     "swarm.spec.ts",
     "tool-errors.spec.ts",
+    "swarm-authoring.spec.ts",
   ],
   outputDir: ".playwright/visual-results",
   fullyParallel: false,
