@@ -9,9 +9,22 @@
 /mcpjam-inspector/client/ @ignaciojimenezr @nachocossio @olartgabo
 /mcpjam-inspector/server/ @chelojimenez @ignaciojimenezr @nachocossio
 
+# Feature reviewers; these specific rules override the broader client rule.
+/mcpjam-inspector/client/src/components/evals/ @ignaciojimenezr @weimar-torres-herrera @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/evaluate/ @ignaciojimenezr @weimar-torres-herrera @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/EvaluateTab.tsx @ignaciojimenezr @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/swarms/ @ignaciojimenezr @weimar-torres-herrera
+/mcpjam-inspector/client/src/components/onboarding/ @ignaciojimenezr @ozboms
+/mcpjam-inspector/client/src/components/home/ @ignaciojimenezr @ozboms
+/mcpjam-inspector/server/utils/harness/local/ @chelojimenez @ozboms
+
+# CLI maintenance and bundling conventions.
+/cli/ @chelojimenez @moisonmaxime
+/.gitignore @prathmeshpatel @moisonmaxime
+
 # SDK, protocol/OAuth support, and product documentation.
 /sdk/ @chelojimenez @ZeHuari @nachocossio
-/docs/ @ignaciojimenezr @Paoli99
+/docs/ @Paoli99 @prathmeshpatel
 
 # CI and quality policy have explicit owners regardless of the application area.
 /.github/ @prathmeshpatel @chelojimenez @olartgabo
