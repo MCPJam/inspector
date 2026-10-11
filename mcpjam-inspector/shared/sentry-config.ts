@@ -423,6 +423,38 @@ function originOf(url: string): string {
   }
 }
 
+/** `https://x`, `blob:…`, `//host/…`: a URL that names its own origin. */
+const ABSOLUTE_URL = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i;
+
+/**
+ * A browser request URL as a breadcrumb keeps it. A relative or same-origin
+ * URL is a call to our own API, whose paths are ours: the path stays. Any
+ * other origin is a third party's, whose path can be anything — a
+ * customer's MCP server, a presigned upload — so only its origin stays.
+ * Without `appOrigin`, every absolute URL counts as another origin.
+ */
+function clientRequestUrl(url: string, appOrigin: string | undefined): string {
+  if (!ABSOLUTE_URL.test(url)) return stripQueryAndFragment(url);
+  const origin = urlOrigin(url, appOrigin);
+  if (origin === undefined) return "[redacted-url]";
+  // An opaque origin (`file:`, `data:`) is "null", which matches nothing.
+  return appOrigin !== undefined && origin !== "null" && origin === appOrigin
+    ? stripQueryAndFragment(url)
+    : origin;
+}
+
+/** `url`'s origin, resolved against `base` when that is a valid URL. */
+function urlOrigin(url: string, base: string | undefined): string | undefined {
+  for (const candidate of [base, undefined]) {
+    try {
+      return new URL(url, candidate).origin;
+    } catch {
+      // An opaque base ("null") or an unparseable URL: try the next one.
+    }
+  }
+  return undefined;
+}
+
 /** `a=1&b=2` (or its object / pair-list spellings) → `a=[redacted]&b=[redacted]`. */
 function queryParamNames(query: unknown): string | undefined {
   let names: string[] = [];
@@ -566,13 +598,14 @@ function describeConsoleCall(
  * - `http` / `fetch` / `xhr`: the query string and fragment always go. On the
  *   server (`"origin"`) the path goes too — outgoing requests there are to a
  *   customer's MCP server, and its host is what tells you which one. The
- *   browser (`"path"`) talks to its own API, whose paths are ours.
+ *   browser keeps the path of a call to its own origin (`appOrigin`), whose
+ *   paths are ours, and only the origin of a call anywhere else.
  * - `navigation`: the query goes (an OAuth callback carries `code`/`state`).
  * - Anything else: its message is redacted and capped.
  */
 export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   breadcrumb: T,
-  urlDetail: "origin" | "path",
+  urlDetail: "origin" | { appOrigin: string | undefined },
 ): T {
   const crumb: ScrubbableBreadcrumb = breadcrumb;
   const data = crumb.data;
@@ -593,7 +626,7 @@ export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
         data.url =
           urlDetail === "origin"
             ? originOf(data.url)
-            : stripQueryAndFragment(data.url);
+            : clientRequestUrl(data.url, urlDetail.appOrigin);
       }
       delete data?.["http.query"];
       delete data?.["http.fragment"];
@@ -616,11 +649,15 @@ export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   return breadcrumb;
 }
 
-/** `beforeBreadcrumb` for the browser client and Electron renderer. */
+/**
+ * `beforeBreadcrumb` for the browser client and Electron renderer.
+ * `appOrigin` is the app's own origin, read by the caller.
+ */
 export function scrubClientSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   breadcrumb: T,
+  appOrigin: string | undefined,
 ): T {
-  return scrubSentryBreadcrumb(breadcrumb, "path");
+  return scrubSentryBreadcrumb(breadcrumb, { appOrigin });
 }
 
 /** `beforeBreadcrumb` for the Node surfaces: the server and Electron main. */
@@ -681,7 +718,8 @@ export function buildClientSentryConfig(
     replayEnabled?: boolean;
     /**
      * The app's own origin, used to spot frames the browser stamped with the
-     * document. The caller reads it — this module stays globals-free.
+     * document and to tell the app's own requests from a third party's in
+     * breadcrumbs. The caller reads it — this module stays globals-free.
      */
     documentOrigin?: string;
   },
@@ -695,7 +733,8 @@ export function buildClientSentryConfig(
     // debugger runs only in the browser client too.
     beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
     // Console arguments are whatever a component logged — often a payload.
-    beforeBreadcrumb: scrubClientSentryBreadcrumb,
+    beforeBreadcrumb: <T extends ScrubbableBreadcrumb>(breadcrumb: T) =>
+      scrubClientSentryBreadcrumb(breadcrumb, ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),

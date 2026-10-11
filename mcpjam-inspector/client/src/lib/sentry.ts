@@ -40,7 +40,8 @@ export function resolveClientSentryConfig() {
     // document instead of a script — see shared/injected-script-frames.ts.
     // The origin, not the href: it is stable across SPA route changes, and
     // the frames carry whichever route was showing when the injected code
-    // was evaluated.
+    // was evaluated. Breadcrumbs use it too: a request to this origin keeps
+    // its path, a request anywhere else only its origin.
     documentOrigin:
       typeof window === "undefined" ? undefined : window.location.origin,
   });
