@@ -49,6 +49,23 @@ describe("describeEvalIterationError", () => {
 });
 
 describe("describeEvalIterationError — organization AI-key refusals", () => {
+  it("reads a refusal recorded only in the diagnostics", () => {
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        errorDetails: '{"code":"org_keys_required"}',
+      }),
+    ).toMatchObject({ slug: "eval/ai_refused", rawCode: "org_keys_required" });
+    // Diagnostics with no refusal in them still describe nothing.
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        errorDetails: "detail text",
+      }),
+    ).toBeNull();
+  });
   it("tells a setup failure refused by the org's policy apart from a host failure", () => {
     const error = describeEvalIterationError({
       status: "setup_failed",

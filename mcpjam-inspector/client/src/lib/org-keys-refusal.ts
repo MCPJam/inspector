@@ -81,16 +81,10 @@ export function orgKeysRefusalCodeFromError(
   error: unknown,
 ): string | undefined {
   if (!error) return undefined;
-  if (typeof error === "object" && !(error instanceof Error)) {
+  // Errors included: one can carry the code with a generic message.
+  if (typeof error === "object") {
     const direct = orgKeysRefusalCodeOf((error as { code?: unknown }).code);
     if (direct) return direct;
-    const data = (error as { data?: unknown }).data;
-    if (data && typeof data === "object") {
-      const fromData = orgKeysRefusalCodeOf((data as { code?: unknown }).code);
-      if (fromData) return fromData;
-    }
-  }
-  if (error instanceof Error) {
     const data = (error as { data?: unknown }).data;
     if (data && typeof data === "object") {
       const fromData = orgKeysRefusalCodeOf((data as { code?: unknown }).code);
@@ -111,7 +105,9 @@ export function orgKeysRefusalCodeFromError(
       const fromJson = orgKeysRefusalCodeOf(parsed?.code);
       if (fromJson) return fromJson;
     } catch {
-      // Not JSON; fall through to the prefix form.
+      // Not JSON: safe to ignore, the prefix form below still reads the code.
+      // The text itself is not logged; it can carry a provider's message.
+      console.debug("[org-keys-refusal] Error text is not JSON");
     }
   }
   const prefix = /^([a-z_]+)\s*:/i.exec(trimmed)?.[1];
@@ -158,7 +154,8 @@ export function orgKeysRefusalSentence(
         return reason.trim();
       }
     } catch {
-      // Not JSON; fall through to the copy.
+      // Not JSON: safe to ignore, the plain-language copy below stands in.
+      console.debug("[org-keys-refusal] Refusal message is not JSON");
     }
   }
   return describeAiRefusal(code, audience).body;
