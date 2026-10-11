@@ -18,6 +18,21 @@ beforeEach(() => {
 });
 
 describe("ErrorBox daily-limit handling", () => {
+  it("shows a BYOK balance error without retry or MCPJam credit prompts", () => {
+    const message =
+      "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.";
+    render(
+      <ErrorBox message={message} code="provider_error" isRetryable={false}
+        onRetry={vi.fn()} onResetChat={vi.fn()} />,
+    );
+    expect(screen.getByText(message, { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText(/buy.*credits|MCPJam credits/i))
+      .not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
   const guestLimitProps = {
     message:
       "Add your own API key in Settings > LLM Providers to keep chatting now, or try again tomorrow.",
