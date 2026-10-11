@@ -78,7 +78,11 @@ function countCopy(text, regex) {
 const FILLER =
   /\b(?:leverage|seamless(?:ly)?|robust|effortless(?:ly)?|empower|streamline|delve|supercharge|elevate|cutting-edge|game[- ]chang(?:er|ing)|revolutioni[sz]e|utili[sz]e)\b/i;
 
-/** An error that names neither what failed nor what to do next. */
+/**
+ * An error that opens by saying nothing about what failed. A next step after
+ * it ("please try again") does not rescue it: the user still cannot tell what
+ * happened, which is the case the copy standard asks every error to cover.
+ */
 const VAGUE_ERROR =
   /^(?:oops|whoops|uh[- ]oh|something went wrong|an? (?:unexpected |unknown )?error (?:has )?occurred|unknown error|error occurred)\b/i;
 
@@ -152,7 +156,7 @@ export const RULES = [
   },
   {
     id: "ui-vague-error",
-    label: "errors that name no cause and no next step",
+    label: "errors that open with a vague phrase (Oops, Something went wrong)",
     appliesTo: isUiFile,
     count: (text) => countCopy(text, VAGUE_ERROR),
   },
