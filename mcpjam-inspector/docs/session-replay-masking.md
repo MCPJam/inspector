@@ -496,7 +496,9 @@ and the outbound filters above.
   (CSS-in-JS rules included) as written, so a `url(...)` in a rule — an
   icon drawn as a CSS mask — keeps its host. Inline `style` attributes are
   scrubbed (`maskReplayStyle`). An organization that cannot accept this
-  gets session replay off.
+  gets session replay off. A credential URL in stylesheet text is scrubbed
+  at every level, in both recorders: PostHog's `before_send` and Sentry's
+  transport run the same pass (`scrubRrwebCredentials`).
 - **Exception messages.** On restricted PostHog events, URLs inside error
   messages are scrubbed, but other text in error messages and stack traces
   is not; general log sanitization is out of scope here.

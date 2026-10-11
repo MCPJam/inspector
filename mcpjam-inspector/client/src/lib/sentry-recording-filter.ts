@@ -3,6 +3,7 @@ import {
   maskReplayStyle,
   scrubNamesFromUrl,
 } from "../../../shared/telemetry-privacy";
+import { scrubRrwebCredentials } from "./rrweb-credential-scrub";
 
 /**
  * Sentry Replay's rrweb events cannot be edited as they are recorded —
@@ -20,6 +21,11 @@ import {
  * data attributes are built from customer data (`prompt-arg-${name}`,
  * `repo-row-${repoFullName}`), and Sentry's own `maskAttributes` is a fixed
  * list that cannot cover them.
+ *
+ * Then every credential comes out of the whole recording, the same pass
+ * PostHog's replay batches get (`scrubRrwebCredentials`): stylesheet text
+ * (`<style>` text, inlined stylesheets, CSSOM rule changes), which no Sentry
+ * option masks, and every URL in meta, custom and plugin events.
  */
 
 const FULL_SNAPSHOT_EVENT = 2;
@@ -96,13 +102,15 @@ function cleanEvent(event: unknown): void {
 }
 
 /**
- * rrweb events, cleaned as described above. Edits `events` in place: it is
- * always a recording this module has just parsed.
+ * rrweb events, cleaned as described above. Edits `events` in place (it is
+ * always a recording this module has just parsed), then returns the
+ * credential-scrubbed copy, or `null` when the recording is not in a shape
+ * the credential pass understands.
  */
-export function scrubRecordingEvents(events: unknown): unknown {
-  if (!Array.isArray(events)) return events;
+export function scrubRecordingEvents(events: unknown): unknown[] | null {
+  if (!Array.isArray(events)) return null;
   for (const event of events) cleanEvent(event);
-  return events;
+  return scrubRrwebCredentials(events);
 }
 
 // Sentry compresses a recording as zlib, which is the format the Compression
@@ -142,10 +150,11 @@ export async function filterReplayRecordingPayload(
     if (typeof payload === "string") {
       const newline = payload.indexOf("\n");
       if (newline < 0) return null;
-      const events = JSON.parse(payload.slice(newline + 1));
-      return `${payload.slice(0, newline + 1)}${JSON.stringify(
-        scrubRecordingEvents(events),
-      )}`;
+      const events = scrubRecordingEvents(
+        JSON.parse(payload.slice(newline + 1)),
+      );
+      if (events === null) return null;
+      return `${payload.slice(0, newline + 1)}${JSON.stringify(events)}`;
     }
     if (!ArrayBuffer.isView(payload)) return null;
     const bytes = new Uint8Array(
@@ -156,8 +165,11 @@ export async function filterReplayRecordingPayload(
     const newline = bytes.indexOf(0x0a);
     if (newline < 0) return null;
     const header = bytes.subarray(0, newline + 1);
-    const events = JSON.parse(await inflate(bytes.subarray(newline + 1)));
-    const body = await deflate(JSON.stringify(scrubRecordingEvents(events)));
+    const events = scrubRecordingEvents(
+      JSON.parse(await inflate(bytes.subarray(newline + 1))),
+    );
+    if (events === null) return null;
+    const body = await deflate(JSON.stringify(events));
     const out = new Uint8Array(header.length + body.length);
     out.set(header);
     out.set(body, header.length);
