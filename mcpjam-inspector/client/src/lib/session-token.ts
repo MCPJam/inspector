@@ -14,6 +14,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getApiAuthorizationHeader,
+  renewSessionBearer,
   resetTokenCache,
   shouldRetryApiAuth401,
 } from "@/lib/apis/web/context";
@@ -508,6 +509,41 @@ function pathMatchesHostedPrefix(pathname: string): boolean {
   });
 }
 
+/**
+ * Plugin App routes: the gateway's bearer check is their only 401, so a
+ * refused request did nothing and may be sent again.
+ */
+const SIGN_IN_RENEWABLE_PREFIXES = [
+  "/api/web/apps/plugin-instances/",
+  "/api/web/plugin-forms/",
+] as const;
+
+function isSignInRenewablePath(input: RequestInfo | URL): boolean {
+  const parsed = resolveRequestUrl(input);
+  const pathname = parsed
+    ? parsed.pathname
+    : typeof input === "string"
+      ? input.split("?")[0]
+      : "";
+  return SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
+    pathname.startsWith(prefix),
+  );
+}
+
+/** A body fetch can send twice (a stream is consumed by the first send). */
+function isReplayableBody(body: RequestInit["body"]): boolean {
+  return (
+    body === undefined ||
+    body === null ||
+    typeof body === "string" ||
+    body instanceof FormData ||
+    body instanceof URLSearchParams ||
+    body instanceof Blob ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body)
+  );
+}
+
 function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
   const parsed = resolveRequestUrl(input);
   // Relative paths starting with "/" resolve same-origin via resolveRequestUrl
@@ -614,6 +650,25 @@ export async function authFetch(
   ) {
     notifySessionRevoked();
     return response;
+  }
+
+  // A signed-in bearer refused as expired by the gateway, on a route whose
+  // only 401 is that refusal (it answers before any handler runs): renew the
+  // token once and send the same request again. A second refusal goes back
+  // to the caller, which says the sign-in expired.
+  if (
+    response.status === 401 &&
+    hostedAuthEligible &&
+    !callerProvidedAuthorization &&
+    isSignInRenewablePath(input) &&
+    isReplayableBody(init?.body) &&
+    response.headers?.get("X-MCP-Auth-Required") !== "oauth"
+  ) {
+    const renewed = await renewSessionBearer();
+    if (renewed) {
+      init?.signal?.throwIfAborted();
+      return fetch(input, buildAuthFetchInit(input, init, `Bearer ${renewed}`));
+    }
   }
 
   // Only Inspector's own session refusal triggers local recovery. Another tab

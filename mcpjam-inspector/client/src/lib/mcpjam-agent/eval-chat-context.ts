@@ -2,14 +2,14 @@ import type {
   EvalCase,
   EvalIteration,
   EvalSuite,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "@/components/evals/types";
 
 /** Authoring context is coverage and outcomes, not a copy of recorded traces. */
 export function evalChatSuiteContext(
   suite: EvalSuite,
   cases: EvalCase[],
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   /** The iterations themselves, or just their count when they are not loaded. */
   iterations: readonly EvalIteration[] | number,
 ) {

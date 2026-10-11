@@ -8,6 +8,7 @@ import {
   BrowserSessionServiceError,
 } from "../../services/browserd/session-service";
 import {
+  browserFeatureUnavailable,
   getConversationBrowser,
   openConversationBrowser,
   provisionConversationBrowser,
@@ -65,6 +66,9 @@ function browserError(c: Context, error: unknown) {
       },
       error.status,
     );
+  const unavailable = browserFeatureUnavailable(error);
+  if (unavailable)
+    return v1Error(c, "FORBIDDEN", unavailable.message, unavailable.details);
   if (error instanceof BrowserSessionServiceError) {
     if (error.status === 404)
       return v1Error(c, "NOT_FOUND", "Browser session not found");
@@ -602,7 +606,7 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
               );
               const value = (await wrapped[toolName]!.execute!(
                 {},
-                { toolCallId: commandId, messages: [] },
+                { toolCallId: commandId, messages: [], context: {} },
               )) as {
                 response: Parameters<typeof toContractResult>[0]["response"];
               };

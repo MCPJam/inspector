@@ -230,13 +230,23 @@ export function Thread({
 
   useEffect(() => {
     const liveToolCallIds = getMessageToolCallIds(messages);
+    // Avoid even scheduling a no-op state update for every streamed chunk.
+    // Synchronous chat subscriptions can keep those lower-priority updates
+    // pending through a buffered burst and exhaust React's update-depth limit.
+    if (
+      !appToolInvocations.some(
+        (invocation) => !liveToolCallIds.has(invocation.parentToolCallId)
+      )
+    ) {
+      return;
+    }
     setAppToolInvocations((current) => {
       const next = current.filter((invocation) =>
         liveToolCallIds.has(invocation.parentToolCallId)
       );
       return next.length === current.length ? current : next;
     });
-  }, [messages]);
+  }, [messages, appToolInvocations]);
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -424,9 +434,11 @@ export function Thread({
           recorder={recorder}
           historyNoticeBeforeMessageId={historyNoticeBeforeMessageId}
         />
-        <InspectorWidgetHostProvider>
-          <WidgetSurfaceHost chatSessionId={chatSessionId} />
-        </InspectorWidgetHostProvider>
+        {widgetPolicy !== "placeholder" && (
+          <InspectorWidgetHostProvider>
+            <WidgetSurfaceHost chatSessionId={chatSessionId} />
+          </InspectorWidgetHostProvider>
+        )}
 
         {/* PR7 (§12.6) — an MCP App's App-initiated `tools/call` can return
             `input_required`; the same SDK MRTR driver that backs `callTool`
