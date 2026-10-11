@@ -697,3 +697,9 @@ describe("Ding Dong case destinations", () => {
     expect(legacyEvalCasePathToEvaluatePath(`${prefix}/suite/s%201/test/c%202/edit`, "?checks=1&project=p1", "#trace")).toBe("/evaluate/suite/s%201/test/c%202/edit?checks=1&project=p1#trace");
   });
 });
+
+it("preserves the isolated deletion receipt through sign-in without project scope", () => {
+  expect(normalizeReturnTargetPath("/deletions/request_1")).toBe("/deletions/request_1");
+  expect(scopeNavigationTarget("/deletions/request_1", "/p/k57aaaaaaaaaaaaaaaaaaaaaaaaa/servers")).toBe("/deletions/request_1");
+  expect(normalizeReturnTargetPath("//foreign.example/deletions/request_1")).toBe("/servers");
+});

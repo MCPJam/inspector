@@ -359,8 +359,9 @@ export function ProjectManagementDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Project?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the project and all its server
-              configurations. This action cannot be undone.
+              Starting deletion immediately blocks access to the project.
+              Data removal runs in the background and may not be cancellable
+              once it starts.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

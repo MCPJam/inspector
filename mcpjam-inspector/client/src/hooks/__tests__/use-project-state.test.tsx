@@ -374,6 +374,25 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
+  it("accepts deleting the only cloud project and returns its durable receipt", async () => {
+    projectQueryState.allProjects = [{
+      _id: "only-project", name: "Only", ownerId: "user-1", organizationId: "org-only",
+      servers: {}, createdAt: 1, updatedAt: 1,
+    }];
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    projectServersState.servers = [];
+    const receipt = { requestId: "request-only", state: "accepted" };
+    deleteProjectMock.mockResolvedValueOnce(receipt);
+    const { result } = renderUseProjectState({
+      appState: createAppState({ default: createSyntheticDefaultProject() }),
+      activeOrganizationId: "org-only",
+    });
+    await act(async () => {
+      expect(await result.current.handleDeleteProject("only-project")).toEqual(receipt);
+    });
+    expect(deleteProjectMock).toHaveBeenCalledWith({ projectId: "only-project" });
+  });
+
   it("skips organization billing status queries while Convex auth is unavailable", () => {
     const appState = createAppState({
       default: createSyntheticDefaultProject(),

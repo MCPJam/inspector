@@ -56,6 +56,7 @@ import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
 import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
 import { NotFoundRoute } from "./components/routing/not-found-route";
+import { DeletionStatusRoute } from "./components/DeletionStatusRoute";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -511,6 +512,11 @@ export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
   const router = createBrowserRouter([
+    {
+      path: "deletions/:requestId",
+      element: <DeletionStatusRoute />,
+      errorElement: <RouteErrorScreen />,
+    },
     ...(import.meta.env.DEV
       ? [
           {

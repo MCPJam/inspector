@@ -1003,9 +1003,8 @@ export function navigationTargetToPath(
   fallback: string = routePaths.servers,
 ): string {
   // A scoped target normalizes on its LOGICAL half and is re-scoped to the
-  // same project. Without this, `/p/A/evals/suite/X` would reduce to the
-  // fallback (`/servers`) — which is exactly how a sign-in round trip used to
-  // lose the page the user asked for.
+  // same project so sign-in retains the exact destination.
+  if (/^\/deletions\/[A-Za-z0-9_-]+(?:[?#].*)?$/.test(rawTarget)) return rawTarget;
   const scoped = parseProjectPath(rawTarget);
   if (scoped) {
     const { suffix, path } = (() => {

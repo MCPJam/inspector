@@ -230,7 +230,7 @@ interface ProjectSettingsTabProps {
     projectId: string,
     updates: Partial<Project>,
   ) => Promise<void>;
-  onDeleteProject: (projectId: string) => Promise<boolean>;
+  onDeleteProject: (projectId: string) => Promise<boolean | import("@mcpjam/sdk/platform").PlatformDeletionReceipt>;
   onProjectShared: (sharedProjectId: string, sourceProjectId?: string) => void;
   onNavigateAway: () => void;
 }
@@ -261,7 +261,6 @@ export function ProjectSettingsTab({
 
   const projectName = project?.name ?? "";
   const projectDescription = project?.description ?? "";
-  const isDefault = project?.isDefault ?? false;
   const currentMember = activeMembers.find(
     (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
   );
@@ -351,11 +350,9 @@ export function ProjectSettingsTab({
             <div className="flex flex-col">
               <span className="text-sm font-medium">Delete project</span>
               <span className="text-xs text-muted-foreground">
-                {isDefault
-                  ? "Switch to another project first"
-                  : !canDeleteProject
+                {!canDeleteProject
                     ? "Only project admins can delete this project"
-                    : "Permanently delete this project and all its data"}
+                    : "Start permanent deletion of this project and its data"}
               </span>
             </div>
             <AlertDialog>
@@ -363,7 +360,7 @@ export function ProjectSettingsTab({
                 <Button
                   variant="destructive"
                   size="sm"
-                  disabled={isDefault || !canDeleteProject}
+                  disabled={!canDeleteProject}
                 >
                   Delete
                 </Button>
@@ -372,8 +369,8 @@ export function ProjectSettingsTab({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete project?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will permanently delete &ldquo;{projectName}
-                    &rdquo; and all its servers. This action cannot be undone.
+                    Starting deletion immediately blocks access to &ldquo;{projectName}
+                    &rdquo;. Data removal proceeds in the background and may not be cancellable once it starts.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -381,7 +378,7 @@ export function ProjectSettingsTab({
                   <AlertDialogAction
                     onClick={async () => {
                       const success = await onDeleteProject(activeProjectId);
-                      if (success) {
+                      if (success === true) {
                         onNavigateAway();
                       }
                     }}

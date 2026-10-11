@@ -17,12 +17,14 @@ export function DeleteOrganizationDialog({
   open,
   onOpenChange,
   name,
+  hasCancellationWindow,
   pending,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   name: string;
+  hasCancellationWindow: boolean;
   pending: boolean;
   onConfirm: () => Promise<void>;
 }) {
@@ -47,8 +49,11 @@ export function DeleteOrganizationDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
           <AlertDialogDescription>
-            Deleting “{name}” permanently removes the organization and its
-            members’ access. This action cannot be undone.
+            Starting deletion immediately blocks access to “{name}”. The
+            deletion runs in the background
+            {hasCancellationWindow
+              ? "; data removal begins after a 48-hour cancellation window. Running sandboxes may expire during this window and cannot be restored."
+              : " and cannot be cancelled once data removal begins."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-4">
@@ -83,7 +88,8 @@ export function DeleteOrganizationDialog({
               onChange={(e) => setPermanentAcknowledged(e.target.checked)}
               className="mt-1 accent-destructive"
             />
-            I understand that deleting this organization is permanent.
+            I understand that the organization and its data will be permanently removed
+            {hasCancellationWindow ? " after the cancellation window" : ""}.
           </label>
         </div>
         <AlertDialogFooter>
@@ -100,7 +106,7 @@ export function DeleteOrganizationDialog({
             ) : (
               <Trash2 aria-hidden="true" className="size-4" />
             )}
-            {pending ? "Deleting..." : "Permanently delete organization"}
+            {pending ? "Starting deletion…" : "Permanently delete organization"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

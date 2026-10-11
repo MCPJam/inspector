@@ -1,3 +1,4 @@
+import { deletionMessage } from "@/lib/deletion-message";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
@@ -1699,17 +1700,14 @@ export function useEvalHandlers({
     [deletingSuiteId],
   );
 
-  // Confirm deletion - actually performs the deletion
-  // Returns whether the delete actually committed (agent tooling propagates a
-  // real failure from this; the UI dialog ignores the return).
   const confirmDelete = useCallback(async (): Promise<boolean> => {
     if (!suiteToDelete || deletingSuiteId) return false;
 
     setDeletingSuiteId(suiteToDelete._id);
 
     try {
-      await mutations.deleteSuiteMutation({ suiteId: suiteToDelete._id });
-      toast.success("Test suite deleted successfully");
+      const result = await mutations.deleteSuiteMutation({ suiteId: suiteToDelete._id });
+      toast.success(deletionMessage(result, "Test suite deleted successfully"));
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
@@ -1877,15 +1875,14 @@ export function useEvalHandlers({
     [mutations.deleteRunMutation],
   );
 
-  // Confirm run deletion - actually performs the deletion
   const confirmDeleteRun = useCallback(async () => {
     if (!runToDelete || deletingRunId) return;
 
     setDeletingRunId(runToDelete);
 
     try {
-      await mutations.deleteRunMutation({ runId: runToDelete });
-      toast.success("Run deleted successfully");
+      const result = await mutations.deleteRunMutation({ runId: runToDelete });
+      toast.success(deletionMessage(result, "Run deleted successfully"));
       setRunToDelete(null);
     } catch (error) {
       console.error("Failed to delete run:", error);

@@ -6056,17 +6056,6 @@ export default function App() {
     [handleCreateProject, isCloudSyncActive, navigateToTarget],
   );
 
-  /**
-   * Deleting the project you are looking at has to move the URL, because the
-   * URL is what names it. Left alone, the address bar would keep pointing at
-   * a project that no longer exists and the route boundary would render the
-   * inaccessible state on a deletion the user performed deliberately.
-   *
-   * The fallback is VALIDATED — a project still visible in this organization,
-   * preferring the default one — and when there is none the viewer goes to
-   * the unscoped root, which is the onboarding/no-project surface. A guessed
-   * or stale id here would put someone in a project they did not choose.
-   */
   const handleDeleteProjectAndLeave = useCallback(
     async (projectId: string) => {
       const remainingIds = Object.keys(projects).filter(
@@ -6079,12 +6068,14 @@ export default function App() {
 
       const deleted = await handleDeleteProject(projectId);
       if (!deleted) return deleted;
-      // Only the tab whose URL named the deleted project moves. A deletion
-      // performed from Project settings while parked on a global route (say
-      // Organizations) should not yank the user off it.
-      if (readProjectPathSegment(window.location.pathname) !== projectId) {
+      if (typeof deleted === "object") {
+        navigateApp(`/deletions/${encodeURIComponent(deleted.requestId)}`, {
+          replace: true,
+          unscoped: true,
+        });
         return deleted;
       }
+      if (readProjectPathSegment(window.location.pathname) !== projectId) return deleted;
       if (fallbackProjectId && isProjectIdShape(fallbackProjectId)) {
         navigateApp(buildProjectPath(fallbackProjectId, routePaths.servers), {
           replace: true,

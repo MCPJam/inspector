@@ -1,3 +1,4 @@
+import { deletionMessage } from "@/lib/deletion-message";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useAppNavigate, useCurrentPathname } from "@/lib/app-navigation";
 import { useSettingsDraft } from "../settings/SettingsDraftProvider";
@@ -303,8 +304,7 @@ function OrganizationProviderSettings({
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await deleteProvider(deleteTarget.providerKey);
-      toast.success(`${deleteTarget.name} removed`);
+      toast.success(deletionMessage(await deleteProvider(deleteTarget.providerKey), `${deleteTarget.name} removed`));
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to remove provider",

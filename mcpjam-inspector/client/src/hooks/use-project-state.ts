@@ -21,6 +21,7 @@ import {
 } from "./useProjects";
 import { useEmbeddedBlobReadTelemetry } from "./useClientTelemetry";
 import * as Sentry from "@sentry/react";
+import type { PlatformDeletionReceipt } from "@mcpjam/sdk/platform";
 
 // Defensive invariant: the serialized servers payload sent to `createProject`
 // must not be empty when the source project actually has servers. Emits a
@@ -1496,9 +1497,9 @@ export function useProjectState({
   );
 
   const handleDeleteProject = useCallback(
-    async (projectId: string): Promise<boolean> => {
-      // If deleting the active project, switch to another first
-      if (projectId === effectiveActiveProjectId) {
+    async (projectId: string): Promise<boolean | PlatformDeletionReceipt> => {
+      // Cloud deletion opens its receipt; only local deletion needs a fallback.
+      if (projectId === effectiveActiveProjectId && (!isAuthenticated || shouldUseLocalFallback)) {
         const otherProjectIds = Object.keys(effectiveProjects).filter(
           (id) => id !== projectId,
         );
@@ -1507,14 +1508,7 @@ export function useProjectState({
         );
         const targetProjectId = defaultProject || otherProjectIds[0];
 
-        if (!targetProjectId) {
-          toast.error("Cannot delete the only project");
-          return false;
-        }
-
-        if (isAuthenticated && !shouldUseLocalFallback) {
-          setConvexActiveProjectId(targetProjectId);
-        } else {
+        if (targetProjectId) {
           dispatch({
             type: "SWITCH_PROJECT",
             projectId: targetProjectId,
@@ -1524,7 +1518,9 @@ export function useProjectState({
 
       if (isAuthenticated && !shouldUseLocalFallback) {
         try {
-          await convexDeleteProject({ projectId });
+          const receipt = await convexDeleteProject({ projectId });
+          toast.success("Deletion started");
+          return receipt;
         } catch (error) {
           let errorMessage = "Failed to delete project";
           if (
@@ -1544,7 +1540,6 @@ export function useProjectState({
           toast.error(errorMessage);
           return false;
         }
-        toast.success("Project deleted");
       } else {
         dispatch({ type: "DELETE_PROJECT", projectId });
         toast.success("Project deleted");
@@ -1557,7 +1552,6 @@ export function useProjectState({
       isAuthenticated,
       shouldUseLocalFallback,
       convexDeleteProject,
-      setConvexActiveProjectId,
       logger,
       dispatch,
     ],

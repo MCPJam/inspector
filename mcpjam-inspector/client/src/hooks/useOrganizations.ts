@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { startDeletion } from "@/lib/apis/deletion-api";
 
 export type OrganizationMembershipRole = "owner" | "admin" | "member" | "guest";
 
@@ -13,6 +14,7 @@ export interface Organization {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  plan?: string;
   myRole?: string;
   isCreator?: boolean;
   /**
@@ -195,8 +197,10 @@ export function useOrganizationMutations() {
   const updateOrganization = useMutation(
     "organizations:updateOrganization" as any,
   );
-  const deleteOrganization = useMutation(
-    "organizations:deleteOrganization" as any,
+  const deleteOrganization = useCallback(
+    ({ organizationId }: { organizationId: string }) =>
+      startDeletion({ type: "organization", id: organizationId }),
+    [],
   );
   const addMember = useMutation("organizations:addMember" as any);
   const changeMemberRole = useMutation("organizations:changeMemberRole" as any);

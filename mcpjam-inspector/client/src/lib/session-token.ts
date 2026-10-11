@@ -342,6 +342,8 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // paths that need the user's bearer attached. Scoped path-by-path — not all
   // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
   "/api/v1/harness/",
+  // Deletion requests use the current user bearer without project access.
+  "/api/v1/deletions",
   // The Tools panel and the Raw request preview reading MCPJam's own built-in
   // tool definitions (`/api/v1/built-in-tools/browser/definitions`), so neither
   // has to keep a hand-written copy of schemas built at turn time. Same shape

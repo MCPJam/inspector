@@ -5,11 +5,15 @@ it("requires the exact name and both acknowledgements, and resets on reopening",
   const props = {
     open: true,
     name: "Acme",
+    hasCancellationWindow: true,
     pending: false,
     onOpenChange: vi.fn(),
     onConfirm: vi.fn().mockResolvedValue(undefined),
   };
   const { rerender } = render(<DeleteOrganizationDialog {...props} />);
+  expect(
+    screen.getByText(/48-hour cancellation window.*Running sandboxes may expire/),
+  ).toBeInTheDocument();
   const action = screen.getByRole("button", {
     name: "Permanently delete organization",
   });
@@ -28,6 +32,7 @@ it("requires the exact name and both acknowledgements, and resets on reopening",
   fireEvent.click(action);
   expect(props.onConfirm).toHaveBeenCalledTimes(1);
   rerender(<DeleteOrganizationDialog {...props} pending />);
+  expect(screen.getByRole("button", { name: "Starting deletion…" })).toBeDisabled();
   expect(action).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   rerender(<DeleteOrganizationDialog {...props} open={false} />);

@@ -1306,13 +1306,13 @@ function OrganizationPage({
     setIsDeleting(true);
     beginOrganizationDeletion(organization._id);
     try {
-      await deleteOrganization({ organizationId: organization._id });
-      toast.success("Organization deleted");
+      const receipt = await deleteOrganization({ organizationId: organization._id });
+      toast.success("Deletion started");
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
-      if (!onOrganizationDeleted) {
-        appNavigate("/servers");
-      }
+      appNavigate(`/deletions/${encodeURIComponent(receipt.requestId)}`, {
+        unscoped: true,
+      });
     } catch (error) {
       // Only on failure: clearing after success re-renders before the org list drops it.
       endOrganizationDeletion(organization._id);
@@ -2457,6 +2457,7 @@ function OrganizationPage({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         name={organization.name}
+        hasCancellationWindow={organization.plan === "enterprise"}
         pending={isDeleting}
         onConfirm={handleDelete}
       />

@@ -3533,10 +3533,10 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
   });
 
-  it("calls onOrganizationDeleted and skips the fallback redirect when provided", async () => {
+  it("calls onOrganizationDeleted and opens the accepted deletion receipt", async () => {
     window.history.replaceState({}, "", "/organizations/org-1");
     const onOrganizationDeleted = vi.fn();
-    deleteOrganizationMock.mockResolvedValue(undefined);
+    deleteOrganizationMock.mockResolvedValue({ requestId: "synthetic-request" });
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({ plan: "free" }),
@@ -3576,7 +3576,7 @@ describe("OrganizationsTab billing", () => {
       expect(onOrganizationDeleted).toHaveBeenCalledWith("org-1");
     });
 
-    expect(window.location.pathname).toBe("/organizations/org-1");
+    expect(window.location.pathname).toBe("/deletions/synthetic-request");
     expect(window.location.hash).toBe("");
   });
 
@@ -3622,6 +3622,7 @@ describe("OrganizationsTab billing", () => {
           }) !== null;
         placeholderShownAtSend =
           screen.queryByText("Deleting organization...") !== null;
+        return { requestId: "synthetic-request" };
       });
 
       render(
@@ -3697,7 +3698,7 @@ describe("OrganizationsTab billing", () => {
     });
 
     it("shows not found once a finished delete drops the org from the list", async () => {
-      deleteOrganizationMock.mockResolvedValue(undefined);
+      deleteOrganizationMock.mockResolvedValue({ requestId: "synthetic-request" });
 
       const { rerender } = render(
         <OrganizationsTab
