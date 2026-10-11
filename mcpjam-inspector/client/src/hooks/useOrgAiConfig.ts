@@ -96,10 +96,10 @@ export type OrgAiConfig = {
 
 /**
  * The config this UI reads, or `null` when the deployment serves the query
- * without the fields it needs. A deployment between the policy and switch
- * halves of the rollout could do that, and reading a missing `aiKeyPolicy`
- * as "off", a missing readiness as "nothing works", or a missing `canEnable`
- * as either answer would misstate what the backend allows.
+ * without the fields it needs. An incomplete answer is never read as a
+ * setting: a missing `aiKeyPolicy` as "off", a missing readiness as "nothing
+ * works", or a missing `canEnable` as either answer would misstate what the
+ * backend allows.
  *
  * The coverage list is `readiness` on this query (the provider list's config
  * spells it `aiReadiness`; that is a different query).
