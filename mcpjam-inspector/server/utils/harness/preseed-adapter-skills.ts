@@ -28,13 +28,15 @@
  *
  * VERSION LOCKSTEP: the no-op depends on this package's `@ai-sdk/harness`
  * hashing byte-identically to the copy nested inside each harness adapter
- * (all 1.0.96 today). If they drift, nothing breaks loudly — the adapter
- * re-writes each skill once per session and MCPJam's supporting files for it
- * are lost until the next session — but the drift should be closed, not
+ * (one deduped 1.0.117 copy shared by all of them today). If they drift,
+ * nothing breaks loudly — the adapter re-writes each skill once per session
+ * and MCPJam's supporting files for it are lost until the next session — but
+ * the drift should be closed, not
  * tolerated. `__tests__/preseed-adapter-skills.test.ts` asserts the no-op
  * against this package's copy; verify the nested versions on adapter bumps.
  */
 import { writeSkills } from "@ai-sdk/harness/utils";
+import { posix } from "node:path";
 import { shellQuote } from "./shell-quote.js";
 import type { HarnessSkillPayload } from "./runtime-skills.js";
 import { logger } from "../logger.js";
@@ -187,7 +189,12 @@ export async function preseedAdapterSkills(args: {
     sandbox: args.session as unknown as Parameters<
       typeof writeSkills
     >[0]["sandbox"],
-    rootDir: args.skillsBase,
+    // `writeSkills` takes the root as `homePath` + a relative `skillsDir` and
+    // joins them back (`@ai-sdk/harness` >= 1.0.117). Splitting the absolute
+    // base at its last segment lands on the exact same root, so the manifest
+    // and every skill dir match what the adapter itself writes.
+    homePath: posix.dirname(args.skillsBase),
+    skillsDir: posix.basename(args.skillsBase),
     skills: args.payload,
     trailingNewline: args.trailingNewline,
     ...(args.signal ? { abortSignal: args.signal } : {}),

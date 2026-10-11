@@ -57,3 +57,11 @@ export type {
   AppToolInvocationStatus,
   AppToolInvocationUpdate,
 } from "./app-tool-invocations.js";
+
+export { mcpAppToolResultSchema } from "./tool-result-schema.js";
+
+export {
+  readResourceDisplayHints,
+  negotiateResourceDisplayModes,
+} from "./resource-display.js";
+export type { ResourceDisplayHints } from "./resource-display.js";

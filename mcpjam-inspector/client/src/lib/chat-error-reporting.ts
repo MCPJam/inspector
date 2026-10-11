@@ -1,3 +1,4 @@
+import { TypeValidationError } from "ai";
 import {
   describeError,
   originOf,
@@ -100,6 +101,41 @@ function syntheticMessage(meta: ChatResponseMeta | null): string {
 }
 
 /**
+ * The browser's AI SDK rejected a chunk of our own chat stream ("Type
+ * validation failed"): protocol drift between what our server streamed and
+ * the `ai` version this build bundles.
+ *
+ * Always ours — no user server or config can produce it — and it fails every
+ * turn on the affected path, so it gets its own message, i.e. its own Sentry
+ * issue, rather than joining `chat_stream_error`, where a new cause never
+ * opens a new issue and so never pings. On 2026-10-05 this broke every hosted
+ * Anthropic chat and reported nothing: it came mid-stream after a 200, which
+ * `attributeChatFailure` could only call `ambiguous`.
+ */
+const STREAM_PROTOCOL_ERROR = "chat_stream_protocol_error";
+
+/**
+ * What a rejected chunk looked like, without its values. The error's message
+ * embeds the whole chunk, and a chunk carries model output — so the type and
+ * field names go to Sentry, never the message.
+ */
+function rejectedChunkShape(error: TypeValidationError): {
+  chunkType: string;
+  fields: string[];
+} {
+  const value = error.value;
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    chunkType:
+      typeof record.type === "string" ? record.type.slice(0, 64) : typeof value,
+    fields: Object.keys(record).slice(0, 20),
+  };
+}
+
+/**
  * Whose fault a chat turn dying was.
  *
  * The describer alone cannot answer this. The AI SDK throws
@@ -180,6 +216,18 @@ export function reportChatFailure(
   // people's infrastructure, so gate at the call site — the same boundary
   // PostHog capture already uses.
   if (!isErrorCaptureSurface()) return false;
+
+  if (TypeValidationError.isInstance(error)) {
+    reportCaught(new Error(STREAM_PROTOCOL_ERROR), {
+      source: STREAM_PROTOCOL_ERROR,
+      extra: {
+        ...rejectedChunkShape(error),
+        origin: "mcpjam",
+        ...(meta?.requestId ? { requestId: meta.requestId } : {}),
+      },
+    });
+    return true;
+  }
 
   const normalized = describeError(error);
   const origin = attributeChatFailure(normalized, meta);

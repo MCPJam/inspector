@@ -27,6 +27,7 @@ import type {
   BrowserAgentResult,
 } from "../../../shared/browser-agent-contract.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { browserFeatureUnavailable } from "./chat-session-browser.js";
 
 const router = new Hono();
 const id = z.string().min(1).max(128);
@@ -311,6 +312,14 @@ for (const op of [
     } catch (error) {
       if (error instanceof z.ZodError)
         return v1Error(c, "VALIDATION_ERROR", error.message);
+      const unavailable = browserFeatureUnavailable(error);
+      if (unavailable)
+        return v1Error(
+          c,
+          "FORBIDDEN",
+          unavailable.message,
+          unavailable.details,
+        );
       if (error instanceof BrowserSessionServiceError)
         return v1Error(
           c,
