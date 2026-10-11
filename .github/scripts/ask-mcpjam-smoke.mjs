@@ -59,7 +59,7 @@ import path from "node:path";
 
 const STARTUP_TIMEOUT_MS = 180_000;
 const TURN_TIMEOUT_MS = 240_000;
-const AGENT_MODEL = "openai/gpt-5.6-luna";
+const AGENT_MODEL = "anthropic/claude-haiku-5.5";
 const PROMPT =
   "This is an automated health check. Reply with one short sentence and do not call any tools.";
 

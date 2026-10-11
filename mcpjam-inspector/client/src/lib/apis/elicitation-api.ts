@@ -19,6 +19,7 @@
 
 import type { ConvexReactClient } from "convex/react";
 import type { HostedElicitationAnswer } from "@/shared/hosted-elicitation";
+import { retryOnceAfterSignIn } from "@/lib/auth/sign-in-retry";
 
 /**
  * Convex functions are referenced by string name across this client (there is
@@ -34,13 +35,23 @@ export type RespondToElicitationResult =
 export async function respondToChatElicitation(
   convex: ConvexReactClient,
   answer: HostedElicitationAnswer,
+  privateReceipt?: string,
 ): Promise<RespondToElicitationResult> {
-  const result = (await convex.mutation(RESPOND_FN as any, {
-    rendezvousId: answer.rendezvousId,
-    action: answer.action,
-    // Only form-mode accepts carry content; the backend rejects it otherwise.
-    ...(answer.content ? { content: answer.content } : {}),
-  })) as RespondToElicitationResult | undefined;
+  // A refusal for missing identity changed nothing (the backend resolves the
+  // caller before it reads the row), so the same answer is sent once more
+  // after the session is back; otherwise it ends as "sign-in expired".
+  const result = (await retryOnceAfterSignIn(() =>
+    convex.mutation(RESPOND_FN as any, {
+      rendezvousId: answer.rendezvousId,
+      action: answer.action,
+      // Only form-mode accepts carry content; the backend rejects it otherwise.
+      ...(privateReceipt
+        ? { contentBlobId: privateReceipt }
+        : answer.content
+          ? { content: answer.content }
+          : {}),
+    }),
+  )) as RespondToElicitationResult | undefined;
 
   // A backend that predates this feature (or any non-object return) shouldn't
   // read as success — the caller decides what to show.

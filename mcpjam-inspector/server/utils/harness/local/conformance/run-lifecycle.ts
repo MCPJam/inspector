@@ -5,7 +5,7 @@
  *   HOME=... npx tsx run-lifecycle.ts orphan-b   # a fresh supervisor reclaims the orphan
  */
 import { spawn, execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import { createSupervisedLocalHarnessProvider, sessionStateDirFor } from "../sup
 import { resolveLocalHarnessAvailability } from "../availability.js";
 import { getLocalMachineId, grantLocalHarnessConsent, localHarnessStateRoot, registerWorkspaceGrant, revokeLocalHarnessGrants } from "../grants.js";
 import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
+import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION, type LocalPlatform } from "../targets.js";
@@ -279,9 +280,8 @@ async function setup() {
   await writeFile(join(WORKSPACE, "hello.txt"), "hello\n");
   const ws = await registerWorkspaceGrant(WORKSPACE); if (!ws.ok) throw new Error(ws.message);
   const digest = await computeTreeDigest(BUNDLE);
-  const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
   const base = LOCAL_HARNESS_MANIFEST["claude-code"];
-  const manifest = { ...base, runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: "launcher.mjs" }, /* THIS scenario's manifest admits the platform it runs on; the shipped one keeps refusing win32 until this leg is green — same rule as run-native-turn. */ nativePlatforms: [...new Set([...base.nativePlatforms, PLATFORM])], lifecycleConformanceVersion: CONFORMANCE_VERSION, bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}` } as typeof base;
+  const manifest = { ...base, runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest } }, /* THIS scenario's manifest admits the platform it runs on; the shipped one keeps refusing win32 until this leg is green — same rule as run-native-turn. */ nativePlatforms: [...new Set([...base.nativePlatforms, PLATFORM])], lifecycleConformanceVersion: CONFORMANCE_VERSION } as typeof base;
   const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM }); if (!rt.ok) throw new Error(rt.message);
   const machineId = await getLocalMachineId();
   const target = { kind: "local-native" as const, machineId, workspaceGrantId: ws.grant.workspaceGrantId, harnessId: "claude-code" as const, runtimeId: rt.runtime.runtimeId, permissionProfile: "workspace-edits" as const, policyVersion: LOCAL_HARNESS_POLICY_VERSION };
@@ -298,8 +298,12 @@ async function setup() {
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
   let bridgePid = -1;
   const provider = createSupervisedLocalHarnessProvider({ harnessId: "claude-code", manifest: plan.manifest, runtime: plan.runtime, supervisor, launcher, workspacePath: plan.workspacePath, workspaceGrantId: target.workspaceGrantId, sessionStateDir, targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000, onBridgeStarted: async ({ pid }) => { bridgePid = pid; } });
-  const harness = createClaudeCodeHarness({ model: "haiku", auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: `http://127.0.0.1:${gw.port}` }, thinking: { type: "disabled" }, env: { CLAUDE_CODE_EFFORT_LEVEL: "unset", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_TMPDIR: join(sessionStateDir, "home", "tmp") }, startupTimeoutMs: 90_000 });
-  const agent: any = new HarnessAgent({ harness: harness as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "Spike." });
+  const harness = createClaudeCodeHarness({ auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: `http://127.0.0.1:${gw.port}` }, thinking: { type: "disabled" }, env: { CLAUDE_CODE_EFFORT_LEVEL: "unset", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_TMPDIR: join(sessionStateDir, "home", "tmp") }, startupTimeoutMs: 90_000 });
+  // `model` rides on the agent; the adapter no longer reads one at construction.
+  // The recipe a local session runs: the Inspector layer's, never the adapter's
+  // sandbox install files (which a local session refuses to write).
+  const local = await withLocalRuntimeBootstrap(harness, plan.runtime);
+  const agent: any = new HarnessAgent({ harness: local as any, sandbox: provider, model: "haiku", permissionMode: plan.permissionMode, instructions: "Spike." });
   const session = await agent.createSession({ sessionId });
   return { agent, session, supervisor, sessionId, sessionStateDir, bridgePid: () => bridgePid, mock, gw };
 }
