@@ -71,7 +71,7 @@ function toolNameOf(part: ToolPartLike): string | undefined {
  */
 export function findUnresolvedMrtrToolCallId(
   messages: readonly UIMessage[],
-  operationLabel?: string
+  operationLabel?: string,
 ): string | undefined {
   let fallback: string | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -123,6 +123,26 @@ export function buildMrtrChatResumeBody(args: {
       continuationId: args.continuationId,
       round: args.round,
       responses: args.responses,
+    },
+  };
+}
+
+/** Owned rounds carry the exact original engine id, never a name/order guess. */
+export function buildOwnedMrtrChatResumeBody(args: {
+  operation: import("@/shared/mrtr-continuation").MrtrOwnedModelOperation;
+  serverId: string;
+  continuationId: string;
+  round: number;
+  responsesBlobId: string;
+}) {
+  return {
+    mrtrResume: {
+      toolCallId: args.operation.toolCallId,
+      serverId: args.serverId,
+      continuationId: args.continuationId,
+      round: args.round,
+      pluginModelOperation: args.operation,
+      responsesBlobId: args.responsesBlobId,
     },
   };
 }

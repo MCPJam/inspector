@@ -20,7 +20,9 @@ import {
   buildRunPassRateChanges,
   type RunPassRateChange,
 } from "./run-pass-rate-changes";
-import { useProjectRunHistory } from "./use-project-run-history";
+import type { ProjectRunHistoryDetail } from "./use-project-run-history";
+import { useSuiteRunMetrics } from "./use-suite-run-metrics";
+import type { EvalSuiteRunListItem } from "./types";
 import { isActiveRun } from "./run-metrics";
 import {
   displayRunServerNames,
@@ -29,8 +31,8 @@ import {
 import { getEffectiveSuiteServers, runClientIdentity } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
-  buildSuiteMetricStripData,
-  buildAggregateMetricStripData,
+  buildSuiteMetricStripDataFromMetrics,
+  buildAggregateMetricStripDataFromMetrics,
   type MetricStripData,
 } from "./metric-strip-data";
 import {
@@ -64,8 +66,10 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useEffect, useMemo, useState, type ReactNode, useRef } from "react";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useConvex, usePaginatedQuery, useQuery } from "convex/react";
+import { toast } from "sonner";
+import { readRunGroupSummaries } from "./use-run-group-summaries";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -109,21 +113,7 @@ import {
   formatDecisionCounts,
 } from "./run-decision-summary-presentation";
 
-export const PROJECT_RUNS_PAGE_SIZE = 50;
-
-/**
- * Pages the Evaluate tab reads on its own before deferring to "Load more".
- *
- * Each page costs one run read and one iteration read per run, so an uncapped
- * reach turns a mature project into thousands of queries on every visit.
- * A Suite Health bar is one launch of one suite, so two pages (100 runs) fill
- * its 60-bar window only when launches are mostly single runs, as with SDK
- * runs started one model at a time. A suite that fans each launch out to three
- * models gets ~33 bars from the same pages and says "read so far". At four
- * pages, a project with ~200 SDK runs spent ~500 queries and ~45 MB per visit
- * before the chart finished.
- */
-export const SUITE_HEALTH_AUTO_PAGES = 1;
+export const PROJECT_RUNS_PAGE_SIZE = 20;
 
 /**
  * One row of `testSuites:listProjectRuns` — the backend's explicit
@@ -133,6 +123,9 @@ export const SUITE_HEALTH_AUTO_PAGES = 1;
  * reach for one.
  */
 export interface ProjectRunRow {
+  runSummary?: EvalSuiteRunListItem;
+  runGroupId?: string | null;
+  serverNames?: string[];
   client?: EvalSuiteRun["client"] | null;
   namedHostId?: string | null;
   name?: string;
@@ -293,6 +286,49 @@ export function ProjectRunsTable({
   );
   const showDeleteColumn = evaluateLayout && onDeleteRun != null;
   const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
+  const convex = useConvex();
+  const launchReadInFlight = useRef(false);
+  const requestDeleteLaunch = async (loaded: ProjectRunRow[]) => {
+    if (launchReadInFlight.current) return;
+    launchReadInFlight.current = true;
+    try {
+      const representative = loaded[0];
+      const groupId =
+        representative.runSummary?.runGroupId ?? representative.runGroupId;
+      const members = groupId
+        ? (
+            await readRunGroupSummaries(
+              convex.query.bind(convex),
+              representative.suiteId,
+              groupId,
+            )
+          ).map((run): ProjectRunRow => ({
+            ...representative,
+            ...run,
+            runSummary: run,
+            summary: run.summary ?? null,
+            source: run.source ?? null,
+            ciMetadata: run.ciMetadata ?? null,
+            completedAt: run.completedAt ?? null,
+          }))
+        : loaded;
+      if (members.some((row) => !(canDeleteRun?.(row) ?? true))) {
+        toast.error(
+          "You do not have permission to delete every run in this launch",
+        );
+        return;
+      }
+      deleteLaunch.request({
+        runIds: members.map((row) => row._id),
+        runNumber: Math.min(...members.map((row) => row.runNumber)),
+        suiteName: representative.suiteName,
+      });
+    } catch {
+      toast.error("Unable to load the full launch. Try again.");
+    } finally {
+      launchReadInFlight.current = false;
+    }
+  };
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
@@ -351,26 +387,64 @@ export function ProjectRunsTable({
 
   // Hydrate loaded history before display filters: options and comparison baselines
   // must not disappear when another row is hidden.
-  const history = useProjectRunHistory(projectId, rows, historyMetricsEnabled);
-  // Suite Health reads more than the first page, but not the whole archive:
-  // every page costs a run read and an iteration read per run, so the reach is
-  // bounded and the rest stays behind the manual control. Finish each page
-  // before requesting the next; legacy tables remain manual throughout.
-  const autoLoadedPages = useRef(0);
-  useEffect(() => {
-    autoLoadedPages.current = 0;
-  }, [projectId]);
-  useEffect(() => {
-    if (
-      evaluateLayout &&
-      status === "CanLoadMore" &&
-      !history.loading &&
-      autoLoadedPages.current < SUITE_HEALTH_AUTO_PAGES
-    ) {
-      autoLoadedPages.current += 1;
-      loadMore(PROJECT_RUNS_PAGE_SIZE);
-    }
-  }, [projectId, evaluateLayout, status, history.loading, loadMore]);
+  const summaries = useMemo(
+    () =>
+      rows.map(
+        (row): EvalSuiteRunListItem =>
+          row.runSummary ?? {
+            _id: row._id,
+            suiteId: row.suiteId,
+            createdBy: row.createdBy,
+            runNumber: row.runNumber,
+            configRevision: "",
+            configSnapshot: {},
+            createdAt: row.createdAt,
+            completedAt: row.completedAt ?? undefined,
+            status: row.status,
+            result: row.result,
+            summary: row.summary ?? undefined,
+            source: row.source ?? undefined,
+            client: row.client ?? undefined,
+            namedHostId: row.namedHostId ?? undefined,
+            runGroupId: row.runGroupId ?? undefined,
+          },
+      ),
+    [rows],
+  );
+  const metrics = useSuiteRunMetrics(
+    projectId,
+    summaries,
+    historyMetricsEnabled,
+  );
+  const details = useMemo(
+    () =>
+      new Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>(
+        historyMetricsEnabled
+          ? summaries
+              .filter((run) => metrics.metricsByRun.has(run._id))
+              .map((run) => [
+                run._id,
+                {
+                  run,
+                  iterations: metrics.iterationsByRun.get(run._id) ?? [],
+                  metrics: metrics.metricsByRun.get(run._id) ?? null,
+                },
+              ])
+          : [],
+      ),
+    [
+      historyMetricsEnabled,
+      summaries,
+      metrics.iterationsByRun,
+      metrics.metricsByRun,
+    ],
+  );
+  const history = {
+    details,
+    loading: metrics.loading,
+    errorCount: metrics.errorCount,
+    retry: metrics.retry,
+  };
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const platformPostLaunchEnabled = usePlatformPostLaunchEnabled();
   const platformFilters = useMemo(
@@ -406,14 +480,8 @@ export function ProjectRunsTable({
   // (see `github-check-server-name.ts`). Resolve those to the suite's real
   // servers, and only pay for the suite lookup when a loaded run has one.
   const rawRunServers = useMemo(
-    () =>
-      new Map<string, string[]>(
-        [...history.details].map(([id, detail]) => [
-          id,
-          detail.run.configSnapshot?.environment?.servers ?? [],
-        ]),
-      ),
-    [history.details],
+    () => new Map(rows.map((row) => [row._id, row.serverNames ?? []])),
+    [rows],
   );
   const hasEphemeralCheckServer = useMemo(
     () =>
@@ -619,8 +687,11 @@ export function ProjectRunsTable({
       // handing them the whole history made every launch rescan everything.
       const data =
         runs.length === 1
-          ? buildSuiteMetricStripData(runs, measured)
-          : buildAggregateMetricStripData(runs, measured);
+          ? buildSuiteMetricStripDataFromMetrics(runs, metrics.metricsByRun)
+          : buildAggregateMetricStripDataFromMetrics(
+              runs,
+              metrics.metricsByRun,
+            );
       const counts = resultCounts(measured);
       return data
         ? [
@@ -831,7 +902,7 @@ export function ProjectRunsTable({
           // every page left one unreadable run able to withhold the chart for
           // good, and the retry it offered re-read the whole history to no
           // effect. What is missing is reported beside the chart instead.
-          // Not gated on `history.loading` either: every auto-loaded page
+          // Not gated on `history.loading` either: every manually loaded page
           // restarts that read, which put the chart back to its skeleton
           // until the last page landed. While a read is in flight only a
           // settled detail counts; an active one is skipped by the chart and
@@ -1134,10 +1205,7 @@ export function ProjectRunsTable({
         >
           <RunHistoryTable aria-label="Project runs">
             {evaluateLayout ? (
-              <EvaluateHistoryHeader
-                showSuite
-                showActions={showDeleteColumn}
-              />
+              <EvaluateHistoryHeader showSuite showActions={showDeleteColumn} />
             ) : (
               <TableHeader>
                 <TableRow>
@@ -1254,12 +1322,7 @@ export function ProjectRunsTable({
                         showDeleteColumn &&
                         representative.suiteName !== null &&
                         launch.runs.every((row) => canDeleteRun?.(row) ?? true)
-                          ? () =>
-                              deleteLaunch.request({
-                                runIds: launch.runs.map((row) => row._id),
-                                runNumber: representative.runNumber,
-                                suiteName: representative.suiteName,
-                              })
+                          ? () => void requestDeleteLaunch(launch.runs)
                           : undefined
                       }
                       onOpen={
