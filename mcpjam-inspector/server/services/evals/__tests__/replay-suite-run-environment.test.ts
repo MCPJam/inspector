@@ -61,6 +61,13 @@ vi.mock("../../../utils/org-model-config.js", () => ({
   resolveOrgModelConfig: vi.fn(async () => undefined),
 }));
 
+const orgPolicyConfigForClientKeysMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<unknown> => undefined),
+);
+vi.mock("../org-policy-client-keys.js", () => ({
+  orgPolicyConfigForClientKeys: orgPolicyConfigForClientKeysMock,
+}));
+
 import { prepareSuiteReplayFromRun } from "../replay-suite-run.js";
 
 /** A source run that WAS environment-backed, replayed by an ordinary caller. */
@@ -137,4 +144,50 @@ it.each(["execution", "harness", "policy"] as const)("refuses replay when %s adm
   await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
   expect(admission.failed).toHaveBeenCalledOnce();
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
+  it("still reads the organization's AI-key policy and hands the runner its config", async () => {
+    const strict = {
+      aiKeyPolicy: { requireOrgKeys: true },
+      providers: [{ providerKey: "openai", exportDenied: true }],
+    };
+    orgPolicyConfigForClientKeysMock.mockResolvedValueOnce(strict);
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: convexClient(),
+      convexAuthToken: "token",
+      sourceRunId: "keyed-run",
+      modelApiKeys: { openai: "sk-personal" },
+    });
+    await prepared.execute();
+
+    expect(orgPolicyConfigForClientKeysMock).toHaveBeenCalledWith(
+      { projectId: "project-1" },
+      expect.objectContaining({ bearerToken: "token" }),
+    );
+    // The runner refuses personal and hosted selections under this config.
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelApiKeys: { openai: "sk-personal" },
+        orgModelConfig: strict,
+      }),
+    );
+  });
+
+  it("fails the created run when the policy can't be read, before any model runs", async () => {
+    admission.failed.mockClear();
+    orgPolicyConfigForClientKeysMock.mockRejectedValueOnce(
+      new Error("The organization's AI key policy could not be read"),
+    );
+    await expect(
+      prepareSuiteReplayFromRun({
+        convexClient: convexClient(),
+        convexAuthToken: "token",
+        sourceRunId: "keyed-run",
+        modelApiKeys: { openai: "sk-personal" },
+      }),
+    ).rejects.toThrow(/policy could not be read/);
+    expect(admission.failed).toHaveBeenCalledOnce();
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
 });
