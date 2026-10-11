@@ -17,7 +17,10 @@
  * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
-import { getCanonicalModelId } from "@/shared/types";
+import {
+  getCanonicalModelId,
+  hostedProviderFromCanonicalId,
+} from "@/shared/types";
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
@@ -228,16 +231,19 @@ function orgSelectionProvider(
   model: { provider?: string },
   selection: OrgHarnessSelection,
 ): string | undefined {
-  const slash = selection.modelId.indexOf("/");
-  const prefix = slash > 0 ? selection.modelId.slice(0, slash) : undefined;
+  const prefix = selection.modelId.includes("/")
+    ? hostedProviderFromCanonicalId(selection.modelId)
+    : undefined;
   if (model.provider && prefix && model.provider !== prefix) return undefined;
   return model.provider ?? prefix;
 }
 
 /**
  * Will this turn run a BROKERED harness's real runtime? One predicate for the
- * chat routing (free path vs org BYOK path), the emulated cloud-skill tools
- * and the persisted `modelSource`, so they cannot disagree about it.
+ * chat routing (free path vs org BYOK path) and the persisted `modelSource`
+ * (`harnessTurnRail`), so they cannot disagree about it. The emulated
+ * cloud-skill tools read it for an org selection only: their hosted check also
+ * covers an external-account harness, which this predicate excludes.
  *
  * True when a brokered harness is requested and the model either is
  * MCPJam-provided (the hosted rail) or comes from an org connection whose

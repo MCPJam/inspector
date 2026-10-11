@@ -16,7 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -47,7 +47,6 @@ import {
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
-import { turnModelSelectionOf } from "./assistant-turn-selection.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -85,6 +84,8 @@ export interface RunAssistantTurnOptions {
    * refuses the turn before any spend.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** The saved selection; an org one runs a harness on the org's own key. */
+  modelSelection?: ModelSelection;
 
   selectedServerIds?: string[];
   /**
@@ -685,7 +686,6 @@ export async function runAssistantTurn(
   // pre-flight.
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
-  const turnSelection = turnModelSelectionOf(opts.extraBodyFields);
   if (harnessRequested) {
     // Venue-aware: a local target runs the local arm (app-server for Codex),
     // and this backstop must judge the adapter that will actually run.
@@ -704,7 +704,7 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
-      ...(turnSelection ? { selection: turnSelection } : {}),
+      ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -736,7 +736,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
-    handlerOptions.modelSelection = turnSelection;
+    handlerOptions.modelSelection = opts.modelSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness

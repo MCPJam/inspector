@@ -5,7 +5,6 @@ import {
   harnessDefaultModel,
   harnessModelLockReason,
   harnessModelLockReasonsByRow,
-  harnessModelRefusalReason,
   harnessPickerModels,
   harnessRowRefusalReason,
 } from "../harness-model-locks";
@@ -27,15 +26,15 @@ const MODELS = [
 describe("harness model locks", () => {
   it("refuses at the pinned version when none is given", () => {
     expect(
-      harnessModelRefusalReason(
-        "openai/gpt-5.6-luna",
+      harnessChoiceRefusalReason(
+        { modelId: "openai/gpt-5.6-luna" },
         { harnessId: "codex" },
         "eval",
       ),
     ).toMatch(/Codex harness can't run this host's model/);
     expect(
-      harnessModelRefusalReason(
-        "openai/gpt-5.5",
+      harnessChoiceRefusalReason(
+        { modelId: "openai/gpt-5.5" },
         { harnessId: "codex" },
         "eval",
       ),
@@ -44,7 +43,11 @@ describe("harness model locks", () => {
 
   it("an emulated or unknown client refuses nothing", () => {
     expect(
-      harnessModelRefusalReason("openai/gpt-5.6-luna", null, "eval"),
+      harnessChoiceRefusalReason(
+        { modelId: "openai/gpt-5.6-luna" },
+        null,
+        "eval",
+      ),
     ).toBeUndefined();
     expect(
       harnessModelLockReason(

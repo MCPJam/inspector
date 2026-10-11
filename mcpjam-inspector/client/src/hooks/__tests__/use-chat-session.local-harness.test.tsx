@@ -519,19 +519,12 @@ describe("useChatSession — a harness client with no model it can run", () => {
     const { result } = await renderWithHarness(undefined, undefined, {
       harnessModelTarget: { harnessId: "claude-code" },
     });
-    const session = result.current as unknown as {
-      availableModels: unknown[];
-      selectedModel: {
-        id: string;
-        disabled?: boolean;
-        disabledReason?: string;
-      };
-      submitBlocked: boolean;
-    };
+    const session = result.current;
     expect(session.availableModels).toEqual([]);
     expect(session.selectedModel).toMatchObject({
       disabled: true,
-      disabledReason: expect.stringContaining("harness"),
+      disabledReason:
+        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models.",
     });
     expect(session.submitBlocked).toBe(true);
   });

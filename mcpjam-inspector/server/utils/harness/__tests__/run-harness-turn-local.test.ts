@@ -212,6 +212,11 @@ import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
 import { logger } from "../../logger.js";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  MCPJamEngineErrorEvent,
+  MCPJamHandlerOptions,
+} from "../../mcpjam-stream-handler";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -873,7 +878,7 @@ describe("runHarnessTurn local continuity", () => {
 
 
   describe("on the organization's own key", () => {
-    const ORG_SELECTION = {
+    const ORG_SELECTION: ModelSelection = {
       source: "org",
       modelId: "anthropic/claude-sonnet-4.6",
       connectionRef: { kind: "orgProvider", id: "conn_1" },
@@ -909,7 +914,7 @@ describe("runHarnessTurn local continuity", () => {
                 credentialRevision: revision,
               },
             },
-          }) as any,
+          }) as never,
       );
     }
     function claimStampedWith(revision: string) {
@@ -923,18 +928,28 @@ describe("runHarnessTurn local continuity", () => {
           computerId: "machine-1:runtime-1",
           resumeState: stampOrgCredentialRevision(ADAPTER_STATE, revision),
         },
-      } as any);
+      } as never);
     }
-    const orgOptions = () =>
-      baseOptions({
-        modelId: "claude-sonnet-4-6",
-        modelSelection: ORG_SELECTION,
-      });
+    /** The local org turn, typed: overrides replace any field. */
+    const orgOptions = (
+      overrides: Partial<MCPJamHandlerOptions> = {},
+    ): MCPJamHandlerOptions =>
+      ({
+        ...baseOptions({
+          modelId: "claude-sonnet-4-6",
+          modelSelection: ORG_SELECTION,
+        }),
+        ...overrides,
+      }) as MCPJamHandlerOptions;
+    const runOwnedTarget = () => ({
+      ...orgOptions().harnessExecutionTarget!,
+      localSessionId: "local-session",
+    });
 
     it("a renamed connection (same key) resumes the same local session", async () => {
       claimStampedWith("rev_a");
       leasesOn("rev_a");
-      await runHarnessTurn(orgOptions() as any, "none");
+      await runHarnessTurn(orgOptions(), "none");
       expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
       expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -951,7 +966,7 @@ describe("runHarnessTurn local continuity", () => {
     it("a replaced key prepares again under a FRESH session id and starts fresh", async () => {
       claimStampedWith("rev_a");
       leasesOn("rev_b", "rev_b");
-      await runHarnessTurn(orgOptions() as any, "none");
+      await runHarnessTurn(orgOptions(), "none");
       expect(prepareLocalHarnessTurn).toHaveBeenCalledTimes(2);
       const calls = vi.mocked(prepareLocalHarnessTurn).mock.calls;
       expect(calls[0]![0].sessionId).toBe("local-session");
@@ -976,17 +991,12 @@ describe("runHarnessTurn local continuity", () => {
       // fresh id would outlive the run: the attempt fails instead.
       claimStampedWith("rev_a");
       leasesOn("rev_b");
-      const events: Array<{ message: string }> = [];
-      const options = orgOptions();
+      const events: MCPJamEngineErrorEvent[] = [];
       await runHarnessTurn(
-        {
-          ...options,
-          harnessExecutionTarget: {
-            ...options.harnessExecutionTarget,
-            localSessionId: "local-session",
-          },
-          onEngineError: (event: { message: string }) => events.push(event),
-        } as any,
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
         "none",
       );
       expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
@@ -1000,17 +1010,12 @@ describe("runHarnessTurn local continuity", () => {
       leasesOn("rev_b");
       harnessState.teardown.mockRejectedValueOnce(new Error("stop failed"));
       const warn = vi.spyOn(logger, "warn");
-      const events: Array<{ message: string }> = [];
-      const options = orgOptions();
+      const events: MCPJamEngineErrorEvent[] = [];
       await runHarnessTurn(
-        {
-          ...options,
-          harnessExecutionTarget: {
-            ...options.harnessExecutionTarget,
-            localSessionId: "local-session",
-          },
-          onEngineError: (event: { message: string }) => events.push(event),
-        } as any,
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
         "none",
       );
       expect(warn).toHaveBeenCalledWith(
@@ -1032,17 +1037,14 @@ describe("runHarnessTurn local continuity", () => {
           resumeState: stampOrgCredentialRevision(ADAPTER_STATE, "rev_a"),
           awaitingApproval: true,
         },
-      } as any);
+      } as never);
       harnessState.continuations = [
         { approvalId: "approval-1", approved: true },
       ];
       leasesOn("rev_b");
-      const events: Array<{ message: string }> = [];
+      const events: MCPJamEngineErrorEvent[] = [];
       await runHarnessTurn(
-        {
-          ...orgOptions(),
-          onEngineError: (event: { message: string }) => events.push(event),
-        } as any,
+        orgOptions({ onEngineError: (event) => events.push(event) }),
         "none",
       );
       expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();

@@ -15,15 +15,19 @@
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
-  HARNESS_ORG_PROVIDER_KEYS,
+  harnessOrgUpstream,
   harnessModelSupport,
   harnessModelVerdictAdmits,
+  harnessNoRunnableModelReason,
   harnessOrgProviderUnsupportedReason,
   harnessPinnedVersion,
   harnessRunsOnOrgProvider,
   type HarnessModelPurpose,
 } from "@/shared/harness-model-support";
-import type { ModelDefinition } from "@/shared/types";
+import {
+  hostedProviderFromCanonicalId,
+  type ModelDefinition,
+} from "@/shared/types";
 import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
 import {
   canonicalSelectionModelId,
@@ -46,7 +50,7 @@ function runtimeVersionOf(target: HarnessModelTarget): string | undefined {
  * Why `modelId` cannot run on `target` for `purpose`, or undefined when it can.
  * `null` / undefined target = an emulated host, which runs any model.
  */
-export function harnessModelRefusalReason(
+function harnessModelRefusalReason(
   modelId: string,
   target: HarnessModelTarget | null | undefined,
   purpose: HarnessModelPurpose,
@@ -64,15 +68,7 @@ export function harnessModelRefusalReason(
 
 /** Does this harness run on an organization's own provider key at all? */
 function harnessTakesOrgKeys(harnessId: string): boolean {
-  return (
-    Object.prototype.hasOwnProperty.call(
-      HARNESS_ORG_PROVIDER_KEYS,
-      harnessId,
-    ) &&
-    HARNESS_ORG_PROVIDER_KEYS[
-      harnessId as keyof typeof HARNESS_ORG_PROVIDER_KEYS
-    ].length > 0
-  );
+  return harnessOrgUpstream(harnessId) !== null;
 }
 
 /**
@@ -80,7 +76,7 @@ function harnessTakesOrgKeys(harnessId: string): boolean {
  * cannot run there at all. See the module comment for the rule.
  *
  * A harness that never takes an org key (Cursor, which runs on the customer's
- * own Cursor account) reads the table alone, exactly as before.
+ * own Cursor account) reads the table alone.
  */
 export function harnessRowModelId(
   model: ModelDefinition,
@@ -150,8 +146,9 @@ export function harnessChoiceRefusalReason(
       return harnessOrgProviderUnsupportedReason(target.harnessId);
     }
     if (source === "org") {
-      const slash = choice.modelId.indexOf("/");
-      const vendor = slash > 0 ? choice.modelId.slice(0, slash) : undefined;
+      const vendor = choice.modelId.includes("/")
+        ? hostedProviderFromCanonicalId(choice.modelId)
+        : undefined;
       if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
         return harnessOrgProviderUnsupportedReason(target.harnessId);
       }
@@ -264,6 +261,8 @@ export function harnessPickerModels(
   return models;
 }
 
+const NO_RUNNABLE_HARNESS_MODEL_ID = "mcpjam/no-runnable-harness-model";
+
 /**
  * Stands in for the selected model when a harness host has NO row it can run
  * (`harnessPickerModels` returned the empty list): a runtime version the
@@ -271,20 +270,21 @@ export function harnessPickerModels(
  * connection. Disabled, with the reason, so the picker shows the empty state
  * and the chat refuses to send rather than send an id the server refuses.
  */
-export const NO_RUNNABLE_HARNESS_MODEL: ModelDefinition = {
-  id: "mcpjam/no-runnable-harness-model",
-  name: "No model this client can run",
-  provider: "custom",
-  hosted: false,
-  disabled: true,
-  disabledReason:
-    "None of your models runs on this client's harness. Pick an MCPJam-provided model or add your organization's provider key.",
-};
+export function noRunnableHarnessModel(harnessId: string): ModelDefinition {
+  return {
+    id: NO_RUNNABLE_HARNESS_MODEL_ID,
+    name: "No runnable model",
+    provider: "custom",
+    hosted: false,
+    disabled: true,
+    disabledReason: harnessNoRunnableModelReason(harnessId),
+  };
+}
 
 export function isNoRunnableHarnessModel(
   model: ModelDefinition | null | undefined,
 ): boolean {
-  return model?.id === NO_RUNNABLE_HARNESS_MODEL.id;
+  return model?.id === NO_RUNNABLE_HARNESS_MODEL_ID;
 }
 
 /**

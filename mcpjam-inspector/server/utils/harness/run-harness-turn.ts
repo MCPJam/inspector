@@ -87,21 +87,17 @@ import {
   reserveHarnessBox,
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
-  readHarnessLeaseRefusal,
   type HarnessBrokerBox,
-  type HarnessOrgLeaseUpstream,
 } from "./harness-model-broker.js";
 import {
-  HARNESS_PROXY_REFUSAL_REASONS,
-  HARNESS_PROXY_REFUSAL_STATUS,
-  isHarnessProxyRefusalReason,
-  type HarnessProxyRefusalReason,
-} from "@/shared/harness-proxy-refusal-reasons";
+  failedTurnEvidence,
+  type HarnessOrgLeaseUpstream,
+} from "./harness-org-lease.js";
 import {
-  orgResumeAllowed,
-  orgUpstreamProfileFor,
-  stampOrgCredentialRevision,
-  unstampOrgCredentialRevision,
+  resetForReplacedKey,
+  resumeStateToCommit,
+  stateForTurn,
+  stateFromAnotherKey,
 } from "./org-credential-continuity.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -157,6 +153,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
+import { harnessOrgUpstream } from "@/shared/harness-model-support";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
@@ -168,6 +165,7 @@ import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
 } from "./local/local-turn.js";
+import { prepareLocalOnOrgKey } from "./local/org-key-preparation.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
 import { HOSTED_APPROVAL_SANDBOX_POLICY } from "./codex-appserver/hosted-sandbox-policy.js";
@@ -664,15 +662,12 @@ export function harnessRuntimeFingerprint(parts: {
    */
   commandSandbox?: string;
   /**
-   * WHOSE KEY the runtime runs on, for a turn on the ORGANIZATION'S own
-   * provider key: the connection and the upstream profile. A session created
-   * on MCPJam's Gateway lease must never resume onto an org key or the other
-   * way round (the opaque provider state belongs to an account), and two
-   * connections are two accounts. The key's REVISION is not here — the lease
-   * that knows it is minted after the lane is claimed — so a replaced key is
-   * caught by the revision stamped into the committed resume state
-   * (`org-credential-continuity.ts`). Appended only for an org turn, after
-   * every existing dimension, so no existing session's hash moves.
+   * WHOSE KEY the runtime runs on, for a turn on the organization's own key.
+   * Opaque provider state belongs to an account: a Gateway session never
+   * resumes onto an org key (or back), and two connections are two accounts.
+   * A replaced key is caught by the revision stamped into the committed state
+   * (`org-credential-continuity.ts`). Appended after every existing dimension,
+   * so no existing session's hash moves.
    */
   credential?: { source: "org"; connectionId: string; profile: string };
   /**
@@ -799,61 +794,6 @@ function harnessToolErrorText(part: unknown): string {
  *  expiry). */
 const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
 
-/**
- * The model proxy's own refusal reason for a failed turn, or undefined.
- *
- * Asked only when the failure could BE one: a model call was made under a
- * lease, and the runtime's evidence is absent or carries the proxy's refusal
- * status (or no status). A definite provider status (a 529, a 401) is the
- * provider's own answer and stands. The reason must be from this turn and from
- * the shared vocabulary; anything else leaves the evidence as it was.
- *
- * A retryable reason is adopted only when the runtime's evidence carries the
- * refusal status, i.e. the turn ended ON it. The lease keeps its latest
- * refusal even after the CLI retries past it, so without that status it may
- * describe a call the runtime recovered from, not the failure at hand.
- */
-async function proxyRefusalForFailedTurn(args: {
-  evidence: InfraFailureEvidence | undefined;
-  modelInvoked: boolean;
-  leaseRunId: string | undefined;
-  bearer: string | undefined;
-  turnStartedAt: number;
-}): Promise<HarnessProxyRefusalReason | undefined> {
-  const { evidence } = args;
-  if (!args.modelInvoked || !args.leaseRunId || !args.bearer) return undefined;
-  if (
-    evidence &&
-    (evidence.source !== "harness_runtime" ||
-      (evidence.httpStatus !== undefined &&
-        evidence.httpStatus !== HARNESS_PROXY_REFUSAL_STATUS))
-  ) {
-    return undefined;
-  }
-  try {
-    const refusal = await readHarnessLeaseRefusal({
-      runId: args.leaseRunId,
-      bearer: args.bearer,
-    });
-    if (
-      !refusal ||
-      refusal.at < args.turnStartedAt ||
-      !isHarnessProxyRefusalReason(refusal.reason)
-    ) {
-      return undefined;
-    }
-    if (
-      HARNESS_PROXY_REFUSAL_REASONS[refusal.reason].retry &&
-      evidence?.httpStatus !== HARNESS_PROXY_REFUSAL_STATUS
-    ) {
-      return undefined;
-    }
-    return refusal.reason;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -932,9 +872,14 @@ export async function runHarnessTurn(
   // The upstream profile an org turn runs under. The lease itself — set from
   // the backend's answer once it exists — names the native id it admits.
   const orgProfile = orgSelection
-    ? orgUpstreamProfileFor(harness ?? "")
+    ? harnessOrgUpstream(harness ?? "")?.profile
     : undefined;
   let orgUpstream: HarnessOrgLeaseUpstream | undefined;
+  // A brokered lease's endpoint is one MCPJam operates (the model proxy); on
+  // the organization's own key it serves a first-party provider.
+  const brokeredEndpoint: ModelEndpointOwnership = orgSelection
+    ? "byok_hosted"
+    : "platform";
   // The credential revision the claimed lane's state was stamped with.
   let continuityCredentialRevision: string | undefined;
   // The harness adapter declares the per-harness bits (auth, native model
@@ -2207,17 +2152,12 @@ export async function runHarnessTurn(
         } else {
           // An org turn's committed state carries the credential revision it
           // ran on; the adapter only ever sees the state it wrote.
-          let claimedState = claim.fingerprintChanged ? null : claim.state;
-          if (claimedState && orgSelection) {
-            const unstamped = unstampOrgCredentialRevision(
-              claimedState.resumeState,
-            );
-            continuityCredentialRevision = unstamped.credentialRevision;
-            claimedState = {
-              ...claimedState,
-              resumeState: unstamped.resumeState,
-            };
-          }
+          const claimed = stateForTurn(
+            claim.fingerprintChanged ? null : claim.state,
+            Boolean(orgSelection),
+          );
+          const claimedState = claimed.state;
+          continuityCredentialRevision = claimed.credentialRevision;
           continuity = {
             owner,
             leaseId,
@@ -2364,84 +2304,27 @@ export async function runHarnessTurn(
           ...(orgSelection ? { modelSelection: orgSelection } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
-        // A preparation the turn will not run on is torn down before it
-        // fails or prepares again; a stop that fails is logged, not fatal.
-        const discardPreparation = (prepared: PreparedLocalHarnessTurn) =>
-          prepared.teardown().catch((error) =>
-            logger.warn("[harness] local preparation teardown failed", {
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
-        let preparation = await prepareLocal(localSessionId!);
-        if (!preparation.ok) {
-          throw new Error(
-            `Can't run this turn on your machine (${preparation.status}): ` +
-              preparation.message,
-          );
+        // Confirmed on the key it runs on; a replaced key starts a fresh
+        // session (`prepareLocalOnOrgKey`).
+        const preparation = await prepareLocalOnOrgKey({
+          prepare: prepareLocal,
+          sessionId: localSessionId!,
+          onOrgKey: Boolean(orgSelection),
+          resumes: Boolean(localEligibility?.resume),
+          continuity,
+          stampedRevision: continuityCredentialRevision,
+          isApprovalResume,
+          runOwnsSession: Boolean(harnessExecutionTarget.localSessionId),
+        });
+        if (preparation.keyReplaced && continuity) {
+          continuity = resetForReplacedKey(continuity);
+          localEligibility = localEligibility && {
+            ...localEligibility,
+            resume: false,
+          };
         }
-        if (orgSelection) {
-          // The loopback start refuses (and revokes) a lease that does not
-          // confirm the org binding; this is the turn's own backstop.
-          if (!preparation.prepared.orgUpstream) {
-            await discardPreparation(preparation.prepared);
-            throw new Error(
-              "The model broker did not confirm a lease on the organization's key; the turn was not started.",
-            );
-          }
-          // A turn on the organization's own key resumes only state produced
-          // on the SAME key, and the lease only now names the revision. A
-          // replaced key (or state never produced on an org key) is decided
-          // HERE, before retention or the runtime session is derived from the
-          // old state: this preparation is torn down and the turn prepares
-          // again under a FRESH session id, so the CLI neither continues the
-          // previous account's session nor collides with its retained
-          // transcript. A rename keeps the key, the revision and the session.
-          if (
-            localEligibility?.resume &&
-            continuity?.state &&
-            !orgResumeAllowed(
-              continuityCredentialRevision,
-              preparation.prepared.orgUpstream.credentialRevision,
-            )
-          ) {
-            await discardPreparation(preparation.prepared);
-            if (isApprovalResume) {
-              throw new Error(
-                "The organization's provider key was replaced while the approval was waiting; the pending action will not run. Start a new turn.",
-              );
-            }
-            // A run (eval, swarm) owns its session id: the run's cleanup
-            // removes that id's state and no other, so a fresh id here would
-            // outlive the run. A key replaced mid-run is a configuration
-            // change; the attempt fails instead.
-            if (harnessExecutionTarget.localSessionId) {
-              throw new Error(
-                "The organization's provider key was replaced during this run; the attempt was not continued. Start a new run.",
-              );
-            }
-            continuity = {
-              ...continuity,
-              state: null,
-              runtimeChanged: continuity.stateVersion > 0,
-            };
-            localEligibility = { ...localEligibility, resume: false };
-            localSessionId = `local-${crypto.randomUUID()}`;
-            preparation = await prepareLocal(localSessionId);
-            if (!preparation.ok) {
-              throw new Error(
-                `Can't run this turn on your machine (${preparation.status}): ` +
-                  preparation.message,
-              );
-            }
-            if (!preparation.prepared.orgUpstream) {
-              await discardPreparation(preparation.prepared);
-              throw new Error(
-                "The model broker did not confirm a lease on the organization's key; the turn was not started.",
-              );
-            }
-          }
-          orgUpstream = preparation.prepared.orgUpstream;
-        }
+        localSessionId = preparation.sessionId;
+        if (orgSelection) orgUpstream = preparation.prepared.orgUpstream;
         localPrepared = preparation.prepared;
         localLeaseRunId = preparation.prepared.brokerRunId;
         // A failed or stopped turn must not erase an already saved conversation.
@@ -2717,9 +2600,7 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
-        // On the org's own key the endpoint is still one MCPJam operates (the
-        // model proxy), serving a first-party provider: `byok_hosted`.
-        modelEndpoint = orgSelection ? "byok_hosted" : "platform";
+        modelEndpoint = brokeredEndpoint;
       } else if (externalAccountAuth) {
         modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
@@ -2784,7 +2665,7 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
-        modelEndpoint = orgSelection ? "byok_hosted" : "platform";
+        modelEndpoint = brokeredEndpoint;
         if (orgSelection) orgUpstream = broker.orgUpstream;
       }
       tBroker = Date.now();
@@ -2796,17 +2677,14 @@ export async function runHarnessTurn(
       // carrying one account's opaque provider state into another's.
       if (
         orgUpstream &&
-        continuity?.state &&
-        !orgResumeAllowed(
+        continuity &&
+        stateFromAnotherKey(
+          continuity,
           continuityCredentialRevision,
           orgUpstream.credentialRevision,
         )
       ) {
-        continuity = {
-          ...continuity,
-          state: null,
-          runtimeChanged: continuity.stateVersion > 0,
-        };
+        continuity = resetForReplacedKey(continuity);
       }
 
       // 4. Assemble the harness over the host's E2B computer (the provider and
@@ -4680,12 +4558,7 @@ export async function runHarnessTurn(
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessSessionId: session.sessionId,
-              resumeState: orgUpstream
-                ? stampOrgCredentialRevision(
-                    continueState,
-                    orgUpstream.credentialRevision,
-                  )
-                : continueState,
+              resumeState: resumeStateToCommit(continueState, orgUpstream),
               computerId,
               runtimeFingerprint,
               awaitingApproval: true,
@@ -4737,12 +4610,7 @@ export async function runHarnessTurn(
               expectedStateVersion: continuity.stateVersion,
               harnessId: harnessAdapter.id,
               harnessSessionId: session.sessionId,
-              resumeState: orgUpstream
-                ? stampOrgCredentialRevision(
-                    resumeState,
-                    orgUpstream.credentialRevision,
-                  )
-                : resumeState,
+              resumeState: resumeStateToCommit(resumeState, orgUpstream),
               computerId,
               runtimeFingerprint,
               // Persist only a real (ok:true) hash; omit on failure so the
@@ -4782,20 +4650,13 @@ export async function runHarnessTurn(
       // policy, a lease cap) reaches the runtime as a bare refusal status, or
       // as nothing typed at all. The proxy recorded its reason on the lease:
       // read it back so the failure is classified as what it was.
-      const proxyRefusal = await proxyRefusalForFailedTurn({
+      const typedEvidence = await failedTurnEvidence({
         evidence: runtimeEvidence,
         modelInvoked,
         leaseRunId: brokerRunId ?? localLeaseRunId,
         bearer: authHeader,
         turnStartedAt,
       });
-      const typedEvidence: InfraFailureEvidence | undefined = proxyRefusal
-        ? {
-            source: "harness_runtime",
-            code: proxyRefusal,
-            httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
-          }
-        : runtimeEvidence;
       // A runtime's provider failure says whose endpoint it came from.
       const failureEvidence =
         typedEvidence?.source === "harness_runtime" && modelEndpoint

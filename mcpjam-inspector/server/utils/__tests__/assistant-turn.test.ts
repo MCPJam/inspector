@@ -12,6 +12,7 @@ import {
 } from "@/shared/http-tool-calls";
 import { runAssistantTurn } from "../assistant-turn";
 import type { ModelDefinition } from "@/shared/types";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
@@ -468,7 +469,7 @@ describe("runAssistantTurn", () => {
   });
 
   describe("a brokered harness on the organization's own key", () => {
-    const ORG_ANTHROPIC = {
+    const ORG_ANTHROPIC: ModelSelection = {
       source: "org",
       modelId: "anthropic/claude-sonnet-4.5",
       connectionRef: { kind: "orgProvider", id: "orgprov_anthropic_1" },
@@ -483,31 +484,31 @@ describe("runAssistantTurn", () => {
     } as ModelDefinition;
     const turn = (extra: Partial<Parameters<typeof runAssistantTurn>[0]>) =>
       runAssistantTurn({
-        messages: [{ role: "user", content: "Hi." }] as any,
+        messages: [{ role: "user", content: "Hi." }],
         modelDefinition: ORG_ROW,
         systemPrompt: "You are helpful",
         tools: {},
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
-        } as any,
+        } as never,
         authContext: { kind: "user_bearer", token: "Bearer test-token" },
         sourceType: "eval",
         origin: "scenario",
         approvalMode: "auto-deny",
         streamSink: "none",
         persistMode: "caller",
-        harness: "claude-code" as any,
+        harness: "claude-code",
         ...extra,
       });
 
-    it("hands the eval's forwarded org selection to the harness turn, typed", async () => {
+    it("hands the turn's org selection to the harness turn", async () => {
       global.fetch = vi.fn();
       runHarnessTurnMock.mockClear();
       runHarnessTurnMock.mockResolvedValue({
         messageHistory: [],
         aborted: false,
       });
-      await turn({ extraBodyFields: { modelSelection: ORG_ANTHROPIC } });
+      await turn({ modelSelection: ORG_ANTHROPIC });
       expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
       expect(runHarnessTurnMock.mock.lastCall?.[0]).toMatchObject({
         modelSelection: ORG_ANTHROPIC,
@@ -526,9 +527,7 @@ describe("runAssistantTurn", () => {
             provider: "openai",
             name: "GPT-5",
           } as ModelDefinition,
-          extraBodyFields: {
-            modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
-          },
+          modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
         }),
       ).rejects.toThrow(/organization's Anthropic key/);
       expect(runHarnessTurnMock).not.toHaveBeenCalled();

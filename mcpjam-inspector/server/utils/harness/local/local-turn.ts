@@ -33,8 +33,8 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import {
   revokeHarnessModelBroker,
   startLoopbackModelBroker,
-  type HarnessOrgLeaseUpstream,
 } from "../harness-model-broker.js";
+import type { HarnessOrgLeaseUpstream } from "../harness-org-lease.js";
 import {
   resolveLocalHarnessAvailability,
   type LocalHarnessActor,

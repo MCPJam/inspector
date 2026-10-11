@@ -45,8 +45,8 @@ import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   selectionCacheKey,
   selectionForModel,
-  selectionHostedFlag,
 } from "./harness-admission-selection.js";
+import { withSelectionRouting } from "../../utils/selection-rail.js";
 import {
   checkHarnessRuntimeAvailable,
   selectionReasoningEffort,
@@ -303,6 +303,8 @@ export function checkEvalHarnessStaticAdmission(args: {
     hostModelId,
   );
 
+  const pinnedRow: { id: string; hosted?: boolean } = { id: hostModelId ?? "" };
+  const pinnedModel = withSelectionRouting(pinnedRow, pinnedSelection);
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
@@ -311,7 +313,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
     // rules rather than fail on a model nobody named: `checkModelEligibility`
     // below owns that decision once the run's cases are known.
-    model: { id: hostModelId ?? "", ...selectionHostedFlag(pinnedSelection) },
+    model: pinnedModel,
     ...(pinnedSelection ? { selection: pinnedSelection } : {}),
     // The same id again, under the name the external-account rule reads. It is
     // not redundant on the FULL check below, where `model` becomes a per-case
@@ -418,19 +420,20 @@ export function checkEvalHarnessAdmission(args: {
     const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}::${selectionCacheKey(selection)}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
+      // Routed by the selection: without it, a case saved to run on an org
+      // key reads as hosted when its id has a hosted twin, and admission
+      // passes a case the turn then refuses.
+      const caseRow: { id: string; provider?: string; hosted?: boolean } = {
+        id: String(test.model),
+        ...(test.provider ? { provider: test.provider } : {}),
+      };
+      const routedCaseModel = withSelectionRouting(caseRow, selection);
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
-        model: {
-          id: String(test.model),
-          ...(test.provider ? { provider: test.provider } : {}),
-          // Without it, a case saved to run on an org key reads as hosted
-          // when its id has a hosted twin, and admission passes a case the
-          // turn then refuses.
-          ...selectionHostedFlag(selection),
-        },
+        model: routedCaseModel,
         ...(selection ? { selection } : {}),
         // The HOST's id, not the case's: the external-account rule is about
         // this host carrying the runtime's sentinel, and a case model can no

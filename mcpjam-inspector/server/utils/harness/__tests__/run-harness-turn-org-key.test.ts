@@ -9,7 +9,11 @@
  * drives a turn with, plus an org lease from the broker.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  MCPJamEngineErrorEvent,
+  MCPJamHandlerOptions,
+} from "../../mcpjam-stream-handler";
 
 const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
@@ -125,10 +129,6 @@ vi.mock("../harness-model-broker.js", () => ({
   })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
-  readHarnessLeaseRefusal: vi.fn(async (args: unknown) => {
-    harnessState.readRefusal(args);
-    return harnessState.recordedRefusal;
-  }),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
@@ -167,21 +167,20 @@ const ADAPTER_STATE = {
   data: { claudeSessionId: "claude-1" },
 };
 
-const ORG_SELECTION = {
+const ORG_SELECTION: ModelSelection = {
   source: "org",
   modelId: "anthropic/claude-sonnet-4.5",
   connectionRef: { kind: "orgProvider", id: "conn_1" },
+  fallback: { provider: "none", model: "none" },
 };
 
-function options() {
-  const messages: ModelMessage[] = [
-    {
-      role: "user",
-      content: [{ type: "text", text: "hello?" }],
-    } as unknown as ModelMessage,
-  ];
+/** A turn on the org row, typed: overrides replace any field. */
+function options(
+  overrides: Partial<MCPJamHandlerOptions> = {},
+): MCPJamHandlerOptions {
   return {
-    messages,
+    messages: [{ role: "user", content: [{ type: "text", text: "hello?" }] }],
+    tools: {},
     // The org row's own (native) id; the selection names the canonical one.
     modelId: "claude-sonnet-4-5",
     provider: "anthropic",
@@ -190,11 +189,12 @@ function options() {
     authHeader: "Bearer test",
     projectId: "project-1",
     chatSessionId: "chat-1",
-    mcpClientManager: { getServerConfig: vi.fn() },
+    mcpClientManager: { getServerConfig: vi.fn() } as never,
     selectedServers: [],
     requireToolApproval: false,
     sourceType: "direct",
     harness: "claude-code",
+    ...overrides,
   };
 }
 
@@ -225,14 +225,37 @@ describe("runHarnessTurn on the organization's own key", () => {
   });
 
   describe("a turn the model proxy refused", () => {
+    // The backend's refusal read-back: the reason the proxy recorded on the
+    // run's lease, behind the real `readHarnessLeaseRefusal`.
+    beforeEach(() => {
+      vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL, init?: RequestInit) => {
+          if (!String(url).endsWith("/web/harness/model-broker/refusal")) {
+            return new Response(null, { status: 404 });
+          }
+          const headers = new Headers(init?.headers);
+          harnessState.readRefusal({
+            authorization: headers.get("authorization"),
+            body: JSON.parse(String(init?.body)),
+          });
+          return Response.json(
+            harnessState.recordedRefusal
+              ? { ok: true, refusal: harnessState.recordedRefusal }
+              : { ok: true },
+          );
+        }),
+      );
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     async function failedTurn() {
-      const events: Array<{ infra?: Record<string, unknown> }> = [];
+      const events: MCPJamEngineErrorEvent[] = [];
       const result = await runHarnessTurn(
-        {
-          ...options(),
-          onEngineError: (event: { infra?: Record<string, unknown> }) =>
-            events.push(event),
-        } as any,
+        options({ onEngineError: (event) => events.push(event) }),
         "ui",
       );
       await result.response!.text();
@@ -256,9 +279,10 @@ describe("runHarnessTurn on the organization's own key", () => {
         at: Date.now() + 60_000,
       };
       const events = await failedTurn();
-      expect(harnessState.readRefusal).toHaveBeenCalledWith(
-        expect.objectContaining({ bearer: "Bearer test" }),
-      );
+      expect(harnessState.readRefusal).toHaveBeenCalledWith({
+        authorization: "Bearer test",
+        body: { runId: expect.any(String) },
+      });
       const infra = events.at(-1)?.infra;
       expect(infra).toEqual({
         source: "harness_runtime",
@@ -351,7 +375,7 @@ describe("runHarnessTurn on the organization's own key", () => {
   }
 
   it("reserves and starts with the selection under its CANONICAL id", async () => {
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
     expect(vi.mocked(reserveHarnessBox).mock.lastCall?.[0]).toMatchObject({
       modelId: "anthropic/claude-sonnet-4.5",
@@ -368,7 +392,7 @@ describe("runHarnessTurn on the organization's own key", () => {
   });
 
   it("runs the runtime natively on the leased model", async () => {
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
     const upstream = {
       profile: "anthropic-native",
@@ -385,7 +409,7 @@ describe("runHarnessTurn on the organization's own key", () => {
 
   it("a renamed connection (same key) resumes the session", async () => {
     claimStampedWith("rev_a");
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
     // The adapter sees exactly the state it wrote, never the stamp.
     expect(harnessState.createSession).toHaveBeenCalledWith({
@@ -397,7 +421,7 @@ describe("runHarnessTurn on the organization's own key", () => {
   it("a replaced key starts a fresh runtime session", async () => {
     claimStampedWith("rev_a");
     harnessState.leaseRevision = "rev_b";
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
     const opts = harnessState.createSession.mock.lastCall?.[0] as
       Record<string, unknown> | undefined;
@@ -408,10 +432,11 @@ describe("runHarnessTurn on the organization's own key", () => {
   it("commits the session state stamped with the lease's credential revision", async () => {
     const onConversationComplete = vi.fn(async () => ({
       outcome: "saved" as const,
+      version: 1,
     }));
     harnessState.leaseRevision = "rev_c";
     const result = await runHarnessTurn(
-      { ...options(), onConversationComplete } as any,
+      options({ onConversationComplete }),
       "ui",
     );
     await result.response!.text();
@@ -430,7 +455,7 @@ describe("runHarnessTurn on the organization's own key", () => {
       computerId: "computer-1",
       resumeState: ADAPTER_STATE,
     };
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
     const opts = harnessState.createSession.mock.lastCall?.[0] as
       Record<string, unknown> | undefined;

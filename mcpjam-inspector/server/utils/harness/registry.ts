@@ -35,7 +35,6 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
-  HARNESS_ORG_PROVIDER_KEYS,
   harnessModelSupport,
   harnessPinnedVersion,
   type HarnessModelSupportVerdict,
@@ -503,7 +502,7 @@ export type HarnessCreateArgs = {
   sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
   /**
    * The upstream the turn's model lease was minted for, as the backend
-   * resolved it (non-secret). Absent ⇒ the Gateway profile, today's shape.
+   * resolved it (non-secret). Absent ⇒ the AI Gateway profile.
    *
    * A native profile (the organization's own Anthropic or OpenAI key) talks
    * to the vendor's API: no Gateway model spellings, no Gateway effort
@@ -523,11 +522,6 @@ export type HarnessCreateArgs = {
  *  needs nothing from the customer's own secrets. */
 type BrokeredModelAccessArm = {
   modelAccess: "broker";
-  /**
-   * The organization provider connections this harness can run on, on the
-   * org's own key (`HARNESS_ORG_PROVIDER_KEYS`, shared with the pickers).
-   */
-  orgProviderKeys: readonly string[];
   externalAccountCredentialEnv?: never;
   externalAccountBrokerBinding?: never;
 };
@@ -536,7 +530,6 @@ type BrokeredModelAccessArm = {
  *  CUSTOMER's credential, so it must SAY which one. */
 type ExternalAccountModelAccessArm = {
   modelAccess: "external-account";
-  orgProviderKeys?: never;
   /**
    * The environment variable names this runtime needs from the project's
    * secrets, e.g. `["CURSOR_API_KEY"]` (which is exactly what
@@ -934,7 +927,6 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // outside the VM, and the model proxy meters the spend.
   modelAccess: "broker",
   // …or runs it on the organization's own Anthropic key.
-  orgProviderKeys: HARNESS_ORG_PROVIDER_KEYS["claude-code"],
   defaultPermissionMode: "allow-all",
   // WS3: the CLI pauses on a tool-approval-request for side-effecting tools;
   // the turn suspends and resumes with the user's decision (see
@@ -1015,28 +1007,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     permissionMode,
     upstream,
   }) {
-    // On the organization's own Anthropic key the runtime talks to Anthropic
-    // natively: the CLI's default thinking and effort behaviour stand (the
-    // disabled-thinking pin and the "unset" effort below are Gateway
-    // workarounds), and every self-chosen model is pinned to the leased one.
-    // A requested effort is applied the same way on either profile, so
-    // changing whose key pays never changes the effort a turn runs at.
-    if (upstream?.profile === "anthropic-native") {
-      return createHostedClaudeCodeHarness({
-        mcpServers: mcpJson.mcpServers,
-        auth,
-        ...(reasoningEffort
-          ? {
-              effort: reasoningEffort,
-              thinking: { type: "adaptive" as const },
-              env: {
-                ...claudeCodeTurnEnv(permissionMode, modelId, upstream),
-                CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
-              },
-            }
-          : { env: claudeCodeTurnEnv(permissionMode, modelId, upstream) }),
-      });
-    }
+    const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's
@@ -1045,49 +1016,59 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       auth,
-      // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
-      // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
-      // (400: expected 'disabled' | 'enabled'). Pin thinking off until the
-      // gateway accepts adaptive. (`"off"` on the canary line; the stable
-      // line takes the richer `{ type }` config, where `'disabled'` is the
-      // same wire behavior.)
-      //
       // WITH an effort the turn asks for adaptive thinking (the only shape the
-      // `effort` option controls), so the disabled pin is dropped for it.
-      // A turn with no effort keeps the exact options above.
-      ...(reasoningEffort ? {} : { thinking: { type: "disabled" as const } }),
-      // AI Gateway's Anthropic-compat schema rejects the newer
-      // output_config.effort request field ("400 output_config.effort: Extra
-      // inputs are not permitted"). "unset" makes the CLI omit the field
-      // entirely (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
-      // "unset"/"auto" short-circuits effort resolution).
+      // `effort` option controls), and the env carries that level: it beats
+      // the `--effort` flag. Applied the same way on either upstream, so
+      // changing whose key pays never changes the effort a turn runs at.
+      //
+      // On the organization's own Anthropic key the runtime talks to
+      // Anthropic natively, so with no effort the CLI's defaults stand. On the
+      // AI Gateway they are pinned instead:
+      //  - Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
+      //    Anthropic API shape the Gateway's Anthropic-compat schema rejects
+      //    (400: expected 'disabled' | 'enabled'). (`"off"` on the canary
+      //    line; the stable line takes the richer `{ type }` config, where
+      //    `'disabled'` is the same wire behavior.)
+      //  - The same schema rejects the newer output_config.effort request
+      //    field ("400 output_config.effort: Extra inputs are not
+      //    permitted"). "unset" makes the CLI omit the field entirely
+      //    (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
+      //    "unset"/"auto" short-circuits effort resolution).
       //
       // This used to be a `process.env.… ??=` write injected into the bridge
       // source. Stable's first-class `env` merges OVER the bridge process
       // env, so unlike `??=` it is now authoritative rather than a default —
       // deliberate: the sandbox env is ours, and the adapter's own `effort`
       // option is the supported way to ask for a value.
-      //
-      // With an effort, the env is set to that level instead: it beats the
-      // `--effort` flag, so leaving "unset" would silently drop the request.
       ...(reasoningEffort
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
-            env: {
-              ...claudeCodeTurnEnv(permissionMode, modelId),
-              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
-            },
+            env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
           }
-        : {
-            env: {
-              ...claudeCodeTurnEnv(permissionMode, modelId),
-              CLAUDE_CODE_EFFORT_LEVEL: "unset",
-            },
-          }),
+        : upstream?.profile === "anthropic-native"
+          ? { env }
+          : {
+              thinking: { type: "disabled" as const },
+              env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: "unset" },
+            }),
     });
   },
 };
+
+/**
+ * The model Codex runs: on the organization's own OpenAI key the leased native
+ * id (the custom provider still points at MCPJam's proxy, with a placeholder
+ * credential); otherwise the gpt-5 slug of the canonical id.
+ */
+function toCodexNativeModel(
+  modelId: string,
+  upstream?: HarnessCreateArgs["upstream"],
+): string | undefined {
+  return upstream?.profile === "openai-native"
+    ? upstream.nativeModelId
+    : toCodexModel(modelId);
+}
 
 /**
  * Codex, over MCPJam's own `codex app-server` adapter (`codex-appserver/`), in
@@ -1124,7 +1105,6 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
   // Anthropic one — or on the organization's own OpenAI key.
   modelAccess: "broker",
-  orgProviderKeys: HARNESS_ORG_PROVIDER_KEYS.codex,
   // Hosted: `never` + `danger-full-access`, the disposable box being the
   // boundary. Locally the bridge refuses `allow-all` without an explicit
   // workspace-write sandbox policy, so it never becomes full access there.
@@ -1177,10 +1157,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  toNativeModel: (modelId, upstream) =>
-    upstream?.profile === "openai-native"
-      ? upstream.nativeModelId
-      : toCodexModel(modelId),
+  toNativeModel: toCodexNativeModel,
   // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
   // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
   // default model (or run without tools), so the preflight rejects it.
@@ -1195,13 +1172,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
   createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream }) {
-    // On the organization's own OpenAI key the leased native id is the model
-    // (the custom provider still points at MCPJam's proxy, with a placeholder
-    // credential); otherwise the gpt-5 slug of the canonical id.
-    const nativeModel =
-      upstream?.profile === "openai-native"
-        ? upstream.nativeModelId
-        : toCodexModel(modelId);
+    const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as

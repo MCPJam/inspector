@@ -99,36 +99,47 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
 }
 
 /**
- * The organization provider connections each BROKERED harness can run on: its
- * own vendor's native API, on the organization's key. Claude Code speaks
- * Anthropic Messages and Codex speaks OpenAI Responses, so a turn whose saved
- * selection names an org Anthropic (resp. OpenAI) connection runs on that
- * key through MCPJam's model proxy. Cursor authenticates with the customer's
- * own Cursor account and runs on no org connection.
+ * The organization upstream each BROKERED harness can run on: its own vendor's
+ * native API, on the organization's key, and the runtime profile that talks to
+ * it. Claude Code speaks Anthropic Messages and Codex speaks OpenAI Responses,
+ * so a turn whose saved selection names an org Anthropic (resp. OpenAI)
+ * connection runs on that key through MCPJam's model proxy. Cursor
+ * authenticates with the customer's own Cursor account and runs on no org
+ * connection.
  *
  * This is the preflight's answer from non-secret metadata; the backend still
  * resolves the connection id authoritatively at lease start and refuses a
  * mismatch (`provider_mismatch`).
  */
-export const HARNESS_ORG_PROVIDER_KEYS = {
-  "claude-code": ["anthropic"],
-  codex: ["openai"],
-  cursor: [],
-} as const satisfies Record<Harness, readonly string[]>;
+export type HarnessOrgUpstream = {
+  provider: "anthropic" | "openai";
+  profile: "anthropic-native" | "openai-native";
+};
+
+export const HARNESS_ORG_UPSTREAM = {
+  "claude-code": { provider: "anthropic", profile: "anthropic-native" },
+  codex: { provider: "openai", profile: "openai-native" },
+  cursor: null,
+} as const satisfies Record<Harness, HarnessOrgUpstream | null>;
+
+/** The org upstream `harnessId` runs on, or null when it takes no org key. */
+export function harnessOrgUpstream(
+  harnessId: string,
+): HarnessOrgUpstream | null {
+  return Object.prototype.hasOwnProperty.call(HARNESS_ORG_UPSTREAM, harnessId)
+    ? HARNESS_ORG_UPSTREAM[harnessId as Harness]
+    : null;
+}
 
 /** Whether `harnessId` can run on an org connection to `providerKey`. */
 export function harnessRunsOnOrgProvider(
   harnessId: string,
   providerKey: string | undefined,
 ): boolean {
-  if (!providerKey) return false;
-  const keys: readonly string[] = Object.prototype.hasOwnProperty.call(
-    HARNESS_ORG_PROVIDER_KEYS,
-    harnessId,
-  )
-    ? HARNESS_ORG_PROVIDER_KEYS[harnessId as Harness]
-    : [];
-  return keys.includes(providerKey);
+  return (
+    providerKey !== undefined &&
+    harnessOrgUpstream(harnessId)?.provider === providerKey
+  );
 }
 
 /**
@@ -140,7 +151,7 @@ export function harnessRunsOnOrgProvider(
 export type HarnessUpstreamProfile =
   "gateway" | "anthropic-native" | "openai-native";
 
-const ORG_PROVIDER_LABELS: Record<string, string> = {
+const ORG_PROVIDER_LABELS: Record<HarnessOrgUpstream["provider"], string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
 };
@@ -148,16 +159,19 @@ const ORG_PROVIDER_LABELS: Record<string, string> = {
 /** The refusal copy for an org connection the harness cannot run on. */
 export function harnessOrgProviderUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  const keys: readonly string[] = Object.prototype.hasOwnProperty.call(
-    HARNESS_ORG_PROVIDER_KEYS,
-    harnessId,
-  )
-    ? HARNESS_ORG_PROVIDER_KEYS[harnessId as Harness]
-    : [];
-  const vendors = keys.map((key) => ORG_PROVIDER_LABELS[key] ?? key);
-  return vendors.length > 0
-    ? `the ${name} harness runs MCPJam-provided models or your organization's ${vendors.join(" or ")} key`
+  const upstream = harnessOrgUpstream(harnessId);
+  return upstream
+    ? `the ${name} harness runs MCPJam-provided models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key`
     : `the ${name} harness does not run on an organization's provider key`;
+}
+
+/** Why a harness host's picker has no row it can run, and what fixes it. */
+export function harnessNoRunnableModelReason(harnessId: string): string {
+  const name = harnessDisplayName(harnessId);
+  const upstream = harnessOrgUpstream(harnessId);
+  return upstream
+    ? `${name} runs MCPJam models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key. Add one in Organization models.`
+    : `${name} has no model it can run here.`;
 }
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */

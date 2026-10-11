@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
-  HARNESS_ORG_PROVIDER_KEYS,
+  harnessOrgUpstream,
   HARNESS_PINNED_VERSIONS,
 } from "@/shared/harness-model-support";
 import { PINNED_CODEX_VERSION } from "../codex-appserver/bridge/app-server-protocol";
@@ -35,6 +35,10 @@ vi.mock("../codex-appserver/index.js", async (original) => {
   return { ...actual, createCodexAppServer: vi.fn(actual.createCodexAppServer) };
 });
 import { createCodexAppServer } from "../codex-appserver/index.js";
+
+/** The settings the Claude Code adapter last built its harness with. */
+const lastClaudeCodeSettings = () =>
+  vi.mocked(createClaudeCodeHarness).mock.lastCall?.[0];
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
@@ -1461,23 +1465,21 @@ describe("the organization's own key (native upstream profiles)", () => {
   };
   const mcpJson = { mcpServers: {} };
 
-  it("each brokered adapter's org providers are the shared map's", () => {
+  it("each brokered adapter has an org upstream; an external-account one has none", () => {
     for (const id of registeredHarnessIds()) {
       const adapter = getHarnessAdapter(id);
-      if (adapter.modelAccess === "broker") {
-        expect(adapter.orgProviderKeys).toEqual(
-          HARNESS_ORG_PROVIDER_KEYS[
-            id as keyof typeof HARNESS_ORG_PROVIDER_KEYS
-          ] ?? [],
-        );
-      } else {
-        expect(adapter.orgProviderKeys).toBeUndefined();
-      }
+      expect(harnessOrgUpstream(id) !== null).toBe(
+        adapter.modelAccess === "broker",
+      );
     }
-    expect(getHarnessAdapter("claude-code").orgProviderKeys).toEqual([
-      "anthropic",
-    ]);
-    expect(getHarnessAdapter("codex").orgProviderKeys).toEqual(["openai"]);
+    expect(harnessOrgUpstream("claude-code")).toEqual({
+      provider: "anthropic",
+      profile: "anthropic-native",
+    });
+    expect(harnessOrgUpstream("codex")).toEqual({
+      provider: "openai",
+      profile: "openai-native",
+    });
   });
 
   it("Claude Code runs the leased native id on the native profile, the alias on the Gateway", () => {
@@ -1537,12 +1539,11 @@ describe("the organization's own key (native upstream profiles)", () => {
       mcpJson,
       upstream: anthropicNative,
     } as never);
-    const settings = vi.mocked(createClaudeCodeHarness).mock
-      .lastCall?.[0] as any;
+    const settings = lastClaudeCodeSettings();
     // No disabled-thinking pin, no "unset" effort: those are Gateway shims.
-    expect(settings.thinking).toBeUndefined();
-    expect(settings.env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
-    expect(settings.env).toMatchObject({
+    expect(settings?.thinking).toBeUndefined();
+    expect(settings?.env?.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    expect(settings?.env).toMatchObject({
       MCPJAM_HARNESS_UPSTREAM_PROFILE: "anthropic-native",
       ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-5",
       ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-5",
@@ -1562,19 +1563,18 @@ describe("the organization's own key (native upstream profiles)", () => {
       reasoningEffort: "high",
       upstream: anthropicNative,
     } as never);
-    const native = vi.mocked(createClaudeCodeHarness).mock.lastCall?.[0] as any;
+    const native = lastClaudeCodeSettings();
     adapter.createHarness({
       modelId: "anthropic/claude-sonnet-4.5",
       auth: {},
       mcpJson,
       reasoningEffort: "high",
     } as never);
-    const gateway = vi.mocked(createClaudeCodeHarness).mock
-      .lastCall?.[0] as any;
+    const gateway = lastClaudeCodeSettings();
     for (const settings of [native, gateway]) {
-      expect(settings.effort).toBe("high");
-      expect(settings.thinking).toEqual({ type: "adaptive" });
-      expect(settings.env.CLAUDE_CODE_EFFORT_LEVEL).toBe("high");
+      expect(settings?.effort).toBe("high");
+      expect(settings?.thinking).toEqual({ type: "adaptive" });
+      expect(settings?.env?.CLAUDE_CODE_EFFORT_LEVEL).toBe("high");
     }
   });
 
@@ -1585,10 +1585,9 @@ describe("the organization's own key (native upstream profiles)", () => {
       auth: {},
       mcpJson,
     } as never);
-    const settings = vi.mocked(createClaudeCodeHarness).mock
-      .lastCall?.[0] as any;
-    expect(settings.thinking).toEqual({ type: "disabled" });
-    expect(settings.env.MCPJAM_HARNESS_UPSTREAM_PROFILE).toBeUndefined();
-    expect(settings.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+    const settings = lastClaudeCodeSettings();
+    expect(settings?.thinking).toEqual({ type: "disabled" });
+    expect(settings?.env?.MCPJAM_HARNESS_UPSTREAM_PROFILE).toBeUndefined();
+    expect(settings?.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
 });

@@ -387,14 +387,19 @@ describe("streamWebChatTurn model dispatch", () => {
         { id: "claude-sonnet-4-5", provider: "anthropic", hosted: false },
         "claude-code",
         { routingSelection: orgSel("anthropic/claude-sonnet-4.5") },
-      ) as any;
-      turn.persist.chatSessionId = "chat-1";
-      turn.runtime.scopeStepUp = {
-        bearer: "Bearer t",
-        authPrincipal: "user_1",
-        resumeRequest: { toolCallId: "call_1" },
-      };
-      await streamWebChatTurn(turn);
+      );
+      await streamWebChatTurn({
+        ...turn,
+        persist: { ...turn.persist, chatSessionId: "chat-1" },
+        runtime: {
+          ...turn.runtime,
+          scopeStepUp: {
+            bearer: "Bearer t",
+            authPrincipal: "user_1",
+            resumeRequest: { toolCallId: "call_1" },
+          },
+        },
+      } as never);
       expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
       expect(handlers.mcpjamFree).not.toHaveBeenCalled();
       expect(

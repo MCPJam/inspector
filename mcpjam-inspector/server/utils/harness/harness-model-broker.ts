@@ -16,17 +16,11 @@ import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
 import { harnessPinnedVersion } from "@/shared/harness-model-support";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
+import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
 import {
   orgLeaseUpstreamFrom,
   orgSelectionField,
   orgBindingUnconfirmed,
-  type HarnessOrgLeaseUpstream,
-} from "./harness-org-lease.js";
-
-export {
-  ORG_BINDING_UNCONFIRMED,
-  orgLeaseUpstreamFrom,
-  readHarnessLeaseRefusal,
   type HarnessOrgLeaseUpstream,
 } from "./harness-org-lease.js";
 
@@ -110,17 +104,19 @@ export type HarnessLoopbackStartResult =
     }
   | { ok: false; status: number; error: string; code?: string };
 
-function getConvexHttpUrl(): string {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) {
-    throw new Error("CONVEX_HTTP_URL is required for harness model broker");
-  }
-  return convexHttpUrl;
-}
-
-function bearerHeader(bearer: string): string {
-  const trimmed = bearer.trim();
-  return /^Bearer\s/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
+/**
+ * A start that asked for an org-key lease and got one that does not confirm
+ * the org binding is refused, and that lease revoked before anything runs:
+ * an org binding is never assumed. Null when there is nothing to refuse.
+ */
+async function refuseUnconfirmedOrgLease(args: {
+  asked: boolean;
+  orgUpstream: HarnessOrgLeaseUpstream | null;
+  revoke: Parameters<typeof revokeHarnessModelBroker>[0];
+}): Promise<ReturnType<typeof orgBindingUnconfirmed> | null> {
+  if (!args.asked || args.orgUpstream) return null;
+  await revokeHarnessModelBroker(args.revoke);
+  return orgBindingUnconfirmed();
 }
 
 /**
@@ -273,18 +269,18 @@ export async function startHarnessModelBroker(args: {
     (payload?.protocol === "anthropic" || payload?.protocol === "openai") &&
     payload?.delivery === "e2b-network-transform";
   const orgUpstream = orgLeaseUpstreamFrom(payload);
-  if (validShape && args.modelSelection?.source === "org" && !orgUpstream) {
-    // Asked for the org's key, got a lease that does not say it is one: an
-    // older backend minted it on MCPJam's key. Kill it before anything runs.
-    await revokeHarnessModelBroker({
-      runId: payload.runId,
+  const unconfirmed = await refuseUnconfirmedOrgLease({
+    asked: validShape && args.modelSelection?.source === "org",
+    orgUpstream,
+    revoke: {
+      runId: payload?.runId,
       ...(args.box.kind === "computer"
         ? { projectId: args.box.projectId }
         : {}),
       bearer: args.bearer,
-    });
-    return orgBindingUnconfirmed();
-  }
+    },
+  });
+  if (unconfirmed) return unconfirmed;
   if (!validShape) {
     return {
       ok: false,
@@ -495,15 +491,12 @@ export async function startLoopbackModelBroker(args: {
     typeof payload?.lease === "string" &&
     payload.lease.length > 0;
   const orgUpstream = orgLeaseUpstreamFrom(payload);
-  if (validShape && args.modelSelection?.source === "org" && !orgUpstream) {
-    // Same guard as the box path: never run on a lease that does not confirm
-    // the org binding that was asked for.
-    await revokeHarnessModelBroker({
-      runId: payload.runId,
-      bearer: args.bearer,
-    });
-    return orgBindingUnconfirmed();
-  }
+  const unconfirmed = await refuseUnconfirmedOrgLease({
+    asked: validShape && args.modelSelection?.source === "org",
+    orgUpstream,
+    revoke: { runId: payload?.runId, bearer: args.bearer },
+  });
+  if (unconfirmed) return unconfirmed;
   if (!validShape) {
     return {
       ok: false,

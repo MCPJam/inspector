@@ -106,7 +106,7 @@ import {
   harnessDefaultModel,
   harnessPickerModels,
   isNoRunnableHarnessModel,
-  NO_RUNNABLE_HARNESS_MODEL,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -3015,7 +3015,7 @@ export function useChatSession(
       // Nothing to offer at all (a harness host none of the rows runs on):
       // a disabled stand-in, never `undefined`, which every reader below
       // dereferences. The chat refuses to send on it (`submitBlocked`).
-      NO_RUNNABLE_HARNESS_MODEL;
+      noRunnableHarnessModel(harnessId ?? "");
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.

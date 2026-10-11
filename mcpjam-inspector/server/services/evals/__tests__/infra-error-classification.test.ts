@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  HARNESS_PROXY_REFUSAL_STATUS,
-  classifyEvalInfraError,
-} from "../infra-error-classification";
+import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
+import { classifyEvalInfraError } from "../infra-error-classification";
 import { byokEndpointOwnership } from "../../../utils/infra-failure-evidence";
 import { resolveIterationInfraError } from "../../evals-runner";
 

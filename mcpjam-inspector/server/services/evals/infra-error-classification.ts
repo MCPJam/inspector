@@ -36,16 +36,11 @@ import {
   HARNESS_PROXY_REFUSAL_REASONS,
   HARNESS_PROXY_REFUSAL_STATUS,
   isHarnessProxyRefusalReason,
+  type HarnessProxyRefusalReason,
 } from "@/shared/harness-proxy-refusal-reasons";
 import { accountLimitCode } from "@/shared/swarm-attempt-error";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { classifyRetry } from "../../utils/run-supervisor/retry.js";
-
-/**
- * The status the backend's harness model proxy answers ITS OWN refusals with
- * (`HARNESS_PROXY_REFUSAL_STATUS` in `convex/http.ts`): never a provider's.
- */
-export { HARNESS_PROXY_REFUSAL_STATUS };
 
 type Row = {
   class: EvalInfraErrorClass;
@@ -190,25 +185,47 @@ const CODEX_CONNECTION_CODES = new Set([
 ]);
 
 /**
- * A refusal reason of the harness model proxy, read by the shared vocabulary.
- * The organization's own key or policy failing is the model credential's layer
- * (`byok_*`, `upstream_*`) or the platform's (its policy); a `null` class —
- * spend, lease caps, a transport limit — is not an infrastructure failure.
+ * Each refusal of the harness model proxy as the classifier reads it. The
+ * organization's own key failing is the model credential's layer, its policy
+ * the platform's; `null` — spend, lease caps, a transport limit — is not an
+ * infrastructure failure, so the trial keeps counting. Exhaustive over the
+ * shared vocabulary: a reason the backend adds is classified here first.
  */
+const PROXY_REFUSAL_ROWS: Record<
+  HarnessProxyRefusalReason,
+  Omit<Row, "retryable"> | null
+> = {
+  spend_budget_reached: null,
+  spending_limit_reached: null,
+  spend_admission: null,
+  pricing_unavailable: null,
+  gateway_not_configured: null,
+  lease_budget_exhausted: null,
+  lease_max_calls: null,
+  lease_daily_harness_spend: null,
+  lease_daily_harness_calls: null,
+  no_billable_usage: null,
+  proxy_error: null,
+  org_keys_required: { class: "configuration", layer: "platform" },
+  ai_key_policy_unavailable: { class: "configuration", layer: "platform" },
+  byok_credential_rejected: { class: "auth", layer: MODEL },
+  byok_credential_unavailable: { class: "configuration", layer: MODEL },
+  byok_connection_changed: { class: "configuration", layer: MODEL },
+  transport_request_too_large: null,
+  transport_response_too_large: null,
+  upstream_timeout: { class: "provider_unavailable", layer: MODEL },
+  upstream_interrupted: { class: "provider_unavailable", layer: MODEL },
+  upstream_unreachable: { class: "provider_unavailable", layer: MODEL },
+  upstream_redirect: { class: "configuration", layer: MODEL },
+};
+
 function classifyProxyRefusal(code: string | undefined): Row | undefined {
   if (!isHarnessProxyRefusalReason(code)) return undefined;
-  const reasonClass = HARNESS_PROXY_REFUSAL_REASONS[code].class;
-  if (!reasonClass) return undefined;
-  return {
-    class: reasonClass,
-    layer:
-      code.startsWith("byok_") || code.startsWith("upstream_")
-        ? MODEL
-        : "platform",
-    // The proxy's own `x-should-retry` for the reason: a timed-out or
-    // interrupted call may have run on the provider, so it is never re-sent.
-    retryable: HARNESS_PROXY_REFUSAL_REASONS[code].retry,
-  };
+  const row = PROXY_REFUSAL_ROWS[code];
+  if (!row) return undefined;
+  // The proxy's own `x-should-retry` for the reason: a timed-out or
+  // interrupted call may have run on the provider, so it is never re-sent.
+  return { ...row, retryable: HARNESS_PROXY_REFUSAL_REASONS[code].retry };
 }
 
 function classifyHarnessRuntime(

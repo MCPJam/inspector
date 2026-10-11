@@ -85,7 +85,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { decideTurnRail } from "./selection-rail.js";
+import { decideTurnRail, harnessTurnRail } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
@@ -111,14 +111,10 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
-import {
-  getHarnessAdapter,
-  harnessUsesExternalAccount,
-} from "./harness/registry.js";
+import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
-  runsHarness,
 } from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
@@ -1241,49 +1237,23 @@ export async function streamWebChatTurn(
       model: prepare.modelDefinition,
     }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
-  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
-  //
-  // Without this the branch below sends a Cursor turn down the org-BYOK path,
-  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
-  // approve the turn and the turn would then run on a completely different
-  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
-  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
-  // product just told the user was ready.
-  //
-  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
-  // model", and an external-account turn is exactly the case where it does not.
-  // The two reasons to take the non-BYOK branch are different facts, so they
-  // stay separate values.
-  const isExternalAccountHarnessTurn =
-    !!persist.harness && harnessUsesExternalAccount(persist.harness);
-  // …OR a brokered harness on the ORGANIZATION'S own key: its saved selection
-  // names an org connection whose provider the harness runs on. Such a turn
-  // runs the REAL runtime (the lease is minted for that connection), so it
-  // takes the harness path, never the org-BYOK branch below — which would run
-  // the emulated engine under the harness's name.
-  const isOrgKeyHarnessTurn =
-    !!persist.harness &&
-    !isExternalAccountHarnessTurn &&
-    prepare.routingSelection?.source === "org" &&
-    runsHarness({
-      harness: persist.harness,
-      model: {
-        id: String(prepare.modelDefinition.id),
-        provider: prepare.modelDefinition.provider,
-        hosted: prepare.modelDefinition.hosted,
-      },
-      selection: prepare.routingSelection,
-    });
-  // A scope step-up RESUME never runs the harness: the free path hands it to
-  // the emulated engine on MCPJam's `/stream`. On an org-key harness turn that
-  // would spend MCPJam's credits — past an org that requires its own keys —
-  // so the resume takes the org path below (`/stream/org`) instead, on the
-  // organization's key, exactly as it did before org-key harness turns.
-  const orgKeyHarnessStepUpResume = isOrgKeyHarnessTurn && !!scopeStepUpResume;
-  const usesMcpjamFreePath =
-    isMCPJam ||
-    isExternalAccountHarnessTurn ||
-    (isOrgKeyHarnessTurn && !orgKeyHarnessStepUpResume);
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted: without it the
+  // branch below would send a Cursor turn down the org-BYOK path, which never
+  // reaches `runHarnessTurn`. …OR a brokered harness on the ORGANIZATION'S own
+  // key. `isMCPJam` means "MCPJam pays for this model"; the other two are
+  // different facts, so the rail keeps them apart (`harnessTurnRail`).
+  const rail = harnessTurnRail({
+    harness: persist.harness,
+    model: {
+      id: String(prepare.modelDefinition.id),
+      provider: prepare.modelDefinition.provider,
+      hosted: prepare.modelDefinition.hosted,
+    },
+    selection: prepare.routingSelection,
+    mcpjamProvided: isMCPJam,
+    stepUpResume: !!scopeStepUpResume,
+  });
+  const usesMcpjamFreePath = rail.usesFreePath;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
@@ -1292,7 +1262,7 @@ export async function streamWebChatTurn(
   // thing here, with the same sentence, for any caller that reaches this
   // helper without one. (An org-key harness turn's step-up resume is the one
   // exception, above: it is the emulated engine on any path.)
-  if (persist.harness && !usesMcpjamFreePath && !orgKeyHarnessStepUpResume) {
+  if (persist.harness && !usesMcpjamFreePath && !rail.orgStepUpResume) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1721,11 +1691,7 @@ export async function streamWebChatTurn(
   // MCPJam's: `'byok'`, exactly like an org-BYOK chat turn.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    isExternalAccountHarnessTurn
-      ? "external-account"
-      : isOrgKeyHarnessTurn
-        ? "byok"
-        : "mcpjam",
+    rail.modelSource,
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1807,9 +1773,7 @@ export async function streamWebChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     // The org selection the harness's lease is minted for (its canonical id
     // and connection). Only on an org-key harness turn.
-    ...(isOrgKeyHarnessTurn && prepare.routingSelection?.source === "org"
-      ? { modelSelection: prepare.routingSelection }
-      : {}),
+    ...(rail.orgSelection ? { modelSelection: rail.orgSelection } : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),

@@ -41,6 +41,7 @@ import {
   type ModelSelectionPurpose,
   type RequestedModelSelection,
 } from "@mcpjam/sdk";
+import type { HarnessOrgKeyRefusalReason } from "@/shared/harness-proxy-refusal-reasons";
 
 /** Refusal codes of the model selection contract. */
 export type ModelRefusalCode =
@@ -55,19 +56,9 @@ export type ModelRefusalCode =
   | "free_tier_model_restricted"
   | "guest_model_not_allowed"
   | "fallback_prohibited"
-  /** The organization's policy refuses MCPJam's key; the turn needs an org key. */
-  | "org_keys_required"
   /** The org connection's provider cannot serve the selected harness. */
   | "provider_mismatch"
-  /** The org provider rejected the key (401/403 upstream). */
-  | "byok_credential_rejected"
-  /** The org key could not be opened for this turn. */
-  | "byok_credential_unavailable"
-  /** The org replaced its key between reserving and starting the turn. */
-  | "byok_connection_changed"
-  /** A request or response exceeded the org-key transport's hard cap. */
-  | "transport_request_too_large"
-  | "transport_response_too_large";
+  | HarnessOrgKeyRefusalReason;
 
 export type ModelRefusal = {
   code: ModelRefusalCode;

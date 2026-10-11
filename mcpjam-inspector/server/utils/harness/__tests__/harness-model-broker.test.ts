@@ -5,10 +5,12 @@ import {
   revokeHarnessModelBroker,
   reserveHarnessBox,
   renewHarnessBoxReservation,
-  orgLeaseUpstreamFrom,
-  ORG_BINDING_UNCONFIRMED,
-  readHarnessLeaseRefusal,
 } from "../harness-model-broker";
+import {
+  ORG_BINDING_UNCONFIRMED,
+  orgLeaseUpstreamFrom,
+  readHarnessLeaseRefusal,
+} from "../harness-org-lease";
 import { buildBrokerDummyAuth } from "../registry";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
@@ -426,7 +428,7 @@ describe("org-key leases", () => {
   };
 
   it("carries the org selection and the prepared revision, and returns the confirmed binding", async () => {
-    let seenBody: any = {};
+    let seenBody: Record<string, unknown> = {};
     mockFetch((_url, init) => {
       seenBody = JSON.parse(String(init.body));
       return Response.json(orgStartResponse);
@@ -455,7 +457,7 @@ describe("org-key leases", () => {
   });
 
   it("a hosted start's body is unchanged: no selection, no revision", async () => {
-    let seenBody: any = {};
+    let seenBody: Record<string, unknown> = {};
     mockFetch((_url, init) => {
       seenBody = JSON.parse(String(init.body));
       return Response.json({
@@ -485,7 +487,7 @@ describe("org-key leases", () => {
   });
 
   it("revokes and fails when an org start comes back without confirming the binding (an older backend)", async () => {
-    const calls: Array<{ url: string; body: any }> = [];
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     mockFetch((url, init) => {
       calls.push({ url, body: JSON.parse(String(init.body)) });
       if (url.endsWith("/start")) {
@@ -514,7 +516,7 @@ describe("org-key leases", () => {
   });
 
   it("the loopback start carries the selection and applies the same guard", async () => {
-    const calls: Array<{ url: string; body: any }> = [];
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     mockFetch((url, init) => {
       calls.push({ url, body: JSON.parse(String(init.body)) });
       if (url.endsWith("/revoke")) return Response.json({ ok: true });
@@ -550,7 +552,7 @@ describe("org-key leases", () => {
   });
 
   it("reserve sends the org selection and returns the revision it prepared", async () => {
-    let seenBody: any = {};
+    let seenBody: Record<string, unknown> = {};
     mockFetch((_url, init) => {
       seenBody = JSON.parse(String(init.body));
       return Response.json({
@@ -615,7 +617,7 @@ describe("orgLeaseUpstreamFrom", () => {
 describe("readHarnessLeaseRefusal", () => {
   it("POSTs the run id and returns the proxy's recorded refusal", async () => {
     let seenUrl = "";
-    let seenBody: any = {};
+    let seenBody: Record<string, unknown> = {};
     mockFetch((url, init) => {
       seenUrl = url;
       seenBody = JSON.parse(String(init.body));
