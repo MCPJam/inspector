@@ -773,7 +773,7 @@ describe("deleteProjectOperation", () => {
       attentionCode: null,
     };
     const request = vi
-      .spyOn(client, "requestDeletion")
+      .spyOn(client, "deleteProject")
       .mockResolvedValue(receipt);
 
     const result = await deleteProjectOperation.execute(
@@ -786,7 +786,7 @@ describe("deleteProjectOperation", () => {
 
     expect(result).toEqual(receipt);
     expect(request).toHaveBeenCalledWith(
-      { scope: { type: "project", id: "project-new" } },
+      { projectId: "project-new" },
       { idempotencyKey: "reusable-key" }
     );
   });

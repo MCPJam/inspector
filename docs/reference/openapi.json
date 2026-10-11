@@ -7881,7 +7881,7 @@
         "operationId": "deleteProject",
         "tags": ["Projects"],
         "summary": "Use the deletion request protocol for project deletion",
-        "description": "This legacy endpoint is mutation-free and returns `409 DELETION_PROTOCOL_REQUIRED`. Submit `POST /deletions` with an idempotency key, then follow the returned receipt and status URL.",
+        "description": "Read `GET /deletions/capabilities` before choosing a deletion protocol. When available is false, this endpoint preserves legacy deletion. When available is true, it returns `409 DELETION_PROTOCOL_REQUIRED`; submit `POST /deletions` with an idempotency key and follow the receipt.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -7904,6 +7904,13 @@
             "$ref": "#/components/responses/ServerUnreachable"
           }
         }
+      }
+    },
+    "/deletions/capabilities": {
+      "get": {
+        "summary": "Read deletion availability",
+        "description": "Authenticated availability check. Choose the legacy path only when available is false, before submitting any deletion. Never fall back after a failed or uncertain deletion request.",
+        "responses": { "200": { "description": "Deletion capability: available, protocolVersion 1, scopeTypes project and organization" } }
       }
     },
     "/deletions": {

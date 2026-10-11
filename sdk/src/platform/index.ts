@@ -1,3 +1,4 @@
+export type { PlatformDeletionCapabilities, PlatformProjectDeletion } from "./deletion.js";
 /**
  * `@mcpjam/sdk/platform` — fetch-based client and curated operation catalog
  * for the MCPJam Platform API (`/api/v1`).

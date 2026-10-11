@@ -7,6 +7,8 @@ import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
 
+import { readDeletionCapabilities } from "./deletion-capabilities.js";
+
 const deletions = new Hono();
 const requestSchema = z.strictObject({
   scope: z.discriminatedUnion("type", [
@@ -95,6 +97,11 @@ function writeError(error: unknown): WebRouteError {
     fallbackMessage: "Deletion request rejected",
   });
 }
+
+deletions.get("/deletions/capabilities", async (c) => {
+  const token = await getConvexBearerForRequest(c);
+  return v1Resource(c, await readDeletionCapabilities(client(token)));
+});
 
 deletions.post("/deletions", async (c) => {
   const rawKey = c.req.header("Idempotency-Key")?.trim();

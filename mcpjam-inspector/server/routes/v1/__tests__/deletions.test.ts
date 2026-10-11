@@ -48,6 +48,15 @@ describe("v1 deletion request contract", () => {
     getBearerMock.mockResolvedValue("human-bearer");
   });
 
+  it("publishes authenticated backend availability without accepting deletion", async () => {
+    queryMock.mockResolvedValue({ available: false, protocolVersion: 1, scopeTypes: ["project", "organization"] });
+    const response = await makeApp().request("/api/v1/deletions/capabilities");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ available: false, protocolVersion: 1 });
+    expect(getBearerMock).toHaveBeenCalled();
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("requires an idempotency key and never sends a malformed request", async () => {
     const response = await makeApp().request("/api/v1/deletions", {
       method: "POST",

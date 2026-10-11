@@ -50,14 +50,15 @@ describe("PlatformApiClient", () => {
       closedAt: null,
       attentionCode: null,
     };
-    const fetchMock = vi.fn(async () => jsonResponse(receipt));
+    const fetchMock = vi.fn(async (url) => jsonResponse(String(url).endsWith("/capabilities")
+      ? { available: true, protocolVersion: 1, scopeTypes: ["project", "organization"] } : receipt));
     const client = makeClient(fetchMock);
 
     await client.requestDeletion(
       { scope: { type: "project", id: "p1" } },
       { idempotencyKey: "stable-key" }
     );
-    const accepted = requestOf(fetchMock);
+    const accepted = requestOf(fetchMock, 1);
     expect(accepted.url.pathname).toBe("/api/v1/deletions");
     expect(accepted.init.headers).toMatchObject({ "idempotency-key": "stable-key" });
     expect(accepted.init.body).toBe(
@@ -65,7 +66,7 @@ describe("PlatformApiClient", () => {
     );
 
     await client.cancelDeletion({ requestId: "r1" });
-    const cancelled = requestOf(fetchMock, 1);
+    const cancelled = requestOf(fetchMock, 2);
     expect(cancelled.url.pathname).toBe("/api/v1/deletions/r1/cancel");
     expect(cancelled.init.body).toBeUndefined();
   });

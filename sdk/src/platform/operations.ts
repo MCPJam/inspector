@@ -1,3 +1,4 @@
+import type { PlatformProjectDeletion } from "./deletion.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -162,7 +163,6 @@ import type {
   PlatformJourneyRunCanceled,
   PlatformPersona,
   PlatformPersonaDeleted,
-  PlatformDeletionReceipt,
   PlatformSecret,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
@@ -654,14 +654,14 @@ export const updateProjectOperation: PlatformOperation<
 const deleteProjectInput = z.object({
   project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
   idempotencyKey: z.string().trim().min(1).max(128).describe(
-    "Stable key to reuse if the request outcome is unknown."
-  ),
+    "Stable key required when deletion receipts are available; reuse after an unknown outcome."
+  ).optional(),
 });
 export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
 
 export const deleteProjectOperation: PlatformOperation<
   DeleteProjectInput,
-  PlatformDeletionReceipt
+  PlatformProjectDeletion
 > = {
   name: "delete_project",
   title: "Delete an MCPJam project",
@@ -675,8 +675,8 @@ export const deleteProjectOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    return client.requestDeletion(
-      { scope: { type: "project", id: project.id } },
+    return client.deleteProject(
+      { projectId: project.id },
       {
         signal,
         idempotencyKey: input.idempotencyKey,

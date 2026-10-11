@@ -10,6 +10,9 @@ import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
 
+import { makeFunctionReference } from "convex/server";
+import { readDeletionCapabilities } from "./deletion-capabilities.js";
+
 const projects = new Hono();
 
 /**
@@ -208,15 +211,25 @@ projects.patch("/projects/:projectId", async (c) => {
   }
 });
 
-// Legacy project deletion must use the durable request protocol.
-projects.delete("/projects/:projectId", async () => {
-  // Immediate deletion bypasses the versioned request, hold, journal and
-  // receipt protocol. Keep the old path explicit and mutation-free.
-  throw new WebRouteError(
-    409,
-    ErrorCode.CONFLICT,
-    "DELETION_PROTOCOL_REQUIRED: use POST /v1/deletions and follow its receipt"
-  );
+// Negotiate before mutating; failures never fall back to immediate deletion.
+projects.delete("/projects/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  if ((await c.req.text()).trim()) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Delete body must be empty");
+  }
+  const token = await getConvexBearerForRequest(c);
+  try {
+    const client = convexClient(token);
+    if ((await readDeletionCapabilities(client)).available) {
+      throw new WebRouteError(409, ErrorCode.CONFLICT,
+        "DELETION_PROTOCOL_REQUIRED: use POST /v1/deletions and follow its receipt");
+    }
+    await assertProjectWritableByCaller(c, token, projectId);
+    await client.mutation(makeFunctionReference<"mutation">("projects:deleteProject"), { projectId });
+    return v1Resource(c, { id: projectId, deleted: true });
+  } catch (error) {
+    throw translateProjectWriteError(error);
+  }
 });
 
 export default projects;

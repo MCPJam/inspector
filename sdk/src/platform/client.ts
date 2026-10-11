@@ -1,3 +1,4 @@
+import { deleteProject as negotiatedDeleteProject, requestDeletion as negotiatedRequestDeletion, type PlatformDeletionCapabilities, type PlatformProjectDeletion } from "./deletion.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -577,7 +578,7 @@ function pageQuery(params: { cursor?: string; limit?: number }): QueryParams {
   return { cursor: params.cursor, limit: params.limit };
 }
 
-type RequestOptions = {
+export type RequestOptions = {
   signal?: AbortSignal;
   /** Stable retry key forwarded to write routes. */
   idempotencyKey?: string;
@@ -856,28 +857,19 @@ export class PlatformApiClient {
     );
   }
 
-  deleteProject(
-    params: { projectId: string },
-    options?: RequestOptions
-  ): Promise<{ id: string; deleted: boolean }> {
-    return this.request(
-      "DELETE",
-      `/projects/${encodeURIComponent(params.projectId)}`,
-      {},
-      options
-    );
+  getDeletionCapabilities(options?: RequestOptions): Promise<PlatformDeletionCapabilities> {
+    return this.request("GET", "/deletions/capabilities", {}, options);
+  }
+
+  deleteProject(params: { projectId: string }, options?: RequestOptions): Promise<PlatformProjectDeletion> {
+    return negotiatedDeleteProject(this.request.bind(this), params.projectId, options);
   }
 
   requestDeletion(
     params: { scope: { type: "organization" | "project"; id: string } },
     options: RequestOptions & { idempotencyKey: string }
   ): Promise<PlatformDeletionReceipt> {
-    return this.request(
-      "POST",
-      "/deletions",
-      { body: { scope: params.scope } },
-      options
-    );
+    return negotiatedRequestDeletion(this.request.bind(this), params.scope, options);
   }
 
   getDeletion(
