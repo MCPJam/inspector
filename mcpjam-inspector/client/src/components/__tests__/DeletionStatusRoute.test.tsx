@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-const { read, cancel, token, signIn, auth, recover, params } = vi.hoisted(() => ({
+const { read, cancel, token, signIn, auth, recover, params, navigate } = vi.hoisted(() => ({
   recover: vi.fn(),
+  navigate: vi.fn(),
   params: { requestId: "request_1" },
   read: vi.fn(),
   cancel: vi.fn(),
@@ -12,6 +13,7 @@ const { read, cancel, token, signIn, auth, recover, params } = vi.hoisted(() => 
 }));
 vi.mock("react-router", () => ({
   useParams: () => params,
+  useNavigate: () => navigate,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ ...auth, getAccessToken: token, signIn }),
@@ -101,4 +103,20 @@ it("checks an uncertain request outside the shell and cancels using its recovere
   expect(recover).toHaveBeenCalledWith(window.location.search, token);
   expect(cancel).toHaveBeenCalledWith("request_1", token);
   expect(read).not.toHaveBeenCalled();
+});
+
+it("replaces the pending link with the recovered receipt before refresh or reload", async () => {
+  params.requestId = "pending";
+  recover.mockResolvedValueOnce({ ...receipt }).mockRejectedValue(new Error("No pending request"));
+  const view = render(<DeletionStatusRoute />);
+  await waitFor(() => expect(navigate).toHaveBeenCalledWith("/deletions/request_1", { replace: true }));
+  params.requestId = "request_1";
+  view.rerender(<DeletionStatusRoute />);
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh status" }));
+  await waitFor(() => expect(read).toHaveBeenCalledWith("request_1", token));
+  expect(recover).toHaveBeenCalledOnce();
+  view.unmount();
+  render(<DeletionStatusRoute />);
+  expect(await screen.findByRole("button", { name: "Cancel deletion" })).toBeEnabled();
+  expect(recover).toHaveBeenCalledOnce();
 });

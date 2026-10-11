@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { PlatformDeletionReceipt } from "@mcpjam/sdk/platform";
@@ -12,6 +12,7 @@ function time(value: number | null): string | null {
 
 export function DeletionStatusRoute() {
   const { requestId = "" } = useParams();
+  const navigate = useNavigate();
   const { getAccessToken, isLoading, user, signIn } = useAuth();
   const [receipt, setReceipt] = useState<PlatformDeletionReceipt | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,16 +24,20 @@ export function DeletionStatusRoute() {
     setLoading(true);
     setFailed(false);
     try {
-      setReceipt(await (requestId === "pending"
+      const next = await (requestId === "pending"
         ? recoverDeletion(window.location.search, getAccessToken)
-        : readDeletion(requestId, getAccessToken)));
+        : readDeletion(requestId, getAccessToken));
+      setReceipt(next);
+      if (requestId === "pending") {
+        navigate(`/deletions/${encodeURIComponent(next.requestId)}`, { replace: true });
+      }
     } catch {
       setFailed(true);
       setReceipt(null);
     } finally {
       setLoading(false);
     }
-  }, [requestId, getAccessToken]);
+  }, [requestId, getAccessToken, navigate]);
 
   useEffect(() => {
     if (!isLoading && user) void refresh();
