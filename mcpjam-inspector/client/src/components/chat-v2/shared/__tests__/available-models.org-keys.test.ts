@@ -371,6 +371,17 @@ describe("composeAvailableModels under the policy", () => {
     expect(models.filter((model) => model.disabled)).toHaveLength(0);
   });
 
+  it("compares a saved id exactly as the surface holds it", () => {
+    // The surface finds its saved model by exact id, so a padded id that
+    // only matches an offered row once trimmed still gets its own row.
+    const offered = compose(policyConfig([anthropic]));
+    const padded = ` ${String(offered[0]!.id)}`;
+    const models = compose(policyConfig([anthropic]), {
+      savedModelIds: [padded],
+    });
+    expect(models.some((model) => String(model.id) === padded)).toBe(true);
+  });
+
   it("is unchanged when the policy is off", () => {
     const models = compose({
       providers: [anthropic],

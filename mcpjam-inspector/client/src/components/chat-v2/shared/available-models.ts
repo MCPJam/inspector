@@ -548,11 +548,13 @@ export function withSavedSelectionLocks(
   savedModelIds: readonly (string | null | undefined)[] | undefined,
   unrestricted: () => readonly ModelDefinition[],
 ): ModelDefinition[] {
+  // Compared exactly as the surface holds them: a trimmed id could match an
+  // offered row the surface's own id never resolves to.
   const missing = [
     ...new Set(
-      (savedModelIds ?? [])
-        .map((id) => (typeof id === "string" ? id.trim() : ""))
-        .filter((id) => id.length > 0),
+      (savedModelIds ?? []).filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0,
+      ),
     ),
   ].filter((id) => !offered.some((model) => String(model.id) === id));
   if (missing.length === 0) return offered;
