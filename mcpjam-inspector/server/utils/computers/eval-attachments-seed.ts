@@ -22,7 +22,7 @@ import {
   resolveEvalRunAttachments,
   type ResolvedEvalAttachment,
 } from "./control-plane-client.js";
-import { logger } from "../logger.js";
+import { downloadArtifactBytes } from "../artifact-download.js";
 
 // Re-checked here even though authoring already enforced them: the snapshot is
 // the source of truth at seed time, and seeding many sandboxes in bursts is real
@@ -79,6 +79,7 @@ export async function seedAttachmentsIntoSandbox(args: {
   const writer = args.writer ?? e2bAttachmentSeedWriter;
 
   let totalBytes = 0;
+  let downloadedBytes = 0;
   const files: Array<{ path: string; bytes: Uint8Array }> = [];
   for (const att of attachments) {
     if (!att.url) {
@@ -96,22 +97,17 @@ export async function seedAttachmentsIntoSandbox(args: {
         )} MB per-case limit.`
       );
     }
-    let response: Response;
+    let bytes: Uint8Array;
     try {
-      response = await fetchImpl(att.url, signal ? { signal } : undefined);
-    } catch (err) {
-      logger.error(`[evals] attachment download failed: ${att.name}`, err);
+      bytes = await downloadArtifactBytes(att.url, {
+        fetchImpl, signal,
+        maxBytes: EVAL_ATTACHMENTS_MAX_TOTAL_BYTES - downloadedBytes,
+      });
+    } catch {
       throw new Error(`Failed to download attachment "${att.name}".`);
     }
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download attachment "${att.name}" (${response.status}).`
-      );
-    }
-    files.push({
-      path: att.path,
-      bytes: new Uint8Array(await response.arrayBuffer()),
-    });
+    downloadedBytes += bytes.byteLength;
+    files.push({ path: att.path, bytes });
   }
 
   await writer({ sandboxId, files });

@@ -157,7 +157,7 @@ describe("POST /api/web/browser-profiles/download", () => {
     const headers = new Headers(lookupInit.headers);
     expect(headers.get("x-inspector-service-token")).toBe(SERVICE_TOKEN);
     expect(headers.get("authorization")).toBe("Bearer convex-jwt");
-    expect(JSON.parse(String(lookupInit.body))).toEqual(IDS);
+    expect(JSON.parse(String(lookupInit.body))).toEqual({ ...IDS, rangedArtifacts: true });
 
     // The archive read carries no credential and follows no redirect.
     const [archiveUrl, archiveInit] = fetchMock.mock.calls[1] as [
@@ -274,6 +274,44 @@ describe("POST /api/web/browser-profiles/download", () => {
     expect(await res.text()).not.toContain("files.example");
     // Only the lookup ran; the other location was never requested.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("streams every signed artifact range as one complete archive", async () => {
+    const location = `${BACKEND}/web/artifact?t=synthetic`;
+    let reads = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === LOOKUP_URL) return lookupAnswers(200, { url: location });
+      expect(String(input)).toBe(location);
+      expect(init?.redirect).toBe("error");
+      reads++;
+      if (reads === 1) return new Response(new Uint8Array([1, 2]), {
+        status: 206, headers: { "Content-Range": "bytes 0-1/4" },
+      });
+      expect(init?.headers).toEqual({ Range: "bytes=2-8388609" });
+      return new Response(new Uint8Array([3, 4]), {
+        status: 206, headers: { "Content-Range": "bytes 2-3/4" },
+      });
+    });
+    const res = await download(IDS);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-length")).toBe("4");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(reads).toBe(2);
+  });
+
+  it("errors the archive stream if a scope is marked between signed ranges", async () => {
+    const location = `${BACKEND}/web/artifact?t=synthetic`;
+    let reads = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === LOOKUP_URL) return lookupAnswers(200, { url: location });
+      reads++;
+      return reads === 1 ? new Response(new Uint8Array([1]), {
+        status: 206, headers: { "Content-Range": "bytes 0-0/4" },
+      }) : new Response("gone", { status: 404 });
+    });
+    const res = await download(IDS);
+    await expect(res.arrayBuffer()).rejects.toThrow("404");
+    expect(reads).toBe(2);
   });
 
   it("refuses an archive declared over the size limit without streaming it", async () => {

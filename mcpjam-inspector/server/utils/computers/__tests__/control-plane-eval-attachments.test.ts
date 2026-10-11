@@ -47,7 +47,7 @@ describe("resolveEvalRunAttachments", () => {
     expect(result).toEqual({ ok: true, value: { cases: [] } });
     const { url, init, headers } = sent();
     expect(url).toBe("https://example.convex.site/evals/sandbox/attachments");
-    expect(JSON.parse(String(init.body))).toEqual({ runId: "run_1" });
+    expect(JSON.parse(String(init.body))).toEqual({ runId: "run_1", rangedArtifacts: true });
     expect(headers.get("x-inspector-service-token")).toBe("svc-token");
     expect(headers.get("authorization")).toBe("Bearer user-token");
   });
