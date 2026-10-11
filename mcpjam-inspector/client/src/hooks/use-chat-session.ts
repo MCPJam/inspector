@@ -105,6 +105,8 @@ import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -117,7 +119,10 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -760,6 +765,9 @@ export interface UseChatSessionReturn {
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
+  /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -2910,7 +2918,8 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
-  const outOfCredits = useOutOfCredits();
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -3009,7 +3018,11 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all (a harness host none of the rows runs on):
+      // a disabled stand-in, never `undefined`, which every reader below
+      // dereferences. The chat refuses to send on it (`submitBlocked`).
+      noRunnableHarnessModel(harnessId ?? "");
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -6038,7 +6051,8 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    isNoRunnableHarnessModel(selectedModel);
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was
@@ -6071,6 +6085,7 @@ export function useChatSession(
     setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
+    outOfCreditsReason,
 
     // Auth state
     isAuthenticated,
