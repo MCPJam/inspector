@@ -131,6 +131,7 @@ import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
+  orgRequiresOwnKeys,
   resolveOrgProviderRuntimeForTarget,
   type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
@@ -150,8 +151,12 @@ import {
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
+  ORG_KEYS_REQUIRED_REASON,
+  policyIneligibleRefusal,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
+import { isOrgKeyPolicyRefusalCode } from "../../shared/ai-execution-refusal.js";
+import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -2553,6 +2558,21 @@ function hasBaseUrls(baseUrls: BaseUrls): boolean {
   return Boolean(baseUrls.ollama || baseUrls.azure || baseUrls.bedrock);
 }
 
+/**
+ * The refusal an eval case gets when its organization requires its own
+ * provider keys and the case would run on another source (an MCPJam-provided
+ * model, a key on this machine, an org model with no cloud org route). Thrown
+ * before any provider call, so the case's rows finalize `setup_failed` with
+ * "Model selection refused — org_keys_required: …".
+ */
+function orgKeysRequiredRefusal(
+  evidence: Record<string, unknown>,
+): ModelResolutionRefusalError {
+  return new ModelResolutionRefusalError([
+    { code: "org_keys_required", reason: ORG_KEYS_REQUIRED_REASON, evidence },
+  ]);
+}
+
 function resolveEvalModelRuntime(args: {
   test: EvalTestCase;
   modelDefinition: ModelDefinition;
@@ -2563,6 +2583,16 @@ function resolveEvalModelRuntime(args: {
   baseUrls?: BaseUrls;
   customProviders?: CustomProviderConfig[];
 } {
+  // The direct (in-process) runner calls the provider from this machine. An
+  // organization that requires its own keys never exports them, so nothing
+  // here may run for it: the dispatcher refuses such cases before they get
+  // this far, and this is the belt to that brace.
+  if (orgRequiresOwnKeys(args.orgModelConfig)) {
+    throw orgKeysRequiredRefusal({
+      rail: "direct",
+      provider: args.test.provider,
+    });
+  }
   const orgRuntime = args.orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(args.orgModelConfig)
     : undefined;
@@ -2646,6 +2676,10 @@ export function resolveEvalSelectionRoute(args: {
       ? { orgProviders: args.orgModelConfig.providers }
       : {}),
     hasLocalKey: (key) => Boolean(lookupProviderApiKey(args.modelApiKeys, key)),
+    // The organization requires its own provider keys: hosted and local
+    // selections, and org connections the backend did not call eligible, are
+    // refused here, before any request is built.
+    requireOrgKeys: orgRequiresOwnKeys(args.orgModelConfig),
   });
   if (!result.ok) throw new ModelResolutionRefusalError(result.refusals);
   return {
@@ -3595,6 +3629,17 @@ const executeTestCase = async (params: {
           hosted: modelDefinition.hosted,
         },
       }) === "hosted";
+  // "Use your keys for all AI features": when the organization requires its
+  // own provider keys, the case runs on an org connection through the
+  // backend's `/stream/org` (cloud) route or not at all — never on MCPJam's
+  // hosted `/stream`, never on a key on this machine, never on a local
+  // runtime with an exported key (the backend exports none). A saved
+  // selection was already refused above (`resolveEvalSelectionRoute`); this
+  // covers the cases without one.
+  const requireOrgKeys = orgRequiresOwnKeys(orgModelConfig);
+  if (requireOrgKeys && isJamModel) {
+    throw orgKeysRequiredRefusal({ source: "hosted", model: resolvedModelId });
+  }
   const orgByokRuntime =
     isJamModel || selectionRoute?.rail === "local"
       ? undefined
@@ -3605,7 +3650,9 @@ const executeTestCase = async (params: {
           orgModelConfig,
           orgModelConfigTarget,
           convexAuthToken,
-          ...(selectionRoute?.rail === "org"
+          // Under the policy the request's own keys never divert a case off
+          // the org connection either.
+          ...(selectionRoute?.rail === "org" || requireOrgKeys
             ? { ignoreExplicitModelApiKeys: true }
             : {}),
           ...(orgSelection ? { modelSelection: orgSelection } : {}),
@@ -3620,6 +3667,29 @@ const executeTestCase = async (params: {
         reason: "the saved org connection cannot be resolved for this run",
       },
     ]);
+  }
+  if (requireOrgKeys) {
+    // Only the cloud org route remains: a local runtime, or no org route at
+    // all (which would fall through to this machine's keys), is refused. The
+    // connection itself must be one the backend calls eligible
+    // (`policyEligibility` on its resolved row; a row without one fails
+    // closed). The backend admits the same connections on `/stream/org`.
+    if (orgByokRuntime?.kind !== "cloud") {
+      throw orgKeysRequiredRefusal({
+        rail: orgByokRuntime?.kind ?? "direct",
+        provider: test.provider,
+      });
+    }
+    const providerKey = orgByokRuntime.providerKey;
+    const verdict = connectionPolicyEligibility(
+      orgModelConfig?.providers.find((row) => row.providerKey === providerKey),
+      true,
+    );
+    if (!verdict.eligible) {
+      throw new ModelResolutionRefusalError([
+        policyIneligibleRefusal(verdict, { providerKey }),
+      ]);
+    }
   }
   // The case's settings, resolved ONCE for every iteration below on the
   // route it takes (per-run override > saved selection > host defaults).
@@ -4612,8 +4682,20 @@ export const runEvalSuiteWithAiSdk = async ({
         ) {
           throw result.reason;
         }
-        // Test failed entirely - log error but continue
-        logger.error("[evals] Test case failed:", result.reason);
+        // Test failed entirely - log error but continue. A refusal by the
+        // organization's AI-key policy is the org's own configuration working
+        // as designed (choose an org model): recorded, never paged.
+        if (
+          result.reason instanceof ModelResolutionRefusalError &&
+          isOrgKeyPolicyRefusalCode(result.reason.code)
+        ) {
+          logger.warn("[evals] Test case refused by the organization AI-key policy:", {
+            code: result.reason.code,
+            message: result.reason.message,
+          });
+        } else {
+          logger.error("[evals] Test case failed:", result.reason);
+        }
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;

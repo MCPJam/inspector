@@ -19,7 +19,15 @@
  *  - `invalid_model` when a connection with a known model list does not serve
  *    the model;
  *  - the `fallback_prohibited` refusal shape for executors that walk a
- *    fallback.
+ *    fallback;
+ *  - `org_keys_required` when the organization requires its own provider keys
+ *    ("Use your keys for all AI features") and the selection would run on
+ *    another source: a hosted (MCPJam-provided) model, a key on this machine,
+ *    or an org connection the backend did not call eligible (its
+ *    `policyEligibility`, read through `shared/org-ai-key-policy.ts`; the
+ *    backend's own code and message when it gave one). Refused here, before
+ *    any request is built, so nothing reaches a provider; the backend refuses
+ *    the same selections on its own routes.
  *
  * TODO(P0-1): `harness_unsupported` / `harness_unknown` from the harness ×
  * model support evidence (`harnessModelSupport`, inspector PR #5559). That
@@ -42,6 +50,11 @@ import {
   type RequestedModelSelection,
 } from "@mcpjam/sdk";
 import type { HarnessOrgKeyRefusalReason } from "@/shared/harness-proxy-refusal-reasons";
+import { isAiConfigurationRefusalCode } from "@/shared/ai-execution-refusal";
+import {
+  connectionPolicyEligibility,
+  type PolicyEligibility,
+} from "@/shared/org-ai-key-policy";
 
 /** Refusal codes of the model selection contract. */
 export type ModelRefusalCode =
@@ -58,7 +71,17 @@ export type ModelRefusalCode =
   | "fallback_prohibited"
   /** The org connection's provider cannot serve the selected harness. */
   | "provider_mismatch"
-  | HarnessOrgKeyRefusalReason;
+  // The harness model proxy's org-key refusals (`org_keys_required`, `byok_*`,
+  // `transport_*`), from its own vocabulary.
+  | HarnessOrgKeyRefusalReason
+  // The organization AI-key policy's configuration refusals
+  // (`shared/ai-execution-refusal.ts`). Permanent until the org's
+  // configuration or the selection changes: never retried, never paged.
+  | "org_keys_required"
+  | "org_model_unconfigured"
+  | "org_runtime_unsupported"
+  | "ai_scope_unresolved"
+  | "provider_auth_failed";
 
 export type ModelRefusal = {
   code: ModelRefusalCode;
@@ -110,6 +133,35 @@ export type LocalResolutionResult =
 /** Provider keys that run without an API key. */
 const KEYLESS_LOCAL_PROVIDERS = new Set(["ollama"]);
 
+/**
+ * The sentence a policy refusal carries. Kept in one place so the eval row,
+ * the chat error and the backend's own refusal read the same.
+ */
+export const ORG_KEYS_REQUIRED_REASON =
+  "This organization requires its own provider keys for AI features. Choose a model from an organization provider.";
+
+/**
+ * The refusal for an org connection the backend did not call eligible while
+ * the organization requires its own keys, with the backend's message when it
+ * wrote one. Its code is kept when it is a configuration refusal (today it
+ * always is: `org_keys_required` or `credential_missing`); anything else reads
+ * as `org_keys_required`, so a policy refusal is never mistaken for an outage
+ * to retry.
+ */
+export function policyIneligibleRefusal(
+  verdict: PolicyEligibility,
+  evidence: Record<string, unknown>,
+): ModelRefusal {
+  return {
+    code:
+      verdict.code && isAiConfigurationRefusalCode(verdict.code)
+        ? (verdict.code as ModelRefusalCode)
+        : "org_keys_required",
+    reason: verdict.message ?? ORG_KEYS_REQUIRED_REASON,
+    evidence,
+  };
+}
+
 export type ResolveLocalModelSelectionInput = {
   selection: ModelSelection;
   purpose: ModelSelectionPurpose;
@@ -136,9 +188,22 @@ export type ResolveLocalModelSelectionInput = {
   orgProviders?: ReadonlyArray<{
     providerKey: string;
     modelIds?: readonly string[];
+    /**
+     * The backend's verdict on the connection under the organization's key
+     * policy. Missing (an older backend) while the policy is on reads as not
+     * eligible.
+     */
+    policyEligibility?: PolicyEligibility;
   }>;
   /** Presence check for a local provider key. Never returns the key. */
   hasLocalKey: (providerKey: string) => boolean;
+  /**
+   * The organization requires its own provider keys for AI features
+   * (`aiKeyPolicy.requireOrgKeys` on the resolved org config). When set, only
+   * an `org` selection on a connection the backend calls eligible resolves;
+   * everything else is refused before any request is built.
+   */
+  requireOrgKeys?: boolean;
 };
 
 /** Provider-native id a selection is executed with. */
@@ -169,6 +234,11 @@ export function resolveLocalModelSelection(
   const fallback = selection.fallback;
 
   if (selection.source === "hosted") {
+    if (input.requireOrgKeys) {
+      return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+        source: "hosted",
+      });
+    }
     return { ok: true, plan: { rail: "hosted", wireModelId, fallback } };
   }
 
@@ -195,6 +265,18 @@ export function resolveLocalModelSelection(
         evidence,
       );
     }
+    if (!input.orgProviders && input.requireOrgKeys) {
+      // No connection rows, so no backend verdict to read: fail closed.
+      return {
+        ok: false,
+        refusals: [
+          policyIneligibleRefusal(connectionPolicyEligibility(null, true), {
+            ...evidence,
+            providerKey: input.orgProviderKey,
+          }),
+        ],
+      };
+    }
     if (input.orgProviders) {
       const provider = input.orgProviders.find(
         (row) => row.providerKey === input.orgProviderKey,
@@ -205,6 +287,20 @@ export function resolveLocalModelSelection(
           `the saved org connection (${input.orgProviderKey}) is no longer configured for this organization`,
           { ...evidence, providerKey: input.orgProviderKey },
         );
+      }
+      if (input.requireOrgKeys) {
+        const verdict = connectionPolicyEligibility(provider, true);
+        if (!verdict.eligible) {
+          return {
+            ok: false,
+            refusals: [
+              policyIneligibleRefusal(verdict, {
+                ...evidence,
+                providerKey: input.orgProviderKey,
+              }),
+            ],
+          };
+        }
       }
       if (
         provider.modelIds?.length &&
@@ -234,6 +330,14 @@ export function resolveLocalModelSelection(
   }
 
   // source === "local"
+  if (input.requireOrgKeys) {
+    return refuse("org_keys_required", ORG_KEYS_REQUIRED_REASON, {
+      source: "local",
+      ...(connectionRef?.kind === "localProvider"
+        ? { providerKey: connectionRef.providerKey }
+        : {}),
+    });
+  }
   if (connectionRef?.kind !== "localProvider") {
     return refuse(
       "credential_missing",
