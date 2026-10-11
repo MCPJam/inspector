@@ -769,6 +769,7 @@ export function ShareUsageThreadDetail({
           <SessionClientModelChip
             sessionId={thread._id}
             modelId={thread.modelId}
+            modelSelection={thread.modelSelection}
           />
           <SessionFeedbackMark thread={thread} variant="header" />
         </div>

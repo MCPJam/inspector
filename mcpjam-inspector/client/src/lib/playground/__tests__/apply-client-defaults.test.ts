@@ -132,6 +132,43 @@ describe("applyHostConfigToPlayground", () => {
     expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("gpt-5");
   });
 
+  it("never writes a model a harness client cannot run over the shared lead", () => {
+    // A Codex client saved on a Claude model (possible before the editor
+    // filtered its picker): the lead must not become a model the server
+    // then refuses for every Codex chat.
+    applyHostConfigToPlayground(
+      {
+        hostStyle: "codex",
+        harness: "codex",
+        modelId: "anthropic/claude-haiku-4.5",
+        hostContext: {},
+        mcpProfile: undefined,
+        hostCapabilitiesOverride: undefined,
+      },
+      setters
+    );
+
+    expect(replaceLeadModelIdSpy).not.toHaveBeenCalledWith(
+      "anthropic/claude-haiku-4.5"
+    );
+  });
+
+  it("passes a harness client's runnable model straight through", () => {
+    applyHostConfigToPlayground(
+      {
+        hostStyle: "codex",
+        harness: "codex",
+        modelId: "openai/gpt-5-nano",
+        hostContext: {},
+        mcpProfile: undefined,
+        hostCapabilitiesOverride: undefined,
+      },
+      setters
+    );
+
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("openai/gpt-5-nano");
+  });
+
   it("falls back to the template default when the persisted modelId is whitespace-only", () => {
     applyHostConfigToPlayground(
       {
