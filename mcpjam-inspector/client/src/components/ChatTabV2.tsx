@@ -129,6 +129,8 @@ import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-av
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -1790,7 +1792,13 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const compareHasDisallowedModel =
+    isMultiModelMode &&
+    modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model));
+  const submitBlocked = baseSubmitBlocked || compareHasDisallowedModel;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
     // Chat tab doesn't have a multi-host axis — its compare mode is
     // exactly multi-model. Pass through directly.
@@ -2466,6 +2474,7 @@ export function ChatTabV2({
         : undefined,
     onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
