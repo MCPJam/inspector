@@ -114,7 +114,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   // vocabulary negotiation projects. Pinned so the published enum and the one
   // the boundary serves cannot drift apart without a red test.
   ResolvedScoreDefinition: "PlatformResolvedScoreDefinition",
-  EvalDeleted: "PlatformEvalSuiteDeleted",
+  // Compare both branches of the SDK deletion union to their wire schemas.
+  EvalDeleted: "PlatformEvalSuiteDeletedImmediate",
+  ObjectDeletionAccepted: "PlatformObjectDeletionAccepted",
   Client: "PlatformClient",
   ClientDetail: "PlatformClientDetail",
   ClientDeleted: "PlatformClientDeleted",

@@ -371,9 +371,16 @@ export interface PlatformProject {
   updatedAt: number | null;
 }
 
+export interface PlatformObjectDeletionAccepted {
+  accepted: true;
+  deleted: false;
+  requestId: string;
+  state: string;
+}
+
 export type PlatformObjectDeletion =
   | { deleted: true }
-  | { accepted: true; deleted: false; requestId: string; state: string };
+  | PlatformObjectDeletionAccepted;
 
 export interface PlatformDeletionReceipt {
   requestId: string;
@@ -2842,7 +2849,15 @@ export interface PlatformRunCompareSkills {
   unchangedCount: number;
 }
 
-export type PlatformEvalSuiteDeleted = { id: string } & PlatformObjectDeletion;
+/** Immediate deletion response from deployments without queued object deletion. */
+export interface PlatformEvalSuiteDeletedImmediate {
+  id: string;
+  deleted: true;
+}
+
+export type PlatformEvalSuiteDeleted =
+  | PlatformEvalSuiteDeletedImmediate
+  | ({ id: string } & PlatformObjectDeletionAccepted);
 
 export interface PlatformEvalCaseDeleted {
   id: string;

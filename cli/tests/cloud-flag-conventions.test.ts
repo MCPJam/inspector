@@ -23,6 +23,7 @@ const CLOUD_COMMAND_FILES = [
   "cloud-link.ts",
   "environments.ts",
   "clients.ts",
+  "deletions.ts",
   "eval.ts",
   "feedback.ts",
   "goals.ts",

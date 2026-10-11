@@ -226,6 +226,10 @@
   },
   "redirects": [
     {
+      "source": "/api-reference/projects/delete-a-project-and-everything-scoped-to-it",
+      "destination": "/api-reference/projects/use-the-deletion-request-protocol-for-project-deletion"
+    },
+    {
       "source": "/inspector/workspaces",
       "destination": "/inspector/projects"
     },
