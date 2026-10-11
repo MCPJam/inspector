@@ -231,7 +231,10 @@ export function syncSentryReplay(location: string | LocationLike): void {
         stopping &&
         typeof (stopping as Promise<unknown>).then === "function"
       ) {
-        const current = Promise.resolve(stopping).catch(() => undefined);
+        const current = Promise.resolve(stopping).catch(() => {
+          // A stop that failed to flush is still over; the resume only waits
+          // for it to settle.
+        });
         // A second `stop()` while the first is still flushing returns at
         // once (the replay is already stopping), so it must not stand in for
         // the first: a resume waits for every stop still in flight.
