@@ -15,6 +15,9 @@ on:
   # all — not a pattern added by hand while some stack happens to be in flight,
   # which only works for the stack somebody remembered to name.
   pull_request:
+  # The merge queue tests the merged result before it lands on main; without
+  # this trigger the queue's required checks never report and entries time out.
+  merge_group:
   push:
     branches: [main]
 
