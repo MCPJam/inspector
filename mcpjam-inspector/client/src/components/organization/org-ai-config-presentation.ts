@@ -13,7 +13,10 @@
  *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
  *   vendor and what doesn't count.
  */
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  validateModelSelection,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   AiFeatureGroupId,
   AiFeatureGroupReadiness,
@@ -325,6 +328,59 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
+/**
+ * The provider keys whose connections can serve each kind, as the backend's
+ * provider table says (text with structured output; an embedding adapter; a
+ * speech adapter). It only narrows the connection list in the editor: the
+ * backend checks the kind's capability again when the model is saved.
+ *
+ * Text work needs schema-constrained output, which Ollama and custom
+ * endpoints can't promise. Any other eligible connection can serve it, so a
+ * provider this client does not know yet is still offered.
+ */
+const EMBEDDING_PROVIDERS: ReadonlySet<string> = new Set([
+  "openai",
+  "google",
+  "azure",
+]);
+const TRANSCRIPTION_PROVIDERS: ReadonlySet<string> = new Set([
+  "openai",
+  "azure",
+]);
+
+export function providerServesModelKind(
+  providerKey: string,
+  kind: OrgAiModelKind,
+): boolean {
+  const key = providerKey.trim().toLowerCase();
+  switch (kind) {
+    case "embedding":
+      return EMBEDDING_PROVIDERS.has(key);
+    case "transcription":
+      return TRANSCRIPTION_PROVIDERS.has(key);
+    case "default":
+    default:
+      return key !== "ollama" && !key.startsWith("custom:");
+  }
+}
+
+/**
+ * Whether a model id a connection lists fits a kind, by its name. Only
+ * filters the editor's suggestions; any model can still be typed, and the
+ * backend decides.
+ */
+export function listedModelFitsKind(
+  modelId: string,
+  kind: OrgAiModelKind,
+): boolean {
+  const id = modelId.toLowerCase();
+  const embedding = id.includes("embed");
+  const speech = /transcri|whisper/.test(id);
+  if (kind === "embedding") return embedding;
+  if (kind === "transcription") return speech;
+  return !embedding && !speech;
+}
+
 /** How the last test of a saved model reads. */
 export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
   label: string;
@@ -372,6 +428,90 @@ export function orgProviderLabel(provider: OrgModelProvider): string {
     return provider.providerKey.slice("custom:".length);
   }
   return provider.providerKey;
+}
+
+/** Model ids an admin listed on the connection, for the editor's suggestions. */
+export function listedModelIds(provider: OrgModelProvider): string[] {
+  const seen = new Set<string>();
+  for (const raw of [
+    ...(provider.modelIds ?? []),
+    ...(provider.selectedModels ?? []),
+  ]) {
+    const id = raw.trim();
+    if (id) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * Canonical vendor prefix for a provider key, where it differs from the key
+ * (the canonical catalog spells these `x-ai/`, `mistralai/`).
+ */
+const CANONICAL_PROVIDER_PREFIX: Readonly<Record<string, string>> = {
+  xai: "x-ai",
+  mistral: "mistralai",
+};
+
+/**
+ * Anthropic's API spells a model version with a dash (`claude-haiku-4-5`);
+ * the canonical catalog spells it with a dot (`anthropic/claude-haiku-4.5`).
+ */
+const ANTHROPIC_DASHED_VERSION = /^(claude-(?:haiku|sonnet|opus))-(\d+)-(\d)$/;
+
+/**
+ * The canonical `provider/model` id and the provider's own id for a model an
+ * admin typed against a connection. A pasted `provider/` prefix is dropped
+ * from the native id, which is what the provider API is called with (for
+ * Azure: the deployment name).
+ */
+export function orgModelIds(
+  providerKey: string,
+  typed: string,
+): { modelId: string; nativeModelId: string } | null {
+  const raw = typed.trim();
+  if (!raw) return null;
+  const key = providerKey.trim().toLowerCase();
+  if (!key) return null;
+  const prefix = CANONICAL_PROVIDER_PREFIX[key] ?? key;
+
+  let native = raw;
+  for (const candidate of new Set([prefix, key])) {
+    if (native.toLowerCase().startsWith(`${candidate}/`)) {
+      native = native.slice(candidate.length + 1);
+      break;
+    }
+  }
+  if (!native) return null;
+
+  const tail =
+    key === "anthropic"
+      ? native.replace(ANTHROPIC_DASHED_VERSION, "$1-$2.$3")
+      : native;
+  return { modelId: `${prefix}/${tail}`, nativeModelId: native };
+}
+
+/**
+ * The selection to save for an organization AI model: always `source:
+ * "org"`, always naming the connection and the provider's native id, never
+ * falling back to another model. `null` when the typed model cannot form a
+ * valid selection.
+ */
+export function buildOrgModelSelection(
+  provider: Pick<OrgModelProvider, "id" | "providerKey">,
+  typedModel: string,
+): ModelSelection | null {
+  const connectionId = provider.id?.trim();
+  if (!connectionId) return null;
+  const ids = orgModelIds(provider.providerKey, typedModel);
+  if (!ids) return null;
+  const result = validateModelSelection({
+    modelId: ids.modelId,
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: connectionId },
+    nativeModelId: ids.nativeModelId,
+    fallback: { provider: "none", model: "none" },
+  });
+  return result.ok ? result.selection : null;
 }
 
 /** The model a saved selection runs, as the admin would recognise it. */

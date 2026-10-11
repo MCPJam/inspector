@@ -6,12 +6,16 @@ import {
   HARNESS_ORG_KEYS_GUIDANCE,
   NOT_SUPPORTED_YET_GUIDANCE,
   blockedBySentence,
+  buildOrgModelSelection,
   degradationSentence,
   featureGuidance,
   listedBlockers,
+  listedModelFitsKind,
   orderedFeatures,
   orgAiModelCheckPresentation,
+  orgModelIds,
   orgProviderLabel,
+  providerServesModelKind,
   selectionModelLabel,
 } from "../org-ai-config-presentation";
 
@@ -237,7 +241,111 @@ describe("degradationSentence", () => {
   });
 });
 
+describe("orgModelIds", () => {
+  it("prefixes the provider and keeps the provider's own id as native", () => {
+    expect(orgModelIds("openai", "gpt-5-mini")).toEqual({
+      modelId: "openai/gpt-5-mini",
+      nativeModelId: "gpt-5-mini",
+    });
+  });
+
+  it("spells Anthropic's dashed versions the catalog way", () => {
+    expect(orgModelIds("anthropic", "claude-haiku-4-5")).toEqual({
+      modelId: "anthropic/claude-haiku-4.5",
+      nativeModelId: "claude-haiku-4-5",
+    });
+    // Dated ids are not version-shaped and pass through.
+    expect(orgModelIds("anthropic", "claude-3-5-sonnet-20241022")).toEqual({
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
+      nativeModelId: "claude-3-5-sonnet-20241022",
+    });
+  });
+
+  it("uses canonical vendor prefixes", () => {
+    expect(orgModelIds("xai", "grok-4")?.modelId).toBe("x-ai/grok-4");
+    expect(orgModelIds("mistral", "mistral-large-latest")?.modelId).toBe(
+      "mistralai/mistral-large-latest",
+    );
+    expect(orgModelIds("z-ai", "glm-4.6")?.modelId).toBe("z-ai/glm-4.6");
+  });
+
+  it("keeps an Azure deployment name as the native id", () => {
+    expect(orgModelIds("azure", "prod-gpt51")).toEqual({
+      modelId: "azure/prod-gpt51",
+      nativeModelId: "prod-gpt51",
+    });
+  });
+
+  it("drops a pasted provider prefix from the native id", () => {
+    expect(orgModelIds("openai", "openai/gpt-5")).toEqual({
+      modelId: "openai/gpt-5",
+      nativeModelId: "gpt-5",
+    });
+    expect(orgModelIds("xai", "x-ai/grok-4")).toEqual({
+      modelId: "x-ai/grok-4",
+      nativeModelId: "grok-4",
+    });
+  });
+
+  it("returns null for an empty model", () => {
+    expect(orgModelIds("openai", "   ")).toBeNull();
+  });
+});
+
+describe("buildOrgModelSelection", () => {
+  it("builds an org selection that never falls back", () => {
+    expect(
+      buildOrgModelSelection(
+        { id: "conn_1", providerKey: "openai" },
+        " gpt-5-mini ",
+      ),
+    ).toEqual({
+      modelId: "openai/gpt-5-mini",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      nativeModelId: "gpt-5-mini",
+      fallback: { provider: "none", model: "none" },
+    });
+  });
+
+  it("refuses a connection without an id or a model that is not an id", () => {
+    expect(
+      buildOrgModelSelection({ providerKey: "openai" }, "gpt-5"),
+    ).toBeNull();
+    expect(
+      buildOrgModelSelection({ id: "conn_1", providerKey: "openai" }, "gpt 5"),
+    ).toBeNull();
+  });
+});
+
 describe("the default model editor's helpers", () => {
+  it("offers only connections that can run the kind", () => {
+    for (const key of ["openai", "anthropic", "google", "azure", "bedrock"]) {
+      expect(providerServesModelKind(key, "default")).toBe(true);
+    }
+    // Text work needs structured output these can't promise.
+    expect(providerServesModelKind("ollama", "default")).toBe(false);
+    expect(providerServesModelKind("custom:acme", "default")).toBe(false);
+
+    expect(providerServesModelKind("google", "embedding")).toBe(true);
+    expect(providerServesModelKind("anthropic", "embedding")).toBe(false);
+    expect(providerServesModelKind("openai", "transcription")).toBe(true);
+    expect(providerServesModelKind("google", "transcription")).toBe(false);
+  });
+
+  it("suggests listed models that fit the kind", () => {
+    expect(listedModelFitsKind("gpt-5-mini", "default")).toBe(true);
+    expect(listedModelFitsKind("text-embedding-3-small", "default")).toBe(
+      false,
+    );
+    expect(listedModelFitsKind("text-embedding-3-small", "embedding")).toBe(
+      true,
+    );
+    expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
+      true,
+    );
+  });
+
   it("reads a test's result", () => {
     expect(orgAiModelCheckPresentation({ ok: true, checkedAt: 1 })).toEqual({
       label: "Passed",

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Loader2 } from "lucide-react";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
@@ -21,6 +21,15 @@ import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import {
   orgAiModelSelectionKey,
   orgAiModelsOf,
@@ -34,12 +43,18 @@ import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
   ORG_AI_MODEL_PRESENTATION,
   STATUS_TONE_CLASSES,
+  buildOrgModelSelection,
+  listedModelFitsKind,
+  listedModelIds,
   orgAiModelCheckPresentation,
   orgProviderLabel,
+  providerServesModelKind,
   selectionModelLabel,
 } from "./org-ai-config-presentation";
 
 const TOGGLE_LABEL = "Use your keys for all AI features";
+
+type EligibleProvider = OrgModelProvider & { id: string };
 
 function connectionIdOf(
   selection: ModelSelection | null | undefined,
@@ -103,6 +118,7 @@ export function OrganizationDefaultModelCard({
     testAiModel,
   } = useOrgAiConfig(organizationId);
 
+  const [editingKind, setEditingKind] = useState<OrgAiModelKind | null>(null);
   const [testingKind, setTestingKind] = useState<OrgAiModelKind | null>(null);
   const [pendingEmbeddingChange, setPendingEmbeddingChange] = useState<{
     selection: ModelSelection | null;
@@ -117,6 +133,11 @@ export function OrganizationDefaultModelCard({
   const locked = !config.canEnable;
   const canChange = canManage && !locked;
   const requireOrgKeys = config.aiKeyPolicy.requireOrgKeys;
+  const eligibleIds = new Set(config.readiness.eligibleConnectionIds);
+  const eligibleProviders = (providers ?? []).filter(
+    (p): p is EligibleProvider =>
+      typeof p.id === "string" && eligibleIds.has(p.id),
+  );
   const suggestions = canChange ? aiModels.suggestions : {};
   const title =
     aiModels.kinds.length === 1 ? "Default AI model" : "Default AI models";
@@ -248,7 +269,17 @@ export function OrganizationDefaultModelCard({
                 isSaving={isSaving}
                 isTesting={isTesting}
                 isTestingThis={testingKind === kind}
+                editing={editingKind === kind && canChange}
+                eligibleProviders={eligibleProviders.filter((p) =>
+                  providerServesModelKind(p.providerKey, kind),
+                )}
+                onEdit={() => setEditingKind(kind)}
+                onCancelEdit={() => setEditingKind(null)}
                 onTestSaved={() => void runTest(kind)}
+                onTestCandidate={(candidate) => runTest(kind, candidate)}
+                onSave={(next) =>
+                  requestSave(kind, next, () => setEditingKind(null))
+                }
                 onUseSuggestion={(next) => requestSave(kind, next)}
                 onClear={() => requestSave(kind, null)}
               />
@@ -342,7 +373,13 @@ function ModelRow({
   isSaving,
   isTesting,
   isTestingThis,
+  editing,
+  eligibleProviders,
+  onEdit,
+  onCancelEdit,
   onTestSaved,
+  onTestCandidate,
+  onSave,
   onUseSuggestion,
   onClear,
 }: {
@@ -357,7 +394,15 @@ function ModelRow({
   isSaving: boolean;
   isTesting: boolean;
   isTestingThis: boolean;
+  editing: boolean;
+  eligibleProviders: EligibleProvider[];
+  onEdit: () => void;
+  onCancelEdit: () => void;
   onTestSaved: () => void;
+  onTestCandidate: (
+    candidate: ModelSelection,
+  ) => Promise<OrgAiModelTestResult | undefined>;
+  onSave: (selection: ModelSelection) => void;
   onUseSuggestion: (selection: ModelSelection) => void;
   onClear: () => void;
 }) {
@@ -394,6 +439,16 @@ function ModelRow({
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : null}
                 Test
+              </Button>
+            ) : null}
+            {canChange && !editing ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`${selection ? "Change" : "Set"} ${noun}`}
+                onClick={onEdit}
+              >
+                {selection ? "Change" : "Set"}
               </Button>
             ) : null}
             {selection ? (
@@ -458,6 +513,204 @@ function ModelRow({
           </div>
         )}
       </div>
+
+      {editing ? (
+        <ModelEditor
+          kind={kind}
+          initial={selection ?? suggestion}
+          eligibleProviders={eligibleProviders}
+          isSaving={isSaving}
+          isTesting={isTesting}
+          onCancel={onCancelEdit}
+          onSave={onSave}
+          onTest={onTestCandidate}
+        />
+      ) : null}
     </li>
+  );
+}
+
+function initialNativeModel(selection: ModelSelection): string {
+  return (
+    selection.nativeModelId?.trim() ||
+    selection.modelId.slice(selection.modelId.indexOf("/") + 1)
+  );
+}
+
+function ModelEditor({
+  kind,
+  initial,
+  eligibleProviders,
+  isSaving,
+  isTesting,
+  onCancel,
+  onSave,
+  onTest,
+}: {
+  kind: OrgAiModelKind;
+  initial: ModelSelection | undefined;
+  /** Eligible connections whose provider can serve this kind. */
+  eligibleProviders: EligibleProvider[];
+  isSaving: boolean;
+  isTesting: boolean;
+  onCancel: () => void;
+  onSave: (selection: ModelSelection) => void;
+  onTest: (
+    candidate: ModelSelection,
+  ) => Promise<OrgAiModelTestResult | undefined>;
+}) {
+  const { label, noun } = ORG_AI_MODEL_PRESENTATION[kind];
+  const fieldId = useId();
+  // Prefilled only from a connection that can still serve it. A removed one
+  // is never swapped for another automatically; the admin picks.
+  const initialConnectionId = connectionIdOf(initial);
+  const initialProvider = initialConnectionId
+    ? eligibleProviders.find((p) => p.id === initialConnectionId)
+    : undefined;
+  const [connectionId, setConnectionId] = useState(initialProvider?.id ?? "");
+  const [model, setModel] = useState(
+    initial && initialProvider ? initialNativeModel(initial) : "",
+  );
+  const [candidateCheck, setCandidateCheck] = useState<{
+    key: string;
+    result: OrgAiModelTestResult;
+  } | null>(null);
+
+  if (eligibleProviders.length === 0) {
+    return (
+      <div className="space-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
+        <p>
+          No eligible organization provider can run the {noun}. Add a direct
+          cloud provider below; OpenRouter and local providers aren&apos;t
+          eligible.
+        </p>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  const provider = eligibleProviders.find((p) => p.id === connectionId);
+  const candidate = provider ? buildOrgModelSelection(provider, model) : null;
+  const candidateKey = candidate ? orgAiModelSelectionKey(candidate) : null;
+  const candidateOutcome =
+    candidateCheck && candidateCheck.key === candidateKey
+      ? orgAiModelCheckPresentation(candidateCheck.result)
+      : null;
+  const listed = new Set(
+    provider
+      ? listedModelIds(provider).filter((id) => listedModelFitsKind(id, kind))
+      : [],
+  );
+  if (initial && provider && initialConnectionId === provider.id) {
+    listed.add(initialNativeModel(initial));
+  }
+  const isAzure = provider?.providerKey === "azure";
+
+  return (
+    <div
+      className="space-y-3 rounded-md bg-muted/40 p-3"
+      data-testid={`org-ai-model-${kind}-editor`}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${fieldId}-provider`}>Provider</Label>
+          <Select
+            value={connectionId}
+            onValueChange={(next) => {
+              setConnectionId(next);
+              setCandidateCheck(null);
+            }}
+          >
+            <SelectTrigger
+              id={`${fieldId}-provider`}
+              aria-label={`${label} provider`}
+              className="w-full"
+            >
+              <SelectValue placeholder="Choose a provider" />
+            </SelectTrigger>
+            <SelectContent>
+              {eligibleProviders.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {orgProviderLabel(p)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${fieldId}-model`}>
+            {isAzure ? "Deployment name" : "Model"}
+          </Label>
+          <Input
+            id={`${fieldId}-model`}
+            aria-label={`${label} id`}
+            list={`${fieldId}-models`}
+            value={model}
+            placeholder={isAzure ? "my-deployment" : "Provider model id"}
+            autoComplete="off"
+            onChange={(event) => setModel(event.target.value)}
+          />
+          <datalist id={`${fieldId}-models`}>
+            {[...listed].map((id) => (
+              <option key={id} value={id} />
+            ))}
+          </datalist>
+        </div>
+      </div>
+
+      {provider && model.trim() && !candidate ? (
+        <p className="text-xs text-destructive">
+          Enter the model id the provider uses, for example its API model name.
+        </p>
+      ) : null}
+      {candidate ? (
+        <p className="break-all text-xs text-muted-foreground">
+          Saved as {candidate.modelId}
+        </p>
+      ) : null}
+      {candidateOutcome ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Test</span>
+          <Badge
+            variant="outline"
+            className={cn(STATUS_TONE_CLASSES[candidateOutcome.tone])}
+            data-testid={`org-ai-model-${kind}-candidate-outcome`}
+          >
+            {candidateOutcome.label}
+          </Badge>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={!candidate || isSaving}
+          onClick={() => {
+            if (candidate) onSave(candidate);
+          }}
+        >
+          Save
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`Test this ${noun}`}
+          disabled={!candidate || isTesting}
+          onClick={() => {
+            if (!candidate || !candidateKey) return;
+            void onTest(candidate).then((result) => {
+              if (result) setCandidateCheck({ key: candidateKey, result });
+            });
+          }}
+        >
+          Test
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
