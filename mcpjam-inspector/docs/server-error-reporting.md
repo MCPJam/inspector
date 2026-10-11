@@ -18,6 +18,25 @@
 If you find yourself importing `@sentry/node` in a route, you are adding a
 double-capture. Use the logger.
 
+## What an event carries
+
+`sendDefaultPii: false` governs what the SDK collects about the USER (IP,
+cookies); it does not stop the http integration from attaching the incoming
+request body, and it does not touch exception text. So:
+
+- `logger.ts` scrubs every `extra` it attaches with `scrubLogPayload`
+  (`shared/log-scrubber.ts`) — the same pass as the Axiom row.
+- `beforeSend` (`scrubServerSentryEvent`) replaces `request.data` with a shape
+  summary, drops query values, cookies and non-allowlisted header values, and
+  redacts and caps exception and message text. Stack frames are untouched, so
+  grouping is unchanged.
+- `beforeBreadcrumb` (`scrubServerSentryBreadcrumb`) cuts outgoing-request
+  breadcrumbs to the host and reduces console breadcrumbs to their label.
+- User identity is an id and an actor kind. No email, no name — on any surface.
+
+Electron main installs the same two hooks: the embedded server reports through
+that client.
+
 ## Process-level handlers
 
 | Signal              | Capture                                           | Log                                     |
@@ -94,3 +113,24 @@ Volume is genuinely unknown.
 
 The `deployment` tag exists precisely so step 3 can be scoped rather than
 blanket.
+
+## Actor identity
+
+Request captures carry `user.id` and `actor_kind` from the verified signed-in
+user, then the verified guest. The request uses AsyncLocalStorage; stream
+reporters and request loggers also bind delayed callbacks to that context.
+Session-authenticated local Electron requests snapshot the desktop actor at
+request start, so changing accounts cannot relabel a running request.
+Unknown hosted requests remain anonymous.
+
+Electron main and renderer start with a random `installation:<uuid>` ID saved
+in the app's user-data directory. Sign-in and guest changes update main through
+IPC accepted only from the app window's main frame and origin. Sign-out, reload,
+and window replacement restore the installation fallback. Native crash reports
+keep the scope stored at crash time. New server and main paths send only the ID
+and actor kind; desktop diagnostic and updater filters retain only `user.id`.
+
+After hosted deployment and the desktop release, check new events for `user.id`
+and `actor_kind`. Historical events stay unchanged. User counts represent
+accounts, guests, or installations, rather than an exact number of people.
+This change does not alter HTTP/database APIs or the 256 KiB request limit.

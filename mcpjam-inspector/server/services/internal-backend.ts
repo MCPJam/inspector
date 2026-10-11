@@ -1,12 +1,23 @@
 /**
  * Shared plumbing for the backend's service-token-gated `/internal/v1/*`
  * routes (see mcpjam-backend `convex/http.ts`). Inspector authenticates to
- * them with `INSPECTOR_SERVICE_TOKEN` via the `x-inspector-service-token`
+ * them with the service credential via the `x-inspector-service-token`
  * header; `CONVEX_HTTP_URL` is the `.convex.site` HTTP-actions origin those
  * routes are mounted on.
  */
+import { requireServiceCredential } from "./service-credential.js";
 
-export function getInternalBackendConfig(): {
+/**
+ * The backend origin and the service credential, or a throw.
+ *
+ * A missing credential throws `ServiceCredentialUnavailableError` (the normal
+ * state of a self-hosted build, answered as "hosted-only" by the route
+ * mapper); a missing `CONVEX_HTTP_URL` is a plain config error. `feature` is
+ * the human name the hosted-only answer uses.
+ */
+export function getInternalBackendConfig(
+  feature = "This feature",
+): {
   convexUrl: string;
   serviceToken: string;
 } {
@@ -14,10 +25,7 @@ export function getInternalBackendConfig(): {
   if (!convexUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!serviceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
+  const serviceToken = requireServiceCredential(feature);
   return { convexUrl, serviceToken };
 }
 
