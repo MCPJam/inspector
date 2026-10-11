@@ -90,6 +90,7 @@ import {
   type BenchmarkProbeEvidence,
 } from "./bench-probe-child.js";
 import type { ConformanceSuiteKind, OAuthConformanceConfig } from "@mcpjam/sdk";
+import { getServiceCredential } from "./service-credential.js";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
 
@@ -464,7 +465,7 @@ export function isBenchWorkerEnabled(): boolean {
  */
 function benchServiceConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) {
     throw new Error(
       "Bench worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",

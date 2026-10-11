@@ -44,8 +44,11 @@ export {
 
 export {
   MCPJAM_EXTENSION_NAMESPACE,
+  OPENAI_EXTENSION_NAMESPACE,
   PLUGIN_MANIFEST_PATH,
   PLUGIN_MANIFEST_SCHEMAS,
+  pluginComposerIconPath,
+  pluginDirectoryIconPath,
   type NormalizedPluginManifest,
   type PluginManifestAuthor,
 } from "./manifest.js";

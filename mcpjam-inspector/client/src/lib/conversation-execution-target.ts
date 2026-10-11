@@ -2,6 +2,10 @@ import {
   parseResumeExecutionTarget,
   type ResumeExecutionTarget,
 } from "@/shared/execution-target";
+import {
+  isAdhocEnvironment,
+  type EnvironmentLabelRow,
+} from "@/lib/environment-label";
 
 /** Saved resume destination. Legacy rows remain explicitly unknown. */
 /** The execution target a conversation recorded, if it recorded one. */
@@ -53,6 +57,45 @@ export function readConversationExecutionTarget(
   const hostId = nonEmpty(session?.hostId);
   if (hostId) return { kind: "host", hostId };
   return { kind: "unrecorded" };
+}
+
+/**
+ * Read a conversation that ran as a HIDDEN environment as the client it ran
+ * on.
+ *
+ * While the environments UI is hidden, a Playground chat in a project with
+ * plugins runs as an ad-hoc environment the composer made for its client
+ * (`lib/plugins/hidden-environment.ts`). That environment is the composer's
+ * own doing, not a choice the member made: reopening the chat must neither
+ * say it "runs somewhere else" nor try to select an environment the member
+ * cannot see. So the recorded environment reads as its client, and the
+ * composer — still in charge of plugins — recomposes for that client with
+ * whatever plugins are runnable now.
+ *
+ * Only ad-hoc rows qualify; a NAMED environment was chosen by someone and is
+ * left as recorded (and disclosed). With the environments UI on, nothing is
+ * translated: the member can see and pick environments themselves. An
+ * unreadable row (deleted, no access, a failed read) stays as recorded too.
+ */
+export async function readHiddenEnvironmentConversationTarget(
+  target: ConversationExecutionTarget,
+  input: {
+    environmentsEnabled: boolean;
+    loadEnvironment: (
+      environmentId: string,
+    ) => Promise<EnvironmentLabelRow | null | undefined>;
+  },
+): Promise<ConversationExecutionTarget> {
+  if (input.environmentsEnabled || target.kind !== "environment") return target;
+  let row: EnvironmentLabelRow | null | undefined;
+  try {
+    row = await input.loadEnvironment(target.environmentId);
+  } catch {
+    return target;
+  }
+  if (!row || !isAdhocEnvironment(row)) return target;
+  const hostId = nonEmpty(row.hostId);
+  return hostId ? { kind: "host", hostId } : target;
 }
 
 /**
