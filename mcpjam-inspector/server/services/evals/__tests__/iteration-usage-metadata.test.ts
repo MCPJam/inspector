@@ -3,6 +3,7 @@ import {
   buildIterationUsageMetadata,
   buildIterationUsagePayload,
 } from "../iteration-usage-metadata";
+import { addUsageTotals, copyUsageTotals, type UsageTotals } from "../types";
 
 describe("buildIterationUsageMetadata", () => {
   it("persists input and output token counts", () => {
@@ -67,6 +68,35 @@ describe("buildIterationUsagePayload", () => {
     expect(buildIterationUsagePayload({ totalTokens: 0 })).toBeUndefined();
   });
 
+  it("carries the reasoning and cached-input breakdown when reported", () => {
+    expect(
+      buildIterationUsagePayload({
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200,
+        reasoningTokens: 50,
+        cachedInputTokens: 0,
+      }),
+    ).toEqual({
+      inputTokens: 120,
+      outputTokens: 80,
+      totalTokens: 200,
+      reasoningTokens: 50,
+      cachedInputTokens: 0,
+    });
+  });
+
+  it("does not send a breakdown on an unmeasured trial", () => {
+    expect(
+      buildIterationUsagePayload({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        reasoningTokens: 0,
+      }),
+    ).toBeUndefined();
+  });
+
   it("keeps a partial split when no total is reported", () => {
     expect(buildIterationUsagePayload({ inputTokens: 42 })).toEqual({
       inputTokens: 42,
@@ -118,5 +148,47 @@ describe("buildIterationUsageMetadata — a reported zero half", () => {
     // Neither half reported: there is no allocation to infer, and the backend
     // answers `not_reported` rather than pricing a guess.
     expect(buildIterationUsageMetadata({ totalTokens: 10 })).toEqual({});
+  });
+});
+
+describe("addUsageTotals / copyUsageTotals", () => {
+  it("sums the totals and only the breakdown fields some turn reported", () => {
+    const acc: UsageTotals = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+    addUsageTotals(acc, { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+    expect(acc).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+    expect("reasoningTokens" in acc).toBe(false);
+
+    addUsageTotals(acc, {
+      inputTokens: 20,
+      outputTokens: 30,
+      totalTokens: 50,
+      reasoningTokens: 12,
+      cachedInputTokens: 4,
+    });
+    addUsageTotals(acc, { reasoningTokens: 3 });
+    addUsageTotals(acc, undefined);
+    expect(acc).toEqual({
+      inputTokens: 30,
+      outputTokens: 35,
+      totalTokens: 65,
+      reasoningTokens: 15,
+      cachedInputTokens: 4,
+    });
+  });
+
+  it("copies without inventing absent breakdown fields", () => {
+    expect(
+      Object.keys(
+        copyUsageTotals({ inputTokens: 1, outputTokens: 2, totalTokens: 3 }),
+      ),
+    ).toEqual(["inputTokens", "outputTokens", "totalTokens"]);
+    const source = { inputTokens: 1, reasoningTokens: 7 };
+    const copy = copyUsageTotals(source);
+    expect(copy).toMatchObject({ inputTokens: 1, reasoningTokens: 7 });
+    expect(copy).not.toBe(source);
   });
 });

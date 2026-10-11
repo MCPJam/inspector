@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  readModelOutputImage,
 } from "../src/mcp-client-manager/model-output.js";
 
 async function captureOpenAIResponsesToolOutput(output: unknown) {
@@ -66,7 +67,13 @@ describe("mcpCallToolResultToModelOutput", () => {
 
     expect(mcpCallToolResultToModelOutput(result)).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -83,7 +90,11 @@ describe("mcpCallToolResultToModelOutput", () => {
       type: "content",
       value: [
         { type: "text", text: "before" },
-        { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
         { type: "text", text: "after" },
       ],
     });
@@ -105,7 +116,13 @@ describe("mcpCallToolResultToModelOutput", () => {
 
     expect(mcpCallToolResultToModelOutput(result)).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -129,7 +146,11 @@ describe("mcpCallToolResultToModelOutput", () => {
       type: "content",
       value: [
         { type: "text", text: "before" },
-        { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
         { type: "text", text: "after" },
       ],
     });
@@ -171,7 +192,11 @@ describe("mcpCallToolResultToModelOutput", () => {
     expect(mcpCallToolResultToModelOutput(result)).toEqual({
       type: "content",
       value: [
-        { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
         { type: "text", text: "[audio omitted: audio/wav]" },
       ],
     });
@@ -260,9 +285,9 @@ describe("mcpCallToolResultToModelOutput", () => {
     expect(manyImages?.value).toHaveLength(17);
     expect(manyImages?.value.slice(0, 16)).toEqual(
       Array.from({ length: 16 }, () => ({
-        type: "media",
-        data: "aGVsbG8=",
+        type: "file",
         mediaType: "image/png",
+        data: { type: "data", data: "aGVsbG8=" },
       }))
     );
     expect(manyImages?.value[16]).toEqual({
@@ -281,7 +306,11 @@ describe("mcpCallToolResultToModelOutput", () => {
     );
 
     expect(aggregateOverflow?.value).toEqual([
-      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+      {
+        type: "file",
+        mediaType: "image/png",
+        data: { type: "data", data: "aGVsbG8=" },
+      },
       {
         type: "text",
         text: "[image omitted: total image bytes exceed 8 bytes limit]",
@@ -316,8 +345,16 @@ describe("mcpCallToolResultToModelOutput", () => {
         type: "text",
         text: "[image omitted: invalid base64 data (image/png)]",
       },
-      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
-      { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+      {
+        type: "file",
+        mediaType: "image/png",
+        data: { type: "data", data: "aGVsbG8=" },
+      },
+      {
+        type: "file",
+        mediaType: "image/png",
+        data: { type: "data", data: "aGVsbG8=" },
+      },
     ]);
   });
 
@@ -364,9 +401,9 @@ describe("mcpCallToolResultToModelOutput", () => {
 
     const part = output!.value[0];
     expect(part).toEqual({
-      type: "media",
-      data,
+      type: "file",
       mediaType: "image/png",
+      data: { type: "data", data },
     });
   });
 
@@ -434,7 +471,13 @@ describe("mcpCallToolResultToModelOutput", () => {
       )
     ).resolves.toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readResource).toHaveBeenCalledWith({
       uri: "mcp://images/one",
@@ -465,7 +508,13 @@ describe("mcpCallToolResultToModelOutput", () => {
       )
     ).resolves.toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -494,7 +543,11 @@ describe("mcpCallToolResultToModelOutput", () => {
       type: "content",
       value: [
         { type: "text", text: "before" },
-        { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
         { type: "text", text: "after" },
       ],
     });
@@ -752,5 +805,47 @@ describe("mcpCallToolResultToModelOutput", () => {
         image_url: "data:image/png;base64,aGVsbG8=",
       },
     ]);
+  });
+});
+
+describe("readModelOutputImage", () => {
+  const image = { data: "aGVsbG8=", mediaType: "image/png" };
+
+  it("reads the AI SDK 7 file part this module emits", () => {
+    expect(
+      readModelOutputImage({
+        type: "file",
+        mediaType: "image/png",
+        data: { type: "data", data: "aGVsbG8=" },
+      })
+    ).toEqual(image);
+  });
+
+  it.each(["media", "image-data", "file-data"])(
+    "reads a stored %s part",
+    (type) => {
+      expect(
+        readModelOutputImage({ type, data: "aGVsbG8=", mediaType: "image/png" })
+      ).toEqual(image);
+    }
+  );
+
+  it("ignores parts that carry no inline image", () => {
+    expect(
+      readModelOutputImage({
+        type: "file",
+        mediaType: "image/png",
+        data: { type: "url", url: "https://example.test/a.png" },
+      })
+    ).toBeUndefined();
+    expect(
+      readModelOutputImage({
+        type: "media",
+        data: "aGVsbG8=",
+        mediaType: "audio/wav",
+      })
+    ).toBeUndefined();
+    expect(readModelOutputImage({ type: "text", text: "hi" })).toBeUndefined();
+    expect(readModelOutputImage("not a part")).toBeUndefined();
   });
 });
