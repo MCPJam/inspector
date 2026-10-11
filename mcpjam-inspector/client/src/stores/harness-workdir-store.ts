@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { HarnessMachine } from "@/shared/harness-session";
 
 /**
  * Caches the latest harness working directory streamed from the server, keyed by
@@ -19,21 +20,63 @@ function workdirKey(projectId: string | null, hostId: string | null): string {
 }
 
 interface HarnessWorkdirState {
+  /** The latest PERSONAL-computer workdir per (project, host). */
   byKey: Record<string, string>;
+  /**
+   * Conversations whose latest turn ran on their own disposable computer. Only
+   * `disposable` is ever stored: absent means the personal computer, so a
+   * server that predates the field changes nothing.
+   *
+   * Keyed by CONVERSATION, not by (project, host): a compare column and the
+   * main chat run the same host at once on different machines, and one
+   * conversation's Cursor turn says nothing about where the next conversation
+   * runs. Keyed by host, either would have told the rail the wrong machine.
+   */
+  disposableByConversation: Record<string, true>;
   setWorkdir: (
     projectId: string | null,
     hostId: string | null,
     workdir: string,
+    machine?: HarnessMachine,
+    chatSessionId?: string | null,
   ) => void;
 }
 
 export const useHarnessWorkdirStore = create<HarnessWorkdirState>((set) => ({
   byKey: {},
-  setWorkdir: (projectId, hostId, workdir) =>
+  disposableByConversation: {},
+  setWorkdir: (projectId, hostId, workdir, machine, chatSessionId) =>
     set((state) => {
       const key = workdirKey(projectId, hostId);
-      if (state.byKey[key] === workdir) return state;
-      return { byKey: { ...state.byKey, [key]: workdir } };
+      const disposable = machine === "disposable";
+      // A disposable turn's workdir is a path on THAT machine. The cache below
+      // is what the rail's (personal-computer) terminal opens at, so it keeps
+      // the last personal path rather than one that does not exist there.
+      const byKey =
+        disposable || state.byKey[key] === workdir
+          ? state.byKey
+          : { ...state.byKey, [key]: workdir };
+      let disposableByConversation = state.disposableByConversation;
+      if (chatSessionId) {
+        const flagged = Boolean(disposableByConversation[chatSessionId]);
+        if (disposable && !flagged) {
+          disposableByConversation = {
+            ...disposableByConversation,
+            [chatSessionId]: true,
+          };
+        } else if (!disposable && flagged) {
+          const { [chatSessionId]: _dropped, ...rest } =
+            disposableByConversation;
+          disposableByConversation = rest;
+        }
+      }
+      if (
+        byKey === state.byKey &&
+        disposableByConversation === state.disposableByConversation
+      ) {
+        return state;
+      }
+      return { byKey, disposableByConversation };
     }),
 }));
 
@@ -44,4 +87,18 @@ export function useHarnessWorkdir(
 ): string | undefined {
   const key = workdirKey(projectId, hostId);
   return useHarnessWorkdirStore((s) => s.byKey[key]);
+}
+
+/**
+ * Did this conversation's latest turn run on its disposable computer rather
+ * than the personal one? The Shell rail uses it (for the conversation on
+ * screen) to say so, and to stop opening its personal-computer terminal at a
+ * path that only exists on the other machine.
+ */
+export function useHarnessRanOnDisposable(
+  chatSessionId: string | null,
+): boolean {
+  return useHarnessWorkdirStore((s) =>
+    chatSessionId ? Boolean(s.disposableByConversation[chatSessionId]) : false,
+  );
 }

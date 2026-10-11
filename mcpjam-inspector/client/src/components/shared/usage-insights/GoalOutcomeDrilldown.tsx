@@ -26,6 +26,7 @@ import {
 import { formatRelativeTime } from "@/components/evals/helpers";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { cn } from "@/lib/utils";
+import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
 
 /**
  * Sessions behind one selection in the session flow — a node, or a link's two
@@ -46,6 +47,7 @@ type DrilldownRow = Pick<
   | "outcome"
   | "messageCount"
   | "modelId"
+  | "modelSelection"
 >;
 
 function sessionRowMeta(session: DrilldownRow): string | null {
@@ -60,7 +62,11 @@ function sessionRowMeta(session: DrilldownRow): string | null {
       `${session.messageCount} message${session.messageCount === 1 ? "" : "s"}`,
     );
   }
-  if (session.modelId) parts.push(session.modelId);
+  if (session.modelId) {
+    parts.push(
+      `${session.modelId}${sessionEffortSuffix(session.modelSelection)}`,
+    );
+  }
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
