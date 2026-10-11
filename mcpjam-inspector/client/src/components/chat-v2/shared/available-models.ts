@@ -23,8 +23,9 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
   findModelForStoredChoice,
   modelRowKey,
+  modelSelectionFromDefinition,
 } from "./model-selection";
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 export { ORG_KEYS_MODEL_REASON, ORG_POLICY_LOADING_REASON };
 
@@ -506,12 +507,18 @@ export function judgeModelOptions(
   ) {
     return { models: rows, currentIneligible: false };
   }
-  const current = args.currentSelection
-    ? findModelForStoredChoice(
-        { modelId: currentModelId, selection: args.currentSelection },
-        rows,
-        undefined,
-      )
+  const savedSelection = args.currentSelection;
+  // Under the policy the judge grades on its saved connection, so only that
+  // connection's row is the current judge: the same model on another
+  // connection is not, and an id fallback would hide a removed connection.
+  const current = savedSelection
+    ? requireOrgKeys
+      ? rowForExactSelection(savedSelection, rows)
+      : findModelForStoredChoice(
+          { modelId: currentModelId, selection: savedSelection },
+          rows,
+          undefined,
+        )
     : (rows.find(
         (row) =>
           String(row.id) === currentModelId &&
@@ -535,6 +542,18 @@ export function judgeModelOptions(
   };
   rows.push(ineligible);
   return { models: rows, currentIneligible: true, current: ineligible };
+}
+
+/** The row whose own selection is exactly `selection`. */
+function rowForExactSelection(
+  selection: ModelSelection,
+  rows: readonly ModelDefinition[],
+): ModelDefinition | undefined {
+  const wanted = selectionKey(selection);
+  return rows.find((row) => {
+    const own = modelSelectionFromDefinition(row, undefined, "chat");
+    return own !== null && selectionKey(own) === wanted;
+  });
 }
 
 /**
