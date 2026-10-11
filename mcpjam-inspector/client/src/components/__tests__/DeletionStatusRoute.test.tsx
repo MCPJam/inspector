@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-const { read, cancel, token, signIn, auth } = vi.hoisted(() => ({
+const { read, cancel, token, signIn, auth, recover, params } = vi.hoisted(() => ({
+  recover: vi.fn(),
+  params: { requestId: "request_1" },
   read: vi.fn(),
   cancel: vi.fn(),
   token: vi.fn(),
@@ -9,13 +11,14 @@ const { read, cancel, token, signIn, auth } = vi.hoisted(() => ({
   auth: { isLoading: false, user: { id: "owner" } as { id: string } | null },
 }));
 vi.mock("react-router", () => ({
-  useParams: () => ({ requestId: "request_1" }),
+  useParams: () => params,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ ...auth, getAccessToken: token, signIn }),
 }));
 vi.mock("@/lib/apis/deletion-api", () => ({
   readDeletion: read,
+  recoverDeletion: recover,
   cancelDeletion: cancel,
 }));
 import { DeletionStatusRoute } from "../DeletionStatusRoute";
@@ -33,6 +36,7 @@ const receipt = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  params.requestId = "request_1";
   auth.user = { id: "owner" };
   auth.isLoading = false;
   read.mockResolvedValue(receipt);
@@ -86,4 +90,15 @@ it("shows cancellation as pending without claiming access has been restored", as
   expect(
     await screen.findByText(/Access remains paused until confirmation/),
   ).toBeInTheDocument();
+});
+
+it("checks an uncertain request outside the shell and cancels using its recovered receipt", async () => {
+  params.requestId = "pending";
+  recover.mockResolvedValue({ ...receipt });
+  render(<DeletionStatusRoute />);
+  expect(screen.getByText("Checking deletion request…")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel deletion" }));
+  expect(recover).toHaveBeenCalledWith(window.location.search, token);
+  expect(cancel).toHaveBeenCalledWith("request_1", token);
+  expect(read).not.toHaveBeenCalled();
 });

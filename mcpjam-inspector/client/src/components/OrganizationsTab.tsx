@@ -1,3 +1,4 @@
+import { DeletionOutcomeUnknown } from "@/lib/apis/deletion-api";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
   DataManagementSettings,
@@ -1302,19 +1303,19 @@ function OrganizationPage({
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (expectedAvailable: boolean) => {
     setIsDeleting(true);
     beginOrganizationDeletion(organization._id);
     try {
-      const receipt = await deleteOrganization({ organizationId: organization._id });
-      toast.success("Deletion started");
+      const receipt = await deleteOrganization({ organizationId: organization._id, expectedAvailable });
+      toast.success(receipt === true ? "Organization deleted" : "Deletion started");
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
-      appNavigate(`/deletions/${encodeURIComponent(receipt.requestId)}`, {
+      if (receipt !== true) appNavigate(`/deletions/${encodeURIComponent(receipt.requestId)}`, {
         unscoped: true,
       });
     } catch (error) {
-      // Only on failure: clearing after success re-renders before the org list drops it.
+      if (error instanceof DeletionOutcomeUnknown) { appNavigate(error.path, { unscoped: true }); return; }
       endOrganizationDeletion(organization._id);
       reportCaught(error, { source: "organizations_delete" });
       toast.error(convexErrMessage(error, "Failed to delete organization"));
@@ -2452,7 +2453,6 @@ function OrganizationPage({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete Confirmation */}
       <DeleteOrganizationDialog
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
@@ -2462,7 +2462,6 @@ function OrganizationPage({
         onConfirm={handleDelete}
       />
 
-      {/* Leave Confirmation */}
       <LeaveOrganizationDialog
         organizationName={organization.name}
         open={leaveConfirmOpen}

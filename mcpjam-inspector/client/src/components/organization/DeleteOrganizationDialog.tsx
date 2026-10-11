@@ -1,3 +1,4 @@
+import { useDeletionAvailability } from "./useDeletionAvailability";
 import { useEffect, useState } from "react";
 import {
   AlertDialog,
@@ -26,8 +27,10 @@ export function DeleteOrganizationDialog({
   name: string;
   hasCancellationWindow: boolean;
   pending: boolean;
-  onConfirm: () => Promise<void>;
+  onConfirm: (available: boolean) => Promise<void>;
 }) {
+  const { available, failed } = useDeletionAvailability(open);
+  const cancellationWindow = available === true && hasCancellationWindow;
   const [confirmation, setConfirmation] = useState("");
   const [accessAcknowledged, setAccessAcknowledged] = useState(false);
   const [permanentAcknowledged, setPermanentAcknowledged] = useState(false);
@@ -49,11 +52,15 @@ export function DeleteOrganizationDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
           <AlertDialogDescription>
-            Starting deletion immediately blocks access to “{name}”. The
-            deletion runs in the background
-            {hasCancellationWindow
-              ? "; data removal begins after a 48-hour cancellation window. Running sandboxes may expire during this window and cannot be restored."
-              : " and cannot be cancelled once data removal begins."}
+            {available === null
+              ? failed ? "Could not check deletion availability. Close this dialog and try again." : "Checking deletion availability…"
+              : available === false
+                ? `Deleting “${name}” immediately removes the organization. This cannot be cancelled.`
+                : <>Starting deletion immediately blocks access to “{name}”. The deletion runs in the background
+                    {cancellationWindow
+                      ? "; data removal begins after a 48-hour cancellation window. Running sandboxes may expire during this window and cannot be restored."
+                      : " and cannot be cancelled once data removal begins."}</>}
+
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-4">
@@ -89,16 +96,16 @@ export function DeleteOrganizationDialog({
               className="mt-1 accent-destructive"
             />
             I understand that the organization and its data will be permanently removed
-            {hasCancellationWindow ? " after the cancellation window" : ""}.
+            {cancellationWindow ? " after the cancellation window" : ""}.
           </label>
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <Button
             variant="destructive"
-            disabled={!ready || pending}
+            disabled={!ready || pending || available === null}
             onClick={() => {
-              if (ready && !pending) void onConfirm();
+              if (ready && !pending && available !== null) void onConfirm(available);
             }}
           >
             {pending ? (

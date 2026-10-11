@@ -8,7 +8,7 @@ import { authFetch } from "@/lib/session-token";
 const idempotencyStorageKey = (scope: {
   type: "organization" | "project";
   id: string;
-}) => `mcpjam:deletion-request:${scope.type}:${scope.id}`;
+}, actorId: string) => `mcpjam:deletion-request:${actorId}:${scope.type}:${scope.id}`;
 
 const deletionFetch: typeof fetch = (input, init) => {
   const headers = new Headers(init?.headers);
@@ -29,30 +29,71 @@ function client(getToken?: GetDeletionToken): PlatformApiClient {
   });
 }
 
-function stableKey(scope: {
-  type: "organization" | "project";
-  id: string;
-}): string {
-  const storageKey = idempotencyStorageKey(scope);
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) return existing;
-  const created = globalThis.crypto.randomUUID();
-  window.localStorage.setItem(storageKey, created);
-  return created;
+type DeletionScope = { type: "organization" | "project"; id: string };
+export class DeletionOutcomeUnknown extends Error {
+  constructor(readonly scope: DeletionScope) {
+    super("Checking deletion request");
+  }
+  get path(): string {
+    return `/deletions/pending?type=${this.scope.type}&id=${encodeURIComponent(this.scope.id)}`;
+  }
 }
 
-/** Preserves the idempotency key after uncertain network outcomes. */
-export async function startDeletion(scope: {
-  type: "organization" | "project";
-  id: string;
-}): Promise<PlatformDeletionReceipt> {
-  const key = stableKey(scope);
-  const receipt = await client().requestDeletion(
-    { scope },
-    { idempotencyKey: key },
-  );
-  window.localStorage.removeItem(idempotencyStorageKey(scope));
-  return receipt;
+function uncertain(error: unknown): boolean {
+  return isPlatformApiError(error) && (error.status === 0 || error.status >= 500);
+}
+
+async function submit(scope: DeletionScope, key: string, actorId: string, getToken?: GetDeletionToken) {
+  try {
+    const receipt = await client(getToken).requestDeletion({ scope }, { idempotencyKey: key });
+    window.localStorage.removeItem(idempotencyStorageKey(scope, actorId));
+    return receipt;
+  } catch (error) {
+    if (uncertain(error)) throw new DeletionOutcomeUnknown(scope);
+    throw error;
+  }
+}
+
+export async function readDeletionAvailability(): Promise<boolean> {
+  return (await client().getDeletionCapabilities()).available;
+}
+
+/** Negotiate before intake; a pending request can never use legacy deletion. */
+export async function deleteScope(scope: DeletionScope, legacyDelete: () => Promise<unknown>, expectedAvailable?: boolean) {
+  const api = client();
+  const actor = await api.getMe();
+  const existing = window.localStorage.getItem(idempotencyStorageKey(scope, actor.id));
+  const capability = existing ? null : await api.getDeletionCapabilities();
+  if (capability && expectedAvailable !== undefined && capability.available !== expectedAvailable) {
+    throw new Error("Deletion availability changed. Close the dialog and try again.");
+  }
+  if (capability && !capability.available) {
+    await legacyDelete();
+    return true as const;
+  }
+  return startDeletion(scope);
+}
+
+/** Persist a key owned by the current actor before submitting any deletion. */
+export async function startDeletion(scope: DeletionScope): Promise<PlatformDeletionReceipt> {
+  const actor = await client().getMe();
+  const storageKey = idempotencyStorageKey(scope, actor.id);
+  const key = window.localStorage.getItem(storageKey) ?? globalThis.crypto.randomUUID();
+  window.localStorage.setItem(storageKey, key);
+  return submit(scope, key, actor.id);
+}
+
+/** Recovery only replays a saved request owned by the current signed-in actor. */
+export async function recoverDeletion(search: string, getToken: GetDeletionToken): Promise<PlatformDeletionReceipt> {
+  const params = new URLSearchParams(search);
+  const type = params.get("type");
+  const id = params.get("id");
+  if ((type !== "project" && type !== "organization") || !id) throw new Error("Invalid deletion recovery link");
+  const scope: DeletionScope = { type, id };
+  const actor = await client(getToken).getMe();
+  const key = window.localStorage.getItem(idempotencyStorageKey(scope, actor.id));
+  if (!key) throw new Error("No pending request for this account");
+  return submit(scope, key, actor.id, getToken);
 }
 
 /** The independent status route is available when the normal app shell is not. */

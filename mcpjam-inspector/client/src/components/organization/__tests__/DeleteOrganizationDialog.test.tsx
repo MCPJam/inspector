@@ -1,7 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { expect, it, vi, beforeEach } from "vitest";
+const { availability } = vi.hoisted(() => ({ availability: vi.fn() }));
+vi.mock("@/lib/apis/deletion-api", () => ({ readDeletionAvailability: availability }));
+beforeEach(() => { availability.mockReset(); availability.mockResolvedValue(true); });
 import { DeleteOrganizationDialog } from "../DeleteOrganizationDialog";
-it("requires the exact name and both acknowledgements, and resets on reopening", () => {
+it("requires the exact name and both acknowledgements, and resets on reopening", async () => {
   const props = {
     open: true,
     name: "Acme",
@@ -12,7 +15,7 @@ it("requires the exact name and both acknowledgements, and resets on reopening",
   };
   const { rerender } = render(<DeleteOrganizationDialog {...props} />);
   expect(
-    screen.getByText(/48-hour cancellation window.*Running sandboxes may expire/),
+    await screen.findByText(/48-hour cancellation window.*Running sandboxes may expire/),
   ).toBeInTheDocument();
   const action = screen.getByRole("button", {
     name: "Permanently delete organization",
@@ -41,4 +44,17 @@ it("requires the exact name and both acknowledgements, and resets on reopening",
   expect(
     screen.getByRole("button", { name: "Permanently delete organization" }),
   ).toBeDisabled();
+});
+
+it("does not promise a hold when the legacy workflow is active", async () => {
+  availability.mockResolvedValue(false);
+  render(<DeleteOrganizationDialog open name="Acme" hasCancellationWindow pending={false} onOpenChange={vi.fn()} onConfirm={vi.fn()} />);
+  expect(await screen.findByText(/immediately removes the organization/)).toBeInTheDocument();
+  expect(screen.queryByText(/48-hour/)).not.toBeInTheDocument();
+});
+it("does not allow confirmation when availability cannot be checked", async () => {
+  availability.mockRejectedValue(new Error("Offline"));
+  render(<DeleteOrganizationDialog open name="Acme" hasCancellationWindow pending={false} onOpenChange={vi.fn()} onConfirm={vi.fn()} />);
+  expect(await screen.findByText(/Close this dialog and try again/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Permanently delete organization" })).toBeDisabled();
 });

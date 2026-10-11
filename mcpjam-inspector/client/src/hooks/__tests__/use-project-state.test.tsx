@@ -374,6 +374,18 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
+  it("refuses deleting the only local project before dispatch or remote mutation", async () => {
+    const { result, dispatch } = renderUseProjectState({
+      appState: createAppState({ default: createSyntheticDefaultProject() }),
+      isAuthenticated: false,
+    });
+    await act(async () => {
+      expect(await result.current.handleDeleteProject(result.current.effectiveActiveProjectId)).toBe(false);
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "DELETE_PROJECT" }));
+    expect(deleteProjectMock).not.toHaveBeenCalled();
+  });
+
   it("accepts deleting the only cloud project and returns its durable receipt", async () => {
     projectQueryState.allProjects = [{
       _id: "only-project", name: "Only", ownerId: "user-1", organizationId: "org-only",

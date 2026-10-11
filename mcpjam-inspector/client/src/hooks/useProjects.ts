@@ -1,7 +1,8 @@
+import { makeFunctionReference } from "convex/server";
 import { useCallback, useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
-import { startDeletion } from "@/lib/apis/deletion-api";
+import { deleteScope } from "@/lib/apis/deletion-api";
 import type { ProjectVisibility } from "@/state/app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
 
@@ -436,10 +437,11 @@ export function useProjectMutations() {
   const patchProjectDefaultConnection = useMutation(
     "hostConfigsV2:patchProjectDefaultConnection" as any,
   );
+  const legacyDelete = useMutation(makeFunctionReference<"mutation", { projectId: string }, unknown>("projects:deleteProject"));
   const deleteProject = useCallback(
     ({ projectId }: { projectId: string }) =>
-      startDeletion({ type: "project", id: projectId }),
-    [],
+      deleteScope({ type: "project", id: projectId }, () => legacyDelete({ projectId })),
+    [legacyDelete],
   );
   const inviteProjectMember = useMutation(
     "projects:inviteProjectMember" as any,

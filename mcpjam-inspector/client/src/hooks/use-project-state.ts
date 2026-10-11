@@ -1,3 +1,6 @@
+import { DeletionOutcomeUnknown } from "@/lib/apis/deletion-api";
+import { navigateApp } from "@/lib/app-navigation";
+import { convexErrMessage } from "@/lib/convex-error";
 import {
   useCallback,
   useEffect,
@@ -1508,6 +1511,10 @@ export function useProjectState({
         );
         const targetProjectId = defaultProject || otherProjectIds[0];
 
+        if (!targetProjectId) {
+          toast.error("Cannot delete the only project");
+          return false;
+        }
         if (targetProjectId) {
           dispatch({
             type: "SWITCH_PROJECT",
@@ -1519,21 +1526,14 @@ export function useProjectState({
       if (isAuthenticated && !shouldUseLocalFallback) {
         try {
           const receipt = await convexDeleteProject({ projectId });
-          toast.success("Deletion started");
+          toast.success(receipt === true ? "Project deleted" : "Deletion started");
           return receipt;
         } catch (error) {
-          let errorMessage = "Failed to delete project";
-          if (
-            error &&
-            typeof error === "object" &&
-            "data" in error &&
-            typeof (error as { data: unknown }).data === "string"
-          ) {
-            errorMessage = (error as { data: string }).data;
-          } else if (error instanceof Error) {
-            const match = error.message.match(/Uncaught Error: (.+?)(?:\n|$)/);
-            errorMessage = match ? match[1] : error.message;
+          if (error instanceof DeletionOutcomeUnknown) {
+            navigateApp(error.path, { replace: true, unscoped: true });
+            return false;
           }
+          const errorMessage = convexErrMessage(error, "Failed to delete project");
           logger.error("Failed to delete project from Convex", {
             error: errorMessage,
           });

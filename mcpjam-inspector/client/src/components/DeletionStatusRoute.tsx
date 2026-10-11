@@ -4,7 +4,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { PlatformDeletionReceipt } from "@mcpjam/sdk/platform";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { cancelDeletion, readDeletion } from "@/lib/apis/deletion-api";
+import { cancelDeletion, readDeletion, recoverDeletion } from "@/lib/apis/deletion-api";
 
 function time(value: number | null): string | null {
   return value === null ? null : new Date(value).toLocaleString();
@@ -23,7 +23,9 @@ export function DeletionStatusRoute() {
     setLoading(true);
     setFailed(false);
     try {
-      setReceipt(await readDeletion(requestId, getAccessToken));
+      setReceipt(await (requestId === "pending"
+        ? recoverDeletion(window.location.search, getAccessToken)
+        : readDeletion(requestId, getAccessToken)));
     } catch {
       setFailed(true);
       setReceipt(null);
@@ -41,7 +43,7 @@ export function DeletionStatusRoute() {
     setActing(true);
     setCancelFailed(false);
     try {
-      setReceipt(await cancelDeletion(requestId, getAccessToken));
+      setReceipt(await cancelDeletion(receipt.requestId, getAccessToken));
     } catch {
       await refresh();
       setCancelFailed(true);
@@ -65,7 +67,7 @@ export function DeletionStatusRoute() {
           <SignInNotice signIn={() => void signIn(permalinkSignInOptions())} />
         ) : loading ? (
           <p className="mt-5 text-sm text-muted-foreground" role="status">
-            Loading request status…
+            {requestId === "pending" ? "Checking deletion request…" : "Loading request status…"}
           </p>
         ) : failed || !receipt ? (
           <div className="mt-5 space-y-4">
