@@ -108,6 +108,15 @@ export interface LocalHarnessEnvOptions {
    * itself. Ignored on every other platform.
    */
   gitBashPath?: string;
+  /**
+   * Runtime directories the session must stay out of, on top of its sibling
+   * sessions: the Inspector layer and the vendor pack it is launched from.
+   * Neither is a session root; naming them here puts them in the agent's own
+   * file-tool deny rules. Defence in depth, not a sandbox — the agent runs as
+   * the same OS user — and the layer and pack are re-hashed before every exec
+   * regardless.
+   */
+  extraDeniedRoots?: readonly string[];
   platform?: NodeJS.Platform;
   base?: NodeJS.ProcessEnv;
 }
@@ -150,6 +159,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   // would point it at any executable; the provider sets it from a path it
   // has verified exists.
   "CLAUDE_CODE_GIT_BASH_PATH",
+  // Codex's config root. The bridge renders a per-session CODEX_HOME (auth,
+  // model provider, the relay's MCP server); an injected one would point Codex
+  // back at a user's real `~/.codex` — its servers, its credentials.
+  "CODEX_HOME",
 ]);
 
 export class LocalHarnessEnvError extends Error {}
@@ -193,6 +206,12 @@ export function buildLocalHarnessEnv(
         if (entry.isDirectory() && ![opts.syntheticHome, opts.sessionRoot].some(active => active === root || active.startsWith(root + path.sep))) deniedRoots.push(root);
       }
     } catch { /* A new installation may not have any sibling sessions. */ }
+  }
+  for (const root of opts.extraDeniedRoots ?? []) {
+    if (!path.isAbsolute(root)) {
+      throw new LocalHarnessEnvError("a denied runtime root must be an absolute path");
+    }
+    if (!deniedRoots.includes(root)) deniedRoots.push(root);
   }
   env.MCPJAM_LOCAL_DENIED_ROOTS = JSON.stringify(deniedRoots);
 
@@ -259,13 +278,38 @@ export function validateLocalHarnessScopedEnv(
   }
 }
 
+/**
+ * Prefixes a project secret may not use, PER HARNESS: the names that harness's
+ * runtime reads its model endpoint and credential from.
+ *
+ * Per harness rather than one global list on purpose. A Claude Code project
+ * may legitimately carry an `OPENAI_API_KEY` for its MCP server to use —
+ * refusing it everywhere would break existing local Claude projects for a
+ * conflict that only exists under Codex, where `OPENAI_BASE_URL` and
+ * `CODEX_API_KEY` are exactly what the gateway's capability travels in.
+ */
+const RUNTIME_RESERVED_SECRET_PREFIXES: Readonly<
+  Record<string, RegExp>
+> = {
+  "claude-code": /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i,
+  codex: /^(CODEX_|OPENAI_|AI_GATEWAY_|BRIDGE_)/i,
+};
+
 /** Project secrets must not impersonate runtime-owned model or bridge credentials. */
 export function validateLocalHarnessSecretEnv(
   scoped: Readonly<Record<string, string>>,
+  harnessId: string = "claude-code",
 ): void {
   validateLocalHarnessScopedEnv(scoped);
+  const reserved = Object.prototype.hasOwnProperty.call(
+    RUNTIME_RESERVED_SECRET_PREFIXES,
+    harnessId,
+  )
+    ? RUNTIME_RESERVED_SECRET_PREFIXES[harnessId]!
+    : // An unknown harness gets the union, never nothing.
+      /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_|CODEX_|OPENAI_)/i;
   for (const name of Object.keys(scoped)) {
-    if (/^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i.test(name)) {
+    if (reserved.test(name)) {
       throw new LocalHarnessEnvError(
         `Project secret ${name} conflicts with the local harness runtime.`,
       );

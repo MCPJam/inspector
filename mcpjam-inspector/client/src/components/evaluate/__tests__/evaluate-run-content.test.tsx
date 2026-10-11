@@ -22,6 +22,10 @@ import { EvaluateRunContent } from "../evaluate-run-content";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
 
+vi.mock("../../evals/use-selected-run", () => ({
+  useSelectedRun: () => ({ run: null, isLoading: false, isUnavailable: false }),
+}));
+
 vi.mock("../unified-findings-section", () => ({
   // The block now occupies the hero's explanation slot, so the mock renders
   // its fallback: a run with no findings built still says what broke.

@@ -29,11 +29,12 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Referenced BY NAME from dependabot-auto-merge.yml. Rename both together.
     name: Build examples
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -65,7 +66,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.changed.outputs.dirs != ''
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 

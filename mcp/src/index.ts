@@ -104,6 +104,46 @@ function toAuthInfo(
   };
 }
 
+/**
+ * Who may use `/mcp` without signing in, from `MCPJAM_GUEST_ACCESS`.
+ *
+ *  - `off` — signed-in only. A tokenless request gets the 401 that starts
+ *    OAuth, and guest tokens are rejected.
+ *  - `mixed` — signed-in callers as above, plus guests: a presented guest
+ *    token is verified, and a tokenless request is served as a lazily-minted
+ *    guest when this worker holds the mint credentials.
+ *
+ * Unset, or any value other than `mixed`, is `off`: a typo must fail closed.
+ * Set per environment in `wrangler.jsonc` rather than the dashboard, because
+ * `wrangler deploy` without `--keep-vars` wipes dashboard vars.
+ */
+type GuestAccess = "off" | "mixed";
+
+function resolveGuestAccess(raw: string | undefined): GuestAccess {
+  return raw?.trim() === "mixed" ? "mixed" : "off";
+}
+
+/**
+ * Whether `mintGuestToken` in server.ts can succeed at all. Both values are
+ * required there; checking them here keeps a tokenless request from being
+ * served when every one of its tool calls would fail.
+ */
+function canMintGuests(env: Env): boolean {
+  return Boolean(
+    env.MCPJAM_INSPECTOR_SERVICE_TOKEN && env.MCPJAM_GUEST_MINT_URL
+  );
+}
+
+let warnedGuestMintMisconfigured = false;
+
+function warnGuestMintMisconfiguredOnce(): void {
+  if (warnedGuestMintMisconfigured) return;
+  warnedGuestMintMisconfigured = true;
+  console.error(
+    '[mcp] MCPJAM_GUEST_ACCESS is "mixed" but MCPJAM_INSPECTOR_SERVICE_TOKEN or MCPJAM_GUEST_MINT_URL is not set; tokenless /mcp requests get 401 until both are.'
+  );
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -184,43 +224,41 @@ export default {
         });
       }
 
-      // Killswitch: when locked down, the server is AuthKit-only — guest
-      // tokens are not accepted and anonymous (tokenless) connections are
-      // refused with the normal 401 → OAuth challenge.
-      const lockedDown = env.MCPJAM_NONPROD_LOCKDOWN === "true";
+      const guestAccess = resolveGuestAccess(env.MCPJAM_GUEST_ACCESS);
 
-      // Guest verification is enabled only when a guest JWKS URL is configured
-      // (and not locked down). Absent it, guest tokens fall through to the
-      // AuthKit allow-list and are rejected.
+      // Guest tokens verify only under `mixed`, and only when a guest JWKS URL
+      // is configured. Otherwise the guest issuer is absent from the
+      // allow-list and a guest token is rejected like any unknown issuer.
       const guest: VerifyConfig["guest"] =
-        !lockedDown && env.MCPJAM_GUEST_JWKS_URL
+        guestAccess === "mixed" && env.MCPJAM_GUEST_JWKS_URL
           ? { issuer: GUEST_ISSUER, jwksUrl: env.MCPJAM_GUEST_JWKS_URL }
           : undefined;
 
+      // A tokenless request is served — as a guest minted lazily on first
+      // tool execution, not at connect/`tools/list` — only when guests are on
+      // AND this worker can actually mint one. Serving it without the mint
+      // credentials is what produced 200s on `initialize`/`tools/list`
+      // followed by "No bearer token on the request." on every tool call: the
+      // client never saw a 401, so it never started OAuth.
+      const servesAnonymous = guestAccess === "mixed" && canMintGuests(env);
+      if (guestAccess === "mixed" && !servesAnonymous) {
+        warnGuestMintMisconfiguredOnce();
+      }
+
       // Pass-through auth: the v2 handler verifies nothing itself, so this
       // stays the single place a bearer is checked. `authInfo` left undefined
-      // means anonymous — the factory then mints a guest lazily, on first tool
-      // execution rather than at connect/tools/list.
+      // means anonymous, which only `servesAnonymous` allows.
       let authInfo: AuthInfo | undefined;
-      if (request.headers.has("authorization")) {
-        // A bearer was presented → it must verify (AuthKit or guest). A
-        // present-but-invalid token still 401s; we never downgrade it to an
-        // anonymous guest.
+      if (request.headers.has("authorization") || !servesAnonymous) {
+        // A presented bearer must verify (AuthKit, or guest under `mixed`); a
+        // present-but-invalid token still 401s — we never downgrade it to an
+        // anonymous guest. With no bearer, this returns the missing-token 401
+        // whose `WWW-Authenticate` points MCP clients at OAuth.
         const result = await verifyBearerToken(
           request,
           { clientId, authkitDomain: env.AUTHKIT_DOMAIN, guest },
           origin,
         );
-        if (!result.ok) return withMcpCors(result.response);
-        authInfo = toAuthInfo(result.verified, clientId);
-      } else if (lockedDown) {
-        // Tokenless + locked down → preserve the 401 → OAuth challenge.
-        const result = await verifyBearerToken(
-          request,
-          { clientId, authkitDomain: env.AUTHKIT_DOMAIN },
-          origin,
-        );
-        // verifyBearerToken returns the 401 missing-token response here.
         if (!result.ok) return withMcpCors(result.response);
         authInfo = toAuthInfo(result.verified, clientId);
       }

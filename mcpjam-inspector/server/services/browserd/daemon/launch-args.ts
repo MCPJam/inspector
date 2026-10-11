@@ -11,7 +11,7 @@
  *
  * PROVENANCE HONESTY: the WebMCP feature flag and `--disable-dev-shm-usage` are
  * carried over from the local inspector, where they were probed against the
- * pinned Chromium (151.0.7922.34 / Playwright 1.62.1). The remaining hardening
+ * pinned Chromium (153.0.8010.12 / Playwright 1.63.0). The remaining hardening
  * (L4) and determinism pins (L5) come from a year of production browser-driving
  * shared by an operator (tracker: `webmcp-hosted-runtime`, learnings L4/L5) and
  * are documented by PURPOSE here; each is live-verified by the driver's
@@ -28,9 +28,9 @@ export { BROWSERD_OBSERVATION_VIEWPORT };
  *
  * CHROMIUM DOES NOT MERGE THESE SWITCHES. Given the same switch twice it
  * honours the LAST occurrence and silently discards every earlier one — and
- * Playwright emits exactly one combined `--disable-features=<12 features>`
+ * Playwright emits exactly one combined `--disable-features=<15 features>`
  * before appending our args, so any `--disable-features` of ours replaces its
- * whole list. Verified against the pinned playwright-core 1.62.1 bundle
+ * whole list. Verified against the pinned playwright-core 1.63.0 bundle
  * (`chromiumSwitches`: one joined switch, then `chromeArguments.push(...args)`).
  *
  * What that costs is not theoretical for an agent browser: it re-enables
@@ -182,7 +182,7 @@ export const BROWSERD_CONTEXT_OPTIONS = {
  *  - no `reducedMotion`/`colorScheme` — the user's actual OS preferences.
  *  - no `userAgent` — the load-bearing one. Playwright derives
  *    `userAgentMetadata` from whatever string it is given and never populates
- *    `brands` (verified in the bundled playwright-core 1.62.1,
+ *    `brands` (verified in the bundled playwright-core 1.63.0,
  *    `calculateUserAgentMetadata`), so ANY context-level UA override ships a
  *    Chrome-claiming UA header beside an EMPTY `Sec-CH-UA` — itself a signal.
  *    The local engine corrects the UA with Chromium's own `--user-agent`
