@@ -427,7 +427,7 @@ describe("replay callbacks", () => {
   it("masks a foreign host at masked, keeps ours", async () => {
     const { scrubNamesFromUrl } = await loadAt("masked");
     expect(scrubNamesFromUrl("https://mcp.acme.example/tenants/42")).toBe(
-      "https://[name]/[name]/42",
+      "https://[host]/[name]/42",
     );
     expect(
       scrubNamesFromUrl("https://app.mcpjam.com/p/k17abc9z/servers"),

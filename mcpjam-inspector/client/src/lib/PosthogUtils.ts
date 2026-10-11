@@ -3,7 +3,6 @@ import type { ClientFeatureFlagValues } from "../../../shared/client-feature-fla
 import {
   POSTHOG_URL_PROPERTIES,
   scrubCredentialsInText,
-  scrubCredentialUrl,
   scrubTelemetryEvent,
   scrubTelemetryValue,
 } from "../../../shared/credential-urls";
@@ -12,6 +11,8 @@ import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { getLastFailedRequest } from "./failed-request-tracker";
+import { scrubSensitiveUrl } from "../../../shared/credential-url";
+import { stampPostHogEvent } from "./telemetry-context";
 import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
@@ -96,19 +97,6 @@ const SERVER_EVALUATED_FLAG_OPTIONS = {
   advanced_disable_feature_flags: true,
   advanced_disable_feature_flags_on_first_load: true,
 } as const;
-
-/**
- * Credentials out of a URL (`shared/credential-urls.ts` — share tokens, OAuth
- * codes, secret query keys), plus organization ids. Organization ids are
- * internal identifiers, and organization routes are captured automatically
- * by PostHog on otherwise privacy-safe events.
- */
-export function scrubSensitiveUrl(value: string): string {
-  return scrubCredentialUrl(value).replace(
-    /(\/organizations\/)[^/?#]+/g,
-    "$1[redacted]",
-  );
-}
 
 // What browsers say when a request never got a response. Matched exactly so
 // our own errors like "Failed to fetch tools" don't get tagged.
@@ -537,6 +525,9 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
+// The credential-URL sanitizer lives in shared/ so the relay can use it too.
+export { scrubSensitiveUrl };
+
 // The recording policy — surfaces, privacy levels, replay profiles — lives in
 // lib/session-privacy.ts. Re-exported here for the modules that have always
 // imported these from this file.
@@ -568,10 +559,18 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
-  // Injected-script exceptions are dropped first, then every remaining event
-  // has its credentials scrubbed (fail closed: an event that cannot be shown
-  // clean is dropped). This replaces the deprecated `sanitize_properties`.
-  before_send: [dropInjectedScriptException, scrubCaptureEvent],
+  // In order: drop browser-injected crashes, stamp what survives with the
+  // context it was captured under (lib/telemetry-context.ts), which the relay
+  // checks against the backend before forwarding, then scrub every
+  // credential out of the whole event (fail closed: an event that cannot be
+  // shown clean is dropped). The scrub replaces the deprecated
+  // `sanitize_properties` and runs last, so nothing added before it leaves
+  // unscrubbed.
+  before_send: [
+    dropInjectedScriptException,
+    stampPostHogEvent,
+    scrubCaptureEvent,
+  ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.
   disable_capture_url_hashes: true,

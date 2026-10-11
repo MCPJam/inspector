@@ -1240,6 +1240,9 @@ chatV2.post("/", async (c) => {
           // stamp) then runs the turn on the org's key — emulated, silently.
           hosted: modelDefinition.hosted,
         },
+        // The saved selection: an org connection on the harness's own vendor
+        // runs the real runtime on the organization's key.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
         // should: it asks whether this HOST carries the runtime's sentinel, a
@@ -1371,6 +1374,9 @@ chatV2.post("/", async (c) => {
         // bare-id harness turn would be mis-detected as emulated and get the
         // emulated skill tools on top of adapter-delivered skills.
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        // A harness on the org's own key runs the real runtime too.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         hasProjectId: Boolean(hostedBody.projectId),
       });
 

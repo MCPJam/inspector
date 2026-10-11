@@ -452,6 +452,9 @@ export async function resolveTurnRuntime(
           ? { extraBodyFields: hostedExtraBodyFields }
           : {}),
         ...(args.harness ? { harness: args.harness } : {}),
+        ...(args.harness && hostedSelection
+          ? { modelSelection: hostedSelection }
+          : {}),
       },
       modelSource: "mcpjam",
       finalizeUsage: HOSTED_NOOP_FINALIZE,
@@ -495,6 +498,7 @@ export async function resolveTurnRuntime(
           : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
+      ...(args.harness && orgSelection ? { modelSelection: orgSelection } : {}),
     },
     modelSource: "byok",
     finalizeUsage: HOSTED_NOOP_FINALIZE,

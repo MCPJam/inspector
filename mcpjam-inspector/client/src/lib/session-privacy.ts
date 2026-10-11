@@ -2,8 +2,12 @@
  * Session privacy levels: what session replay and product analytics may
  * record in this browser session.
  *
- *   - `off`    — no replay at all. npx/Docker installs, `electron-forge start`,
- *                and builds with `VITE_DISABLE_POSTHOG_LOCAL`.
+ *   - `off`    — no replay at all. npx/Docker installs, `electron-forge start`
+ *                and builds with `VITE_DISABLE_POSTHOG_LOCAL` (an `off`
+ *                SURFACE), and anyone the backend answers `off` for: an
+ *                organization with session replay off is in view, or the
+ *                person belongs to one. On a recording surface, `off`
+ *                analytics are masked like `masked` ones.
  *   - `masked` — replay of layout and interaction only: every text node and
  *                input masked, media blocked, no console logs, no network
  *                headers or bodies, and name-like URL segments replaced.
@@ -11,22 +15,50 @@
  *   - `full`   — replay as it has always been: inputs and annotated secret
  *                surfaces masked, everything else visible.
  *
- * Who gets which level is `resolveSessionPrivacy`. The level is applied to
- * BOTH recorders — PostHog here (`syncSessionRecording`), Sentry Replay in
- * `sentry.ts` (`syncSentryReplay`) — from the same module state, so the two
- * cannot disagree. `docs/session-replay-masking.md` has the table.
+ * Who gets which level is `resolveSessionPrivacy`, from the backend's answer
+ * for the contexts in view (`telemetryPrivacy:getContext`, read by
+ * `useTelemetryPrivacyContext`). The level is applied to BOTH recorders —
+ * PostHog here (`syncSessionRecording`), Sentry Replay in `sentry.ts`
+ * (`syncSentryReplay`) — from the same module state, so the two cannot
+ * disagree. `docs/session-replay-masking.md` has the table.
  *
- * Fail closed. Nothing records until the level is known; an answer that does
- * not arrive becomes `masked` (`useSessionPrivacy`), never `full`.
+ * Fail closed. Nothing records until the backend has answered: an answer that
+ * fails or never arrives keeps both recorders stopped (`useSessionPrivacy`),
+ * and a person this browser last saw answered `off` stays `off`
+ * (`replayOffRemembered`). After an answer has let the session record, a
+ * navigation whose answer is still on its way records `masked`. The PostHog relay
+ * enforces the same policy again on the server: it drops replay the backend
+ * says is `off`, and restricted replay the client did not declare masked.
  */
 import {
   isReplayBlockedLocation,
   scrubCredentialsInText,
-  scrubCredentialUrl,
   type LocationLike,
 } from "../../../shared/credential-urls";
-import { APP_ROUTES } from "./app-routes";
 import { HOSTED_MODE } from "./config";
+import {
+  MASKED_REPLAY_BLOCKED_TAGS,
+  maskReplayAttribute,
+  maskReplayText,
+  scrubNamesFromUrl,
+  type TelemetryRecording,
+} from "../../../shared/telemetry-privacy";
+
+export {
+  APP_ROUTE_WORDS,
+  maskReplayAttribute,
+  scrubNamesFromUrl,
+} from "../../../shared/telemetry-privacy";
+import {
+  maskReplayRequest,
+  maskReplayRequestFull,
+} from "./session-privacy/replay-network";
+
+export {
+  maskReplayRequest,
+  maskReplayRequestFull,
+  REPLAY_PLACEHOLDER_HREF,
+} from "./session-privacy/replay-network";
 
 export type PrivacyLevel = "off" | "masked" | "full";
 
@@ -109,83 +141,100 @@ export function recordingSurface(): RecordingSurface {
 export interface SessionPrivacyInputs {
   surface: RecordingSurface;
   /**
-   * The WorkOS session. A guest has none: `signed_out` covers both visitors
-   * and guests, whose data is their own and who belong to no organization
-   * that could ask for privacy.
-   */
-  account: "loading" | "signed_out" | "signed_in";
-  /**
    * A share-link page (a published study's tester chat) that shows a project
    * the viewer may not belong to, so its organization's posture is unknown.
    */
   sharedLink: boolean;
-  /** `resolveEnterprisePrivacyInView`; `undefined` = not known yet. */
-  enterprisePrivacyInView: boolean | undefined;
+  /**
+   * The backend's recording level for the contexts in view, for the current
+   * actor (`useTelemetryPrivacyContext`). `undefined` = not answered yet.
+   * Anything the backend could not verify — no context in view, no access,
+   * no authentication — already arrives as `masked`.
+   */
+  recording: TelemetryRecording | undefined;
 }
 
 /**
  * The level for this session. Pure: the caller supplies the facts.
  *
  * - npx/Docker and dev builds: `off`.
- * - Packaged desktop: `masked` for everyone. It records people debugging their
- *   own MCP servers on their own machines, which is the npx reasoning with
- *   replay kept for crash debugging.
- * - Hosted share links: `masked` — whose data it is cannot be known here.
- * - Hosted, signed out (visitors, guests): `full`. Landing pages and a
- *   guest's own sandbox carry no organization's data.
- * - Hosted, signed in: `masked` when any organization in view has enterprise
- *   privacy, `full` when none does, `pending` until that is known.
+ * - Share links: `off`. The page shows an organization the viewer may not
+ *   belong to; the backend answers for the viewer, not the page's owner,
+ *   whose replay might be off.
+ * - Everywhere else, `pending` until the backend answers, and `off` when it
+ *   answers `off`: no replay for an organization with session replay off, on
+ *   any surface.
+ * - Packaged desktop: otherwise `masked` for everyone. It records people
+ *   debugging their own MCP servers on their own machines, which is the npx
+ *   reasoning with replay kept for crash debugging.
+ * - Hosted otherwise: the backend's answer. Only a verified non-private
+ *   context gets `full`; visitors with no session, and pages with nothing in
+ *   view, are `masked`.
  */
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
 ): SessionPrivacy {
-  if (inputs.surface === "off") return "off";
+  // A share-link page shows an organization's content to a viewer who may
+  // not belong to it. The backend answers for the viewer, not the page's
+  // owner, whose replay might be off, so nothing records there at all.
+  if (inputs.surface === "off" || inputs.sharedLink) return "off";
+  if (inputs.recording === undefined) return "pending";
+  if (inputs.recording === "off") return "off";
   if (inputs.surface === "desktop") return "masked";
-  if (inputs.sharedLink) return "masked";
-  if (inputs.account === "loading") return "pending";
-  if (inputs.account === "signed_out") return "full";
-  if (inputs.enterprisePrivacyInView === undefined) return "pending";
-  return inputs.enterprisePrivacyInView ? "masked" : "full";
+  return inputs.recording === "full" ? "full" : "masked";
+}
+
+// ── Remembered `off` ───────────────────────────────────────────────────
+
+const REPLAY_OFF_STORAGE_KEY = "mcpjam.telemetry.replayOffActor";
+let replayOffActor: string | null | undefined;
+
+function readReplayOffActor(): string | null {
+  if (replayOffActor !== undefined) return replayOffActor;
+  try {
+    replayOffActor = window.localStorage.getItem(REPLAY_OFF_STORAGE_KEY);
+  } catch {
+    replayOffActor = null;
+  }
+  return replayOffActor;
 }
 
 /**
- * The organization fields this module reads. `enterprisePrivacy` is on the
- * organization row `organizations:getMyOrganizations` returns; it switches on
- * when an organization moves to Enterprise and can be set explicitly.
+ * Record the backend's answer for `actorId`: whether replay is `off` for
+ * them. Kept in memory and, where storage works, across reloads, so a person
+ * whose organization has replay off is never recorded while the answer is
+ * slow, failing or not asked yet. Only real answers belong here.
  */
-export interface PrivacyOrganization {
-  _id: string;
-  enterprisePrivacy?: boolean;
+export function rememberReplayOff(actorId: string | null, off: boolean): void {
+  if (actorId === null) return;
+  const current = readReplayOffActor();
+  const next = off ? actorId : current === actorId ? null : current;
+  if (next === current) return;
+  replayOffActor = next;
+  try {
+    if (next === null) window.localStorage.removeItem(REPLAY_OFF_STORAGE_KEY);
+    else window.localStorage.setItem(REPLAY_OFF_STORAGE_KEY, next);
+  } catch {
+    // Memory still holds it for this page.
+  }
 }
 
 /**
- * Whether an organization in view (the route's, the active one, the active
- * project's) has enterprise privacy: any one is enough. `undefined` while
- * the list has not loaded or nothing is in view — never a guess.
+ * Whether `actorId` was last answered `off` in this browser. `undefined` is
+ * an actor not known yet (sign-in still loading): it counts when anyone was,
+ * because it is most likely the same person.
  */
-export function resolveEnterprisePrivacyInView(
-  organizations: readonly PrivacyOrganization[] | undefined,
-  organizationIdsInView: ReadonlyArray<string | null | undefined>,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  const inView = organizationIdsInView.filter((id): id is string => !!id);
-  if (inView.length === 0) return undefined;
-  return organizations.some(
-    (org) => org.enterprisePrivacy === true && inView.includes(org._id),
-  );
+export function replayOffRemembered(
+  actorId: string | null | undefined,
+): boolean {
+  const remembered = readReplayOffActor();
+  if (remembered === null) return false;
+  return actorId === undefined || actorId === remembered;
 }
 
-/**
- * Whether the signed-in person belongs to ANY organization with enterprise
- * privacy. Identity follows membership, not the organization in view,
- * because person properties outlive the page. `undefined` until the list
- * has loaded; `usePostHogIdentify` sends the id alone until this is `false`.
- */
-export function resolveEnterprisePrivacyMember(
-  organizations: readonly PrivacyOrganization[] | undefined,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  return organizations.some((org) => org.enterprisePrivacy === true);
+/** Tests only. */
+export function resetRememberedReplayOffForTests(): void {
+  replayOffActor = undefined;
 }
 
 // ── The level in effect ────────────────────────────────────────────────
@@ -204,120 +253,13 @@ export function setSessionPrivacy(level: SessionPrivacy): void {
 
 /**
  * Whether analytics must keep names out right now: on a recording surface,
- * anything short of a resolved `full`. `off` surfaces keep today's analytics.
+ * anything short of a resolved `full` — replay `off` included. `off`
+ * surfaces keep today's analytics.
  */
 export function shouldMaskAnalytics(): boolean {
   const privacy = currentSessionPrivacy();
-  return privacy === "masked" || privacy === "pending";
-}
-
-// ── URL scrubbing ──────────────────────────────────────────────────────
-
-const NAME_PLACEHOLDER = "[name]";
-
-/**
- * Path segments that are the app's own vocabulary, read off the route table
- * so a new route needs no edit here. `p` prefixes every project route; the
- * rest are the API prefixes replayed network requests start with.
- */
-const ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
-  "p",
-  "api",
-  "web",
-  "v1",
-  "mcp",
-  ...APP_ROUTES.flatMap((route) => route.path.split("/")).filter(
-    (segment) => segment && !segment.startsWith(":") && segment !== "*",
-  ),
-]);
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Ids may stay: a document id says which record without saying what it is
- * called. Convex ids (lowercase base32, always with digits in practice),
- * UUIDs and plain numbers.
- */
-function isIdLike(value: string): boolean {
-  return (
-    /^\d+$/.test(value) ||
-    UUID.test(value) ||
-    (/^[0-9a-z]{25,40}$/.test(value) && /\d/.test(value))
-  );
-}
-
-function scrubSegment(segment: string): string {
-  if (!segment || ROUTE_SEGMENTS.has(segment) || isIdLike(segment)) {
-    return segment;
-  }
-  return NAME_PLACEHOLDER;
-}
-
-/**
- * Hosts whose names are ours to keep: the hosted app and its vanity domains,
- * and loopback, where npx and desktop serve the app. Any other host in a URL
- * is a customer's (an MCP server, an OAuth provider) and is itself a name.
- */
-function isOwnHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return (
-    host === "mcpjam.com" ||
-    host.endsWith(".mcpjam.com") ||
-    host === "caniuse.dev" ||
-    host.endsWith(".caniuse.dev") ||
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "[::1]" ||
-    (typeof window !== "undefined" &&
-      host === window.location?.hostname?.toLowerCase())
-  );
-}
-
-/**
- * Replace every name-like part of a URL — server names, project slugs, host
- * names, free-form query values — with a placeholder, keeping route words and
- * ids. Credentials go first (`scrubCredentialUrl`), so a share token that
- * happens to look like an id — the hex bench secret does — can never survive
- * as one. A host that is not ours becomes the placeholder too. The fragment
- * is dropped (it can hold anything, OAuth responses included). A value that
- * is not a URL or path has its credentials scrubbed and is otherwise returned
- * unchanged; one that fails to parse becomes the placeholder.
- */
-export function scrubNamesFromUrl(rawValue: string): string {
-  const value = scrubCredentialUrl(rawValue);
-  const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
-  if (!isAbsolute && !value.startsWith("/")) return value;
-  try {
-    const url = new URL(value, "http://scrub.invalid");
-    const path = url.pathname
-      .split("/")
-      .map((segment) =>
-        segment === "[redacted]"
-          ? segment
-          : scrubSegment(decodeURIComponent(segment)),
-      )
-      .join("/");
-    const query = [...url.searchParams]
-      .map(
-        ([key, param]) =>
-          `${encodeURIComponent(key)}=${
-            param === "[redacted]"
-              ? param
-              : isIdLike(param)
-                ? encodeURIComponent(param)
-                : NAME_PLACEHOLDER
-          }`,
-      )
-      .join("&");
-    const origin = !isAbsolute
-      ? ""
-      : isOwnHost(url.hostname)
-        ? url.origin
-        : `${url.protocol}//${NAME_PLACEHOLDER}`;
-    return `${origin}${path}${query ? `?${query}` : ""}`;
-  } catch {
-    return NAME_PLACEHOLDER;
-  }
+  if (privacy === "full") return false;
+  return privacy !== "off" || recordingSurface() !== "off";
 }
 
 // ── PostHog profiles ───────────────────────────────────────────────────
@@ -337,11 +279,6 @@ export type PostHogProfile = "full" | "masked";
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
 
-/** rrweb's own masking: every non-space character becomes `*`. */
-function maskAllCharacters(text: string): string {
-  return text.replace(/[\S]/g, "*");
-}
-
 function isUnderSecretSurface(element: Element | null | undefined): boolean {
   try {
     return !!element?.closest?.(`[${SECRET_SURFACE_ATTRIBUTE}]`);
@@ -358,7 +295,7 @@ function isUnderSecretSurface(element: Element | null | undefined): boolean {
  * the page is a credential whatever the level.
  */
 export function maskReplayTextFull(text: string, element?: Element): string {
-  if (isUnderSecretSurface(element)) return maskAllCharacters(text);
+  if (isUnderSecretSurface(element)) return maskReplayText(text);
   // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
   // a narrower copy let `encodeURIComponent("/results/<token>")` through.
   return scrubCredentialsInText(text);
@@ -366,7 +303,7 @@ export function maskReplayTextFull(text: string, element?: Element): string {
 
 /** `maskTextFn` at `masked`: every text node, as `maskTextSelector: "*"` did. */
 export function maskReplayTextMasked(text: string): string {
-  return maskAllCharacters(text);
+  return maskReplayText(text);
 }
 
 /**
@@ -377,86 +314,6 @@ export function maskReplayTextMasked(text: string): string {
 export function maskReplayAttributeFull(_name: string, value: string): string {
   return scrubCredentialsInText(value);
 }
-
-/**
- * The page URL a replay meta event may carry when nothing else can be shown.
- * posthog-js uses whatever `maskCapturedNetworkRequestFn` returns as the
- * `href`; an empty one breaks the player, so a placeholder stands in.
- */
-export const REPLAY_PLACEHOLDER_HREF = "https://redacted.invalid/";
-
-/**
- * The fields of a captured network entry a replay keeps: its URL (scrubbed)
- * and its timing. Everything else is dropped — request and response headers
- * and bodies above all, but also `serverTiming`, which a server can fill with
- * anything. posthog-js uses this callback INSTEAD of its own body scrubber,
- * so nothing it used to scrub may pass through here.
- */
-const KEPT_NETWORK_FIELDS = [
-  "entryType",
-  "initiatorType",
-  "method",
-  "status",
-  "responseStatus",
-  "isInitial",
-  "startTime",
-  "endTime",
-  "duration",
-  "timeOrigin",
-  "timestamp",
-  "fetchStart",
-  "domainLookupStart",
-  "domainLookupEnd",
-  "connectStart",
-  "secureConnectionStart",
-  "connectEnd",
-  "requestStart",
-  "responseStart",
-  "responseEnd",
-  "redirectStart",
-  "redirectEnd",
-  "workerStart",
-  "transferSize",
-  "encodedBodySize",
-  "decodedBodySize",
-  "nextHopProtocol",
-  "renderBlockingStatus",
-  "deliveryType",
-] as const;
-
-type CapturedRequest = { name?: string; url?: string } & Record<
-  string,
-  unknown
->;
-
-function buildReplayRequestMasker(profile: PostHogProfile) {
-  const scrubUrl = (url: string) =>
-    profile === "masked" ? scrubNamesFromUrl(url) : scrubCredentialUrl(url);
-  return function maskRequest<T extends CapturedRequest>(request: T): T | null {
-    // posthog-js calls this with `{ name: href }` alone for the page URL of
-    // a meta or URL-change event, and with a full entry for network requests.
-    const isPageUrl = request.entryType === undefined && !request.isInitial;
-    try {
-      const out: Record<string, unknown> = {};
-      for (const field of KEPT_NETWORK_FIELDS) {
-        if (request[field] !== undefined) out[field] = request[field];
-      }
-      if (typeof request.name === "string") {
-        out.name = scrubUrl(request.name);
-      }
-      if (typeof request.url === "string") out.url = scrubUrl(request.url);
-      if (isPageUrl && !out.name) out.name = REPLAY_PLACEHOLDER_HREF;
-      return out as T;
-    } catch {
-      // Cannot show it clean: drop a request, and give a page URL the
-      // placeholder (an empty href breaks the player).
-      return isPageUrl ? ({ name: REPLAY_PLACEHOLDER_HREF } as T) : null;
-    }
-  };
-}
-
-/** `maskCapturedNetworkRequestFn` at `full`: credentials out of the URL. */
-export const maskReplayRequestFull = buildReplayRequestMasker("full");
 
 export const SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
@@ -478,98 +335,9 @@ export const SESSION_RECORDING_OPTIONS = {
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
-export const MASKED_BLOCK_SELECTOR =
-  "img, picture, video, audio, canvas, svg image, iframe, object, embed";
-
-/**
- * Attributes a `masked` replay keeps: the ones layout and styling need and
- * that never hold user text. Everything else — `title`, `alt`, `href`, `src`,
- * `placeholder`, `aria-label`, `id`, most `data-*` — is masked.
- * `maskAllElementAttributes` would also mask `class` and `style`, which
- * leaves a replay of unstyled boxes.
- */
-const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "class",
-  "style",
-  "role",
-  "type",
-  "dir",
-  "lang",
-  "rel",
-  "tabindex",
-  "width",
-  "height",
-  "colspan",
-  "rowspan",
-  "disabled",
-  "checked",
-  "selected",
-  "hidden",
-  "open",
-  "viewbox",
-  "xmlns",
-  "d",
-  "fill",
-  "stroke",
-  "stroke-width",
-  "stroke-linecap",
-  "stroke-linejoin",
-  "points",
-  "cx",
-  "cy",
-  "r",
-  "rx",
-  "ry",
-  "x",
-  "y",
-  "x1",
-  "x2",
-  "y1",
-  "y2",
-  "transform",
-  "opacity",
-  "aria-hidden",
-  "aria-expanded",
-  "aria-selected",
-  "aria-checked",
-  "aria-disabled",
-  "aria-pressed",
-  "aria-current",
-  "aria-orientation",
-  "data-state",
-  "data-side",
-  "data-align",
-  "data-orientation",
-  "data-disabled",
-  "data-highlighted",
-  "data-selected",
-  "data-active",
-  "data-open",
-  "data-slot",
-  "data-variant",
-  "data-size",
-]);
-
-const MASKED_ATTRIBUTE_VALUE = "***";
-
-/**
- * `maskAttributeFn` at `masked`: the kept attributes keep their value (with
- * any credential URL scrubbed — a `style` can carry a `url(…)`), every other
- * attribute is masked.
- */
-export function maskReplayAttribute(name: string, value: string): string {
-  return MASKED_REPLAY_KEPT_ATTRIBUTES.has(name.toLowerCase())
-    ? maskReplayAttributeFull(name, value)
-    : MASKED_ATTRIBUTE_VALUE;
-}
-
-/**
- * `maskCapturedNetworkRequestFn` at `masked`. posthog-js routes BOTH the
- * recorded page URL (rrweb meta and URL-change events) and every captured
- * network request through this callback: credentials and names scrubbed from
- * the URL, a host that is not ours replaced, and only timing kept.
- */
-export const maskReplayRequest = buildReplayRequestMasker("masked");
+export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
+  .map((tag) => (tag === "image" ? "svg image" : tag))
+  .join(", ");
 
 export const MASKED_SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
@@ -632,6 +400,40 @@ export function lastSyncedPostHogClient(): PostHogRecorder | null {
   return lastPostHogClient;
 }
 
+// Stopping the recorder flushes its buffer through `before_send` — after the
+// level has already tightened, so those frames would be stamped with the new,
+// stricter label. Set only while a tightening stop runs.
+let discardingReplayBuffer = false;
+// When the recorder last started on the masked profile: older frames were
+// recorded under another profile and arrive here only through a late flush.
+let maskedReplayStartedAt: number | null = null;
+
+interface ReplayFrameLike {
+  timestamp?: unknown;
+}
+
+/**
+ * The `$snapshot_data` frames a `$snapshot` captured now may carry, or `null`
+ * to drop the event. Frames recorded before privacy tightened are dropped:
+ * the stop's synchronous flush outright, and any later flush (posthog-js
+ * defers it while compression drains) by timestamp against the masked
+ * recorder's start. A full-profile frame must never leave under a masked
+ * label, because the relay passes a masked-labelled replay as it is.
+ */
+export function replayFramesToSend(frames: unknown): unknown[] | null {
+  if (discardingReplayBuffer) return null;
+  if (!Array.isArray(frames)) return null;
+  if (posthogProfile !== "masked" || maskedReplayStartedAt === null) {
+    return frames;
+  }
+  const startedAt = maskedReplayStartedAt;
+  const kept = frames.filter((frame: ReplayFrameLike) => {
+    const timestamp = frame?.timestamp;
+    return typeof timestamp === "number" && timestamp >= startedAt;
+  });
+  return kept.length > 0 ? kept : null;
+}
+
 /**
  * Bring PostHog in line with the level in effect and the current path.
  *
@@ -644,8 +446,9 @@ export function lastSyncedPostHogClient(): PostHogRecorder | null {
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
- * declined. `pending` and credential locations (`isCredentialBearingPath`:
- * path, query and fragment) hold the recorder stopped.
+ * declined. `pending`, `off` and credential locations
+ * (`isCredentialBearingPath`: path, query and fragment) hold the recorder
+ * stopped; an `off` surface never configures it at all.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
@@ -656,22 +459,30 @@ export function syncSessionRecording(
 ): void {
   lastPostHogClient = client;
   try {
+    if (recordingSurface() === "off") return;
     const privacy = currentSessionPrivacy();
-    if (privacy === "off") return;
     // Analytics masking follows the level even while replay is held off:
-    // `pending` analytics are masked.
+    // `pending` and `off` analytics are masked.
     const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
-        client.stopSessionRecording?.();
+        discardingReplayBuffer = profile === "masked";
+        try {
+          client.stopSessionRecording?.();
+        } finally {
+          discardingReplayBuffer = false;
+        }
         posthogRecording = false;
       }
       client.set_config?.(posthogPrivacyConfig(profile));
       posthogProfile = profile;
     }
     const shouldRecord =
-      privacy !== "pending" && !isCredentialBearingPath(location);
+      privacy !== "pending" &&
+      privacy !== "off" &&
+      !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
+      if (profile === "masked") maskedReplayStartedAt = Date.now();
       client.startSessionRecording?.();
       posthogRecording = true;
     } else if (!shouldRecord && posthogRecording) {
@@ -689,11 +500,88 @@ interface ReplayFrame {
   data?: { tag?: string; payload?: object };
 }
 
+// One `[attr]` or `[attr="value"]` part of a CSS selector, as Sentry's
+// `htmlTreeAsString` writes them (values are not escaped).
+const SELECTOR_ATTRIBUTE = /\[[\w:.-]+(?:="[^"]*")?\]/g;
+// One `#id` part. Ids can be data: an MCP prompt argument's or elicitation
+// field's name (`prompt-arg-${name}`).
+const SELECTOR_ID = /#[^\s.#[>:]+/g;
+
+/**
+ * A CSS selector from Sentry (`htmlTreeAsString`, web-vitals element names)
+ * without its attribute and id parts: `[aria-label="…"]`, `[title="…"]`,
+ * `[name="…"]` and `[alt="…"]` carry the page's text, and an id can carry a
+ * name. A value holding its own quote defeats the pattern, so the selector
+ * is cut at the first part left over.
+ */
+export function stripSelectorAttributes(selector: string): string {
+  const stripped = selector
+    .replace(SELECTOR_ATTRIBUTE, "")
+    .replace(SELECTOR_ID, "");
+  const leftover = stripped.search(/[["]/);
+  return leftover === -1 ? stripped : stripped.slice(0, leftover);
+}
+
+// What a Sentry Replay click frame's `data.node.attributes` may keep: code,
+// not data. `aria-label`, `title`, `alt` and `name` are text; `id` and
+// `testId` can be built from a name (`repo-row-${repoFullName}`).
+const UI_FRAME_KEPT_ATTRIBUTES = new Set([
+  "class",
+  "role",
+  "disabled",
+  "aria-disabled",
+  "data-sentry-component",
+]);
+
+/** A `ui.*` frame's payload (click, slow or multi click, key down), masked. */
+function maskUiFramePayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload };
+  if (typeof payload.message === "string") {
+    out.message = stripSelectorAttributes(payload.message);
+  }
+  const data = payload.data as Record<string, unknown> | undefined;
+  if (data && typeof data === "object") {
+    const nextData: Record<string, unknown> = { ...data };
+    if (typeof data.url === "string") {
+      nextData.url = scrubNamesFromUrl(data.url);
+    }
+    if (typeof data.route === "string") {
+      nextData.route = scrubNamesFromUrl(data.route);
+    }
+    const node = data.node as Record<string, unknown> | undefined;
+    if (node && typeof node === "object") {
+      const attributes =
+        node.attributes && typeof node.attributes === "object"
+          ? Object.fromEntries(
+              Object.entries(node.attributes as Record<string, unknown>).map(
+                ([key, value]) => [
+                  key,
+                  UI_FRAME_KEPT_ATTRIBUTES.has(key) ? value : "***",
+                ],
+              ),
+            )
+          : node.attributes;
+      nextData.node = {
+        ...node,
+        attributes,
+        ...(typeof node.textContent === "string"
+          ? { textContent: maskReplayText(node.textContent) }
+          : {}),
+      };
+    }
+    out.data = nextData;
+  }
+  return out;
+}
+
 /**
  * Sentry's `beforeAddRecordingEvent`. Sentry Replay masks text, inputs and
  * media at every level (`SENTRY_REPLAY_OPTIONS`); short of `full` this also
- * drops console breadcrumbs and scrubs the URLs in navigation and network
- * frames. Only Sentry's own frames come through here — rrweb's DOM events
+ * drops console breadcrumbs, scrubs the URLs in navigation and network
+ * frames, and takes the page's text out of click and key frames (their
+ * selector's attribute parts, the node's text-bearing attributes). Only Sentry's own frames come through here — rrweb's DOM events
  * cannot be edited, which is why the DOM masking is on everywhere.
  */
 export function filterSentryReplayFrame<T extends ReplayFrame>(
@@ -705,6 +593,16 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
   if (!data || !payload) return frame;
   if (data.tag === "breadcrumb" && payload.category === "console") {
     return null;
+  }
+  if (
+    data.tag === "breadcrumb" &&
+    typeof payload.category === "string" &&
+    payload.category.startsWith("ui.")
+  ) {
+    return {
+      ...frame,
+      data: { ...data, payload: maskUiFramePayload(payload) },
+    };
   }
   if (data.tag === "breadcrumb" && payload.category === "navigation") {
     const detail = (payload.data ?? {}) as Record<string, unknown>;
@@ -745,6 +643,53 @@ export function filterSentryReplayFrame<T extends ReplayFrame>(
   return frame;
 }
 
+interface SentryBreadcrumb {
+  category?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+const URL_BREADCRUMB_FIELDS: Record<string, readonly string[]> = {
+  navigation: ["from", "to"],
+  fetch: ["url"],
+  xhr: ["url"],
+};
+
+/**
+ * Sentry's `beforeBreadcrumb`. Short of `full`, a breadcrumb recorded now
+ * keeps no console output and no names in the URLs it carries: error events
+ * attach breadcrumbs wholesale, so this is the console and network content
+ * of an error event, the counterpart of `filterSentryReplayFrame` for the
+ * replay. Decided when the breadcrumb is recorded, so a later, laxer page
+ * never relaxes it.
+ */
+export function filterSentryBreadcrumb<T extends SentryBreadcrumb>(
+  breadcrumb: T,
+): T | null {
+  if (!shouldMaskAnalytics()) return breadcrumb;
+  if (breadcrumb?.category === "console") return null;
+  // A click or input names its element as a selector (`htmlTreeAsString`),
+  // whose attribute parts are the page's text.
+  if (
+    breadcrumb?.category?.startsWith("ui.") &&
+    typeof breadcrumb.message === "string"
+  ) {
+    const message = stripSelectorAttributes(breadcrumb.message);
+    return message === breadcrumb.message
+      ? breadcrumb
+      : { ...breadcrumb, message };
+  }
+  const fields = URL_BREADCRUMB_FIELDS[breadcrumb?.category ?? ""];
+  if (!fields || !breadcrumb.data) return breadcrumb;
+  const data = { ...breadcrumb.data };
+  for (const field of fields) {
+    if (typeof data[field] === "string") {
+      data[field] = scrubNamesFromUrl(data[field] as string);
+    }
+  }
+  return { ...breadcrumb, data };
+}
+
 /**
  * `Sentry.replayIntegration` options, explicit rather than inherited from
  * defaults that could move: text, inputs and media masked, and no request or
@@ -760,6 +705,27 @@ export const SENTRY_REPLAY_OPTIONS = {
     "aria-label",
     "aria-description",
     "alt",
+    "action",
+    "formaction",
+    "poster",
+  ],
+  // rrweb never passes `href`, `src` or `style` through attribute masking —
+  // it rewrites their URLs to absolute ones instead — so elements whose job
+  // is a URL, or whose inline style holds one (an MCP server's icon drawn as
+  // a CSS mask) or a string (a custom property's label, a brand font), are
+  // blocked: kept as sized boxes, their URL and content dropped. Their text
+  // is masked at every level anyway, and Sentry's DOM events cannot be
+  // edited per level, so this applies at `full` too.
+  block: [
+    "a[href]",
+    "area[href]",
+    "iframe",
+    "source",
+    "track",
+    '[style*="url(" i]',
+    '[style*="image-set(" i]',
+    `[style*='"']`,
+    `[style*="'"]`,
   ],
   networkDetailAllowUrls: [] as string[],
   networkCaptureBodies: false,
