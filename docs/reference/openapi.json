@@ -7908,6 +7908,7 @@
     },
     "/deletions/capabilities": {
       "get": {
+        "operationId": "getDeletionCapabilities",
         "summary": "Read deletion availability",
         "description": "Authenticated availability check. Choose the legacy path only when available is false, before submitting any deletion. Never fall back after a failed or uncertain deletion request.",
         "responses": { "200": { "description": "Deletion capability: available, protocolVersion 1, scopeTypes project and organization" } }
@@ -7962,6 +7963,110 @@
           "409": { "description": "A deletion is already in progress or the idempotency key was reused." },
           "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" }
+        }
+      }
+    },
+    "/deletions/replay": {
+      "post": {
+        "operationId": "replayDeletion",
+        "tags": [
+          "Deletion"
+        ],
+        "summary": "Recover an existing deletion receipt",
+        "description": "Returns a restricted existing receipt for the current actor, exact scope and original Idempotency-Key. Works while new intake is disabled. Never creates a deletion request; unknown or inaccessible requests return opaque 404.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "scope"
+                ],
+                "properties": {
+                  "scope": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "const": "organization"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "const": "project"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Request not found or inaccessible"
+          },
+          "409": {
+            "description": "A deletion is already in progress or the idempotency key was reused."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "200": {
+            "description": "Existing restricted receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformDeletionReceipt"
+                }
+              }
+            }
+          }
         }
       }
     },

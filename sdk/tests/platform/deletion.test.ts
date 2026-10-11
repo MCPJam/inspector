@@ -31,5 +31,19 @@ describe("deletion negotiation", () => {
     const { client, fetch } = setup(false);
     await expect(client.requestDeletion({ scope: { type: "organization", id: "o1" } }, { idempotencyKey: "key" })).rejects.toMatchObject({ code: "FEATURE_NOT_SUPPORTED" });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });  it("replays an existing receipt without capability lookup or new intake", async () => {
+    const { client, fetch } = setup(false);
+    expect(await client.replayDeletion({ scope: { type: "project", id: "p1" } }, { idempotencyKey: "saved-key" })).toEqual({ requestId: "r1" });
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toBe("https://example.test/api/v1/deletions/replay");
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("saved-key");
   });
+  it("rejects replay without an existing key before sending a request", async () => {
+    const { client, fetch } = setup(false);
+    await expect(client.replayDeletion({ scope: { type: "project", id: "p1" } }, { idempotencyKey: "" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
 });
