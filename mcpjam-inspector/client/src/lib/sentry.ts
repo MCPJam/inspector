@@ -49,7 +49,8 @@ export function resolveClientSentryConfig() {
     // document instead of a script — see shared/injected-script-frames.ts.
     // The origin, not the href: it is stable across SPA route changes, and
     // the frames carry whichever route was showing when the injected code
-    // was evaluated.
+    // was evaluated. Breadcrumbs use it too: a request to this origin keeps
+    // its path, a request anywhere else only its origin.
     documentOrigin:
       typeof window === "undefined" ? undefined : window.location.origin,
   });
@@ -187,7 +188,7 @@ export function initSentry() {
 let sentryReplayStoppedByGuard = false;
 let sentryReplayResumeMode: "session" | "buffer" = "session";
 let sentryReplayAdded = false;
-/** The guard's last `stop()`, while it is still flushing. */
+/** The guard's `stop()` calls still flushing, as one promise. */
 let pendingSentryStop: Promise<unknown> | null = null;
 /** Whether the latest sync found the location blocked. */
 let lastSyncBlocked = false;
@@ -230,7 +231,13 @@ export function syncSentryReplay(location: string | LocationLike): void {
         stopping &&
         typeof (stopping as Promise<unknown>).then === "function"
       ) {
-        const settled = Promise.resolve(stopping).catch(() => undefined);
+        const current = Promise.resolve(stopping).catch(() => undefined);
+        // A second `stop()` while the first is still flushing returns at
+        // once (the replay is already stopping), so it must not stand in for
+        // the first: a resume waits for every stop still in flight.
+        const settled = pendingSentryStop
+          ? Promise.all([pendingSentryStop, current])
+          : current;
         pendingSentryStop = settled;
         void settled.then(() => {
           if (pendingSentryStop === settled) pendingSentryStop = null;
@@ -254,22 +261,30 @@ export function syncSentryReplay(location: string | LocationLike): void {
       // still in flight is ignored — a quick in-and-out of a credential page
       // would otherwise leave the replay stopped for good. Wait for it, then
       // resume only if nothing has blocked the location since.
-      const stopping = pendingSentryStop;
-      if (!stopping) {
+      afterPendingSentryStops(() => {
+        if (lastSyncBlocked) {
+          sentryReplayStoppedByGuard = true;
+          return;
+        }
         resume();
-      } else {
-        void stopping.then(() => {
-          if (lastSyncBlocked) {
-            sentryReplayStoppedByGuard = true;
-            return;
-          }
-          resume();
-        });
-      }
+      });
     }
   } catch {
     // See doc comment — a failed guard must not break the render.
   }
+}
+
+/**
+ * Runs `then` once no guard `stop()` is flushing: now if none is, otherwise
+ * after the pending ones settle — and after any stop issued meanwhile.
+ */
+function afterPendingSentryStops(then: () => void): void {
+  const stopping = pendingSentryStop;
+  if (!stopping) {
+    then();
+    return;
+  }
+  void stopping.then(() => afterPendingSentryStops(then));
 }
 
 /**

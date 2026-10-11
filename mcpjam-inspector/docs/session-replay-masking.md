@@ -375,6 +375,16 @@ recorders, or they drift.
   and Sentry offers no hook to edit rrweb events. It is never a credential URL
   (replay is blocked there) and never a `masked` session (Sentry Replay does
   not record at `masked`), so what remains is names at `full`.
+- **Stylesheet text in Sentry Replay.** rrweb records a `<style>` element's
+  text, an inlined stylesheet and CSSOM rule changes exactly as the page holds
+  them. Sentry offers no option that masks them and no hook that edits rrweb
+  events; blocking `style` would drop every stylesheet from the replay. A
+  credential URL inside CSS would therefore reach Sentry. The app never writes
+  one: every CSS `url(` in app source is a fragment, a literal with no
+  credential, or a reviewed site, which
+  `client/src/lib/__tests__/stylesheet-credentials.test.ts` enforces. PostHog's
+  `before_send` scrubs stylesheet text in replay batches
+  (`scrubCaptureEvent`).
 - **Viewers outside the organization.** The posture of an organization the
   viewer does not belong to is unknown. Share links are `masked` for that
   reason, but a project shared to a non-member outside a share link is judged

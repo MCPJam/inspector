@@ -354,18 +354,74 @@ describe("the claim", () => {
     expect(window.location.href).not.toContain("someone-elses-token");
   });
 
-  it("takes the token out of the address bar on an unexpected failure", async () => {
-    mockApi({
-      "/claim": () =>
-        new Response(JSON.stringify({ message: "Upstream exploded" }), {
-          status: 500,
-        }),
+  it("keeps a link whose claim got no answer, and retries it in place", async () => {
+    // A 5xx says nothing about the link: the token may well be unspent. The
+    // page keeps it — in the address bar too, so a reload retries — and
+    // offers Retry rather than a dead end.
+    let attempts = 0;
+    const calls = mockApi({
+      "/claim": () => {
+        attempts += 1;
+        return attempts === 1
+          ? new Response(JSON.stringify({ message: "Upstream exploded" }), {
+              status: 503,
+            })
+          : { requestId: "scr_1", status: "awaiting_project" };
+      },
+      "/state": () => stateBody(),
     });
     goTo("/connect/server/handoff-token-abc");
 
     render(<ServerConnectionHandoff />);
-    await screen.findByText("This link cannot be used");
+    expect(
+      await screen.findByText("This link could not be opened yet"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("This link cannot be used")).toBeNull();
+    expect(window.location.pathname).toBe("/connect/server/handoff-token-abc");
 
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Personal");
+
+    const claims = calls.filter((call) => call.path === "/claim");
+    expect(claims).toHaveLength(2);
+    expect(claims[1]?.body).toEqual({ handoffToken: "handoff-token-abc" });
+    expect(window.location.pathname).toBe("/connect/server/request/scr_1");
+    expect(window.location.href).not.toContain("handoff-token-abc");
+  });
+
+  it("treats a network failure as no answer, and a later refusal as final", async () => {
+    let attempts = 0;
+    mockApi({
+      "/claim": () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError("Failed to fetch");
+        return new Response(
+          JSON.stringify({
+            message: "That authorization link has expired.",
+            details: { reason: "REQUEST_EXPIRED" },
+          }),
+          { status: 404 },
+        );
+      },
+    });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link could not be opened yet");
+    expect(screen.getByText("Failed to fetch")).toBeInTheDocument();
+    expect(window.location.href).toContain("handoff-token-abc");
+
+    // The retry gets an answer about the link this time: it is refused, so
+    // the token leaves the address bar and nothing offers to try again.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByText("This link cannot be used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("That authorization link has expired."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(window.location.pathname).toBe("/connect/server");
     expect(window.location.href).not.toContain("handoff-token-abc");
   });
 });

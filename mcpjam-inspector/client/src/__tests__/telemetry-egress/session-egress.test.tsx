@@ -108,12 +108,14 @@ describe("at `full`, on a normal page", () => {
       sentryFullSnapshot: true,
     });
     // The share links were recorded — scrubbed, not dropped: proof that the
-    // full profile records the page, and that the decoder opened the gzipped
-    // mutation that added them.
+    // full profile records the page.
     expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
       "https://app.mcpjam.com/results/[redacted]",
     );
-    expect(compressedReplayEventCount(scan.decoded)).toBeGreaterThan(0);
+    // Unpacked: both profiles turn posthog-js's per-event gzip off, so
+    // `before_send` can scrub the stylesheet text rrweb masks nowhere. A
+    // packed DOM event would drop its whole batch.
+    expect(compressedReplayEventCount(scan.decoded)).toBe(0);
     // The console line arrived too, with its credential scrubbed.
     expectArrived(scan, "share links at full", {
       posthogPlugins: ["rrweb/console@1"],

@@ -112,8 +112,18 @@ function pinRandomScript() {
   };
 }
 
+export interface EgressRecorderOptions {
+  /**
+   * How long Sentry's ingest takes to answer. A real one is not instant, and
+   * a slow answer is what keeps a replay `stop()` flushing while the visitor
+   * moves on.
+   */
+  sentryLatencyMs?: number;
+}
+
 export async function installEgressRecorder(
   page: Page,
+  options: EgressRecorderOptions = {},
 ): Promise<EgressRecorder> {
   const recorder: EgressRecorder = {
     telemetry: [],
@@ -152,6 +162,11 @@ export async function installEgressRecorder(
           contentType: "application/javascript",
           body: posthogRemoteConfigScript(),
         });
+      }
+      if (sink === "sentry" && options.sentryLatencyMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.sentryLatencyMs),
+        );
       }
       return route.fulfill({
         status: 200,

@@ -40,17 +40,44 @@ import {
   pageCorpus,
   posthogReplayEvents,
   recordedText,
+  RRWEB,
   sentinel,
+  sentryItems,
+  sentryReplayEvents,
   type Arrivals,
 } from "./egress";
 
 /**
- * How long a visitor stays on each page in the round-trip test. Realistic,
- * and long enough for Sentry Replay's asynchronous stop to finish before the
- * guard starts it again: with sub-second hops Sentry Replay ends up stopped
- * for good (no leak — it fails closed — but nothing left to observe).
+ * How long a visitor stays on a credential page and then on the normal page
+ * it returns to, in the round-trip test, in rotation:
+ *
+ *  - a short stay both ways;
+ *  - a long return, so Sentry keeps the replay segment (it discards a
+ *    session shorter than about 5s) and the guard's next `stop()` really
+ *    flushes one;
+ *  - a quick in-and-out right after it: back on the normal page while that
+ *    flush is still waiting on Sentry (`SENTRY_LATENCY_MS`), the race
+ *    `syncSentryReplay` waits out before it resumes.
+ *
+ * Every return outlasts the slowest flush, so a recorder that resumed is
+ * recording by the time the return is checked. The corpus has 11 pages, so
+ * the last return is a long one.
  */
-const DWELL_MS = 2_500;
+const ROUND_TRIP_DWELLS_MS: ReadonlyArray<{ away: number; back: number }> = [
+  { away: 400, back: 1_200 },
+  { away: 2_500, back: 5_500 },
+  { away: 250, back: 1_500 },
+];
+const SENTRY_LATENCY_MS = 800;
+
+/**
+ * Credential pages that are share links. A share link is recorded `masked`,
+ * and the way back to `full` waits `MASKED_TO_FULL_SETTLE_MS` (3s,
+ * hooks/useSessionPrivacy.ts) — Sentry Replay, which records only at `full`,
+ * is held off until then. A return from one lasts past that.
+ */
+const SHARE_LINK_ROUTES = new Set<string>(["tester-link"]);
+const SHARE_LINK_RETURN_MS = 4_500;
 
 /** A public page every signed-out visitor can open: the score landing. */
 const NORMAL_PAGE = "/embed/score";
@@ -98,13 +125,17 @@ async function openNormalPage(page: Page): Promise<void> {
 }
 
 /** An uncaught error, the way a real one reaches both SDKs' handlers. */
-async function throwUncaught(page: Page, message: string): Promise<void> {
+async function throwUncaught(
+  page: Page,
+  message: string,
+  settleMs = 200,
+): Promise<void> {
   await page.evaluate((text) => {
     setTimeout(() => {
       throw new Error(text);
     }, 0);
   }, message);
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(settleMs);
 }
 
 test("share links on a normal page at full: text, href and iframe src", async ({
@@ -189,28 +220,117 @@ for (const [id, url] of pageCorpus()) {
   });
 }
 
+/** The page's clock: what rrweb stamps its events with. */
+function pageNow(page: Page): Promise<number> {
+  return page.evaluate(() => Date.now());
+}
+
 test("SPA navigation from a normal page onto every credential page and back", async ({
   page,
 }) => {
-  const recorder = await installEgressRecorder(page);
+  const recorder = await installEgressRecorder(page, {
+    sentryLatencyMs: SENTRY_LATENCY_MS,
+  });
   await openNormalPage(page);
-  for (const [, url] of pageCorpus()) {
+  // One entry per return to the normal page: from the moment the visitor
+  // left the credential page until they leave the normal page again.
+  const returns: Array<{
+    id: string;
+    from: number;
+    until: number;
+    mark: number;
+    error: string;
+  }> = [];
+  for (const [index, [id, url]] of pageCorpus().entries()) {
+    const dwell = ROUND_TRIP_DWELLS_MS[index % ROUND_TRIP_DWELLS_MS.length]!;
     await spaNavigate(page, url);
     await page.mouse.click(5, 5);
-    await page.waitForTimeout(DWELL_MS);
+    await page.waitForTimeout(dwell.away);
+    const mark = recorder.mark();
+    const from = await pageNow(page);
     await page.goBack();
-    await page.waitForTimeout(DWELL_MS);
+    // Some credential pages hand off to another page (`/home`); back from
+    // there is not the normal page, so go to it.
+    if (new URL(page.url()).pathname !== NORMAL_PAGE) {
+      await spaNavigate(page, NORMAL_PAGE);
+    }
+    // An interaction straight away: posthog-js holds a new recording's
+    // first flush until there is one.
     await page.mouse.click(5, 5);
+    await page.waitForTimeout(
+      SHARE_LINK_ROUTES.has(id)
+        ? Math.max(dwell.back, SHARE_LINK_RETURN_MS)
+        : dwell.back,
+    );
+    const error = `liveness check after ${id}`;
+    await throwUncaught(page, error);
+    returns.push({ id, from, until: await pageNow(page), mark, error });
   }
   await interact(page);
   await throwUncaught(page, "after the round trip");
   await drain(page, recorder);
-  expectClean(recorder, "SPA navigation", {
+  const scan = expectClean(recorder, "SPA navigation", {
     posthogEvents: ["$snapshot"],
     posthogFullSnapshot: true,
     sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
+
+  // Not just somewhere in the run: BOTH recorders came back after EVERY
+  // visit. PostHog shows it with DOM events recorded during that return
+  // (a full snapshot on resume, the click straight after it) and sent after
+  // it began; Sentry with the replay it tags an error thrown during that
+  // return with — a quick return's own segment is too short for Sentry to
+  // keep, so the tag is what a resumed replay leaves.
+  const errors = sentryItems(scan.decoded).filter(
+    (item) => item.type === "event",
+  );
+  for (const visit of returns) {
+    const recorded = posthogReplayEvents(
+      recorder.scanSince(visit.mark).decoded,
+    ).filter((event) => {
+      const at = (event as { timestamp?: unknown }).timestamp;
+      return (
+        (event.type === RRWEB.FullSnapshot ||
+          event.type === RRWEB.IncrementalSnapshot) &&
+        typeof at === "number" &&
+        at >= visit.from &&
+        at <= visit.until
+      );
+    });
+    expect
+      .soft(
+        recorded.length,
+        `PostHog replay was not recording after leaving ${visit.id}`,
+      )
+      .toBeGreaterThan(0);
+    const error = errors.find((item) =>
+      JSON.stringify(item.payload).includes(visit.error),
+    );
+    expect
+      .soft(
+        (error?.payload as { tags?: { replayId?: unknown } } | undefined)?.tags
+          ?.replayId,
+        `Sentry Replay was not recording after leaving ${visit.id}`,
+      )
+      .toEqual(expect.any(String));
+  }
+  // The last return lasts past Sentry's minimum, so what it recorded there
+  // is sent, not only tagged.
+  const last = returns.at(-1)!;
+  expect(
+    sentryReplayEvents(scan.decoded).some((event) => {
+      const at = (event as { timestamp?: unknown }).timestamp;
+      return (
+        (event.type === RRWEB.FullSnapshot ||
+          event.type === RRWEB.IncrementalSnapshot) &&
+        typeof at === "number" &&
+        at >= last.from &&
+        at <= last.until
+      );
+    }),
+    "Sentry sent nothing it recorded during the last return",
+  ).toBe(true);
 });
 
 test("a secret query key and fragment on a normal page", async ({ page }) => {
@@ -246,7 +366,10 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.waitForTimeout(2_500);
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
-  await throwUncaught(page, "just before closing");
+  // Only long enough for both SDKs to take the error. A longer wait let
+  // PostHog's 3s request-queue timer empty the queue first now and then,
+  // leaving the unload flush nothing to send.
+  await throwUncaught(page, "just before closing", 20);
   // No waiting: the tab goes with PostHog's queue and replay buffer full.
   // Its unload flush runs first from the live page, so the beacon it sends
   // is one the route can read (`fireUnloadFlush`).

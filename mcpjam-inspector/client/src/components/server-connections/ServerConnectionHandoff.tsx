@@ -127,6 +127,18 @@ class HandoffCallError extends Error {
   }
 }
 
+/**
+ * A failure that says nothing about the link: the request never got an
+ * answer (offline, a dropped connection, an unreadable body), the server
+ * failed (5xx), or it asked to be tried later (408, 429). The token may well
+ * still be good, so the page keeps it and offers a retry. Any other 4xx is
+ * the backend's answer about THIS link.
+ */
+function isTransientCallFailure(error: unknown): boolean {
+  if (!(error instanceof HandoffCallError)) return true;
+  return error.status >= 500 || error.status === 408 || error.status === 429;
+}
+
 function isUsedLinkError(error: unknown): boolean {
   return (
     error instanceof HandoffCallError &&
@@ -303,6 +315,9 @@ export function ServerConnectionHandoff() {
     callback: CallbackParams;
     pending: PendingAuthorization;
   } | null>(null);
+  // A claim that failed without an answer about the link (see
+  // `isTransientCallFailure`), kept for an in-page retry from `claimLinkRef`.
+  const [retryableClaim, setRetryableClaim] = useState(false);
   const claimed = useRef(false);
   // The link as it was opened, held in memory only. A claim that does not
   // succeed takes the token out of the address bar (below), but the two
@@ -321,6 +336,96 @@ export function ServerConnectionHandoff() {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
+
+  /** Trade the token for the cookie, then take it out of the URL. Throws. */
+  const claimHandoff = useCallback(
+    async (handoffToken: string) => {
+      const result = await call<{ requestId: string }>(
+        "/claim",
+        { handoffToken },
+        // Only the claim carries identity. Every later step authenticates
+        // with the continuation cookie, which is scoped to this request.
+        await bestEffortAccessToken(getAccessToken),
+      );
+      // Record what this token became, so a later reopen of THIS link can
+      // tell the continuation cookie is describing the same request rather
+      // than whichever one this browser claimed most recently.
+      rememberClaimedHandoff(handoffToken, result.requestId);
+      // `replaceState`, not push: the token URL must not be somewhere the
+      // back button can return to, and it is single-use anyway.
+      window.history.replaceState({}, "", handoffRequestPath(result.requestId));
+    },
+    [getAccessToken],
+  );
+
+  /** What a claim that did not succeed leaves on screen. */
+  const settleFailedClaim = useCallback(
+    async (handoffToken: string, cause: unknown) => {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      // No answer about the link: keep it, in the address bar as well as in
+      // `claimLinkRef`, so both Retry and a reload try the claim again.
+      if (isTransientCallFailure(cause)) {
+        setRetryableClaim(true);
+        setError(message);
+        return;
+      }
+      setRetryableClaim(false);
+      // A refused claim must not leave its token in the address bar for as
+      // long as the error screen stays up: every telemetry sink and every
+      // `Referer` sees the URL. The success path trades it for the request
+      // page; this is the same rule for a refusal. The resume below may still
+      // move on to the request page, and the recoveries use `claimLinkRef`,
+      // not the URL.
+      window.history.replaceState({}, "", handoffRefusedPath());
+      // A refusal about WHO is asking is recoverable, and gets its own screen
+      // with the action that recovers it. Everything else is the existing
+      // dead-end report.
+      const claimRefusal =
+        cause instanceof HandoffCallError
+          ? readClaimRefusal(cause.details)
+          : null;
+      if (claimRefusal) {
+        setRefusal(claimRefusal);
+        return;
+      }
+      // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
+      // is what turned a re-opened link into a burned retry. The first claim
+      // cleared the handoff digest, but it also set the continuation cookie —
+      // the credential every later step of the flow already authenticates
+      // with. If that cookie still resolves to a request, this is the same
+      // browser coming back to its own link, and the honest answer is to put
+      // the user back in the flow rather than tell them it is gone.
+      //
+      // A browser that never claimed has no cookie and gets the used-link
+      // screen exactly as before.
+      //
+      // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
+      // describes the last link this browser claimed, so a browser that
+      // claimed A and then B would answer a reopened A with B — a different
+      // server quietly swapped in behind the URL the user opened. The claim
+      // recorded which request each token became; only that request may be
+      // resumed here. When they disagree, the session behind this link really
+      // is gone, and the used-link screen is the honest answer.
+      if (isUsedLinkError(cause)) {
+        const claimedRequestId = readClaimedHandoff(handoffToken);
+        const resumed = claimedRequestId
+          ? await call<HandoffState>("/state").catch(() => null)
+          : null;
+        if (resumed && resumed.requestId === claimedRequestId) {
+          window.history.replaceState(
+            {},
+            "",
+            handoffRequestPath(resumed.requestId),
+          );
+          setState(resumed);
+          return;
+        }
+        setUsedLink(true);
+      }
+      setError(message);
+    },
+    [],
+  );
 
   // First load: trade the token for the cookie, then take it out of the URL.
   //
@@ -354,24 +459,7 @@ export function ServerConnectionHandoff() {
 
       try {
         if (route?.kind === "claim") {
-          const result = await call<{ requestId: string }>(
-            "/claim",
-            { handoffToken: route.handoffToken },
-            // Only the claim carries identity. Every later step authenticates
-            // with the continuation cookie, which is scoped to this request.
-            await bestEffortAccessToken(getAccessToken),
-          );
-          // Record what this token became, so a later reopen of THIS link can
-          // tell the continuation cookie is describing the same request rather
-          // than whichever one this browser claimed most recently.
-          rememberClaimedHandoff(route.handoffToken, result.requestId);
-          // `replaceState`, not push: the token URL must not be somewhere the
-          // back button can return to, and it is single-use anyway.
-          window.history.replaceState(
-            {},
-            "",
-            handoffRequestPath(result.requestId),
-          );
+          await claimHandoff(route.handoffToken);
         } else if (callbackMatchesPending(pending, callback)) {
           // Returned from the authorization server. The cookie travelled with
           // the top-level navigation, so this post is already authorized.
@@ -392,18 +480,10 @@ export function ServerConnectionHandoff() {
           );
         }
       } catch (cause) {
-        // A claim that did not succeed must not leave its token in the address
-        // bar for as long as the error screen stays up: every telemetry sink
-        // and every `Referer` sees the URL. The success path trades it for the
-        // request page; this is the same rule for every other outcome. The
-        // resume below may still move on to the request page, and the
-        // recoveries use `claimLinkRef`, not the URL.
         if (route?.kind === "claim") {
-          window.history.replaceState({}, "", handoffRefusedPath());
+          await settleFailedClaim(route.handoffToken, cause);
+          return;
         }
-        // A refusal about WHO is asking is recoverable, and gets its own
-        // screen with the action that recovers it. Everything else is the
-        // existing dead-end report.
         const claimRefusal =
           cause instanceof HandoffCallError
             ? readClaimRefusal(cause.details)
@@ -412,54 +492,34 @@ export function ServerConnectionHandoff() {
           setRefusal(claimRefusal);
           return;
         }
-        // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
-        // is what turned a re-opened link into a burned retry. The first claim
-        // cleared the handoff digest, but it also set the continuation cookie —
-        // the credential every later step of the flow already authenticates
-        // with. If that cookie still resolves to a request, this is the same
-        // browser coming back to its own link, and the honest answer is to put
-        // the user back in the flow rather than tell them it is gone.
-        //
-        // A browser that never claimed has no cookie and gets the used-link
-        // screen exactly as before.
-        //
-        // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
-        // describes the last link this browser claimed, so a browser that
-        // claimed A and then B would answer a reopened A with B — a different
-        // server quietly swapped in behind the URL the user opened. The claim
-        // recorded which request each token became; only that request may be
-        // resumed here. When they disagree, the session behind this link really
-        // is gone, and the used-link screen is the honest answer.
-        if (
-          route?.kind !== "claim" &&
-          pending &&
-          callback &&
-          callbackMatchesPending(pending, callback)
-        ) {
+        if (pending && callback && callbackMatchesPending(pending, callback)) {
           setRetryableCompletion({ callback, pending });
-        }
-        if (route?.kind === "claim" && isUsedLinkError(cause)) {
-          const claimedRequestId = readClaimedHandoff(route.handoffToken);
-          const resumed = claimedRequestId
-            ? await call<HandoffState>("/state").catch(() => null)
-            : null;
-          if (resumed && resumed.requestId === claimedRequestId) {
-            window.history.replaceState(
-              {},
-              "",
-              handoffRequestPath(resumed.requestId),
-            );
-            setState(resumed);
-            return;
-          }
-          setUsedLink(true);
         }
         setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
       await refresh();
     })();
-  }, [isAuthLoading, refresh]);
+  }, [isAuthLoading, refresh, claimHandoff, settleFailedClaim]);
+
+  /** Retry a claim that failed without an answer, from the link in memory. */
+  const retryClaim = useCallback(async () => {
+    const link = claimLinkRef.current;
+    const route = link ? matchHandoffRoute(link.split(/[?#]/)[0] ?? "") : null;
+    if (route?.kind !== "claim") return;
+    setBusy(true);
+    setError(null);
+    setRetryableClaim(false);
+    try {
+      await claimHandoff(route.handoffToken);
+    } catch (cause) {
+      await settleFailedClaim(route.handoffToken, cause);
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await refresh();
+  }, [claimHandoff, settleFailedClaim, refresh]);
 
   /** Retry a failed `/authorize/complete` with the answer still in memory. */
   const retryCompletion = useCallback(async () => {
@@ -646,7 +706,9 @@ export function ServerConnectionHandoff() {
         <h1 className="text-lg font-semibold">
           {usedLink
             ? "This link was opened somewhere else"
-            : "This link cannot be used"}
+            : retryableClaim
+              ? "This link could not be opened yet"
+              : "This link cannot be used"}
         </h1>
         {usedLink ? (
           <p className="text-sm text-muted-foreground">
@@ -662,7 +724,11 @@ export function ServerConnectionHandoff() {
                 ? () => {
                     if (!busy) void retryCompletion();
                   }
-                : undefined
+                : retryableClaim
+                  ? () => {
+                      if (!busy) void retryClaim();
+                    }
+                  : undefined
             }
           />
         )}
