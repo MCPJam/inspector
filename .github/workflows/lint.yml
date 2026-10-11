@@ -57,6 +57,7 @@ jobs:
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
             .github/scripts/daily-release.test.mjs \
+            .github/scripts/daily-release-candidate.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
             .github/scripts/check-workos-loopback.test.mjs
 
