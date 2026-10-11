@@ -112,11 +112,13 @@ export const toolOutputDeniedChunk = (a: {
 export const toolOutputErrorChunk = (a: {
   toolCallId: string;
   errorText: string;
+  providerExecuted?: boolean;
 }): UIMessageChunk =>
   asChunk({
     type: "tool-output-error",
     toolCallId: a.toolCallId,
     errorText: a.errorText,
+    ...(a.providerExecuted ? { providerExecuted: true } : {}),
   });
 
 // ── finish / error ───────────────────────────────────────────────────────────
