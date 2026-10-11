@@ -41,6 +41,9 @@ describe("OAuthDebugCallback", () => {
 
     beforeEach(() => {
       window.name = "oauth_authorization_test";
+      // The popup closes itself 100ms after posting. A close that lands in
+      // the next test tears down jsdom's window under it.
+      vi.spyOn(window, "close").mockImplementation(() => undefined);
       Object.defineProperty(window, "opener", {
         configurable: true,
         value: { postMessage, closed: false },
