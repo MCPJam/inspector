@@ -125,13 +125,17 @@ async function openNormalPage(page: Page): Promise<void> {
 }
 
 /** An uncaught error, the way a real one reaches both SDKs' handlers. */
-async function throwUncaught(page: Page, message: string): Promise<void> {
+async function throwUncaught(
+  page: Page,
+  message: string,
+  settleMs = 200,
+): Promise<void> {
   await page.evaluate((text) => {
     setTimeout(() => {
       throw new Error(text);
     }, 0);
   }, message);
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(settleMs);
 }
 
 test("share links on a normal page at full: text, href and iframe src", async ({
@@ -362,7 +366,10 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.waitForTimeout(2_500);
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
-  await throwUncaught(page, "just before closing");
+  // Only long enough for both SDKs to take the error. A longer wait let
+  // PostHog's 3s request-queue timer empty the queue first now and then,
+  // leaving the unload flush nothing to send.
+  await throwUncaught(page, "just before closing", 20);
   // No waiting: the tab goes with PostHog's queue and replay buffer full.
   // Its unload flush runs first from the live page, so the beacon it sends
   // is one the route can read (`fireUnloadFlush`).
