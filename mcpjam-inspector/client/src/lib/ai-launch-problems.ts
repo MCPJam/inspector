@@ -73,8 +73,9 @@ function readProblems(value: unknown): AiLaunchProblem[] | undefined {
     const reason = typeof row.reason === "string" ? row.reason.trim() : "";
     if (!reason) continue;
     problems.push({
-      dependency:
-        typeof row.dependency === "string" ? row.dependency : "target",
+      // A row without a dependency reads under the generic "Dependency"
+      // heading, never as a model to change.
+      dependency: typeof row.dependency === "string" ? row.dependency : "",
       label: typeof row.label === "string" ? row.label : "",
       code: typeof row.code === "string" ? row.code : "",
       reason,
@@ -84,25 +85,26 @@ function readProblems(value: unknown): AiLaunchProblem[] | undefined {
 }
 
 /**
- * The `problems` a launch refusal carries, wherever the transport put them:
- * a ConvexError's `data`, an HTTP body (top level or under `details`), or an
- * error object holding either. `[]` when the failure is not such a refusal.
+ * The first thing `read` finds on an error or where the transports nest it:
+ * a ConvexError's `data`, an HTTP body (top level or under `details` /
+ * `body`), or either of those serialized as JSON in `data` or `message`.
  */
-export function aiLaunchProblemsOf(error: unknown): AiLaunchProblem[] {
+function readErrorShapes<T>(
+  error: unknown,
+  nestedKeys: readonly string[],
+  read: (record: Record<string, unknown>) => T | undefined,
+): T | undefined {
   const seen = new Set<unknown>();
-  const visit = (
-    value: unknown,
-    depth: number,
-  ): AiLaunchProblem[] | undefined => {
+  const visit = (value: unknown, depth: number): T | undefined => {
     if (!value || typeof value !== "object" || depth > 3 || seen.has(value))
       return undefined;
     seen.add(value);
     const record = value as Record<string, unknown>;
-    const direct = readProblems(record.problems) ?? readProblems(value);
-    if (direct) return direct;
-    for (const key of ["data", "details", "body", "problems"]) {
+    const direct = read(record);
+    if (direct !== undefined) return direct;
+    for (const key of nestedKeys) {
       const nested = visit(record[key], depth + 1);
-      if (nested) return nested;
+      if (nested !== undefined) return nested;
     }
     // A ConvexError whose data arrived serialized.
     for (const key of ["data", "message"]) {
@@ -110,29 +112,40 @@ export function aiLaunchProblemsOf(error: unknown): AiLaunchProblem[] {
       if (typeof text !== "string" || !text.trim().startsWith("{")) continue;
       try {
         const parsed = visit(JSON.parse(text), depth + 1);
-        if (parsed) return parsed;
+        if (parsed !== undefined) return parsed;
       } catch {
-        // Not JSON.
+        // Safe to ignore: text that only starts like JSON carries nothing to
+        // read. Not logged itself, since it can hold a provider's message.
+        console.debug("[ai-launch-problems] Error text is not JSON");
       }
     }
     return undefined;
   };
-  return visit(error, 0) ?? [];
+  return visit(error, 0);
 }
 
-/** The refusal's primary code (`org_keys_required`, …), when it is one. */
+/**
+ * The `problems` a launch refusal carries, wherever the transport put them.
+ * `[]` when the failure is not such a refusal.
+ */
+export function aiLaunchProblemsOf(error: unknown): AiLaunchProblem[] {
+  return (
+    readErrorShapes(
+      error,
+      ["data", "details", "body", "problems"],
+      (record) => readProblems(record.problems) ?? readProblems(record),
+    ) ?? []
+  );
+}
+
+/**
+ * The refusal's primary code (`org_keys_required`, …), when it is one, read
+ * from the same shapes as its problems.
+ */
 export function aiLaunchRefusalCodeOf(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const record = error as Record<string, unknown>;
-  for (const candidate of [
-    record.code,
-    (record.data as Record<string, unknown> | undefined)?.code,
-    (record.details as Record<string, unknown> | undefined)?.code,
-  ]) {
-    const code = orgKeysRefusalCodeOf(candidate);
-    if (code) return code;
-  }
-  return undefined;
+  return readErrorShapes(error, ["data", "details", "body"], (record) =>
+    orgKeysRefusalCodeOf(record.code),
+  );
 }
 
 /**
