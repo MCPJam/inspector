@@ -543,4 +543,30 @@ describe("judge rows with organization providers", () => {
     expect(currentIneligible).toBe(false);
     expect(current).toBe(orgRow);
   });
+
+  it("does not stand in the same model on another connection for a saved org judge under the policy", () => {
+    // The judge grades on its saved connection. When that one is gone, a row
+    // of the same model on another connection is not the saved judge.
+    const otherConnection: ModelDefinition = {
+      ...orgRow,
+      id: "anthropic/claude-sonnet-4.5",
+      orgProvider: { providerKey: "anthropic", id: "orgprov_other" },
+    };
+    const { current, currentIneligible } = judgeModelOptions(
+      [otherConnection],
+      {
+        currentModelId: "anthropic/claude-sonnet-4.5",
+        currentSelection: {
+          modelId: "anthropic/claude-sonnet-4.5",
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "orgprov_removed" },
+          fallback: { provider: "none", model: "none" },
+        },
+        managedDefaultModelId: "anthropic/claude-haiku-4.5",
+        requireOrgKeys: true,
+      },
+    );
+    expect(currentIneligible).toBe(true);
+    expect(isOrgKeysDisallowedRow(current)).toBe(true);
+  });
 });
