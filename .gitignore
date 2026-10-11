@@ -27,3 +27,6 @@ wt-*/
 .playwright-mcp/
 evaluators/dist/
 
+
+# Meticulous AI onboard workspace
+.meticulous-onboard/
