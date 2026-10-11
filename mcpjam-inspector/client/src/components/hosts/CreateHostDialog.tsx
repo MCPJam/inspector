@@ -434,7 +434,7 @@ export function CreateHostDialog({
           <GuestSignInMessage
             compact
             location="create_client_dialog"
-            message={`Sign in to use ${selectedTemplateLabel || "this client"}. It runs on a cloud computer tied to your account, so it's off for guests.`}
+            message={`Sign in to use ${selectedTemplateLabel || "this client"}. It runs in the cloud on your account, so it's off for guests.`}
           />
         )}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}

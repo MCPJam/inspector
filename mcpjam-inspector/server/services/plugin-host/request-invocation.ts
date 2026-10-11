@@ -92,6 +92,7 @@ export async function invokePluginRequest(
     projectId: actor.projectId,
     chatSessionId: `plugin-instance:${owner.instanceId}:${owner.generation}`,
   };
+  const deferred: (() => Promise<void>)[] = [];
   try {
     input.assertLive();
     const initial = await resolve(
@@ -147,12 +148,23 @@ export async function invokePluginRequest(
         409,
       );
     }
+    // The invoker's latest authorization that read current state, while
+    // nothing else has run since (no receipt write, approval, admission,
+    // metadata or tool call). The invoker always ends with such an
+    // authorization (after the effect, or around a replayed result), so the
+    // delivery check below stands on it instead of reading again.
+    let latest: { name: string; resolved: Resolved } | undefined;
+    const ran = () => {
+      primed = undefined;
+      latest = undefined;
+    };
     const authorize = async (
       ...[requestedOwner, requestedOrigin, next, signal, read]: [
         ...Parameters<PluginInvocationPorts["authorize"]>,
         PluginInstanceAdmissionRead?,
       ]
     ) => {
+      latest = undefined;
       input.assertLive();
       if (
         requestedOrigin !== origin ||
@@ -166,6 +178,7 @@ export async function invokePluginRequest(
       primed = undefined;
       const live = reuse ?? (await resolve(next.name, signal, read));
       assertOrigin(live);
+      if (!reuse) latest = { name: next.name, resolved: live };
       return {
         owner: requestedOwner,
         revision: live.revision,
@@ -180,15 +193,15 @@ export async function invokePluginRequest(
       // or suspended call) is an await: the first authorization reads again.
       receipts: receipts && {
         read: (...args) => {
-          primed = undefined;
+          ran();
           return receipts.read(...args);
         },
         claim: (...args) => {
-          primed = undefined;
+          ran();
           return receipts.claim(...args);
         },
         write: (...args) => {
-          primed = undefined;
+          ran();
           return receipts.write(...args);
         },
       },
@@ -201,6 +214,7 @@ export async function invokePluginRequest(
                 next: PluginToolCallParams,
                 signal: AbortSignal,
               ) => {
+                ran();
                 if (!runtime.resumeMrtr)
                   throw new PluginInvocationError(
                     "CONTINUATION_PROTOCOL_DENIED",
@@ -219,6 +233,7 @@ export async function invokePluginRequest(
       authorize,
       authorizeInstance: authorize,
       approve: async (authorization) => {
+        ran();
         if (
           !input.approval?.approved ||
           authorization.revision !== initial.revision
@@ -238,10 +253,12 @@ export async function invokePluginRequest(
       admit: combinedAdmission
         ? createPluginAdmissionNoop()
         : async (_authorization, _id, signal) => {
+            ran();
             signal.throwIfAborted();
             await admission.revalidate({ signal });
           },
       execute: async (authorization, next, signal) => {
+        ran();
         const metadata = input.hostMetadata
           ? await input.hostMetadata(next, signal)
           : next._meta;
@@ -277,6 +294,9 @@ export async function invokePluginRequest(
         return result;
       },
       classifyFailure: classifyPluginToolFailure,
+      defer: (work) => {
+        deferred.push(work);
+      },
     };
     let result: unknown;
     try {
@@ -291,12 +311,22 @@ export async function invokePluginRequest(
         throw new PluginToolCallFailure(error);
       throw error;
     }
-    // Duplicate delivery still requires this request's current actor and authority.
+    // Duplicate delivery still requires this request's current actor and
+    // authority. When the invoker's last step was a full authorization of
+    // this tool (admission included) and nothing ran after it, delivery
+    // stands on that read: it was taken after the effect, with no write or
+    // wait since. Otherwise it reads again.
     try {
-      if (!combinedAdmission)
+      const settled =
+        combinedAdmission && latest?.name === params.name
+          ? latest.resolved
+          : undefined;
+      if (!settled && !combinedAdmission)
         await admission.revalidate({ signal: c.req.raw.signal });
       input.assertLive();
-      const delivery = await resolve(params.name, c.req.raw.signal);
+      const delivery =
+        settled ?? (await resolve(params.name, c.req.raw.signal));
+      input.assertLive();
       assertOrigin(delivery);
       if (delivery.revision !== initial.revision)
         throw new PluginInvocationError("INSTANCE_DENIED");
@@ -321,5 +351,7 @@ export async function invokePluginRequest(
     throw error;
   } finally {
     await runtime.release();
+    // Records that no longer gate the answer (see `PluginInvocationPorts.defer`).
+    for (const work of deferred.splice(0)) void work().catch(() => {});
   }
 }

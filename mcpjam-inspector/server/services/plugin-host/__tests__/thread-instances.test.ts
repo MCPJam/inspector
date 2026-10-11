@@ -512,7 +512,25 @@ describe("durable thread App ownership", () => {
     expect(f.ports.execute).not.toHaveBeenCalled();
     expect(f.ports.approve).not.toHaveBeenCalled();
   });
-  it.each([0, 1, 3])(
+  it.each([1, 2])(
+    "accepts a coordinated authorization with %i ownership fences (warm, cold)",
+    async (count) => {
+      const f = await ownedInvocation();
+      f.ports.authorizeInstance = vi.fn(
+        async (_owner, _origin, _params, _signal, together) => {
+          for (let i = 0; i < count; i++) await together(async () => i);
+          return f.authorization;
+        },
+      );
+      await f.invoke();
+      expect(f.ports.execute).toHaveBeenCalledOnce();
+      // Each fenced read is one durable control read beside admission.
+      expect(f.read.mock.calls.length).toBe(
+        vi.mocked(f.ports.authorizeInstance!).mock.calls.length * count,
+      );
+    },
+  );
+  it.each([0, 3])(
     "refuses a coordinated adapter with %i ownership fences",
     async (count) => {
       const f = await ownedInvocation();
@@ -568,7 +586,56 @@ describe("durable thread App ownership", () => {
     expect(calls).toBeGreaterThan(1);
     expect(f.read.mock.calls.length - fenceReads).toBe((calls - 1) * 2);
   });
-  it.each([0, 1])(
+  it("lets a one-read route fence (a warm resolution) serve the first authorization", async () => {
+    const f = await ownedInvocation();
+    const fence = f.registry.fence(f.opened.token, identity, signal());
+    await fence.read(async () => "before-catalog");
+    const fenceReads = f.read.mock.calls.length;
+    await fencedInvoke(f, fence, (call) => (call === 0 ? 0 : 1));
+    expect(f.ports.execute).toHaveBeenCalledOnce();
+    const calls = vi.mocked(f.ports.authorizeInstance!).mock.calls.length;
+    expect(f.read.mock.calls.length - fenceReads).toBe(calls - 1);
+  });
+  it("stands the route's first fenced read on the request's own control read, once", async () => {
+    const f = await ownedInvocation();
+    const queries: string[] = [];
+    const { instance, fence } = await f.registry.readFenced(
+      f.opened.token,
+      identity,
+      signal(),
+    );
+    expect(instance.owner).toEqual(f.opened.instance.owner);
+    // readFenced made the control read; the first fenced read adds only the
+    // admission query beside it, the second makes both legs again.
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await fence.read(async () => queries.push("first"));
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await fence.read(async () => queries.push("second"));
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(queries).toEqual(["first", "second"]);
+    // A plain fence never skips its control leg.
+    const plain = f.registry.fence(f.opened.token, identity, signal());
+    await plain.read(async () => "plain");
+    expect(f.read).toHaveBeenCalledTimes(3);
+  });
+  it("refuses a closed App at the primed first read without a second control read", async () => {
+    const f = await ownedInvocation();
+    const { fence } = await f.registry.readFenced(
+      f.opened.token,
+      identity,
+      signal(),
+    );
+    await f.registry.closePersistent(
+      f.opened.token,
+      identity,
+      signal(),
+      f.s.port,
+    );
+    const query = vi.fn(async () => "never");
+    await expect(fence.read(query)).rejects.toThrow("INSTANCE_UNAVAILABLE");
+    expect(query).not.toHaveBeenCalled();
+  });
+  it.each([0])(
     "refuses to stand on a route fence with %i reads",
     async (count) => {
       const f = await ownedInvocation();

@@ -109,7 +109,18 @@ export interface PluginInvocationPorts {
   ) => Promise<unknown>;
   /** Only an authoritative server failure can classify a dispatched error as known. */
   classifyFailure: (error: unknown) => "failed" | "unknown";
+  /** Run `work` once this request's response is decided, off its critical
+   * path. When present, the final receipt of a call with a known result is
+   * written through it (see `AuthorizedToolInvoker.persistLater`); without
+   * it that write gates the result, as before. */
+  defer?: (work: () => Promise<void>) => void;
 }
+
+/** How many times a deferred final receipt write is tried, and the wait
+ * before each retry. Only a transport failure is retried. */
+export const PLUGIN_DEFERRED_RECEIPT_ATTEMPTS = 3;
+const DEFERRED_RECEIPT_RETRY_MS = 250;
+const DEFERRED_RECEIPT_TIMEOUT_MS = 15_000;
 
 export interface PluginContinuationSubmission {
   continuationId: string;
@@ -768,6 +779,7 @@ export class AuthorizedToolInvoker {
           }
           if (claimed)
             await this.persistResult(
+              this.ports.receipts!,
               invocationId,
               writerHash,
               submission.round,
@@ -953,7 +965,53 @@ export class AuthorizedToolInvoker {
     }
   }
 
+  /**
+   * Record a known final result once the response is decided (`defer`),
+   * retrying a transport failure a bounded number of times. Safe because the
+   * leg is already `dispatched` before the call: until this write lands, and
+   * forever if it never does, every reader of the receipt sees an uncertain
+   * outcome (INVOCATION_OUTCOME_UNKNOWN) and never runs the call again. The
+   * live request still answers with its result, and this process's own
+   * replays read it from memory. Uses the request's receipt port as captured
+   * now, never the request's signal: the response may already be gone.
+   */
+  private persistLater(
+    defer: NonNullable<PluginInvocationPorts["defer"]>,
+    id: string,
+    writerHash: string,
+    round: number,
+    value: unknown,
+  ) {
+    const receipts = this.ports.receipts!;
+    defer(async () => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await this.persistResult(
+            receipts,
+            id,
+            writerHash,
+            round,
+            value,
+            AbortSignal.timeout(DEFERRED_RECEIPT_TIMEOUT_MS),
+          );
+          return;
+        } catch (error) {
+          if (
+            attempt >= PLUGIN_DEFERRED_RECEIPT_ATTEMPTS ||
+            !(error instanceof PluginInvocationError) ||
+            error.code !== "RECEIPT_STORE_UNAVAILABLE"
+          )
+            return;
+          await new Promise((done) =>
+            setTimeout(done, DEFERRED_RECEIPT_RETRY_MS * attempt).unref?.(),
+          );
+        }
+      }
+    });
+  }
+
   private async persistResult(
+    receipts: PluginInvocationReceiptPort,
     id: string,
     writerHash: string,
     round: number,
@@ -966,7 +1024,7 @@ export class AuthorizedToolInvoker {
       typeof valueJson !== "string" ||
       Buffer.byteLength(valueJson) > INVOCATION_RECEIPT_VALUE_BYTES
     ) {
-      await this.ports.receipts!.write(
+      await receipts.write(
         id,
         {
           writerHash,
@@ -978,7 +1036,7 @@ export class AuthorizedToolInvoker {
       );
       return;
     }
-    await this.ports.receipts!.write(
+    await receipts.write(
       id,
       {
         writerHash,
@@ -1118,12 +1176,23 @@ export class AuthorizedToolInvoker {
     let dispatched = false;
     const writerHash = randomBytes(32).toString("hex");
     let claimed = false;
+    // The durable leg already says `dispatched` (claimed and marked in one
+    // write), so no separate dispatch write follows.
+    let marked = false;
     try {
       params = sanitizePluginToolParams(params);
       let authorization = await this.resolve(origin, params, signal);
       const revision = authorization.revision;
       receipt.revision = revision;
       if (this.ports.receipts) {
+        // Claim and mark dispatched in ONE write when nothing gated runs
+        // between them: no approval, no admission or metadata service. The
+        // store still checks the instance is live in that same transaction,
+        // and a fresh authorization still follows before the effect.
+        const dispatch =
+          !authorization.requiresApproval &&
+          noAdmissionWork.has(this.ports.admit) &&
+          !this.ports.metadata;
         const claim = await awaitOwned(signal, () =>
           this.ports.receipts!.claim(
             invocationId,
@@ -1133,6 +1202,7 @@ export class AuthorizedToolInvoker {
               writerHash,
               round: 0,
               legFingerprint: receipt.fingerprint,
+              ...(dispatch ? { dispatch: true as const } : {}),
             },
             signal,
           ),
@@ -1142,6 +1212,13 @@ export class AuthorizedToolInvoker {
           return this.replay(origin, params, receipt, receipt.result, signal);
         }
         claimed = true;
+        // The store's own answer says whether it marked the leg: an older
+        // store refuses the combined claim, and the port falls back to a
+        // plain one that leaves the leg reserved.
+        marked =
+          dispatch &&
+          claim.receipt.legs.find((leg) => leg.round === 0)?.state ===
+            "dispatched";
         authorization = await this.resolve(origin, params, signal);
         if (authorization.revision !== revision) fail("AUTHORIZATION_CHANGED");
       }
@@ -1187,7 +1264,7 @@ export class AuthorizedToolInvoker {
         authorization = await this.resolve(origin, params, signal);
         if (authorization.revision !== revision) fail("AUTHORIZATION_CHANGED");
       }
-      if (claimed) {
+      if (claimed && !marked) {
         await this.ports.receipts!.write(
           invocationId,
           { writerHash, round: 0, state: "dispatched" },
@@ -1204,8 +1281,26 @@ export class AuthorizedToolInvoker {
       if (completed.revision !== revision) fail("AUTHORIZATION_CHANGED");
       if (result instanceof PluginInvocationSuspension)
         receipt.pending = result;
-      if (claimed)
-        await this.persistResult(invocationId, writerHash, 0, result, signal);
+      if (claimed) {
+        // A suspension's record is what its continuation reads next, so it
+        // is written before the response; a known final result's record is
+        // not needed to answer this request.
+        const defer =
+          result instanceof PluginInvocationSuspension
+            ? undefined
+            : this.ports.defer;
+        if (defer)
+          this.persistLater(defer, invocationId, writerHash, 0, result);
+        else
+          await this.persistResult(
+            this.ports.receipts!,
+            invocationId,
+            writerHash,
+            0,
+            result,
+            signal,
+          );
+      }
       return result;
     } catch (error) {
       // A cancelled/revoked owner cannot deliver a result or safely retry a

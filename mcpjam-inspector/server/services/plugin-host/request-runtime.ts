@@ -47,6 +47,7 @@ import {
   openAILegacyFormSchemas,
 } from "../../../shared/plugin-extensions/wire.js";
 import {
+  PLUGIN_CONNECTION_WAIT_MS,
   pluginConnectionPool,
   type PluginConnectionHooks,
   type PooledPluginConnection,
@@ -277,9 +278,22 @@ export function createPluginRequestRuntime(
     mrtr = undefined;
   };
   const directRead: PluginInstanceAdmissionRead = (read) => read();
+  type Tool = Awaited<
+    ReturnType<Lease["manager"]["listTools"]>
+  >["tools"][number];
+  // The declarations this request listed on its lease (see `connect`).
+  let listed: { lease: Lease; tools: Map<string, Tool> } | undefined;
+  /** A form step: a human could act before the next resolution, which must
+   * therefore read everything again, its catalog included. */
+  const humanInput = () => {
+    listed = undefined;
+  };
   const connect = async (
     signal: AbortSignal,
     read: PluginInstanceAdmissionRead = directRead,
+    /** The tool a resolution looks for: it may stand on this request's
+     * listing of it (see below). Catalog reads pass none. */
+    reuseName?: string,
   ) => {
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     signal.throwIfAborted();
@@ -350,6 +364,8 @@ export function createPluginRequestRuntime(
       services: {},
     });
     const assertCurrent = async () => {
+      // Every form step re-reads here; a person may be acting on the form.
+      humanInput();
       signal.throwIfAborted();
       if (!expected) throw denied();
       pluginInstances.getFormOwner(expected.owner, {
@@ -451,6 +467,7 @@ export function createPluginRequestRuntime(
               }),
               assertCurrent,
               bindForm: async (input) => {
+                humanInput();
                 // Just after this form's own fresh admission read: a form
                 // asked for while Forms is off is never shown. The server
                 // gets a cancel, and the client's Logs say why.
@@ -583,12 +600,99 @@ export function createPluginRequestRuntime(
     let candidate: Lease | undefined =
       lease && lease.key === key && !lease.closed ? lease : undefined;
     if (!candidate && lease) await dropLease(true);
-    candidate ??= pluginConnectionPool.acquire(key, lessee);
+    // Another request of this actor and binding may be finishing on the
+    // pooled connection (the App's first call during its activation): wait
+    // briefly for it rather than authorize and initialize a second one.
+    candidate ??= await pluginConnectionPool.acquireWithin<Lease["manager"]>(
+      key,
+      lessee,
+      PLUGIN_CONNECTION_WAIT_MS,
+      signal,
+    );
+    if (disposed) {
+      if (candidate)
+        await pluginConnectionPool.release(candidate, lessee, true);
+      throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
+    }
     if (candidate) lease = candidate;
+    signal.throwIfAborted();
     const sameBinding =
       !!candidate &&
       (!expected || candidate.bindingId === expected.owner.bindingId);
-    if (!candidate || !sameBinding || !pluginConnectionPool.authorized(candidate)) {
+    /** FULL target and credential authorization (no MCP initialize). */
+    const authorizeTarget = (hooks: PluginConnectionHooks) =>
+      createManualHostedConnection(
+        c,
+        projectServerSchema.parse({
+          projectId: admission.projectId,
+          serverId: binding.serverId,
+        }),
+        projectServerSchema,
+        {
+          lazyConnect: true,
+          extensionRequestHandlers: legacyForms
+            ? {
+                [binding.serverId]: [
+                  {
+                    method: OPENAI_LEGACY_FORM_METHOD,
+                    schemas: openAILegacyFormSchemas,
+                    waitsForInput: true,
+                    legacyClaim: OPENAI_LEGACY_FORM_EXTENSION,
+                    handler: async (request: {
+                      params?: Record<string, unknown>;
+                    }) => {
+                      const handler = hooks.legacy;
+                      if (!handler) throw denied();
+                      return handler(request);
+                    },
+                  },
+                ],
+              }
+            : undefined,
+          hostConfig: { ...config, clientCapabilities },
+        },
+      );
+    const authorizationOf = (
+      created: Awaited<ReturnType<typeof authorizeTarget>>,
+    ) => {
+      const identity = created.authorizedServerIdentities?.[binding.serverId];
+      return {
+        target: created.authorizedServerConfigs?.[binding.serverId],
+        // Hash only: no target credentials enter the retained instance or response.
+        bindingId: pluginServerBindingDigest(identity),
+        transport: (
+          identity as { config?: { transportType?: unknown } } | undefined
+        )?.config?.transportType as string | undefined,
+      };
+    };
+    // Set when this call ran full target authorization or opened the MCP
+    // session: long external work the caller reads again after.
+    let cold = false;
+    if (
+      candidate &&
+      sameBinding &&
+      pluginConnectionPool.authorized(candidate)
+    ) {
+      // In active use: re-authorize ahead of the window, off this request's
+      // critical path (connection-pool.ts). This request keeps standing on
+      // the current authorization, which is still inside its window.
+      const entry = candidate;
+      const startedAt = pluginConnectionPool.beginRefresh(entry);
+      if (startedAt !== undefined)
+        void timedPluginStep("authorize-refresh", async () => {
+          let authorization;
+          try {
+            const created = await authorizeTarget({});
+            // The refresh only proves the target; its session is never used.
+            await created.manager.disconnectAllServers().catch(() => {});
+            authorization = authorizationOf(created);
+          } catch {
+            authorization = undefined;
+          }
+          pluginConnectionPool.endRefresh(entry, startedAt, authorization);
+        });
+    } else {
+      cold = true;
       const hooks: PluginConnectionHooks = {};
       // A refused or changed full authorization retires the stale session:
       // no later request may reuse it.
@@ -596,38 +700,7 @@ export function createPluginRequestRuntime(
         if (candidate && lease === candidate) await dropLease(false);
       };
       const created = await timedPluginStep("authorize-connection", () =>
-        createManualHostedConnection(
-          c,
-          projectServerSchema.parse({
-            projectId: admission.projectId,
-            serverId: binding.serverId,
-          }),
-          projectServerSchema,
-          {
-            lazyConnect: true,
-            extensionRequestHandlers:
-              legacyForms
-                ? {
-                    [binding.serverId]: [
-                      {
-                        method: OPENAI_LEGACY_FORM_METHOD,
-                        schemas: openAILegacyFormSchemas,
-                        waitsForInput: true,
-                        legacyClaim: OPENAI_LEGACY_FORM_EXTENSION,
-                        handler: async (request: {
-                          params?: Record<string, unknown>;
-                        }) => {
-                          const handler = hooks.legacy;
-                          if (!handler) throw denied();
-                          return handler(request);
-                        },
-                      },
-                    ],
-                  }
-                : undefined,
-            hostConfig: { ...config, clientCapabilities },
-          },
-        ),
+        authorizeTarget(hooks),
       ).catch(async (error: unknown) => {
         await retire();
         throw error;
@@ -639,16 +712,7 @@ export function createPluginRequestRuntime(
       }
       let adopted: Lease | undefined;
       try {
-        const target = created.authorizedServerConfigs?.[binding.serverId];
-        // Hash only: no target credentials enter the retained instance or response.
-        const bindingId = pluginServerBindingDigest(
-          created.authorizedServerIdentities?.[binding.serverId],
-        );
-        const transport = (
-          created.authorizedServerIdentities?.[binding.serverId] as
-            | { config?: { transportType?: unknown } }
-            | undefined
-        )?.config?.transportType as string | undefined;
+        const { target, bindingId, transport } = authorizationOf(created);
         if (expected && bindingId !== expected.owner.bindingId) {
           throw new PluginInvocationError("INSTANCE_CONNECTION_CHANGED");
         }
@@ -716,14 +780,26 @@ export function createPluginRequestRuntime(
       throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     attach(lease);
     const manager = lease.manager;
-    // Every resolution still fetches a current catalog from the admitted
-    // connection. No cached declaration grants execution.
-    const initialCatalog = await timedPluginStep("tools-list", () =>
-      manager.listTools(binding.serverId, undefined, {
-        signal,
-        cacheMode: "bypass",
-      }),
-    );
+    // A request's first resolution fetches a current catalog from the
+    // admitted connection. A later one in the SAME request, on the same warm
+    // lease, stands on the declaration that request listed: everything it
+    // authorizes (actor, member, host, server, toggles, durable control) was
+    // just read again above. A form shown since (a human could act during
+    // it) drops the listing, as does any change of lease. Nothing listed is
+    // ever kept beyond this request.
+    const kept =
+      reuseName !== undefined && !cold && listed?.lease === lease
+        ? listed.tools.get(reuseName)
+        : undefined;
+    const initialCatalog = kept
+      ? { tools: [kept], nextCursor: undefined }
+      : await timedPluginStep("tools-list", () =>
+          manager.listTools(binding.serverId, undefined, {
+            signal,
+            cacheMode: "bypass",
+          }),
+        );
+    if (!kept) listed = undefined;
     signal.throwIfAborted();
     const negotiatedVersion = manager.getInitializationInfo(
       binding.serverId,
@@ -752,6 +828,10 @@ export function createPluginRequestRuntime(
     return {
       manager,
       initialCatalog,
+      /** Full target authorization or MCP initialize ran in this call. */
+      cold,
+      /** The first page is this request's earlier listing, not a new one. */
+      kept: !!kept,
       protocolVersion: negotiatedVersion,
       hostRevision,
       bindingId: lease.bindingId,
@@ -784,8 +864,10 @@ export function createPluginRequestRuntime(
     };
   };
   type Connection = Awaited<ReturnType<typeof connect>>;
+  /** The connection facts a resolution reports (not how it got them). */
+  type Admitted = Omit<Connection, "initialCatalog" | "cold" | "kept">;
   const verify = async (
-    current: Omit<Connection, "initialCatalog">,
+    current: Admitted,
     signal: AbortSignal,
     read: PluginInstanceAdmissionRead = directRead,
   ) => {
@@ -831,17 +913,22 @@ export function createPluginRequestRuntime(
   };
   // The last admitted connection facts this request resolved, for the final
   // single-read fence. Never retained beyond this request.
-  let lastAdmitted: Omit<Connection, "initialCatalog"> | undefined;
+  let lastAdmitted: Admitted | undefined;
   const resolve = (
     name: string,
     signal: AbortSignal,
     read: PluginInstanceAdmissionRead = directRead,
   ) =>
     owned(async () => {
-      const { initialCatalog, ...current } = await connect(signal, read);
+      const { initialCatalog, cold, kept, ...current } = await connect(
+        signal,
+        read,
+        name,
+      );
       lastAdmitted = current;
       let cursor: string | undefined;
       const seen = new Set<string>();
+      const listedOn = lease;
       for (let page = 0; page < 64; page++) {
         const catalog =
           page === 0
@@ -852,9 +939,18 @@ export function createPluginRequestRuntime(
                 { signal, cacheMode: "bypass" },
               );
         signal.throwIfAborted();
+        if (!kept && listedOn) {
+          // Remember what this request listed, for its later resolutions.
+          if (page === 0) listed = { lease: listedOn, tools: new Map() };
+          for (const tool of catalog.tools)
+            if (!listed!.tools.has(tool.name) && listed!.tools.size < 4096)
+              listed!.tools.set(tool.name, tool);
+        }
         const tool = catalog.tools.find((candidate) => candidate.name === name);
         if (tool) {
-          await verify(current, signal, read);
+          // After a cold authorization or initialize (long external work),
+          // read again before anything stands on this resolution.
+          if (cold) await verify(current, signal, read);
           return resolvePluginCatalogTool({ ...current, tools: [tool] }, name);
         }
         if (typeof catalog.nextCursor !== "string") break;
@@ -865,9 +961,11 @@ export function createPluginRequestRuntime(
       }
       throw new PluginInvocationError("INSTANCE_TOOL_UNAVAILABLE");
     });
-  // Each resolution checks actor/member/rollout and host/server both before
-  // and after catalog work. The invoker can coalesce admission-only reads
-  // immediately adjacent to this full resolution without retaining authority.
+  // Each resolution reads actor/member/rollout, host/server and the caller's
+  // durable control (its `read` fence) before its catalog work, and again
+  // after it when that work authorized or opened the connection cold. The
+  // invoker can coalesce admission-only reads immediately adjacent to this
+  // full resolution without retaining authority.
   registerPluginAdmissionResolver(resolve);
   /** Headless discovery shares exactly the same actor, installed version and target admission. */
   const catalog = (
@@ -875,7 +973,12 @@ export function createPluginRequestRuntime(
     read: PluginInstanceAdmissionRead = directRead,
   ) =>
     owned(async () => {
-      const { initialCatalog, ...current } = await connect(signal, read);
+      const {
+        initialCatalog,
+        cold,
+        kept: _kept,
+        ...current
+      } = await connect(signal, read);
       lastAdmitted = current;
       if (!current.protocolVersion)
         throw new PluginInvocationError("INSTANCE_PROTOCOL_UNAVAILABLE");
@@ -902,7 +1005,7 @@ export function createPluginRequestRuntime(
           tools.push(tool);
         }
         if (typeof result.nextCursor !== "string") {
-          await verify(current, signal, read);
+          if (cold) await verify(current, signal, read);
           return {
             ...current,
             tools,

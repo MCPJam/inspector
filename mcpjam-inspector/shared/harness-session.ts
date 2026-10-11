@@ -342,3 +342,135 @@ export function isHarnessSubagentStepDataPart(
   if (data.kind === "tool-call") return typeof data.toolName === "string";
   return data.kind === "tool-result" && typeof data.isError === "boolean";
 }
+
+/**
+ * The agent's own plan for the turn, as a checklist: Codex's `update_plan`,
+ * which the app-server reports as `turn/plan/updated` with the WHOLE plan each
+ * time. NOT transient: the part sits in the reply where the plan first
+ * appeared, and each update replaces it in place (same `id`). Like every data
+ * part it is never sent to the model, and a reload shows the answers only.
+ */
+export type HarnessPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export interface HarnessPlanInfo {
+  explanation?: string;
+  steps: Array<{ step: string; status: HarnessPlanStepStatus }>;
+}
+
+export interface HarnessPlanDataPart {
+  type: "data-harness-plan";
+  id?: string;
+  data: HarnessPlanInfo;
+}
+
+const PLAN_STEPS_MAX = 50;
+const PLAN_STATUSES = new Set<HarnessPlanStepStatus>([
+  "pending",
+  "inProgress",
+  "completed",
+]);
+
+/**
+ * Read Codex's `turn/plan/updated` notification (a `raw` passthrough). Returns
+ * the plan and the turn it belongs to; anything else is not a plan.
+ */
+export function harnessPlanFromRaw(
+  rawValue: unknown,
+): { turnId?: string; plan: HarnessPlanInfo } | undefined {
+  if (!rawValue || typeof rawValue !== "object") return undefined;
+  const raw = rawValue as Record<string, unknown>;
+  if (raw.method !== "turn/plan/updated") return undefined;
+  const params = raw.params as Record<string, unknown> | undefined;
+  if (!params || !Array.isArray(params.plan)) return undefined;
+  const steps: HarnessPlanInfo["steps"] = [];
+  for (const entry of params.plan.slice(0, PLAN_STEPS_MAX)) {
+    const item = entry as Record<string, unknown> | null;
+    const step = optionalString(item?.step);
+    const status = item?.status as HarnessPlanStepStatus;
+    if (!step || !PLAN_STATUSES.has(status)) continue;
+    steps.push({ step: step.slice(0, STEP_STRING_MAX), status });
+  }
+  const explanation = optionalString(params.explanation);
+  const turnId = optionalString(params.turnId);
+  return {
+    ...(turnId ? { turnId } : {}),
+    plan: {
+      ...(explanation
+        ? { explanation: explanation.slice(0, STEP_STRING_MAX) }
+        : {}),
+      steps,
+    },
+  };
+}
+
+export function isHarnessPlanDataPart(
+  value: unknown,
+): value is HarnessPlanDataPart {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== "data-harness-plan") return false;
+  const data = candidate.data as Record<string, unknown> | undefined;
+  return (
+    !!data &&
+    typeof data === "object" &&
+    Array.isArray(data.steps) &&
+    data.steps.every(
+      (step) =>
+        !!step &&
+        typeof (step as Record<string, unknown>).step === "string" &&
+        PLAN_STATUSES.has(
+          (step as Record<string, unknown>).status as HarnessPlanStepStatus,
+        ),
+    )
+  );
+}
+
+/**
+ * Output a running command printed, as it prints it: Codex's
+ * `item/commandExecution/outputDelta`. `toolCallId` is the command's item id,
+ * which is the id of its `bash` tool call. Transient: the command's full output
+ * still arrives as the tool call's result.
+ */
+export interface HarnessToolOutputInfo {
+  toolCallId: string;
+  delta: string;
+}
+
+export interface HarnessToolOutputDataPart {
+  type: "data-harness-tool-output";
+  data: HarnessToolOutputInfo;
+}
+
+/** One delta's ceiling; a chunk past it is cut, not dropped. */
+export const HARNESS_TOOL_OUTPUT_DELTA_MAX = 4096;
+
+export function harnessToolOutputFromRaw(
+  rawValue: unknown,
+): HarnessToolOutputInfo | undefined {
+  if (!rawValue || typeof rawValue !== "object") return undefined;
+  const raw = rawValue as Record<string, unknown>;
+  if (raw.method !== "item/commandExecution/outputDelta") return undefined;
+  const params = raw.params as Record<string, unknown> | undefined;
+  const toolCallId = optionalString(params?.itemId);
+  const delta = optionalString(params?.delta);
+  if (!toolCallId || !delta) return undefined;
+  return {
+    toolCallId,
+    delta: delta.slice(0, HARNESS_TOOL_OUTPUT_DELTA_MAX),
+  };
+}
+
+export function isHarnessToolOutputDataPart(
+  value: unknown,
+): value is HarnessToolOutputDataPart {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== "data-harness-tool-output") return false;
+  const data = candidate.data as Record<string, unknown> | undefined;
+  return (
+    !!data &&
+    typeof data === "object" &&
+    typeof data.toolCallId === "string" &&
+    typeof data.delta === "string"
+  );
+}

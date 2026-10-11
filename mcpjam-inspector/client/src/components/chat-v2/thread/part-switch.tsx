@@ -18,6 +18,8 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
 import { AskUserPart } from "./parts/ask-user-part";
+import { HarnessPlanPart } from "./parts/harness-plan-part";
+import { isHarnessPlanDataPart } from "@/shared/harness-session";
 import {
   ASK_USER_TOOL_NAME,
   useAskUserCallIsOurs,
@@ -871,6 +873,10 @@ function LivePartSwitch({
     return (
       <ContextAttachmentChip id="mention" title={link.title ?? link.name} />
     );
+  }
+  // The agent's own plan (Codex `update_plan`), as a checklist.
+  if (isHarnessPlanDataPart(part)) {
+    return <HarnessPlanPart plan={part.data} />;
   }
   if (isDataPart(part)) {
     return (

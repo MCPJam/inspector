@@ -34,7 +34,11 @@ import { useAppNavigate, useCurrentSearchParam } from "@/lib/app-navigation";
  * to the selected organization; the hint does not grant membership. Other query
  * parameters, including the deprecated `context` hand-off, stay ignored.
  */
-export function LoginInitiationRoute() {
+export function LoginInitiationRoute({
+  onAlreadySignedIn,
+}: {
+  onAlreadySignedIn?: () => void;
+} = {}) {
   const {
     user,
     organizationId: currentOrganizationId,
@@ -78,7 +82,8 @@ export function LoginInitiationRoute() {
     // An existing session in another organization must still use the requested
     // SSO connection. Reopening a link for the current organization is a no-op.
     if (user && (!organizationId || organizationId === currentOrganizationId)) {
-      navigate("/", { replace: true });
+      if (onAlreadySignedIn) onAlreadySignedIn();
+      else navigate("/", { replace: true });
       return;
     }
     startSignIn();
@@ -89,6 +94,7 @@ export function LoginInitiationRoute() {
     currentOrganizationId,
     startSignIn,
     navigate,
+    onAlreadySignedIn,
   ]);
 
   if (failed) {

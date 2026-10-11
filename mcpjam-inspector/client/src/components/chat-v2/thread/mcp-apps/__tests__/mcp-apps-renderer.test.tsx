@@ -54,7 +54,8 @@ const {
   const appBridgeArgsRef = { current: null as any };
   const mockAppBridgeCtor = vi
     .fn()
-    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+    // Constructed with `new`, which Vitest 4 rejects for arrow implementations.
+    .mockImplementation(function (client, hostInfo, hostCapabilities, options) {
       appBridgeArgsRef.current = {
         client,
         hostInfo,
@@ -1427,6 +1428,37 @@ describe("MCPAppsRenderer tool input streaming", () => {
     it("keeps an entrypoint (not a model App) fullscreen only", async () => {
       const { state } = mountChat("thread");
       await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+    });
+
+    it("opens an entrypoint whose App declares only inline, in the fullscreen the host chose", async () => {
+      const owned = handle as unknown as { widgetContent: unknown };
+      const original = owned.widgetContent;
+      owned.widgetContent = {
+        html: "<html><body>inline-only fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "inline",
+          availableDisplayModes: ["inline"],
+        },
+      };
+      try {
+        const { state } = mountChat("global");
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue({
+          availableDisplayModes: ["inline"],
+        });
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(
+          screen.queryByText(/This App has no supported display mode/),
+        ).toBeNull();
+      } finally {
+        owned.widgetContent = original;
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      }
     });
   });
 

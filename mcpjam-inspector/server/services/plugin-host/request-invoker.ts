@@ -50,6 +50,11 @@ export class RequestOwnedToolInvoker {
         },
         execute: (...args) => ports().execute(...args),
         classifyFailure: (error) => ports().classifyFailure(error),
+        get defer() {
+          // The request's own scheduler, read while that request is live;
+          // work it accepts never reaches back into settled request ports.
+          return ports().defer;
+        },
       },
       2048,
       observe,

@@ -168,6 +168,16 @@ describe("shouldShowComputerToggle", () => {
     ).toBe(false);
   });
 
+  it("always hides for a harness client, even with a computer attached", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: true,
+        computerAttached: true,
+        hasHarness: true,
+      }),
+    ).toBe(false);
+  });
+
   it("always hides when disallowed (eval suites), even if a computer is attached", () => {
     expect(
       shouldShowComputerToggle({

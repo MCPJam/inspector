@@ -470,6 +470,7 @@ export type {
  */
 export {
   GRADING_POLICY_READ_REFUSALS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   gradingPolicyForReportedRun,
   gradingPolicyFromLoadedSuiteFile,

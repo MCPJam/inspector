@@ -25,6 +25,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 20
     name: Build and Test
 
     steps:
@@ -99,6 +102,14 @@ jobs:
 
       - name: Typecheck inspector client
         run: npm run typecheck:client -w @mcpjam/inspector
+
+      # A ratchet, not a clean gate: server/tsc-baseline.json holds each
+      # server file's current error count, and a file may only go down. Runs
+      # before the build so the count matches a fresh checkout.
+      - name: Typecheck inspector server
+        run: |
+          node --test mcpjam-inspector/scripts/__tests__/typecheck-server.test.mjs
+          npm run typecheck:server -w @mcpjam/inspector
 
       - name: Build inspector package
         run: npm run build:inspector

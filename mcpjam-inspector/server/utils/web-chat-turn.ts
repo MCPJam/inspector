@@ -85,7 +85,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { decideTurnRail } from "./selection-rail.js";
+import { decideTurnRail, harnessTurnRail } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
@@ -111,10 +111,7 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
-import {
-  getHarnessAdapter,
-  harnessUsesExternalAccount,
-} from "./harness/registry.js";
+import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
@@ -306,6 +303,12 @@ export interface WebChatTurnPersistContext {
    * the same place `harness` and `executionScope` already travel.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The Playground's HIDDEN environment, HARNESS side: the turn delivers the
+   * project's live skill pool beside `runtimeSkillsOverride` (the harness's
+   * `live_plus` source). Forwarded verbatim; never inferred downstream.
+   */
+  includeProjectSkills?: boolean;
   /**
    * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
    * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
@@ -1234,30 +1237,32 @@ export async function streamWebChatTurn(
       model: prepare.modelDefinition,
     }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
-  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
-  //
-  // Without this the branch below sends a Cursor turn down the org-BYOK path,
-  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
-  // approve the turn and the turn would then run on a completely different
-  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
-  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
-  // product just told the user was ready.
-  //
-  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
-  // model", and an external-account turn is exactly the case where it does not.
-  // The two reasons to take the non-BYOK branch are different facts, so they
-  // stay separate values.
-  const isExternalAccountHarnessTurn =
-    !!persist.harness && harnessUsesExternalAccount(persist.harness);
-  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted: without it the
+  // branch below would send a Cursor turn down the org-BYOK path, which never
+  // reaches `runHarnessTurn`. …OR a brokered harness on the ORGANIZATION'S own
+  // key. `isMCPJam` means "MCPJam pays for this model"; the other two are
+  // different facts, so the rail keeps them apart (`harnessTurnRail`).
+  const rail = harnessTurnRail({
+    harness: persist.harness,
+    model: {
+      id: String(prepare.modelDefinition.id),
+      provider: prepare.modelDefinition.provider,
+      hosted: prepare.modelDefinition.hosted,
+    },
+    selection: prepare.routingSelection,
+    mcpjamProvided: isMCPJam,
+    stepUpResume: !!scopeStepUpResume,
+  });
+  const usesMcpjamFreePath = rail.usesFreePath;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
   // over a turn the harness never touched. The route pre-flight refuses a
   // non-MCPJam model on a brokered harness already; this refuses the same
   // thing here, with the same sentence, for any caller that reaches this
-  // helper without one.
-  if (persist.harness && !usesMcpjamFreePath) {
+  // helper without one. (An org-key harness turn's step-up resume is the one
+  // exception, above: it is the emulated engine on any path.)
+  if (persist.harness && !usesMcpjamFreePath && !rail.orgStepUpResume) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1266,6 +1271,9 @@ export async function streamWebChatTurn(
         hosted: prepare.modelDefinition.hosted,
       },
       purpose: harnessModelPurposeForSourceType(persist.sourceType),
+      ...(prepare.routingSelection
+        ? { selection: prepare.routingSelection }
+        : {}),
     });
     throw new WebRouteError(
       503,
@@ -1679,9 +1687,11 @@ export async function streamWebChatTurn(
   // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
   // which this turn does not have. See `chatModelSourceValidator` in the
   // backend for the two surfaces that read it that way.
+  // A harness turn on the organization's own key is the org's spend, never
+  // MCPJam's: `'byok'`, exactly like an org-BYOK chat turn.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
+    rail.modelSource,
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1761,6 +1771,9 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // The org selection the harness's lease is minted for (its canonical id
+    // and connection). Only on an org-key harness turn.
+    ...(rail.orgSelection ? { modelSelection: rail.orgSelection } : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),
@@ -1782,6 +1795,7 @@ export async function streamWebChatTurn(
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
+    ...(persist.includeProjectSkills ? { includeProjectSkills: true } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),

@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.14.1",
+  "version": "3.15.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -77,6 +77,7 @@
     "build:client": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "pretypecheck:client": "npm run check:renderer-tier-b && npm run check:browser-viewer",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
+    "typecheck:server": "node scripts/typecheck-server.mjs",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",
     "build:client:clean": "rm -rf node_modules/.vite && cross-env FORCE_OPTIMIZE=true NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "build:server": "tsup --config server/tsup.config.ts",
@@ -112,6 +113,7 @@
     "pretest:watch": "npm run build -w @mcpjam/evaluators",
     "pretest:coverage": "npm run build -w @mcpjam/evaluators",
     "test:swarm-reporting:smoke": "playwright test --config playwright.swarm-reporting.config.ts",
+    "test:e2e:telemetry-privacy": "playwright test --config playwright.telemetry-privacy.config.ts",
     "dev:processes": "run-script-os",
     "dev:processes:default": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
@@ -152,15 +154,15 @@
     "@hookform/resolvers": "^5.9.1",
     "@lezer/highlight": "^1.2.5",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^9.1.0",
+    "@mcpjam/sdk": "^9.2.0",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
     "@openai/mcp-extensions": "0.1.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "@sentry/electron": "^5.10.0",
-    "@sentry/node": "8.55.0",
-    "@sentry/react": "8.55.0",
+    "@sentry/electron": "7.20.0",
+    "@sentry/node": "10.75.0",
+    "@sentry/react": "10.75.0",
     "@sentry/vite-plugin": "^5.4.0",
     "@tanstack/react-virtual": "^3.14.13",
     "@workos-inc/authkit-react": "^0.16.3",
@@ -236,6 +238,7 @@
     "node-pty": "1.1.0"
   },
   "devDependencies": {
+    "@alwaysmeticulous/recorder-plugin": "^2.346.0",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
@@ -265,7 +268,8 @@
     "@types/ws": "^8.18.2",
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.1.1",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitejs/plugin-react-electron": "npm:@vitejs/plugin-react@^5.2.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
     "concurrently": "^10.0.5",
@@ -287,7 +291,7 @@
     "typescript": "^5",
     "vite": "^8.3.0",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "tmp": "0.2.5",
