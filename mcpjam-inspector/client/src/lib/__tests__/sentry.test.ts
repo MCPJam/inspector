@@ -629,6 +629,28 @@ describe("content at the outbound boundary", () => {
     ).toBe("/servers/acme");
     getClient.mockReset();
   });
+
+  it("runs the config's breadcrumb content scrub ahead of the level filter", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    init.mockClear();
+    const { initSentry } = await import("../sentry");
+    const privacy = await import("../session-privacy");
+    initSentry();
+    const config = init.mock.calls[0][0];
+
+    // At full the level filter keeps console breadcrumbs; the logged
+    // payload still loses its value.
+    privacy.setSessionPrivacy("full");
+    const crumb = config.beforeBreadcrumb({
+      category: "console",
+      message: "tool result { body: acme contract }",
+      data: { arguments: ["tool result", { body: "acme contract" }] },
+    });
+    expect(crumb.data).toEqual({ argumentCount: 2 });
+    expect(JSON.stringify(crumb)).not.toContain("acme contract");
+  });
 });
 
 describe("performance transactions short of full", () => {
