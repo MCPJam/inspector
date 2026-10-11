@@ -324,17 +324,26 @@ export function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
+/** `r` → `%72`. Hex digits' case is covered by the regex's `i` flag. */
+function percentEncoding(char: string): string {
+  return `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
+}
+
 /**
  * A route's static segment as the router matches it: case-insensitively
  * (compiled with the `i` flag) and with any character percent-encoded
  * (`/%72esults/…` is `/results/…` to React Router, so it must be to the
- * scrubber too).
+ * scrubber too). The `i` flag folds a literal letter's case but not an
+ * escape's: `%52` (`R`) and `%72` (`r`) are different text, so a letter
+ * accepts the escape of either case (`/%52esults/…`).
  */
 function literalSegment(segment: string): string {
   return [...segment]
     .map((char) => {
-      const hex = char.charCodeAt(0).toString(16).padStart(2, "0");
-      return `(?:${escapeRegex(char)}|%${hex})`;
+      const escapes = new Set(
+        [char.toLowerCase(), char.toUpperCase()].map(percentEncoding),
+      );
+      return `(?:${[escapeRegex(char), ...escapes].join("|")})`;
     })
     .join("");
 }
