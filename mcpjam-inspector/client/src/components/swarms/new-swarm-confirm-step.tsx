@@ -131,13 +131,10 @@ export type ConfirmLaunchPayload = {
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
   /**
    * What the person was shown about sponsored conversations when they pressed
-   * launch. `shownSponsored` is the sponsored total across the WHOLE launch as
-   * displayed, or `null` when the display did not cover every run (new goals
-   * that do not exist yet) or showed nothing. The launch compares it with the
-   * split it is about to get and stops for review only when fewer
-   * conversations would be sponsored than were shown.
+   * launch, scoped to the goals the preview covered. New goals do not have a
+   * preview yet, but must not erase the baseline shown for existing goals.
    */
-  funding: { shownSponsored: number | null };
+  funding: { shownSponsored: number | null; shownJourneyIds: string[] };
 };
 
 type SelectedPersona =
@@ -1176,9 +1173,8 @@ export function NewSwarmConfirmStep({
       : null;
   // After a launch attempt, a counter changed and the split is being re-read.
   // `shownSplit` is null until it lands, so a click now would send nothing to
-  // compare against and the launch would stop again with its first-review
-  // wording. Before any goal exists the launch's own check covers this, and a
-  // preview that never settles must not be able to stop a first launch.
+  // compare against. Before any goal exists the launch's own check covers
+  // this, and a preview that never settles must not stop a first launch.
   const previewSettling = structureLocked && fundingState.status === "loading";
   // Out of credits, a launch with no sponsored conversation could only be
   // refused, so Continue says so before the click.
@@ -1698,10 +1694,10 @@ export function NewSwarmConfirmStep({
                   reusedTargets: activeReusedTargets,
                   reusedGrading: [],
                   funding: {
-                    shownSponsored:
-                      shownSplit && pendingGoals === 0
-                        ? shownSplit.sponsored
-                        : null,
+                    shownSponsored: shownSplit?.sponsored ?? null,
+                    shownJourneyIds: shownSplit
+                      ? previewTargets.map((target) => target.journeyId)
+                      : [],
                   },
                 })
               }

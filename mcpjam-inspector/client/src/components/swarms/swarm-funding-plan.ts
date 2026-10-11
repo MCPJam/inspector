@@ -273,8 +273,9 @@ export function creditFundingExplanation(
 export function fundingReviewNotice(args: {
   shown: number;
   now: FundingSplit;
+  partial?: boolean;
 }): string {
-  return `Sponsored conversations dropped from ${args.shown.toLocaleString()} to ${args.now.sponsored.toLocaleString()}, so ${plural(
+  return `Sponsored conversations${args.partial ? " for your existing goals" : ""} dropped from ${args.shown.toLocaleString()} to ${args.now.sponsored.toLocaleString()}, so ${plural(
     args.now.credits,
     "now uses",
     "now use",

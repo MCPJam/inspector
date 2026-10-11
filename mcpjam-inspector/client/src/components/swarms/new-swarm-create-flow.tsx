@@ -1697,8 +1697,9 @@ export function NewSwarmCreateFlow({
         // conversations would be funded (sponsored versus the organization's
         // credits). Stop BEFORE creating any run only when that split is worse
         // than what was on screen: fewer sponsored, so more on org credits.
-        // A split at least as good as the one shown (including brand-new goals,
-        // which had none shown) launches in the same click. Each run is
+        // Compare only goals covered by the display: sponsorship for new goals
+        // must not mask a drop for existing goals. A split at least as good as
+        // the one shown launches in the same click. Each run is
         // launched with its previewed sponsored count, so the backend refuses
         // it (409) rather than moving conversations onto org credits.
         //
@@ -1706,6 +1707,7 @@ export function NewSwarmCreateFlow({
         // launch exactly as it was before this existed.
         let expectedSponsoredByRun: number[] | null = null;
         let fundingSplit: FundingSplit | null = null;
+        let shownGoalsSplit: FundingSplit | null = null;
         if (targets.length > 0) {
           try {
             const preview = await fetchSwarmFundingPreview(
@@ -1715,6 +1717,15 @@ export function NewSwarmCreateFlow({
             fundingSplit = fundingSplitOf(preview, targets.length);
             if (fundingSplit) {
               expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
+              const shownRuns = preview.runs.filter((_, index) =>
+                payload.funding.shownJourneyIds.includes(
+                  targets[index].journeyId,
+                ),
+              );
+              shownGoalsSplit = fundingSplitOf(
+                { ...preview, runs: shownRuns },
+                payload.funding.shownJourneyIds.length,
+              );
             }
           } catch {
             // Handled below with the "no usable split" case.
@@ -1729,19 +1740,23 @@ export function NewSwarmCreateFlow({
         // Both stops return before the launch's own summary, so a failure from
         // earlier in this pass (a goal that could not be created) is said here.
         const shownSponsored = payload.funding.shownSponsored;
-        if (!fundingSplit && (shownSponsored ?? 0) > 0) {
+        if (!shownGoalsSplit && (shownSponsored ?? 0) > 0) {
           setFundingNotice(fundingUnverifiedNotice());
           if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
           return;
         }
         if (
-          fundingSplit &&
+          shownGoalsSplit &&
           shownSponsored !== null &&
-          fundingSplit.sponsored < shownSponsored
+          shownGoalsSplit.sponsored < shownSponsored
         ) {
           setFundingNotice(
-            fundingReviewNotice({ shown: shownSponsored, now: fundingSplit }),
+            fundingReviewNotice({
+              shown: shownSponsored,
+              now: shownGoalsSplit,
+              partial: payload.funding.shownJourneyIds.length < targets.length,
+            }),
           );
           if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
