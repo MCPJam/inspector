@@ -283,11 +283,17 @@ export function describeShape(value: unknown): string {
   }
 }
 
+/**
+ * A key that reads as a field name. Anything else — a path, a URL, an email,
+ * a sentence — is a value someone used as a key (`{"/results/<token>": …}`),
+ * and naming it would ship the value.
+ */
+const IDENTIFIER_KEY = /^[A-Za-z_$][\w$-]{0,63}$/;
+
 function shapeKey(key: string): string {
-  return capText(
-    key.replace(EMAIL_LIKE, "[redacted-email]"),
-    SHAPE_MAX_KEY_CHARS,
-  );
+  if (!IDENTIFIER_KEY.test(key)) return "[key]";
+  // An identifier can still be a secret's shape (`sk-…`).
+  return capText(scrubString(key), SHAPE_MAX_KEY_CHARS);
 }
 
 function shapeOf(value: unknown, depth: number, path: Set<object>): string {
