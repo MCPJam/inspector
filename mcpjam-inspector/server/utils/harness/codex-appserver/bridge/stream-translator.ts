@@ -574,6 +574,24 @@ export function createStreamTranslator(input: {
   const finishTurn: Translator["finishTurn"] = (outcome) => {
     if (finished) return;
     finished = true;
+    // A tool item the turn started but never completed gets a result now.
+    // Codex returns from `exec_command` while a long command is still running
+    // ("Process running with session ID …") and can end the turn there, so the
+    // command's item never reaches `item/completed`. Left open, its call has
+    // no result: the UI keeps an approved call looking unanswered and its chat
+    // re-sends the decision, and the transcript keeps a call with no output.
+    for (const [itemId, item] of items) {
+      if (!item.toolCallId || item.emittedResult) continue;
+      emitToolResult(
+        itemId,
+        item.toolName ?? item.type,
+        {
+          status: "inProgress",
+          note: "still running when the turn ended",
+        },
+        false,
+      );
+    }
     closeAllBlocks();
     if (steps.closeStep()) emitStepFinish("stop");
     if (outcome.error && outcome.error.message !== lastTerminalError) {

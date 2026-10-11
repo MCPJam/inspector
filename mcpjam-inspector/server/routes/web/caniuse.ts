@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode, WebRouteError, readJsonBody } from "./errors.js";
 import { backendFailureRouteError } from "./backend-error.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 const REPORT_RATE_LIMIT = 10;
 const REPORT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -54,7 +55,7 @@ async function storeReport(args: { message: string }): Promise<{
   emailDeliveryStatus?: "sent" | "failed";
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
 
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
@@ -136,7 +137,7 @@ async function storeSubscriber(args: { email: string }): Promise<{
   created?: boolean;
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
 
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(

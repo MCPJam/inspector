@@ -314,6 +314,48 @@ describe("constructed frames (not recorded — see fixtures/README.md)", () => {
     });
   });
 
+  it("closes a command still running when the turn ends, before the finish", () => {
+    // Codex answered `exec_command` with "Process running with session ID …"
+    // and ended the turn while `sleep 120` ran: the item never completed.
+    const { parts, translator } = fresh();
+    const item = {
+      type: "commandExecution",
+      id: "item_long",
+      status: "inProgress",
+      command: "sleep 120; echo finished",
+    };
+    translator.handleNotification({ method: "item/started", params: { item } });
+    translator.handleNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+    const resultIndex = parts.findIndex(
+      (p) => p.type === "tool-result" && p.toolCallId === "item_long",
+    );
+    expect(resultIndex).toBeGreaterThan(-1);
+    expect(parts[resultIndex]).toMatchObject({
+      toolName: "bash",
+      result: { status: "inProgress" },
+    });
+    expect(parts[resultIndex]).not.toHaveProperty("isError");
+    expect(resultIndex).toBeLessThan(parts.findIndex((p) => p.type === "finish"));
+  });
+
+  it("does not add a second result for a command that completed", () => {
+    const { parts, translator } = fresh();
+    const item = { type: "commandExecution", id: "item_done", status: "inProgress", command: "ls" };
+    translator.handleNotification({ method: "item/started", params: { item } });
+    translator.handleNotification({
+      method: "item/completed",
+      params: { item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "a\n" } },
+    });
+    translator.handleNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed" } },
+    });
+    expect(parts.filter((p) => p.type === "tool-result")).toHaveLength(1);
+  });
+
   it("maps patchUpdated entries onto file-change parts", () => {
     const { parts, translator } = fresh();
     translator.handleNotification({

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: true }));
 const post = vi.hoisted(() => vi.fn());
 vi.mock("../base", () => ({ webPost: post }));
@@ -14,7 +14,67 @@ afterEach(() => {
   post.mockReset();
 });
 
-describe("hosted validation scheduling", () => {
+describe.each(["native", "fallback"])("hosted validation scheduling (%s)", (support) => {
+  const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")!;
+  beforeEach(() => {
+    if (support === "fallback")
+      Object.defineProperty(AbortSignal, "any", {
+        ...anyDescriptor,
+        value: undefined,
+      });
+  });
+  afterEach(() => {
+    Object.defineProperty(AbortSignal, "any", anyDescriptor);
+    vi.restoreAllMocks();
+  });
+  it.each(["success", "failure", "cancel", "timeout"])(
+    "cleans up forwarded signals and deadlines after %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const caller = new AbortController();
+      const add = vi.spyOn(caller.signal, "addEventListener");
+      const remove = vi.spyOn(caller.signal, "removeEventListener");
+      const failure = new Error("Connection failed");
+      post.mockImplementation((_path, _body, options) => {
+        if (outcome === "success") return Promise.resolve({ success: true });
+        if (outcome === "failure") return Promise.reject(failure);
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(options.signal.reason),
+            { once: true }
+          );
+        });
+      });
+      const result = validateHostedServer("one", undefined, undefined, {
+        projectId: "cleanup",
+        serverId: "one",
+        queueSignal: caller.signal,
+      });
+      const settled = Promise.allSettled([result]);
+      if (outcome === "cancel") caller.abort(failure);
+      if (outcome === "timeout") await vi.advanceTimersByTimeAsync(50_000);
+      const [value] = await settled;
+      if (outcome === "success")
+        expect(value).toMatchObject({ status: "fulfilled" });
+      else {
+        expect(value.status).toBe("rejected");
+        if (value.status === "rejected") {
+          if (outcome === "timeout")
+            expect(value.reason.name).toBe("TimeoutError");
+          else expect(value.reason).toBe(failure);
+        }
+      }
+      expect(vi.getTimerCount()).toBe(0);
+      if (support === "fallback") {
+        expect(add).toHaveBeenCalledTimes(2);
+        expect(remove).toHaveBeenCalledTimes(2);
+        for (const [type, listener] of add.mock.calls)
+          expect(remove).toHaveBeenCalledWith(type, listener);
+      }
+    }
+  );
+
   it("keeps waiting time outside the request deadline and actually aborts timed-out fetches", async () => {
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];

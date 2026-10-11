@@ -18,9 +18,11 @@ export {
   MCP_IMAGE_MAX_TOTAL_BYTES,
   MCP_LINKED_RESOURCE_MAX_READS,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -303,6 +305,62 @@ export type {
   OpenAIArchiveObservations,
   OpenAIPluginPackageEvidence,
 } from "./openai-readiness/package/reader.js";
+
+/**
+ * Muse (Meta) connector readiness — the RENDERING surface only, named for the
+ * same reason as Claude's and OpenAI's: a wildcard would make anything added
+ * to the barrel public browser API with no reviewer looking. A client renders
+ * lanes, findings and the classification sheet, and validates the submission
+ * form; it does not run the checks.
+ */
+export {
+  MUSE_READINESS_ENGINE_VERSION,
+  MUSE_READINESS_LANES,
+  MUSE_READINESS_STAGES,
+  MUSE_STAGE_LANES,
+  isDispositiveMuseFinding,
+  isMuseReadinessResult,
+  rollUpMuseStage,
+} from "./muse-readiness/types.js";
+export type {
+  MuseLaneCoverage,
+  MuseLaneStatus,
+  MuseReadinessFinding,
+  MuseReadinessLane,
+  MuseReadinessLaneResult,
+  MuseReadinessResult,
+  MuseReadinessRunContext,
+  MuseReadinessStage,
+} from "./muse-readiness/types.js";
+export {
+  MUSE_PLATFORM_BASE_URL,
+  MUSE_POLICY_MANIFEST,
+  MUSE_POLICY_PAGES,
+  MUSE_POLICY_SNAPSHOT_DATE,
+  isMusePolicyCorpusVerified,
+} from "./muse-readiness/manifest.js";
+export type {
+  MusePolicyPage,
+  MusePolicySourceRef,
+} from "./muse-readiness/manifest.js";
+export {
+  MUSE_ATTESTATIONS,
+  MUSE_AUTH_METHODS,
+  MUSE_CREDENTIAL_ENVIRONMENTS,
+  MUSE_DOCUMENTATION_TOPICS,
+  MUSE_TOOL_CLASSES,
+} from "./muse-readiness/profile.js";
+export type { MuseToolClass } from "./muse-readiness/profile.js";
+export {
+  museSubmissionProfileSchema,
+  parseMuseSubmissionProfile,
+} from "./muse-readiness/submission-profile.js";
+export type {
+  MuseSubmissionProfile,
+  MuseSubmissionProfileParse,
+} from "./muse-readiness/submission-profile.js";
+export { formatMuseClassificationSheet } from "./muse-readiness/classification.js";
+export type { MuseClassificationRow } from "./muse-readiness/classification.js";
 
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
@@ -970,7 +1028,13 @@ export {
   reasoningEffortProviderOptions,
   selectionConfigKey,
   selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./host-config/index.js";
 export type {
   ReasoningEffortProviderOptions,
