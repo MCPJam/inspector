@@ -1,4 +1,5 @@
 import { evaluateToolCalls, resolveExtrasCap } from "@/shared/eval-matching";
+import { hasEvalInfraError } from "@/shared/eval-infra-error";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 export type PassCriteriaType =
@@ -116,6 +117,34 @@ export function computeIterationResult(
   return passed ? "passed" : "failed";
 }
 
+export type MeasuredIterationResult =
+  | ReturnType<typeof computeIterationResult>
+  | "infra_error";
+
+/**
+ * The result a PASS RATE counts: {@link computeIterationResult}, except that a
+ * row OUR infrastructure failed (`infraError`) is `infra_error`, which no rate
+ * counts — in neither the numerator nor the denominator.
+ *
+ * Checked BEFORE the stored result is trusted: an infra row is persisted as
+ * `failed` + `failed`, and reading that verdict is exactly how a provider
+ * outage used to be scored against the customer's server. Mirrors the
+ * backend's legacy header and `evalRunMetrics.verdictOf`, so a rate computed
+ * here matches the server's.
+ *
+ * LABELS keep using {@link computeIterationResult}: an infra row still reads
+ * "Failed" while every rate leaves it out.
+ */
+export function computeMeasuredIterationResult(
+  iteration: Parameters<typeof computeIterationResult>[0] & {
+    infraError?: unknown;
+  },
+  criteria?: PassCriteria
+): MeasuredIterationResult {
+  if (hasEvalInfraError(iteration)) return "infra_error";
+  return computeIterationResult(iteration, criteria);
+}
+
 /**
  * Did this iteration pass?
  *
@@ -223,10 +252,11 @@ export function evaluatePassCriteria(
   // Filter to only this run's iterations
   const runIterations = iterations.filter((it) => it.suiteRunId === run._id);
 
-  // Compute passed/failed for each iteration (only completed ones)
+  // Compute passed/failed for each iteration (only completed ones). Infra
+  // rows read `infra_error` and fall out at the filter below.
   const iterationsWithResults = runIterations
     .map((it) => {
-      const result = computeIterationResult(it, criteria);
+      const result = computeMeasuredIterationResult(it, criteria);
       return {
         ...it,
         result,
