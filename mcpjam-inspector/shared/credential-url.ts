@@ -1,36 +1,38 @@
 /**
- * Credential-bearing URLs: share and result links whose last path segment IS
- * the credential. Moved here unchanged from `client/src/lib/PosthogUtils.ts`
- * (which still re-exports it) so the PostHog relay redacts with the same
- * function the client does, rather than a second copy.
+ * The URL sanitizer the PostHog client (`client/src/lib/PosthogUtils.ts`,
+ * which re-exports it) and the PostHog relay (`shared/telemetry-privacy.ts`)
+ * share, so the two redact with the same function rather than two copies.
+ *
+ * Which URLs carry a credential is not decided here: that is the registry in
+ * `credential-urls.ts`, which every telemetry exit reads. This module adds
+ * only the analytics-specific organization-id redaction on top.
  */
+import { CREDENTIAL_ROUTES, scrubCredentialUrl } from "./credential-urls";
 
 /**
- * A score result link is a bearer credential — the token in `/results/<token>`
- * is the only thing standing between a private run and anyone who has the URL.
- * Autocapture attaches `$current_url` to every captured event, so a single
- * click on that page would ship the credential to analytics, where it lands in
- * logs and exports that no one thinks of as secret-bearing. Replace the token
- * with a placeholder before anything leaves the browser; the path itself is
- * still useful, and the token never was.
+ * Every page path whose LAST segment is the credential, as a prefix
+ * (`/results/`), derived from the registry. Autocapture attaches
+ * `$current_url` to each event, so a share viewer's address bar would ship
+ * the token to PostHog on every click if these were not redacted.
  */
-// Every path whose LAST segment is a bearer credential. Autocapture attaches
-// `$current_url` to each event, so a share viewer's address bar would ship the
-// redeem token to PostHog on every click if these were not redacted.
-export const CREDENTIAL_PATH_PREFIXES = [
-  "/results/",
-  "/conformance/shared/",
-  "/evals/shared/",
-];
+export const CREDENTIAL_PATH_PREFIXES: readonly string[] =
+  CREDENTIAL_ROUTES.flatMap((route) => {
+    if (route.secretIn !== "path" || route.scope !== "page") return [];
+    const secret = `:${route.secretParam}`;
+    if (!route.pattern.endsWith(secret)) return [];
+    const prefix = route.pattern.slice(0, -secret.length);
+    return prefix.includes(":") ? [] : [prefix];
+  });
 
+/**
+ * Credentials out of a URL (share tokens, OAuth codes, secret query and
+ * fragment keys; see `scrubCredentialUrl`), plus organization ids.
+ * Organization ids are internal identifiers, and organization routes are
+ * captured automatically by PostHog on otherwise privacy-safe events.
+ */
 export function scrubSensitiveUrl(value: string): string {
-  let out = value;
-  for (const prefix of CREDENTIAL_PATH_PREFIXES) {
-    const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
-    out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
-  }
-  // Organization ids are internal identifiers and organization routes are
-  // captured automatically by PostHog on otherwise privacy-safe events.
-  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
-  return out;
+  return scrubCredentialUrl(value).replace(
+    /(\/organizations\/)[^/?#]+/g,
+    "$1[redacted]",
+  );
 }

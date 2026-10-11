@@ -1,5 +1,11 @@
 import type { CaptureResult } from "posthog-js";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
+import {
+  POSTHOG_URL_PROPERTIES,
+  scrubCredentialsInText,
+  scrubTelemetryEvent,
+  scrubTelemetryValue,
+} from "../../../shared/credential-urls";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
@@ -156,17 +162,7 @@ export function sanitizeAnalyticsProperties(
   // Short of a resolved `full` privacy level, names come out of URLs too
   // (lib/session-privacy.ts), on top of the credential redaction below.
   const maskNames = shouldMaskAnalytics();
-  for (const key of [
-    "$current_url",
-    "$referrer",
-    "$pathname",
-    "$session_entry_url",
-    "$session_entry_pathname",
-    "$session_entry_referrer",
-    "$initial_current_url",
-    "$initial_pathname",
-    "$initial_referrer",
-  ]) {
+  for (const key of POSTHOG_URL_PROPERTIES) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
       if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);
@@ -174,6 +170,311 @@ export function sanitizeAnalyticsProperties(
   }
   if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
+}
+
+/**
+ * rrweb event types a `$snapshot` batch may carry. 0 and 1 (DOM loaded, load)
+ * carry nothing. 4 (meta: the page URL), 5 (custom: `$url_changed` and
+ * friends) and 6 (plugins: console logs and network requests) are walked
+ * whole. 2 (full snapshot) and 3 (incremental) are DOM: masked at capture by
+ * the replay profile's text, attribute and network callbacks — except
+ * stylesheet text, which rrweb hands to none of them. That is scrubbed here
+ * (`scrubDomEvent`): a credential URL in a `<style>` is a credential like
+ * any other.
+ */
+const SNAPSHOT_PASSIVE_EVENT_TYPES = new Set([0, 1]);
+const SNAPSHOT_DOM_EVENT_TYPES = new Set([2, 3]);
+const SNAPSHOT_WALKED_EVENT_TYPES = new Set([4, 5, 6]);
+
+/** rrweb's `NodeType.Text`. */
+const RRWEB_TEXT_NODE = 3;
+/** rrweb's `IncrementalSource` values that carry stylesheet text. */
+const RRWEB_SOURCE = {
+  mutation: 0,
+  styleSheetRule: 8,
+  font: 10,
+  styleDeclaration: 13,
+  adoptedStyleSheet: 15,
+} as const;
+/**
+ * Attributes rrweb fills with CSS: a `<link>` stylesheet it inlined
+ * (`_cssText`) and the `style` attribute, which it absolutifies before any
+ * masking callback runs.
+ */
+const RRWEB_STYLE_ATTRIBUTES = new Set(["_cssText", "style"]);
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * `record` with `key` set to `next(record[key])`. The same object when
+ * nothing changed, a shallow copy otherwise: rrweb's mirror holds the
+ * serialized nodes it emitted, so they are never edited in place.
+ */
+function withField(
+  record: Record<string, unknown>,
+  key: string,
+  next: (value: unknown) => unknown,
+): Record<string, unknown> {
+  if (!(key in record)) return record;
+  const value = next(record[key]);
+  return value === record[key] ? record : { ...record, [key]: value };
+}
+
+/** `items` mapped; the same array when no item changed. */
+function mapItems(items: unknown, next: (item: unknown) => unknown): unknown {
+  if (!Array.isArray(items)) return items;
+  let out: unknown[] | null = null;
+  items.forEach((item, index) => {
+    const value = next(item);
+    if (value !== item) {
+      out ??= items.slice();
+      out[index] = value;
+    }
+  });
+  return out ?? items;
+}
+
+function scrubCss(value: unknown): unknown {
+  return typeof value === "string" ? scrubCredentialsInText(value) : value;
+}
+
+/** A `style` attribute's change: a string, or rrweb's per-property diff. */
+function scrubStyleValue(value: unknown): unknown {
+  if (typeof value === "string") return scrubCss(value);
+  if (!isPlainRecord(value)) return value;
+  let out = value;
+  for (const property of Object.keys(value)) {
+    out = withField(out, property, (entry) =>
+      Array.isArray(entry) ? mapItems(entry, scrubCss) : scrubCss(entry),
+    );
+  }
+  return out;
+}
+
+function scrubStyleAttributes(attributes: unknown): unknown {
+  if (!isPlainRecord(attributes)) return attributes;
+  let out = attributes;
+  for (const name of RRWEB_STYLE_ATTRIBUTES) {
+    out = withField(out, name, scrubStyleValue);
+  }
+  return out;
+}
+
+/** A serialized DOM node (rrweb-snapshot) and its subtree. */
+function scrubSerializedNode(node: unknown): unknown {
+  if (!isPlainRecord(node)) return node;
+  let out = node;
+  if (node.type === RRWEB_TEXT_NODE && node.isStyle === true) {
+    out = withField(out, "textContent", scrubCss);
+  }
+  out = withField(out, "attributes", scrubStyleAttributes);
+  return withField(out, "childNodes", (children) =>
+    mapItems(children, scrubSerializedNode),
+  );
+}
+
+/** `rules: [{ rule, index }]` (CSSOM insertions). */
+function scrubRules(rules: unknown): unknown {
+  return mapItems(rules, (entry) =>
+    isPlainRecord(entry) ? withField(entry, "rule", scrubCss) : entry,
+  );
+}
+
+function scrubIncrementalData(data: Record<string, unknown>): unknown {
+  switch (data.source) {
+    case RRWEB_SOURCE.mutation: {
+      let out = withField(data, "adds", (adds) =>
+        mapItems(adds, (add) =>
+          isPlainRecord(add)
+            ? withField(add, "node", scrubSerializedNode)
+            : add,
+        ),
+      );
+      // Text changes reach `maskTextFn`, a `<style>`'s included; once more
+      // here is idempotent and keeps this pass the one guarantee.
+      out = withField(out, "texts", (texts) =>
+        mapItems(texts, (text) =>
+          isPlainRecord(text) ? withField(text, "value", scrubCss) : text,
+        ),
+      );
+      return withField(out, "attributes", (changes) =>
+        mapItems(changes, (change) =>
+          isPlainRecord(change)
+            ? withField(change, "attributes", scrubStyleAttributes)
+            : change,
+        ),
+      );
+    }
+    case RRWEB_SOURCE.styleSheetRule: {
+      let out = withField(data, "adds", scrubRules);
+      out = withField(out, "replace", scrubCss);
+      return withField(out, "replaceSync", scrubCss);
+    }
+    case RRWEB_SOURCE.styleDeclaration:
+      return withField(data, "set", (set) =>
+        isPlainRecord(set) ? withField(set, "value", scrubCss) : set,
+      );
+    case RRWEB_SOURCE.adoptedStyleSheet:
+      return withField(data, "styles", (styles) =>
+        mapItems(styles, (style) =>
+          isPlainRecord(style) ? withField(style, "rules", scrubRules) : style,
+        ),
+      );
+    case RRWEB_SOURCE.font:
+      return withField(data, "fontSource", scrubCss);
+    default:
+      return data;
+  }
+}
+
+/**
+ * A full snapshot or incremental event with its stylesheet text scrubbed.
+ * `null` when it cannot be read: posthog-js packs a compressed event's DOM
+ * into gzip strings (`cv`), which cannot be scrubbed without corrupting them.
+ * Both replay profiles turn that packing off (`compress_events: false`), so
+ * one arriving packed is a shape this does not understand.
+ */
+function scrubDomEvent(event: Record<string, unknown>): unknown {
+  if ("cv" in event || !isPlainRecord(event.data)) return null;
+  if (event.type === 2) {
+    return withField(event, "data", (data) =>
+      withField(data as Record<string, unknown>, "node", scrubSerializedNode),
+    );
+  }
+  return withField(event, "data", (data) =>
+    scrubIncrementalData(data as Record<string, unknown>),
+  );
+}
+
+/**
+ * The `$snapshot` half of `scrubCaptureEvent`. `null` when the batch is not
+ * in a shape this understands: fail closed, the batch is dropped.
+ */
+function scrubSnapshotData(data: unknown): unknown[] | null {
+  if (!Array.isArray(data)) return null;
+  const out: unknown[] = [];
+  for (const item of data) {
+    if (!isPlainRecord(item)) return null;
+    const type = item.type;
+    if (typeof type !== "number") return null;
+    if (SNAPSHOT_PASSIVE_EVENT_TYPES.has(type)) {
+      out.push(item);
+    } else if (SNAPSHOT_DOM_EVENT_TYPES.has(type)) {
+      const scrubbed = scrubDomEvent(item);
+      if (scrubbed === null) return null;
+      out.push(scrubbed);
+    } else if (SNAPSHOT_WALKED_EVENT_TYPES.has(type)) {
+      out.push(scrubTelemetryValue(item));
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+/** The parts of a posthog-js instance whose stored state is scrubbed. */
+interface PostHogPersistenceLike {
+  props?: Record<string, unknown>;
+  save?: () => void;
+}
+interface PostHogWithPersistence {
+  persistence?: PostHogPersistenceLike | null;
+  sessionPersistence?: PostHogPersistenceLike | null;
+}
+
+let persistedPostHog: PostHogWithPersistence | null = null;
+
+/**
+ * Credentials out of what posthog-js STORES, not only what it sends: on the
+ * first capture of a visit it records the landing URL as
+ * `$initial_person_info` (`u`, `r`) straight from `location.href`, into its
+ * cookie — scoped to the parent domain, so it rides every same-site request —
+ * and into localStorage. Neither `before_send` nor any URL hook sees that
+ * write. A landing on a share link would keep the token there for a year.
+ *
+ * Run from `before_send` (posthog-js writes the person info earlier in the
+ * same `capture`) and once at load, for values an older build stored. A walk
+ * that cannot finish deletes the person info rather than leaving it raw.
+ */
+export function scrubPostHogPersistence(
+  instance: PostHogWithPersistence | null = persistedPostHog,
+): void {
+  if (!instance) return;
+  for (const store of [instance.persistence, instance.sessionPersistence]) {
+    const props = store?.props;
+    if (!store || !props) continue;
+    try {
+      const scrubbed = scrubTelemetryValue(props);
+      if (scrubbed === props) continue;
+      // In place: the SDK holds this object, not a getter for it.
+      for (const key of Object.keys(props)) {
+        if (!(key in scrubbed)) delete props[key];
+      }
+      Object.assign(props, scrubbed);
+    } catch {
+      delete props.$initial_person_info;
+    }
+    try {
+      store.save?.();
+    } catch {
+      // Storage refused the write; nothing else to do here.
+    }
+  }
+}
+
+/**
+ * The single `before_send` pass: every credential out of everything an event
+ * carries — its properties (URL properties, `$elements_chain`,
+ * `$external_click_url`, web vitals, `$$heatmap` data keyed by URL, exception
+ * text), `$set` and `$set_once` — via the shared walker
+ * (`scrubTelemetryEvent`), after the URL properties have had their names
+ * masked where the privacy level asks for it.
+ *
+ * `properties.token` is the project key and is never touched: ingestion
+ * rejects an event without it.
+ *
+ * Fail closed. When the walker cannot finish, the URL-bearing fields go and
+ * the rest is scrubbed; when even that fails, the event is dropped (`null`).
+ * A `$snapshot` batch is walked event by event (`scrubSnapshotData`) and
+ * dropped whole if any part of it is not understood.
+ */
+export function scrubCaptureEvent(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  scrubPostHogPersistence();
+  if (!event) return event;
+  try {
+    const properties: Record<string, any> = { ...(event.properties ?? {}) };
+    if (event.event === "$snapshot") {
+      const snapshot = scrubSnapshotData(properties.$snapshot_data);
+      if (snapshot === null) return null;
+      const { $snapshot_data: _omit, ...rest } = properties;
+      const scrubbedRest = scrubTelemetryEvent(rest, {
+        preserveTopLevelKeys: ["token"],
+      });
+      if (scrubbedRest === null) return null;
+      return {
+        ...event,
+        properties: { ...scrubbedRest, $snapshot_data: snapshot },
+      };
+    }
+    sanitizeAnalyticsProperties(properties, event.event);
+    const scrubbedProperties = scrubTelemetryEvent(properties, {
+      preserveTopLevelKeys: ["token"],
+    });
+    if (scrubbedProperties === null) return null;
+    const { properties: _properties, ...envelope } = event;
+    const scrubbedEnvelope = scrubTelemetryEvent(envelope);
+    if (scrubbedEnvelope === null) return null;
+    return {
+      ...scrubbedEnvelope,
+      properties: scrubbedProperties,
+    } as CaptureResult;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -258,11 +559,21 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
-  sanitize_properties: sanitizeAnalyticsProperties,
-  // In order: drop browser-injected crashes, then stamp what survives with
-  // the context it was captured under (lib/telemetry-context.ts), which the
-  // relay checks against the backend before forwarding.
-  before_send: [dropInjectedScriptException, stampPostHogEvent],
+  // In order: drop browser-injected crashes, stamp what survives with the
+  // context it was captured under (lib/telemetry-context.ts), which the relay
+  // checks against the backend before forwarding, then scrub every
+  // credential out of the whole event (fail closed: an event that cannot be
+  // shown clean is dropped). The scrub replaces the deprecated
+  // `sanitize_properties` and runs last, so nothing added before it leaves
+  // unscrubbed.
+  before_send: [
+    dropInjectedScriptException,
+    stampPostHogEvent,
+    scrubCaptureEvent,
+  ],
+  // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
+  // no event, replay URL or heatmap needs one.
+  disable_capture_url_hashes: true,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
@@ -298,6 +609,8 @@ export const options = {
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
+    persistedPostHog = posthog;
+    scrubPostHogPersistence(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
@@ -390,6 +703,10 @@ export const getPostHogOptions = (
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // Nothing is sent from here by default, but anything that opts in
+        // later still goes through the same scrubber.
+        before_send: [dropInjectedScriptException, scrubCaptureEvent],
+        disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({
