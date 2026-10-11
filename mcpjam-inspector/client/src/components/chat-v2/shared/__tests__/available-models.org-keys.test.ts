@@ -8,6 +8,7 @@ import {
   composeAvailableModels,
   isOrgKeysDisallowedRow,
   ORG_KEYS_MODEL_REASON,
+  ORG_POLICY_LOADING_REASON,
   orgKeysDisallowedNotice,
 } from "../available-models";
 import {
@@ -389,6 +390,17 @@ describe("composeAvailableModels under the policy", () => {
     });
     expect(models.some((model) => model.hosted)).toBe(true);
     expect(models.every((model) => !model.disabled)).toBe(true);
+  });
+
+  it("locks every row while the organization's settings load", () => {
+    const models = compose({ providers: [], pending: true });
+    expect(models.length).toBeGreaterThan(0);
+    expect(
+      models.every(
+        (model) =>
+          model.disabled && model.disabledReason === ORG_POLICY_LOADING_REASON,
+      ),
+    ).toBe(true);
   });
 
   it("composes a project no organization owns as today", () => {
