@@ -36,6 +36,8 @@ type Cookie = { name: string; value: string };
 type WebSocketEvent = { type: unknown; data?: unknown };
 type WebSocketConnection = { url: string; events: WebSocketEvent[] };
 type IndexedDBStore = { entries: { key?: unknown; value: unknown }[] };
+type StreamingChunk = { offsetMs: number; data: string };
+type StreamingData = { chunks: StreamingChunk[] };
 
 /** Keys whose value is a credential wherever they appear, after `normalizeKey`. */
 const SECRET_KEYS = new Set([
@@ -59,7 +61,7 @@ const SECRET_KEYS = new Set([
 ]);
 /** Keys whose every nested string is a credential: MCP server headers and env. */
 const SECRET_CONTAINER_KEYS = new Set(["headers", "env", "secretpatch"]);
-/** Form bodies only: an OAuth authorization code. In JSON, `code` is usually an error code. */
+/** Form bodies and query strings only: an OAuth authorization code. In JSON, `code` is usually an error code. */
 const FORM_SECRET_KEYS = new Set(["code"]);
 /** PKCE verifiers are stored under this prefix as bare strings, not JSON. */
 const VERIFIER_STORAGE_PREFIX = "mcp-verifier-";
@@ -136,6 +138,36 @@ function maskFormText(text: string): string {
   return changed ? params.toString() : text;
 }
 
+const JSON_FIELD = /("([A-Za-z0-9_.-]+)"\s*:\s*")((?:[^"\\]|\\.)*)(")/g;
+/** The same field once JSON-escaped inside another string, as a tool result is. */
+const ESCAPED_JSON_FIELD =
+  /(\\"([A-Za-z0-9_.-]+)\\"\s*:\s*\\")((?:[^"\\]|\\[^"])*)(\\")/g;
+const BEARER = /\b(Bearer\s+)([A-Za-z0-9\-._~+/]+=*)/g;
+
+const maskField = (
+  match: string,
+  prefix: string,
+  key: string,
+  value: string,
+  suffix: string,
+) => (value && isSecretKey(key) ? `${prefix}${mask(value)}${suffix}` : match);
+
+/**
+ * Masks secret fields and bearer tokens by pattern, for text that is not one
+ * JSON document: server-sent events, streamed chat chunks and tool results
+ * embedded as strings. Escapes inside a masked value become asterisks too,
+ * which keeps the surrounding JSON valid.
+ */
+export function maskText(text: string): string {
+  return text
+    .replace(JSON_FIELD, maskField)
+    .replace(ESCAPED_JSON_FIELD, maskField)
+    .replace(
+      BEARER,
+      (_match, prefix: string, token: string) => `${prefix}${mask(token)}`,
+    );
+}
+
 function maskBodyText(
   mimeType: string,
   text: string | undefined,
@@ -147,7 +179,7 @@ function maskBodyText(
   // A `fetch` with a string body and no content type is sent as text/plain
   // but is JSON in practice.
   if (/^\s*[[{]/.test(text)) return maskJsonText(text);
-  return text;
+  return maskText(text);
 }
 
 function maskHeaders(headers: NameValue[]): NameValue[] {
@@ -160,24 +192,31 @@ function maskHeaders(headers: NameValue[]): NameValue[] {
   return changed ? out : headers;
 }
 
+/** Lets `URL` parse a relative request URL; stripped again on the way out. */
+const RELATIVE_BASE = "http://relative.invalid";
+
 function maskUrl(url: string): string {
   if (!url.includes("?")) return url;
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url);
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(url, RELATIVE_BASE);
   } catch {
-    // A relative or malformed URL has no query the recorder could replay.
+    // A malformed URL has no query the recorder could replay.
     return url;
   }
   let changed = false;
   for (const key of Array.from(new Set(parsed.searchParams.keys()))) {
     const value = parsed.searchParams.get(key);
-    if (value && isSecretKey(key)) {
+    if (value && isSecretKey(key, FORM_SECRET_KEYS)) {
       parsed.searchParams.set(key, mask(value));
       changed = true;
     }
   }
-  return changed ? parsed.toString() : url;
+  if (!changed) return url;
+  return absolute
+    ? parsed.toString()
+    : parsed.toString().slice(RELATIVE_BASE.length);
 }
 
 export function redactRequest<T extends HarRequest>(request: T): T {
@@ -242,6 +281,72 @@ export function redactIndexedDB<T extends IndexedDBStore>(store: T): T {
     : { ...store, entries: entries as T["entries"] };
 }
 
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++)
+    binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+/** Bytes at the end that begin a multi-byte character the batch does not finish. */
+function incompleteUtf8Tail(bytes: Uint8Array): number {
+  for (let back = 1; back <= Math.min(3, bytes.length); back++) {
+    const byte = bytes[bytes.length - back];
+    if ((byte & 0xc0) === 0x80) continue;
+    const needed = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return needed > back ? back : 0;
+  }
+  return 0;
+}
+
+/**
+ * Streamed chat replies and server-sent events arrive as base64 chunks. The
+ * batch is decoded as one UTF-8 text so a field or character split between
+ * two chunks is still seen whole, masked by pattern, and re-split at the
+ * original chunk boundaries. A field split between two batches is the one
+ * case this cannot see; the recorder gives a batch no stream id to carry
+ * state across.
+ */
+export function redactStreamingChunks<T extends StreamingData>(entry: T): T {
+  const parts = entry.chunks.map((chunk) => decodeBase64(chunk.data));
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  if (total === 0) return entry;
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  const keep = incompleteUtf8Tail(bytes);
+  const text = new TextDecoder().decode(bytes.subarray(0, total - keep));
+  const masked = maskText(text);
+  if (masked === text) return entry;
+  const encoded = new TextEncoder().encode(masked);
+  const rebuilt = new Uint8Array(encoded.length + keep);
+  rebuilt.set(encoded);
+  rebuilt.set(bytes.subarray(total - keep), encoded.length);
+  // Masking keeps ASCII length, so the boundaries line up unless a masked
+  // value held non-ASCII text; then the last chunk absorbs the difference.
+  let start = 0;
+  const chunks = entry.chunks.map((chunk, index) => {
+    const last = index === entry.chunks.length - 1;
+    const end = last
+      ? rebuilt.length
+      : Math.min(rebuilt.length, start + parts[index].length);
+    const data = encodeBase64(rebuilt.subarray(start, end));
+    start = end;
+    return { ...chunk, data };
+  });
+  return { ...entry, chunks };
+}
+
 export function redactCookie<T extends Cookie>(cookie: T): T {
   if (!cookie.value || !COOKIE_SECRET_NAME.test(cookie.name)) return cookie;
   return { ...cookie, value: mask(cookie.value) };
@@ -257,8 +362,8 @@ export const inspectorRedactionMiddleware = {
   transformCookie: redactCookie,
   // Once any network hook is defined, the recorder drops streamed responses
   // that have no hook of their own, which would lose every chat reply.
-  transformStreamingFetchResponseData: <T>(entry: T): T => entry,
-  transformStreamingXhrResponseData: <T>(entry: T): T => entry,
+  transformStreamingFetchResponseData: redactStreamingChunks,
+  transformStreamingXhrResponseData: redactStreamingChunks,
 };
 
 declare global {

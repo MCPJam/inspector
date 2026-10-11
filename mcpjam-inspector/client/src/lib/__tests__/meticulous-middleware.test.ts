@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   inspectorRedactionMiddleware,
   maskSecrets,
+  maskText,
   redactCookie,
   redactRequest,
   redactResponse,
   redactStorageEntry,
+  redactStreamingChunks,
   redactWebSocket,
 } from "../meticulous-middleware";
+
+const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+const fromB64 = (data: string) => Buffer.from(data, "base64");
 
 const json = (body: unknown) => ({
   mimeType: "application/json",
@@ -21,14 +26,77 @@ describe("inspectorRedactionMiddleware", () => {
     );
   });
 
-  it("passes streamed responses through unchanged", () => {
-    const entry = { url: "/api/mcp/chat-v2", chunks: [{ data: "aGk=" }] };
+  it("wires the streaming hooks so chat replies are kept, not dropped", () => {
+    const entry = { chunks: [{ offsetMs: 0, data: b64("data: hi\n\n") }] };
     expect(
       inspectorRedactionMiddleware.transformStreamingFetchResponseData(entry),
     ).toBe(entry);
     expect(
       inspectorRedactionMiddleware.transformStreamingXhrResponseData(entry),
     ).toBe(entry);
+  });
+});
+
+describe("redactStreamingChunks", () => {
+  it("masks a secret field split across two chunks and keeps the boundaries", () => {
+    const sse =
+      'data: {"type":"tool-result","output":{"apiKey":"sk-abcdef"}}\n\n';
+    const cut = sse.indexOf("abc");
+    const entry = {
+      chunks: [
+        { offsetMs: 0, data: b64(sse.slice(0, cut)) },
+        { offsetMs: 10, data: b64(sse.slice(cut)) },
+      ],
+    };
+    const redacted = redactStreamingChunks(entry);
+    const joined = redacted.chunks
+      .map((c) => fromB64(c.data).toString())
+      .join("");
+    expect(joined).toBe(
+      'data: {"type":"tool-result","output":{"apiKey":"*********"}}\n\n',
+    );
+    expect(fromB64(redacted.chunks[0].data).length).toBe(cut);
+    expect(redacted.chunks[1].offsetMs).toBe(10);
+  });
+
+  it("keeps a multi-byte character split between chunks and an unfinished tail", () => {
+    const text = 'x: "é" {"token":"t"}';
+    const bytes = Buffer.from(text, "utf8");
+    const accent = Buffer.from("é", "utf8");
+    const mid = bytes.indexOf(accent) + 1;
+    const tail = accent.subarray(0, 1);
+    const entry = {
+      chunks: [
+        { offsetMs: 0, data: bytes.subarray(0, mid).toString("base64") },
+        {
+          offsetMs: 1,
+          data: Buffer.concat([bytes.subarray(mid), tail]).toString("base64"),
+        },
+      ],
+    };
+    const redacted = redactStreamingChunks(entry);
+    const out = Buffer.concat(redacted.chunks.map((c) => fromB64(c.data)));
+    expect(out.subarray(0, out.length - 1).toString()).toBe(
+      'x: "é" {"token":"*"}',
+    );
+    expect(out.subarray(out.length - 1)).toEqual(tail);
+  });
+
+  it("returns the same entry when nothing is secret", () => {
+    const entry = { chunks: [{ offsetMs: 0, data: b64('{"ok":true}') }] };
+    expect(redactStreamingChunks(entry)).toBe(entry);
+  });
+});
+
+describe("maskText", () => {
+  it("masks bearer tokens and fields escaped inside another JSON string", () => {
+    expect(maskText("Authorization: Bearer abc.def")).toBe(
+      "Authorization: Bearer *******",
+    );
+    expect(maskText('{"text":"{\\"access_token\\":\\"tok\\"}"}')).toBe(
+      '{"text":"{\\"access_token\\":\\"***\\"}"}',
+    );
+    expect(maskText('{"code":"NOT_FOUND"}')).toBe('{"code":"NOT_FOUND"}');
   });
 });
 
@@ -103,15 +171,21 @@ describe("redactRequest", () => {
     );
   });
 
-  it("masks secret query parameters", () => {
-    const request = {
+  it("masks secret query parameters, including an OAuth code on a relative URL", () => {
+    const absolute = {
       url: "https://example.com/cb?state=s&token=t0k",
       method: "GET",
       headers: [],
     };
-    expect(redactRequest(request).url).toBe(
+    expect(redactRequest(absolute).url).toBe(
       "https://example.com/cb?state=s&token=***",
     );
+    const relative = {
+      url: "/cb?code=abc&state=s",
+      method: "GET",
+      headers: [],
+    };
+    expect(redactRequest(relative).url).toBe("/cb?code=***&state=s");
   });
 
   it("treats a text/plain JSON body as JSON", () => {
