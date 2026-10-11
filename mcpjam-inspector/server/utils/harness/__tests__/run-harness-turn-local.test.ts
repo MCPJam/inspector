@@ -1,10 +1,10 @@
-vi.mock("../local/pack-bootstrap.js", () => ({ withLocalPackBootstrap: async (adapter: unknown) => adapter }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
 const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
 vi.mock("../local/approval-park.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../local/approval-park.js")>()),
   invalidateParkedLocalSession: parkRegistry.invalidate,
 }));
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -162,7 +162,6 @@ import {
   runHarnessTurn,
 } from "../run-harness-turn";
 import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
-import { getHarnessAdapter } from "../registry.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
@@ -211,6 +210,13 @@ import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js
 import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
+import { stampOrgCredentialRevision } from "../org-credential-continuity";
+import { logger } from "../../logger.js";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  MCPJamEngineErrorEvent,
+  MCPJamHandlerOptions,
+} from "../../mcpjam-stream-handler";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -319,6 +325,17 @@ describe("runHarnessTurn local continuity", () => {
     }
   });
 
+  it("runs a scenario-scoped turn on a local target: only a CLOUD scenario harness needs a box", async () => {
+    await runHarnessTurn(baseOptions({
+      executionScope: {
+        kind: "swarm", swarmId: "cb_1", accessVersion: 1,
+        projectId: "project-1", workspaceId: "ws_1",
+      },
+    }) as any, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
   it("binds preparation and first SDK session to one id without any cloud reservation", async () => {
     await runHarnessTurn(baseOptions() as any, "none");
     expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
@@ -359,7 +376,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("continues a paused approval with the same identity", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session" }));
     expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session", continueFrom: expect.any(Object) }));
@@ -409,20 +426,34 @@ describe("runHarnessTurn local continuity", () => {
 
   it("closes a denied call in the UI so the decision is not re-sent", async () => {
     resume(true);
-    harnessState.continuations = [{
-      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: false },
-      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
-    }];
-    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    harnessState.continuations = [
+      { type: "tool-approval-response", approvalId: "approval-1", approved: false },
+    ];
+    // The bare response names only the approval; the call id comes from the
+    // assistant's earlier approval request.
+    const options = baseOptions();
+    options.messages.push(
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
+          { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+        ],
+      } as unknown as ModelMessage,
+      {
+        role: "tool",
+        content: [{ type: "tool-approval-response", approvalId: "approval-1", approved: false }],
+      } as unknown as ModelMessage,
+    );
+    const stream = await (await runHarnessTurn(options as any, "ui")).response!.text();
     expect(stream).toContain('"type":"tool-output-denied","toolCallId":"call-1"');
   });
 
   it("leaves an approved call for its tool result to close", async () => {
     resume(true);
-    harnessState.continuations = [{
-      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: true },
-      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
-    }];
+    harnessState.continuations = [
+      { type: "tool-approval-response", approvalId: "approval-1", approved: true },
+    ];
     const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
     expect(stream).not.toContain("tool-output-denied");
   });
@@ -505,7 +536,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("refuses approval continuation after the runtime changes", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     const options = baseOptions();
     options.harnessExecutionTarget.runtimeId = "runtime-2";
     await runHarnessTurn(options as any, "none");
@@ -584,7 +615,7 @@ describe("runHarnessTurn local continuity", () => {
   it("rejects an approval whose local state was removed", async () => {
     resume(true);
     harnessState.stateExists = false;
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(harnessState.create).not.toHaveBeenCalled();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -622,11 +653,6 @@ describe("runHarnessTurn local continuity", () => {
         },
       } as any);
     }
-
-    it("looks the adapter up for the LOCAL venue", async () => {
-      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
-      expect(getHarnessAdapter).toHaveBeenCalledWith("codex", { localExecution: true });
-    });
 
     it("parks the live runtime at an approval pause instead of tearing it down", async () => {
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
@@ -685,7 +711,7 @@ describe("runHarnessTurn local continuity", () => {
 
     it("delivers the decision to the parked process generation and hands it back after", async () => {
       pausedLane();
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: "local-session",
@@ -703,7 +729,7 @@ describe("runHarnessTurn local continuity", () => {
 
     it("refuses a decision when the parked runtime refuses it, running nothing", async () => {
       pausedLane();
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       vi.mocked(prepareLocalHarnessTurn).mockResolvedValueOnce({
         ok: false, status: "approval-duplicate-approval",
         message: "This approval was already answered; the action will not run twice.",
@@ -721,7 +747,7 @@ describe("runHarnessTurn local continuity", () => {
           awaitingApproval: true,
         },
       } as any);
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
       expect(harnessState.create).not.toHaveBeenCalled();
@@ -850,4 +876,180 @@ describe("runHarnessTurn local continuity", () => {
     expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
   });
 
+
+  describe("on the organization's own key", () => {
+    const ORG_SELECTION: ModelSelection = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.6",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const ADAPTER_STATE = { data: { bridge: { sandboxId: "local-session" } } };
+    /** Each preparation's lease names the next revision in `revisions`. */
+    function leasesOn(...revisions: string[]) {
+      for (const revision of revisions) leaseOn(revision);
+    }
+    function leaseOn(revision: string) {
+      vi.mocked(prepareLocalHarnessTurn).mockImplementationOnce(
+        async () =>
+          ({
+            ok: true,
+            prepared: {
+              plan: { runtime: { runtimeId: "runtime-1" } },
+              sandbox: {},
+              auth: {},
+              sandboxWorkDir: "project",
+              skillsBaseDir: "/private/local/home/.claude/skills",
+              permissionMode: "allow-reads",
+              sessionStateExists: harnessState.stateExists,
+              teardown: harnessState.teardown,
+              discardState: harnessState.discardState,
+              park: harnessState.park,
+              unpark: harnessState.unpark,
+              brokerRunId: "run_local",
+              orgUpstream: {
+                credentialSource: "org",
+                profile: "anthropic-native",
+                nativeModelId: "claude-sonnet-4-6",
+                credentialRevision: revision,
+              },
+            },
+          }) as never,
+      );
+    }
+    function claimStampedWith(revision: string) {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, revision),
+        },
+      } as never);
+    }
+    /** The local org turn, typed: overrides replace any field. */
+    const orgOptions = (
+      overrides: Partial<MCPJamHandlerOptions> = {},
+    ): MCPJamHandlerOptions =>
+      ({
+        ...baseOptions({
+          modelId: "claude-sonnet-4-6",
+          modelSelection: ORG_SELECTION,
+        }),
+        ...overrides,
+      }) as MCPJamHandlerOptions;
+    const runOwnedTarget = () => ({
+      ...orgOptions().harnessExecutionTarget!,
+      localSessionId: "local-session",
+    });
+
+    it("a renamed connection (same key) resumes the same local session", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_a");
+      await runHarnessTurn(orgOptions(), "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "local-session",
+          modelSelection: ORG_SELECTION,
+        }),
+      );
+      expect(harnessState.create).toHaveBeenLastCalledWith({
+        sessionId: "local-session",
+        resumeFrom: ADAPTER_STATE,
+      });
+    });
+
+    it("a replaced key prepares again under a FRESH session id and starts fresh", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b", "rev_b");
+      await runHarnessTurn(orgOptions(), "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledTimes(2);
+      const calls = vi.mocked(prepareLocalHarnessTurn).mock.calls;
+      expect(calls[0]![0].sessionId).toBe("local-session");
+      const freshId = calls[1]![0].sessionId;
+      expect(freshId).not.toBe("local-session");
+      expect(freshId).toMatch(/^local-/);
+      // The first preparation, on the old session, was torn down.
+      expect(harnessState.teardown).toHaveBeenCalled();
+      // The runtime starts a fresh session under the new id — never the old
+      // account's session, never resuming its transcript.
+      expect(harnessState.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionId: freshId }),
+      );
+      expect(
+        (harnessState.create.mock.lastCall?.[0] as Record<string, unknown>)
+          ?.resumeFrom,
+      ).toBeUndefined();
+    });
+
+    it("a run that owns its session id fails the attempt on a replaced key", async () => {
+      // A run's cleanup removes ITS session id's state and no other, so a
+      // fresh id would outlive the run: the attempt fails instead.
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.teardown).toHaveBeenCalled();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
+    it("a teardown that fails is logged; the turn still reports the key change", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      harnessState.teardown.mockRejectedValueOnce(new Error("stop failed"));
+      const warn = vi.spyOn(logger, "warn");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
+        "none",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[harness] local preparation teardown failed",
+        { error: "stop failed" },
+      );
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
+    it("an approval waiting across a key replacement does not run", async () => {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, "rev_a"),
+          awaitingApproval: true,
+        },
+      } as never);
+      harnessState.continuations = [
+        { approvalId: "approval-1", approved: true },
+      ];
+      leasesOn("rev_b");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({ onEngineError: (event) => events.push(event) }),
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/key was replaced/);
+    });
+  });
 });

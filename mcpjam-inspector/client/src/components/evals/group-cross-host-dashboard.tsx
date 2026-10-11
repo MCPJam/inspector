@@ -9,7 +9,12 @@ import { useMemo } from "react";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 import type { HostVerdictMap } from "./cross-host/cross-host-matrix";
 import { useRunGroupQuality } from "./use-run-group-quality";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRunListItem,
+} from "./types";
 import type { CaseRowSort } from "./cross-host/case-row-metrics";
 import type {
   CellData,
@@ -19,7 +24,7 @@ import type {
 interface GroupCrossHostDashboardProps {
   suite: EvalSuite;
   cases: EvalCase[];
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   runGroupId: string;
   caseRowSort: CaseRowSort;

@@ -212,6 +212,7 @@ describe("eval runner reads saved model selections", () => {
         modelId: "gpt-4o",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([{ role: "assistant", content: "Done" }]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,

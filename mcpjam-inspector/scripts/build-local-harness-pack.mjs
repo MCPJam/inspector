@@ -19,13 +19,15 @@
 // defaults to `claude-code`, the pack this script built before it was split.
 //
 // ── What goes in (every harness) ─────────────────────────────────────────
-//   - the harness recipe, byte-identical to the one used at runtime;
-//   - `launcher.mjs`, Inspector-owned, which forces the bridge's listeners
-//     onto loopback and then imports the bridge;
-//   - a hoisted, symlink-free `node_modules` with no `.bin` shims;
+//   - the vendor graph the harness recipe installs, as a hoisted, symlink-free
+//     `node_modules` with no `.bin` shims;
 //   - `bin/node`, an official nodejs.org build, because Electron's `RunAsNode`
 //     fuse is off and the npx server's own Node is outside the digest;
 //   - on Windows, the Job Object launcher.
+//
+// MCPJam's own code — the bridge and its loopback launcher — is the Inspector
+// layer, shipped with the Inspector (`server/utils/harness/local/inspector-layer.ts`)
+// rather than in a pack. A pack is vendor bytes only.
 //
 // ── What comes out ───────────────────────────────────────────────────────
 //   <stem>.tar.gz, <stem>.tar.gz.sha256, <stem>.manifest.json (+ .sig),
@@ -53,6 +55,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  symlinkSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -64,6 +67,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPackHarness, packAssetStem } from "./local-harness-pack-harnesses.mjs";
+
+/**
+ * The SBOM generator, at an exact version: it is fetched by `npx` at build
+ * time, so "latest" would be whatever its publisher shipped that morning. It
+ * runs only after the pack is sealed (see below).
+ */
+export const CYCLONEDX_NPM = "@cyclonedx/cyclonedx-npm@6.0.1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = resolve(scriptDir, "..");
@@ -504,14 +514,7 @@ async function main() {
   const adapterVersion = recipe.adapterVersion();
   const packVersion = String(args["pack-version"] ?? adapterVersion);
 
-  // 2. The Inspector-owned loopback launcher, from the repo (digest-covered,
-  //    reviewed in a diff like any other source file).
-  copyFileSync(
-    join(inspectorRoot, "server/utils/harness/local/pack/launcher.mjs"),
-    join(packRoot, "launcher.mjs"),
-  );
-
-  // 3. Verify the vendor binary, then prune. `.bin` shims are symlinks and
+  // 2. Verify the vendor binary, then prune. `.bin` shims are symlinks and
   //    nothing in the pack invokes them; what else a harness drops is its
   //    recipe's call.
   let vendor;
@@ -586,7 +589,9 @@ async function main() {
     platform: platformKey,
     nodeVersion: node.version,
     treeDigest: digest,
-    bridgeDigest,
+    // Only for a pack that still carries its harness's bridge. A layer-split
+    // pack carries no bridge, and the release gate no longer compares one.
+    ...(typeof bridgeDigest === "string" ? { bridgeDigest } : {}),
     files,
     bytes,
     vendorPackages,
@@ -712,13 +717,51 @@ async function main() {
     );
   }
 
-  // An SBOM and a license listing, from the graph that is actually in the pack.
+  // An SBOM of the graph in the pack, or a license listing of the tree.
+  //
+  // Only AFTER the archive is sealed and signed, and never inside the pack:
+  // the generator is a third-party package fetched by `npx`, so it runs from a
+  // scratch directory holding the recipe's install manifests and a link to the
+  // pack's `node_modules`, at a PINNED version, with no secret in its
+  // environment — and the tree is digested again afterwards, so a generator
+  // that wrote into the pack fails the build instead of shipping. (It used to
+  // run inside the pack before the digest, where anything it changed would
+  // have been covered by the digest and the signature.)
+  let sbom = null;
+  if (args["skip-archive"] !== true) {
+    const scratch = mkdtempSync(join(outRoot, ".sbom-"));
+    try {
+      const { bootstrapDir, files: recipeFiles } = await recipe.loadRecipe();
+      for (const file of recipeFiles) {
+        const name = file.path.slice(bootstrapDir.length + 1);
+        if (name === "package.json" || name.endsWith(".yaml") || name.endsWith(".json")) {
+          mkdirSync(dirname(join(scratch, name)), { recursive: true });
+          writeFileSync(join(scratch, name), file.content);
+        }
+      }
+      symlinkSync(join(packRoot, "node_modules"), join(scratch, "node_modules"), "junction");
+      sbom = execFileSync(
+        "npx",
+        ["--yes", CYCLONEDX_NPM, "--output-format", "JSON", "--output-file", "-"],
+        {
+          cwd: scratch,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+          env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !/SIGNING_KEY|TOKEN|SECRET/i.test(name))),
+        },
+      );
+    } catch {
+      sbom = null;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    if (computeTreeDigest(packRoot).digest !== digest) {
+      fail("the pack tree changed while its SBOM was generated; refusing to ship it");
+    }
+  }
   try {
-    const sbom = execFileSync(
-      "npx",
-      ["--yes", "@cyclonedx/cyclonedx-npm", "--output-format", "JSON", "--output-file", "-"],
-      { cwd: packRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
+    if (sbom === null) throw new Error("no SBOM");
     writeFileSync(join(outRoot, `${stem}.sbom.json`), sbom);
   } catch {
     // A missing SBOM must not fail the build; the license listing below is the

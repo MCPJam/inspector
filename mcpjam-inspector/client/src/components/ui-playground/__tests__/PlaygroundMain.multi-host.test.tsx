@@ -197,6 +197,20 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+// The project's installed plugins, as the hidden environment reads them.
+// None here, so nothing is composed.
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    plugins: [],
+    pluginServers: [],
+    wanted: false,
+    environmentId: null,
+    pluginServerIds: [],
+    failed: false,
+    recover: async () => ({ ok: false }),
+  }),
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
@@ -974,7 +988,7 @@ describe("PlaygroundMain — multi-host render path", () => {
         projectId: "default",
         name: "MCPJam",
         input: expect.objectContaining({
-          modelId: "anthropic/claude-haiku-4.5",
+          modelId: "anthropic/claude-haiku-5.5",
         }),
       })
     );

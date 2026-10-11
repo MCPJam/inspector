@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { createCodex } from "@ai-sdk/harness-codex";
 import claudeAdapterPkg from "@ai-sdk/harness-claude-code/package.json" with { type: "json" };
 import { createCodexAppServer } from "../../codex-appserver/index.js";
 import {
@@ -130,13 +129,11 @@ describe("the shipped manifest", () => {
     expect(
       LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals,
     ).toBe(createClaudeCode().supportsBuiltinToolApprovals);
-    // LOCAL Codex is MCPJam's app-server adapter, never the published exec
-    // one — which still cannot surface approvals at all.
+    // Codex is MCPJam's app-server adapter.
     expect(LOCAL_HARNESS_MANIFEST.codex.supportsBuiltinToolApprovals).toBe(
       createCodexAppServer().supportsBuiltinToolApprovals,
     );
     expect(createCodexAppServer().supportsBuiltinToolApprovals).toBe(true);
-    expect(createCodex().supportsBuiltinToolApprovals).toBe(false);
   });
 
   it("pins the exact adapter versions the evidence was gathered against", () => {

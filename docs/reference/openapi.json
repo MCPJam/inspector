@@ -3082,6 +3082,242 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/rerun-preview": {
+      "get": {
+        "operationId": "getEvalRunRerunPreview",
+        "tags": ["Eval runs"],
+        "summary": "Preview a failed-cases rerun",
+        "description": "What `POST /projects/{projectId}/eval-runs/{runId}/rerun` with `scope: \"failed_cases\"` would execute, before anything spends. The platform selects every case with a trial that is not completed and passed; cancelled and skipped trials do not count. `reasons` and `excluded` count trials; `selectedCaseCount` counts cases. `rerunnable` is `false` while the run is still in flight (including `grading`) and when nothing qualifies.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rerun selection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "suiteId",
+                    "scope",
+                    "sourceStatus",
+                    "sourceTerminal",
+                    "totalCaseCount",
+                    "selectedCaseCount",
+                    "selectedCaseIds",
+                    "reasons",
+                    "excluded",
+                    "rerunnable"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteId": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": ["failed_cases"]
+                    },
+                    "sourceStatus": {
+                      "type": "string"
+                    },
+                    "sourceTerminal": {
+                      "type": "boolean",
+                      "description": "`false` while the source run is still executing or grading."
+                    },
+                    "totalCaseCount": {
+                      "type": "integer"
+                    },
+                    "selectedCaseCount": {
+                      "type": "integer"
+                    },
+                    "selectedCaseIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "reasons": {
+                      "type": "object",
+                      "description": "Qualifying trials by the most specific reason: `failed`, `evaluator_error`, `timed_out`, `execution_failed`, `setup_failed`, `pending`.",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    },
+                    "excluded": {
+                      "type": "object",
+                      "description": "Trials that did not qualify: `passed`, `cancelled`, `skipped`.",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    },
+                    "rerunnable": {
+                      "type": "boolean",
+                      "description": "The source run finished and at least one case qualifies."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/rerun": {
+      "post": {
+        "operationId": "rerunEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Rerun a run's failed cases",
+        "description": "Replay a finished run's frozen snapshot narrowed to the cases that did not pass: every case with a trial that is not completed and passed (cancelled and skipped trials do not count). The platform selects the cases — see the rerun preview. The new run records `rerunOfRunId` and `rerunScope`, and because its pass rate is biased by that selection it is never used as the suite's latest run, a trend point, or a comparison/gate baseline. Returns `409` with `details.reason` `RERUN_NOTHING_TO_RERUN` when nothing qualifies, or `RERUN_SOURCE_NOT_TERMINAL` while the run is still in flight. Honors the `Idempotency-Key` header.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["scope"],
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": ["failed_cases"],
+                    "description": "The only scope: every case with a trial that did not complete and pass."
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The rerun was started (or, on an idempotent retry, the run it already started).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "suiteId",
+                    "status",
+                    "rerunOfRunId",
+                    "rerunScope"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "deduped": {
+                      "type": "boolean"
+                    },
+                    "rerunOfRunId": {
+                      "type": "string"
+                    },
+                    "rerunScope": {
+                      "type": "string",
+                      "enum": ["failed_cases"]
+                    },
+                    "servers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "environment": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/EvalRunEnvironment"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Nothing in the run qualifies (`RERUN_NOTHING_TO_RERUN`), or the run is still in flight (`RERUN_SOURCE_NOT_TERMINAL`)."
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/runs": {
       "get": {
         "operationId": "listEvalSuiteRuns",
@@ -9512,10 +9748,10 @@
         "operationId": "cancelGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Cancel a journey run",
-        "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
+        "description": "Accepts a durable Stop request and returns immediately. cleanupPending indicates that attempts are being settled in the background; status remains the current stored run status. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
         "responses": {
           "200": {
-            "description": "The run was cancelled (or already was).",
+            "description": "Stop accepted (or already requested); cleanup may still be pending.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11169,6 +11405,70 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/muse": {
+      "post": {
+        "operationId": "startMuseReadinessRun",
+        "tags": ["Directory readiness"],
+        "summary": "Start a Muse connector readiness run",
+        "description": "Grades the saved server against Meta's Muse connector guidelines and returns `202` with a run id. Free: Muse readiness has no AI observations, so the body has no field that can spend, and no submission mode, which belongs to the OpenAI plugin directory. The submission-ready verdict stays `incomplete` on a hosted run, because Muse's submission requirements are declared by the submitter and only the CLI accepts a submission profile. Meta reviews every submission by hand, so `ready` is a preflight, not a prediction of approval.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key (including `includeLlmObservations`, which Muse does not offer), or the server uses a transport no directory can list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/readiness-runs": {
       "get": {
         "operationId": "listReadinessRuns",
@@ -11184,9 +11484,9 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": ["claude", "openai"]
+              "enum": ["claude", "openai", "muse"]
             },
-            "description": "Narrow to one publisher. Omitted lists both, newest first."
+            "description": "Narrow to one publisher. Omitted lists all, newest first."
           },
           {
             "name": "serverId",
@@ -20354,6 +20654,15 @@
             "type": "string",
             "description": "Shared by every per-target run from the same fan-out launch. Absent on a single-target launch and on rows created before run groups."
           },
+          "rerunOfRunId": {
+            "type": "string",
+            "description": "The run this one re-ran a subset of. Present only with `rerunScope`."
+          },
+          "rerunScope": {
+            "type": "string",
+            "enum": ["failed_cases"],
+            "description": "`failed_cases`: this run re-ran only the cases of `rerunOfRunId` that did not pass. Its pass rate is biased by that selection, so it is never a suite's latest run, a trend point, or a baseline. Absent on every other run."
+          },
           "effectiveModelId": {
             "type": "string",
             "description": "Model the run actually executed with. Absent on pre-attribution rows."
@@ -21506,6 +21815,37 @@
           }
         }
       },
+      "EvalInfraError": {
+        "type": "object",
+        "required": [
+          "class",
+          "layer",
+          "retryable"
+        ],
+        "description": "Why MCPJam's own infrastructure, not the server under test, failed a trial. Present only on such a trial, which is `status: \"failed\"`, measured nothing about the server, is excluded from every pass rate and verdict, and has its eval fee refunded.",
+        "properties": {
+          "class": {
+            "type": "string",
+            "description": "`provider_unavailable`, `rate_limited`, `capacity`, `auth`, `account_limit`, `configuration` or `sandbox`. Read unknown values as an infrastructure failure of an unnamed kind."
+          },
+          "layer": {
+            "type": "string",
+            "description": "`model`, `sandbox` or `platform`."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether the failure looked transient. Advisory."
+          },
+          "code": {
+            "type": "string",
+            "description": "The producer's structured code, when it sent one."
+          },
+          "httpStatus": {
+            "type": "integer",
+            "description": "The upstream HTTP status, when there was one."
+          }
+        }
+      },
       "EvalIteration": {
         "type": "object",
         "required": [
@@ -21590,6 +21930,9 @@
           },
           "error": {
             "type": ["string", "null"]
+          },
+          "infraError": {
+            "$ref": "#/components/schemas/EvalInfraError"
           },
           "scores": {
             "type": ["array", "null"],
@@ -27819,6 +28162,14 @@
           "createdAt"
         ],
         "properties": {
+          "cancelRequested": {
+            "type": "boolean",
+            "description": "A durable Stop request exists, including while status is still running. Optional for older servers."
+          },
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Cancellation cleanup is pending. Absent means false."
+          },
           "id": {
             "type": "string"
           },
@@ -28191,6 +28542,11 @@
             },
             "minItems": 1,
             "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+          },
+          "expectedSponsored": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` whose `details.code` is `swarm_funding_changed` (with `expectedSponsored`, `actualSponsored` and `totalConversations`) and nothing is created. Omit it to accept whatever split applies."
           }
         }
       },
@@ -28216,6 +28572,22 @@
           "deduped": {
             "type": "boolean",
             "description": "True when an `Idempotency-Key` replayed onto a run that ALREADY existed, so nothing new was started. The response is otherwise identical, which is how a retry of a dropped request tells \"I launched it\" from \"it was already going\" without a second read."
+          },
+          "funding": {
+            "type": "object",
+            "description": "How the run's conversations are funded. `sponsored` conversations are paid from MCPJam's per-user allowance; the `credits` remainder is paid from your organization's credits. Absent when the server does not report it.",
+            "required": ["sponsored", "credits", "total"],
+            "properties": {
+              "sponsored": {
+                "type": "integer"
+              },
+              "credits": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -28229,12 +28601,16 @@
           "finalized"
         ],
         "properties": {
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Stop accepted; background cleanup is pending. Absent means false on older servers."
+          },
           "id": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "description": "The run's terminal status after the cancel settled it."
+            "description": "Current run status; may still be running while cleanup is pending."
           },
           "canceled": {
             "type": "boolean",
@@ -30276,9 +30652,10 @@
               "submission-artifacts",
               "experience-insights",
               "plugin-package",
-              "release-contract"
+              "release-contract",
+              "tool-policy"
             ],
-            "description": "Anthropic defines five lanes and OpenAI seven, overlapping on four. Which subset applies is decided by the run's `readinessKind`."
+            "description": "Anthropic defines five lanes, OpenAI seven and Muse four. Which subset applies is decided by the run's `readinessKind`."
           },
           "status": {
             "type": "string",
@@ -30329,7 +30706,8 @@
                 "submission-artifacts",
                 "experience-insights",
                 "plugin-package",
-                "release-contract"
+                "release-contract",
+                "tool-policy"
               ]
             },
             "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
@@ -30405,7 +30783,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "serverId": {
             "type": "string",
@@ -30527,7 +30905,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "status": {
             "type": "string",

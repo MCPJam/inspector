@@ -287,10 +287,12 @@ type StartedToolCall = {
  * only `description`, never name, schema or execute.
  */
 function applyToolDescriptionOverridesToRecord<
-  T extends Record<string, { description?: string }>,
+  // `unknown`, not `string`: an AI SDK 7 tool's description may also be a
+  // function of the call context. An override always replaces it with a string.
+  T extends Record<string, { description?: unknown }>,
 >(tools: T, overrides: Readonly<Record<string, string>> | undefined): T {
   if (!overrides || Object.keys(overrides).length === 0) return tools;
-  const next: Record<string, { description?: string }> = { ...tools };
+  const next: Record<string, { description?: unknown }> = { ...tools };
   for (const [name, description] of Object.entries(overrides)) {
     // Own properties only: `next` is a plain object, so an override named
     // `toString` or `constructor` would otherwise find Object.prototype's
@@ -858,7 +860,9 @@ export class HostRunner implements HostExecutor {
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
     const completedToolCalls: PromptToolCall[] = [];
     const pendingStepToolCalls: StartedToolCall[] = [];
-    let lastCompletedStepMessages: ModelMessage[] = [];
+    // Every completed step's response messages, in order. AI SDK 7's
+    // `step.response.messages` holds only that step's, so they accumulate here.
+    const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
@@ -976,14 +980,10 @@ export class HostRunner implements HostExecutor {
             return;
           }
 
-          const stepMessages = stepResult.response?.messages
-            ? [...stepResult.response.messages]
-            : [];
-
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          lastCompletedStepMessages = stepMessages;
+          completedStepMessages.push(...(stepResult.response?.messages ?? []));
           const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
             ...stepResult.toolCalls
@@ -1012,10 +1012,10 @@ export class HostRunner implements HostExecutor {
       const messages: ModelMessage[] = [];
       messages.push(userMessage);
 
-      // Add response messages (assistant + tool messages from agentic loop)
-      if (result.response?.messages) {
-        messages.push(...result.response.messages);
-      }
+      // Add response messages (assistant + tool messages from agentic loop).
+      // `responseMessages` spans every step; in AI SDK 7 `response` is only
+      // the final step's.
+      messages.push(...(result.responseMessages ?? []));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -1062,7 +1062,7 @@ export class HostRunner implements HostExecutor {
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
-        ...lastCompletedStepMessages,
+        ...completedStepMessages,
         ...this.buildPartialAssistantMessages(pendingStepToolCalls),
       ];
       const blockedAtFailure = this.policyBlockedToolCallIds?.();

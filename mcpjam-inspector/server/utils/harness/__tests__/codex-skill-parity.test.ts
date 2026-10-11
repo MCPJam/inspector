@@ -3,8 +3,8 @@
  *
  * The repo rule is that advertising a capability means enforcing it, so the flag
  * may only be on if the REAL adapter actually delivers. These tests therefore
- * drive the installed `@ai-sdk/harness-codex` adapter against a fake sandbox
- * session (no mock of the adapter, no reimplementation of its writer) and assert
+ * drive MCPJam's Codex app-server adapter against a fake sandbox session (no
+ * mock of the adapter, no reimplementation of its writer) and assert
  * what it puts on the box, then assert the SAME payload through the installed
  * `@ai-sdk/harness-claude-code` adapter to show the two runtimes are at parity
  * apart from their root.
@@ -32,7 +32,6 @@
 import { describe, expect, it } from "vitest";
 import matter from "gray-matter";
 import { WebSocketServer } from "ws";
-import { createCodex } from "@ai-sdk/harness-codex";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
 import { getHarnessAdapter } from "../registry";
@@ -189,7 +188,7 @@ function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
   };
 }
 
-describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
+describe("codex skill parity (real adapter)", () => {
   it("writes each delivered skill under the adapter's advertised skillsBaseDir", async () => {
     const adapter = getHarnessAdapter("codex");
     const prepared = prepareCodexSkills([
@@ -198,7 +197,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     ]);
 
     const { writes, error } = await promptWithSkills(
-      createCodex() as never,
+      createCodexAppServer() as never,
       prepared.payload
     );
 
@@ -225,7 +224,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     // MCPJam materializes supporting files itself (Convex blobs, byte budget),
     // but it must write them into the SAME dir layout the adapter uses.
     const adapter = getHarnessAdapter("codex");
-    const { writes, error } = await promptWithSkills(createCodex() as never, [
+    const { writes, error } = await promptWithSkills(createCodexAppServer() as never, [
       {
         name: "pdf-tools",
         description: "Process PDFs",
@@ -255,7 +254,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ];
     const { writes, error } = await promptWithSkills(
-      createCodex() as never,
+      createCodexAppServer() as never,
       prepareCodexSkills(runtime).payload
     );
 
@@ -273,7 +272,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     // structurally-composing adapter could take — yields YAML that does not
     // round-trip through codex's raw interpolation.
     const { writes, error } = await promptWithSkills(
-      createCodex() as never,
+      createCodexAppServer() as never,
       toHarnessSkills([
         skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
       ])
@@ -311,7 +310,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     expect(prepared.skipped).toEqual([]);
 
     const { writes, error } = await promptWithSkills(
-      createCodex() as never,
+      createCodexAppServer() as never,
       prepared.payload
     );
 
@@ -326,10 +325,10 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     // the stable line the rejection happens inside `doPromptTurn` (skills are
     // synced per turn), so an unfiltered bad name takes down the entire turn
     // (not just that skill).
-    const { error } = await promptWithSkills(createCodex() as never, [
+    const { error } = await promptWithSkills(createCodexAppServer() as never, [
       { name: "..", description: "d", content: "c" },
     ]);
-    expect((error as Error).message).toMatch(/Invalid Codex skill name/);
+    expect((error as Error).message).toMatch(/Invalid skill name/);
   });
 
   it("parity with Claude Code: same payload, same SKILL.md, own root", async () => {
@@ -342,7 +341,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ]).payload;
 
-    const codexRun = await promptWithSkills(createCodex() as never, payload);
+    const codexRun = await promptWithSkills(createCodexAppServer() as never, payload);
     const claudeRun = await promptWithSkills(
       createClaudeCode() as never,
       payload
@@ -371,12 +370,8 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
   });
 });
 
-/**
- * The same gate for MCPJam's own app-server adapter. It replaces the exec
- * adapter (locally first, hosted later), so `supportsSkills` must stay true
- * for EITHER transport — same root, same frontmatter, same name rule.
- */
-describe("codex skill parity (MCPJam's codex app-server adapter)", () => {
+/** Supporting files, the absence of a Claude Code root, and the name rule. */
+describe("codex skill delivery details", () => {
   it("writes delivered skills and supporting files under the advertised skillsBaseDir", async () => {
     const adapter = getHarnessAdapter("codex");
     const { writes, error } = await promptWithSkills(
@@ -405,25 +400,6 @@ describe("codex skill parity (MCPJam's codex app-server adapter)", () => {
     ]);
     expect(writes.filter((w) => w.path.includes("/.claude/skills/"))).toEqual(
       []
-    );
-  });
-
-  it("writes byte-identical SKILL.md to the exec adapter for the same payload", async () => {
-    const payload = prepareCodexSkills([
-      skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
-    ]).payload;
-    const exec = await promptWithSkills(createCodex() as never, payload);
-    const appServer = await promptWithSkills(
-      createCodexAppServer() as never,
-      payload
-    );
-    expectReachedPrompt(exec.error);
-    expectReachedPrompt(appServer.error);
-    const skillMd = (writes: Write[]) =>
-      writes.find((w) => w.path.endsWith("/SKILL.md"))!;
-    expect(skillMd(appServer.writes)).toEqual(skillMd(exec.writes));
-    expect(matter(skillMd(appServer.writes).content).data.description).toBe(
-      'Process: PDFs "safely"'
     );
   });
 

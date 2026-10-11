@@ -1,0 +1,112 @@
+name: Local harness pack prebuild
+
+# Builds local-harness runtime packs IN THE BACKGROUND, ahead of the release
+# that pins them. When a push to main can move a pack input (a vendor version,
+# Node, the build scripts), this runs `local-harness-pack-pipeline.yml` for
+# every harness: one whose inputs did not move is up to date in a minute; one
+# whose inputs moved is built, signed, published and conformance-tested.
+#
+# Nothing here reaches users or main: no PR, no pin. Starting a release
+# (`prepare-release.yml`) runs the same pipeline, finds the pack already
+# published from these inputs and ADOPTS it, so no build sits in the release's
+# path. A failure opens the harness's failure issue days before anyone starts a
+# release, instead of during one.
+#
+# One pipeline per harness at a time: it shares the `local-harness-pack-<id>`
+# concurrency group with prepare-release's `packs` job, and stands down while a
+# release is being prepared (that run does this work itself). The nightly run is
+# a safety net for an input the path filter missed; when nothing moved, it costs
+# one planning job per harness.
+
+on:
+  push:
+    branches: [main]
+    # Every declared pack input must match one of these; a test fails if one
+    # does not (release-workflow.test.ts).
+    paths:
+      - ".github/workflows/local-harness-pack.yml"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
+      - "mcpjam-inspector/server/utils/harness/local/tree-digest.ts"
+      - "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/**"
+      - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
+      - "package-lock.json"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harnesses:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+      release_in_progress: ${{ steps.release.outputs.in_progress }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # A release being prepared runs this same pipeline; queueing behind it
+      # would only re-plan to "up to date", and a second pending run in the
+      # group would cancel the release's own pending job.
+      - name: Stand down while a release is being prepared, or signing needs a person
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow prepare-release.yml --limit 20 \
+            --json status --jq '[.[] | select(.status != "completed")] | length')"
+          # Signing that waits for a person would hold the per-harness group
+          # for as long as nobody approves, and the next release would queue
+          # behind it. While the environment requires a reviewer, building in
+          # the background is not background, so leave it to the release.
+          reviewers="$(gh api "repos/$GITHUB_REPOSITORY/environments/local-harness-pack-release" \
+            --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo unknown)"
+          if [ "$count" != "0" ]; then
+            echo "A release is being prepared; it builds any pack itself." >> "$GITHUB_STEP_SUMMARY"
+            echo "in_progress=true" >> "$GITHUB_OUTPUT"
+          elif [ "$reviewers" != "0" ]; then
+            echo "Signing (local-harness-pack-release) requires a reviewer ($reviewers rule(s)); the release will build the pack." >> "$GITHUB_STEP_SUMMARY"
+            echo "in_progress=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_progress=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Harnesses with a pack recipe
+        id: list
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { listPackHarnessIds } from "./mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs";
+          console.log(`list=${JSON.stringify(listPackHarnessIds())}`);
+          JS
+
+  prebuild:
+    name: ${{ matrix.harness }} pack
+    needs: harnesses
+    if: needs.harnesses.outputs.release_in_progress == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.harnesses.outputs.list) }}
+    concurrency:
+      group: local-harness-pack-${{ matrix.harness }}
+      cancel-in-progress: false
+    # What the pipeline's jobs ask for: publishing (contents), signing
+    # provenance (id-token, attestations) and the failure issue (issues).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      issues: write
+    uses: ./.github/workflows/local-harness-pack-pipeline.yml
+    with:
+      harness: ${{ matrix.harness }}
+    secrets: inherit

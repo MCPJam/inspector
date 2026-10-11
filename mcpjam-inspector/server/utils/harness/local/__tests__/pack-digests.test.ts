@@ -9,6 +9,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
   archiveListArgs,
+  CYCLONEDX_NPM,
   computeTreeDigest as buildScriptDigest,
   flattenHardLinks,
 } from "../../../../../scripts/build-local-harness-pack.mjs";
@@ -227,5 +229,23 @@ describe("the generated digest table", () => {
     for (const table of [PACK_RECORDS, PACK_TREE_DIGESTS, EXPECTED_PACK_VERSIONS]) {
       expect(Object.keys(table).sort()).toEqual(["claude-code", "codex"]);
     }
+  });
+});
+
+describe("the SBOM generator cannot change what is signed", () => {
+  const source = readFileSync(new URL("../../../../../scripts/build-local-harness-pack.mjs", import.meta.url), "utf8");
+
+  it("is pinned to an exact version", () => {
+    expect(CYCLONEDX_NPM).toMatch(/^@cyclonedx\/cyclonedx-npm@\d+\.\d+\.\d+$/);
+    expect(source).not.toMatch(/"@cyclonedx\/cyclonedx-npm"(?!@)/);
+  });
+
+  it("runs only after the archive is sealed and signed, outside the pack, and re-digests it", () => {
+    const sealed = source.indexOf('console.log("[pack] manifest signed")');
+    const generated = source.indexOf("CYCLONEDX_NPM, \"--output-format\"");
+    expect(sealed).toBeGreaterThan(0);
+    expect(generated).toBeGreaterThan(sealed);
+    expect(source).toMatch(/cwd: scratch,/);
+    expect(source).toMatch(/computeTreeDigest\(packRoot\)\.digest !== digest/);
   });
 });

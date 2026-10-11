@@ -172,6 +172,53 @@ describe("the pinned command grammar", () => {
     });
   });
 
+  describe("claude-code over the Inspector layer", () => {
+    const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/cc";
+    const launch =
+      `node '${BOOT}/bridge.mjs' --workdir '${SESSION}/w' ` +
+      `--bridge-state-dir '${SESSION}/.harness-bridge'`;
+
+    it("hands the launcher the verified pack to resolve the agent SDK from, ahead of the bridge's flags", async () => {
+      const result = await translateAdapterCommand(
+        { command: launch },
+        ctx({
+          layerRoot: LAYER,
+          layerFiles: ["bridge.mjs", "launcher.mjs", "layer.json"],
+          bridgeLauncherPath: `${LAYER}/launcher.mjs`,
+          launcherVendorRoot: BUNDLE,
+        }),
+      );
+      expect(result).toEqual({
+        kind: "exec",
+        executable: "/usr/local/bin/node",
+        workingDirectory: SESSION,
+        args: [
+          `${LAYER}/launcher.mjs`,
+          "--mcpjam-vendor-root",
+          BUNDLE,
+          "--workdir",
+          `${SESSION}/w`,
+          "--bridge-state-dir",
+          `${SESSION}/.harness-bridge`,
+        ],
+      });
+    });
+
+    it("never passes the launcher's flag to a bridge launched without a launcher", async () => {
+      const result = await translateAdapterCommand(
+        { command: launch },
+        ctx({ layerRoot: LAYER, layerFiles: ["bridge.mjs"], launcherVendorRoot: BUNDLE }),
+      );
+      expect(result.kind === "exec" && result.args).toEqual([
+        `${LAYER}/bridge.mjs`,
+        "--workdir",
+        `${SESSION}/w`,
+        "--bridge-state-dir",
+        `${SESSION}/.harness-bridge`,
+      ]);
+    });
+  });
+
   describe("codex (app-server adapter)", () => {
     const CODEX_BOOT = `${SESSION}/.harness-bootstrap/codex-appserver`;
     const CODEX_BUNDLE = "/opt/mcpjam/runtimes/codex";
@@ -223,6 +270,73 @@ describe("the pinned command grammar", () => {
           "--bootstrap-dir",
           CODEX_BUNDLE,
         ],
+      });
+    });
+
+    describe("split along the two trusted sources (Inspector layer)", () => {
+      const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/abc";
+      const layered = (overrides: Partial<CommandTranslationContext> = {}) =>
+        codex({
+          layerRoot: LAYER,
+          layerFiles: ["bridge.mjs", "host-tools-mcp.mjs", "launcher.mjs", "layer.json"],
+          adapterBootstrapFiles: ["bridge.mjs", "host-tools-mcp.mjs"],
+          bridgeLauncherPath: `${LAYER}/launcher.mjs`,
+          ...overrides,
+        });
+
+      it("turns --bootstrap-dir into the verified pack (vendor) and the layer (ours)", async () => {
+        const result = await translateAdapterCommand({ command: launch() }, layered());
+        expect(result).toEqual({
+          kind: "exec",
+          executable: "/usr/local/bin/node",
+          workingDirectory: SESSION,
+          args: [
+            `${LAYER}/launcher.mjs`,
+            "--workdir",
+            `${SESSION}/project`,
+            "--bridge-state-dir",
+            `${STATE}/.agent-runs/s1/bridge`,
+            "--session-data-dir",
+            `${STATE}/.agent-runs/s1`,
+            "--vendor-dir",
+            CODEX_BUNDLE,
+            "--layer-dir",
+            LAYER,
+          ],
+        });
+      });
+
+      it("still refuses any other bootstrap directory", async () => {
+        await expect(
+          translateAdapterCommand({ command: launch({ bootstrap: `${SESSION}/elsewhere` }) }, layered()),
+        ).rejects.toThrow(/only bootstrap this session may load/);
+      });
+
+      it("serves the bridge files from the layer, never from the pack", () => {
+        expect(classifyBootstrapPath(`${CODEX_BOOT}/bridge.mjs`, layered())).toEqual({
+          kind: "bundle-asset",
+          bundlePath: `${LAYER}/bridge.mjs`,
+          relativePath: "bridge.mjs",
+        });
+        expect(classifyBootstrapPath(`${CODEX_BOOT}/host-tools-mcp.mjs`, layered())).toMatchObject({
+          bundlePath: `${LAYER}/host-tools-mcp.mjs`,
+        });
+      });
+
+      it("refuses the hosted recipe's install files: locally the pack already is that graph", () => {
+        for (const name of ["package.json", "pnpm-lock.yaml"]) {
+          expect(() => classifyBootstrapPath(`${CODEX_BOOT}/${name}`, layered())).toThrow(
+            /not part of the pinned codex bootstrap recipe/,
+          );
+        }
+      });
+
+      it("launches the layer's bridge when no launcher is named", async () => {
+        const result = await translateAdapterCommand(
+          { command: launch() },
+          layered({ bridgeLauncherPath: undefined }),
+        );
+        expect(result.kind === "exec" && result.args[0]).toBe(`${LAYER}/bridge.mjs`);
       });
     });
 

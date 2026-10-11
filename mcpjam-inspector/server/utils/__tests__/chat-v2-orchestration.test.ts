@@ -1960,7 +1960,7 @@ describe("account routing snapshots", () => {
     });
     await result.allTools.search.execute!(
       { link_id: b.connectionId },
-      { toolCallId: "b-call", messages: [] },
+      { toolCallId: "b-call", messages: [], context: {} },
     );
     expect(executeA).not.toHaveBeenCalled();
     expect(executeB).toHaveBeenCalledOnce();

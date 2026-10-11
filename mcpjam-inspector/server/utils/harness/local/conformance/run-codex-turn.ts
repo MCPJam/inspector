@@ -22,7 +22,7 @@
  * Every verdict is asserted; a run that observes a violation exits non-zero.
  */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
-import { withLocalPackBootstrap } from "../pack-bootstrap.js";
+import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
@@ -218,6 +218,8 @@ type TurnResult = {
   errors: string[];
   tools: string[];
   finishMs: number;
+  /** App-server notification methods the turn passed through as `raw`. */
+  methods: string[];
 };
 
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
@@ -227,6 +229,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
   const toolCalls = new Map<string, any>();
   let text = "";
   let approvals = 0;
+  const methods: string[] = [];
   let res: any = await agent.stream({ session: sessionRef.s, prompt });
   let stream: AsyncIterable<any> = res.fullStream;
   for (let round = 0; round < 4; round++) {
@@ -236,6 +239,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
       parts[type] = (parts[type] ?? 0) + 1;
       if (type === "text-delta") text += part.text ?? part.textDelta ?? part.delta ?? "";
       if (type === "tool-call") toolCalls.set(part.toolCallId, part);
+      if (type === "raw" && typeof part.rawValue?.method === "string") methods.push(part.rawValue.method);
       if (type === "tool-approval-request") { paused = part; break; }
       if (type === "error") errors.push(String(part.error?.message ?? part.error ?? part));
     }
@@ -250,17 +254,16 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
     res = await agent.continueStream({
       session: sessionRef.s,
-      toolApprovalContinuations: [{
-        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
-        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
-      }],
+      toolApprovalContinuations: [
+        { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+      ],
     });
     stream = res.fullStream;
   }
   const finishMs = Math.round(performance.now() - start);
   const tools = [...toolCalls.values()].map((c: any) => String(c.toolName));
   console.log(`[codex-conformance] ${label}: ${finishMs}ms parts=${JSON.stringify(parts)} tools=${JSON.stringify(tools)} text=${JSON.stringify(text.slice(0, 200))}`);
-  return { text, parts, approvals, errors, tools, finishMs };
+  return { text, parts, approvals, errors, tools, finishMs, methods };
 }
 
 async function main() {
@@ -297,7 +300,6 @@ async function main() {
   if (!ws.ok) throw new Error(ws.message);
 
   const digest = await computeTreeDigest(BUNDLE);
-  const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
   const base = LOCAL_HARNESS_MANIFEST.codex;
   // THIS scenario's manifest: conformance recorded, this target certified and
   // (for the unattended leg) its sandbox measured — the claims the run exists
@@ -309,13 +311,14 @@ async function main() {
     nativePlatforms: [...new Set([...base.nativePlatforms, PLATFORM])],
     nativeTargets: [...new Set([...(base.nativeTargets ?? []), PACK_TARGET])],
     unattendedSandboxTargets: UNATTENDED ? [PACK_TARGET] : [],
-    bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
   } as typeof base;
   const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM });
   if (!rt.ok) throw new Error(`${rt.status}: ${rt.message}`);
-  if (rt.runtime.adapterVersion !== CODEX_LOCAL_ADAPTER_IDENTITY) {
-    note(`pack adapter ${rt.runtime.adapterVersion} vs Inspector ${CODEX_LOCAL_ADAPTER_IDENTITY}`);
-  }
+  // The bridge is this checkout's Inspector layer; the pack is vendor bytes
+  // (a published pack from before the split still carries its own bridge,
+  // which nothing reads). Either way the session runs THIS layer.
+  if (rt.runtime.layer === undefined) throw new Error("local Codex resolved without an Inspector layer");
+  console.log(`[codex-conformance] pack=${digest} layer=${rt.runtime.layer.digest}`);
   const machineId = await getLocalMachineId();
   const permissionProfile = UNATTENDED ? "unrestricted" as const : "workspace-edits" as const;
   const scope = UNATTENDED ? "unattended" as const : "attended" as const;
@@ -378,7 +381,7 @@ async function main() {
   };
   // Narrowed on the delivery mode, as the turn runner does: local Codex's MCP
   // tools are host-executed, so its adapter takes no MCP config at all.
-  const adapter = getHarnessAdapter("codex", { localExecution: true });
+  const adapter = getHarnessAdapter("codex");
   if (adapter.mcpDelivery !== "host-executed") {
     throw new Error("local Codex must use host-executed MCP delivery");
   }
@@ -387,7 +390,7 @@ async function main() {
     auth: { CODEX_API_KEY: CAPABILITY, OPENAI_BASE_URL: gatewayUrl } as any,
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
   });
-  const localHarness = await withLocalPackBootstrap(harness, plan.runtime.rootPath);
+  const localHarness = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
     harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
     sandbox: provider,
@@ -438,6 +441,12 @@ async function main() {
   if (probeCalls < 1) failures.push("the host-executed MCP tool never ran");
   if (!turns.mcp.text.includes("PROBE_OK:conformance")) failures.push("the MCP tool's result did not come back through the model");
   if (turns.mcp.approvals > 0) failures.push("the relayed MCP tool raised a Codex approval (MCPJam's gate must be the single authority)");
+
+  // Codex's own plan reaches the turn as `turn/plan/updated`, which the
+  // Inspector shows as the reply's checklist.
+  turns.plan = await runTurn("plan", agent, sessionRef, "PLAN");
+  if (!turns.plan.methods.includes("turn/plan/updated")) failures.push("Codex's update_plan never reached the turn as turn/plan/updated");
+  if (turns.plan.approvals > 0) failures.push("update_plan raised a Codex approval");
 
   // Process tree and hygiene while the session is live.
   const kids = await descendants(bridgePid);
