@@ -359,8 +359,8 @@ function isUnderSecretSurface(element: Element | null | undefined): boolean {
  */
 export function maskReplayTextFull(text: string, element?: Element): string {
   if (isUnderSecretSurface(element)) return maskAllCharacters(text);
-  // Cheap pre-check: a credential needs a `/` or an `=` to exist at all.
-  if (!text || (!text.includes("/") && !text.includes("="))) return text;
+  // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
+  // a narrower copy let `encodeURIComponent("/results/<token>")` through.
   return scrubCredentialsInText(text);
 }
 
@@ -375,7 +375,6 @@ export function maskReplayTextMasked(text: string): string {
  * `title`.
  */
 export function maskReplayAttributeFull(_name: string, value: string): string {
-  if (!value || (!value.includes("/") && !value.includes("="))) return value;
   return scrubCredentialsInText(value);
 }
 

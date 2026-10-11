@@ -244,6 +244,24 @@ describe("replay callbacks", () => {
     );
   });
 
+  it("scrubs a percent-encoded credential from a replay text node and attribute", async () => {
+    const { posthogPrivacyConfig } = await loadAt("full");
+    const recording = posthogPrivacyConfig("full").session_recording as {
+      maskTextFn: (text: string, element?: Element) => string;
+      maskAttributeFn: (name: string, value: string) => string;
+    };
+    // Neither a `/` nor an `=` survives encoding.
+    const encoded = encodeURIComponent(`/results/${SECRET}`);
+    expect(encoded).not.toMatch(/[/=]/);
+
+    const text = recording.maskTextFn(`Share link: ${encoded}`);
+    expect(text).not.toContain(SECRET);
+    expect(text).toContain("Share link: %2Fresults%2F");
+    const attribute = recording.maskAttributeFn("data-link", encoded);
+    expect(attribute).not.toContain(SECRET);
+    expect(attribute).toContain("%2Fresults%2F");
+  });
+
   it("attributes keep their content at full, minus credentials", async () => {
     const { maskReplayAttributeFull, maskReplayAttribute } =
       await loadAt("full");
