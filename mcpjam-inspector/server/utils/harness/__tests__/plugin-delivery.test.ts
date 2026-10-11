@@ -8,6 +8,7 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
+  skillsHashWithPlugins,
 } from "../plugin-delivery";
 import { getHarnessAdapter } from "../registry";
 import type {
@@ -490,5 +491,22 @@ describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
         ]),
       })
     ).toEqual([]);
+  });
+});
+
+describe("skillsHashWithPlugins", () => {
+  it("is the plain skills hash when no plugin ran", () => {
+    expect(skillsHashWithPlugins("abc", [])).toBe("abc");
+  });
+
+  it("changes when the plugin versions change, even with identical skills", () => {
+    const one = skillsHashWithPlugins("abc", [
+      version({ pluginVersionId: "pv_1" }),
+    ]);
+    const two = skillsHashWithPlugins("abc", [
+      version({ pluginVersionId: "pv_2" }),
+    ]);
+    expect(one).not.toBe("abc");
+    expect(one).not.toBe(two);
   });
 });

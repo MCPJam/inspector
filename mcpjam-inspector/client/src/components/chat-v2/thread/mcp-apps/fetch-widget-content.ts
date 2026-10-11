@@ -64,6 +64,7 @@ export interface FetchMcpAppsWidgetContentRequest {
 }
 
 export interface FetchMcpAppsWidgetContentResponse {
+  resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
@@ -103,7 +104,7 @@ export interface FetchMcpAppsWidgetContentResponse {
 }
 
 export async function fetchMcpAppsWidgetContent(
-  request: FetchMcpAppsWidgetContentRequest
+  request: FetchMcpAppsWidgetContentRequest,
 ): Promise<FetchMcpAppsWidgetContentResponse> {
   const useWebEndpoint = HOSTED_MODE || request.forceWebEndpoint === true;
 
@@ -157,7 +158,7 @@ export async function fetchMcpAppsWidgetContent(
     throw new Error(
       errorData.message ||
         errorData.error ||
-        `Failed to fetch widget: ${response.statusText}`
+        `Failed to fetch widget: ${response.statusText}`,
     );
   }
 
