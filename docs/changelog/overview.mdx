@@ -9,6 +9,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-11
+
+#### Added
+
+- **Claude Code and Codex on your organization's own provider keys** — a harness host can now run on an organization connection to its own vendor: Claude Code on your organization's Anthropic key, and Codex on your organization's OpenAI key. Add the connection under **Organization models** in your organization settings, then select it in the harness host's model picker. The key, the lease, and the forwarding are handled by the backend; no secret leaves your organization's configuration.
+
+  The model picker for a harness host now shows only the rows it can actually run: MCPJam-provided models and, for brokered harnesses, org-connection rows on the matching vendor. When no runnable row is available — for example, a Claude Code host whose only org connection is OpenRouter — the picker shows an empty state explaining which key the harness needs and a **Manage organization models** link, rather than offering rows the server would refuse. Sending is blocked until a runnable model is selected.
+
 ### 2026-10-09
 
 #### Added
