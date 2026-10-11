@@ -1,0 +1,196 @@
+---
+title: "MCPJam in Claude"
+description: "Connect Claude to your MCPJam account through the hosted MCP server — projects, saved servers, evals, and user testing"
+icon: "plug"
+---
+
+MCPJam runs a hosted MCP server that gives Claude access to your MCPJam
+account: your projects, the MCP servers saved in them, eval suites and runs,
+Swarms, and user-testing studies. You add it to Claude once, sign in with your
+MCPJam account, and then ask Claude to do the work in a conversation.
+
+| | |
+| --- | --- |
+| Server URL | `https://mcp.mcpjam.com/mcp` |
+| Transport | Streamable HTTP |
+| Sign-in | OAuth with your MCPJam account (`login.mcpjam.com`) |
+| Acts as | You. Every call uses your own MCPJam identity and your own project access |
+
+## Before you start
+
+- **An MCPJam account.** Sign up at [app.mcpjam.com](https://app.mcpjam.com).
+  The free plan works.
+- **A project.** Claude can list your projects and create a new one, and every
+  project tool falls back to your most recently updated project when you don't
+  name one.
+- **MCP servers to work with** (optional). Servers you already saved in the
+  MCPJam app are available right away. Claude can also connect a new server by
+  URL; when that server needs OAuth, Claude gives you a sign-in link to open.
+- **Plan and feature access.** Some features depend on your plan, your project
+  role, or features enabled for your account. Ask Claude what you can do in a
+  project. It reads that from your account, and a tool you can't use is
+  refused with a clear error.
+
+## Add it to Claude
+
+### Claude (web and desktop)
+
+Any Claude plan can add a connector by URL.
+
+1. Open [**Customize → Connectors**](https://claude.ai/customize/connectors)
+   and add a custom connector.
+2. Name it **MCPJam** and enter `https://mcp.mcpjam.com/mcp`.
+3. Click **Connect** and sign in with your MCPJam account. The connector shows
+   **Connected** under **Your connectors** when sign-in finished.
+4. In a chat, turn it on from **+ → Connectors**.
+
+On Team and Enterprise plans, an owner may need to add the connector for the
+organization first. See Anthropic's
+[guide to adding a connector by URL](https://claude.com/docs/connectors/custom/add-unlisted#add-a-connector-by-url).
+
+### Claude Code
+
+```bash
+claude mcp add --transport http mcpjam https://mcp.mcpjam.com/mcp
+```
+
+Then run `/mcp`, choose **mcpjam**, and sign in.
+
+## Sign-in and what Claude can reach
+
+The connector is an OAuth 2.0 protected resource. Claude discovers MCPJam's
+sign-in page from the server, you sign in with your MCPJam account, and Claude
+receives a token for this server. Any request without a valid token is refused
+with `401`, which is what starts sign-in.
+
+- **Your access, no more.** Each tool call is forwarded to MCPJam's API with
+  your token, so you see exactly the organizations and projects your account
+  can see, and writes need the same role they need in the app.
+- **Nothing stored by the connector.** The server is stateless. It keeps no
+  session and no copy of your token between requests.
+- **Credentials you save stay write-only.** Server headers, environment values
+  and client secrets you save are encrypted at rest. No tool returns a stored
+  secret's value.
+- **Disconnecting.** Remove the connector in Claude's connector settings to
+  stop Claude from calling MCPJam.
+
+## Tool permissions
+
+Each tool tells Claude what kind of action it is:
+
+- **Read-only** tools only read your account: listing projects, reading a run's
+  results, fetching a trace.
+- Tools that **create** something new, such as a project, an eval suite or a
+  run, are not read-only.
+- Tools that **change, replace, cancel, revoke or delete** something that
+  already exists are marked destructive, and Claude asks before running them.
+  So are `call_server_tool` and `send_chat_message`, because they run tools on
+  your own MCP servers, and those tools can do anything.
+
+You can review every tool and set its permission on the connector's page in
+Claude, under **Tool permissions**.
+
+## Costs
+
+Most tools are free to call. These spend your organization's MCPJam credits,
+or the model-provider keys your organization configured, and their
+descriptions say so:
+
+| Tool | Spends on |
+| --- | --- |
+| `run_eval_suite`, `run_eval_case` | Model calls for every iteration of every case |
+| `request_eval_run_judge`, `backtest_eval_run_judge` | LLM-as-judge grading |
+| `send_chat_message` | Each Playground message |
+| `launch_goal_run` | Every Swarms session the run fans out to |
+| `set_study_guest_execution` | What anonymous study visitors may run on your account |
+
+These are included with MCPJam and are not charged to you, but they count
+against per-minute and daily usage limits: `generate_eval_cases`,
+`import_eval_cases`, `generate_personas`, `generate_goals`,
+`request_swarm_run_insights`, and `request_study_insights`. A tool that hits a
+limit is refused with `RATE_LIMITED` and the time it can be called again.
+Adding credits does not lift these limits.
+
+## Examples
+
+**See where things stand**
+
+> Which MCPJam projects do I have, and which servers are in the most recent one?
+
+Claude calls `list_projects`, then `list_project_servers`.
+
+**Check a server**
+
+> Diagnose the "billing" server in my Payments project. It stopped connecting.
+
+Claude calls `diagnose_server`, which probes the URL, connects, and reports
+what failed.
+
+**Run and read evals**
+
+> Run the "checkout flows" eval suite in Payments and tell me which cases fail.
+
+Claude calls `run_eval_suite` (it asks first, because the run spends credits),
+then `get_eval_run` until the run finishes, then `get_eval_run_steps` for a
+failing case.
+
+**Did a change break anything?**
+
+> Compare the latest "checkout flows" run with the one before it.
+
+Claude calls `compare_eval_run`, which classifies each case as regressed,
+fixed, new, removed, changed, or unchanged.
+
+**Add a server**
+
+> Connect https://example.com/mcp to my Payments project.
+
+Claude calls `connect_project_server`. If the server needs OAuth, Claude gives
+you a sign-in link to open, then calls `get_project_server_connection_status`
+until the connection is ready.
+
+## Troubleshooting
+
+**Claude says the connector needs you to sign in again.** Your MCPJam sign-in
+expired or was revoked. Reconnect the connector in Claude's connector settings
+(in Claude Code, run `/mcp`, choose **mcpjam**, and re-authenticate).
+
+**You see a different account's projects.** You signed in with another
+MCPJam account. Disconnect the connector, connect again, and choose the account
+you meant on the MCPJam sign-in page. `get_me` shows which account Claude is
+using.
+
+**`NOT_FOUND` for a project, server, suite or run.** The name or id did not
+match anything your account can see. Project tools default to your most
+recently updated project, so name the project when you have several.
+
+**`403 FORBIDDEN`.** Your role or plan does not allow that action, or the
+feature is not enabled for your account. A refusal for a feature carries
+`details.code: "FEATURE_UNAVAILABLE"` and names the feature.
+
+**`RATE_LIMITED`.** A usage limit was reached. The error says when the tool can
+be called again.
+
+**`TARGET_REQUIRED` from `run_eval_suite`.** The suite is attached to several
+environments or clients. The error lists them; tell Claude which one to run.
+
+**A tool your teammate mentioned is missing.** Features in beta are not offered
+through this connector yet, even when they are enabled for you in the app.
+
+**Anything else.** Email [support@mcpjam.com](mailto:support@mcpjam.com) with
+the request id from the error message when there is one.
+
+## Privacy and terms
+
+The connector processes your MCPJam data under MCPJam's
+[Privacy Policy](https://www.mcpjam.com/privacy-policy) and
+[Terms of Use](https://www.mcpjam.com/terms-of-use).
+
+- Tools that run models (evals, judges, Playground messages, Swarms, and the
+  generation and insight tools) send the content they work on to the model
+  providers MCPJam uses. `get_eval_run_disclosure` lists, before a run, which
+  models it calls, where they route, and what is retained.
+- `call_server_tool` and `send_chat_message` send their inputs to your own MCP
+  servers.
+- `send_feedback` sends the text you give it to the MCPJam team, where it is
+  kept for 180 days.

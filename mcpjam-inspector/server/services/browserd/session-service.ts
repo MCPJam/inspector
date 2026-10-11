@@ -74,11 +74,22 @@ type RequestArgs = {
 export class BrowserSessionServiceError extends Error {
   readonly status: number;
   readonly detail: string;
-  constructor(message: string, status: number, detail: string) {
+  /** The backend's machine code, when its refusal sent one (`FEATURE_UNAVAILABLE`). */
+  readonly code?: string;
+  /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
+  readonly feature?: string;
+  constructor(
+    message: string,
+    status: number,
+    detail: string,
+    refusal: { code?: string; feature?: string } = {},
+  ) {
     super(message);
     this.name = "BrowserSessionServiceError";
     this.status = status;
     this.detail = detail;
+    if (refusal.code) this.code = refusal.code;
+    if (refusal.feature) this.feature = refusal.feature;
   }
 }
 
@@ -278,12 +289,20 @@ export class BrowserSessionService {
       // "profile is not owned" tells a user what to change; "route returned
       // 400" tells them nothing and sends whoever is on call reading Convex
       // logs. Body first, status only as the fallback when there is no body.
+      // A gate refusal also names its code and feature, kept so the route can
+      // answer with them rather than a bare status.
+      const refusal: { code?: string; feature?: string } = {};
       const detail = await response
         .text()
         .then((text) => {
           if (!text) return "";
           try {
             const parsed: unknown = JSON.parse(text);
+            if (isRecord(parsed)) {
+              if (typeof parsed.code === "string") refusal.code = parsed.code;
+              if (typeof parsed.feature === "string")
+                refusal.feature = parsed.feature;
+            }
             const message = isRecord(parsed) ? parsed.error : undefined;
             return typeof message === "string" && message ? message : text;
           } catch {
@@ -297,6 +316,7 @@ export class BrowserSessionService {
           : `browser session route ${path} returned ${response.status}`,
         response.status,
         detail,
+        refusal,
       );
     }
     return (await response.json()) as T;

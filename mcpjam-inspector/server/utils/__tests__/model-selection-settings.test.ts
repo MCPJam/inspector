@@ -109,15 +109,16 @@ describe("resolveEffectiveModelSettings: reasoning effort", () => {
     expect(result.refusal.reason).toContain("reasoning effort");
   });
 
-  it("orgCloud: refused (the backend route does not apply one)", () => {
+  it("orgCloud: kept for the backend to apply, no provider options", () => {
     const result = resolveEffectiveModelSettings({
       route: "orgCloud",
       modelDefinition: OPENAI_GPT5,
       selection: localSelection({ reasoningEffort: "low" }, "openai/gpt-5"),
     });
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "capability_missing" },
+    expect(result).toEqual({
+      ok: true,
+      settings: { reasoningEffort: "low" },
+      sources: { reasoningEffort: "selection" },
     });
   });
 

@@ -766,3 +766,38 @@ describe("resolveExecutionContext — tasks policy", () => {
     expect(resolved.tasksPolicy).toBe("invalid");
   });
 });
+
+describe("resolveExecutionContext — modelSelection (host-only)", () => {
+  const selection = {
+    modelId: "openai/gpt-5",
+    source: "hosted",
+    settings: { reasoningEffort: "high" },
+    fallback: { provider: "openrouter", model: "none" },
+  };
+
+  it("reads the host's saved selection with its settings", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { modelSelection: selection },
+      precedence: "override-wins",
+    });
+    expect(result.modelSelection?.modelId).toBe("openai/gpt-5");
+    expect(result.modelSelection?.settings?.reasoningEffort).toBe("high");
+  });
+
+  it("is absent for a host with none, a malformed one, and no host config", () => {
+    expect(
+      resolveExecutionContext({ hostConfig: {}, precedence: "host-wins" })
+        .modelSelection,
+    ).toBeUndefined();
+    expect(
+      resolveExecutionContext({
+        hostConfig: { modelSelection: { modelId: 3 } },
+        precedence: "host-wins",
+      }).modelSelection,
+    ).toBeUndefined();
+    expect(
+      resolveExecutionContext({ hostConfig: null, precedence: "override-wins" })
+        .modelSelection,
+    ).toBeUndefined();
+  });
+});
