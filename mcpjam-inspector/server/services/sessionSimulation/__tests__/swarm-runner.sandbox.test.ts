@@ -30,6 +30,7 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
+const touchSandboxMock = vi.fn(async () => "touched" as const);
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
@@ -161,6 +162,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
     provisionJourneySandbox: (...args: unknown[]) =>
       provisionJourneySandboxMock(...args),
     releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+    touchSandbox: (...args: unknown[]) => touchSandboxMock(...(args as [])),
   };
 });
 
@@ -188,26 +190,6 @@ vi.mock("../../../utils/built-in-tools/registry.js", async () => {
 // never re-exports it, so mocking that namespace would intercept nothing and
 // this assertion would pass no matter what the runner did — false confidence on
 // exactly the guarantee that matters most here.
-// The approval gate reads the adapter's declared capabilities. One test needs a
-// NATIVE-delivery harness that cannot approve its MCP tools — a combination no
-// registered adapter has anymore — so the flag is overridable here. Everything
-// else on the adapter stays real.
-let forceNoMcpToolApproval = false;
-vi.mock("../../../utils/harness/registry.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../../utils/harness/registry.js")
-  >("../../../utils/harness/registry.js");
-  return {
-    ...actual,
-    getHarnessAdapter: (id: Parameters<typeof actual.getHarnessAdapter>[0]) => {
-      const adapter = actual.getHarnessAdapter(id);
-      return forceNoMcpToolApproval
-        ? { ...adapter, supportsMcpToolApproval: false }
-        : adapter;
-    },
-  };
-});
-
 vi.mock("../../../utils/harness/resolve-sandbox.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/harness/resolve-sandbox.js")
@@ -224,6 +206,8 @@ import {
   type StartJourneyRunOptions,
 } from "../swarm-runner.js";
 import type { PinnedHostExecutionSpec } from "../../swarm-agent.js";
+import { provisionAttemptSandbox } from "../swarm-sandbox.js";
+import { harnessBoxHeartbeatIntervalMs } from "../../../utils/harness/harness-box.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -414,9 +398,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Same reasoning as the timers below: reset unconditionally so a capability
-  // override can never leak into the next test's adapter.
-  forceNoMcpToolApproval = false;
   // Unconditionally, so a run that rejects between `useFakeTimers()` and its
   // matching restore can't leak a frozen clock into the next test and produce
   // a confusing cascade. Cheap, and it covers every fake-timer test here.
@@ -1047,15 +1028,17 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
 
-  it("FAILS CLOSED, without provisioning, when the run pinned no image", async () => {
+  it("FAILS CLOSED, without provisioning, when the target's pinned image cannot boot", async () => {
     // Knowable per TARGET, so it is refused before any box is booted — a
     // harness-blocked session would pay for a box purely to release it unused.
+    // The target ASKED for that image, so it does not quietly fall back to
+    // the default template either.
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
         computerEnvironment: undefined,
         computerUnavailableReason:
-          "This environment has no computer image configured, so this run has no sandbox to execute in.",
+          "This environment's computer image has no successful build yet, so this run has no sandbox to execute in.",
       })
     );
 
@@ -1080,19 +1063,48 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     );
   });
 
-  it("treats a PRE-B-isolation snapshot as blocked for a harness, not silently degraded", async () => {
-    // Both pin fields absent is an OLD run snapshot. For bash that stays silent
-    // (the tool simply goes missing); a harness cannot run at all, so the
-    // session must fail with something true rather than reserve the shared box.
+  it("runs a harness target that pinned NO image on a terminal box (the default template)", async () => {
+    // Both pin fields absent: nothing pinned and nothing unavailable. A harness
+    // has to run on a machine, so it gets a disposable terminal box on the
+    // deployment default — the control plane picks the image, so the request
+    // names none and stays byte-identical to a pinned one.
+    personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
+        builtInToolIds: [],
         computerEnvironment: undefined,
         computerUnavailableReason: undefined,
       })
     );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).not.toHaveProperty(
+      "runtimeKind"
+    );
+    // Still never the launcher's personal computer.
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
-    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+    expect(turnOptions().harnessSandboxBinding).toMatchObject({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_1",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
+  });
+
+  it("a bash-only target that pinned nothing still provisions nothing", async () => {
+    // Only a HARNESS gets the default template. A shell does not have to
+    // exist, so an unpinned bash target keeps today's silent suppression.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        computerEnvironment: undefined,
+        computerUnavailableReason: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 });
 
@@ -1162,10 +1174,8 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
   });
 
   it("refuses requireToolApproval on a harness that cannot pause", async () => {
-    // Codex builds its thread with `approvalPolicy: "never"` hardcoded, so it
-    // is never asked to pause on any surface — the combination advertises an
-    // approval gate it cannot enforce. (Claude Code CAN pause on all three
-    // surfaces and is admitted; asserted below.)
+    // Nobody can answer an approval in a swarm, so this is refused before a
+    // box is provisioned, whatever the runtime could pause on.
     await startJourneyRun(
       baseOpts({
         harness: "codex",
@@ -1178,65 +1188,26 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
   });
 
-  it("admits requireToolApproval with MCP servers on Claude Code", async () => {
-    // The adapter bridge's `canUseTool` gates MCP tool calls under
-    // "allow-reads", so this target is sound and must reach provisioning
-    // rather than being refused at the preflight.
+  // Claude Code CAN pause, but a swarm has nobody to answer: admitted, the
+  // turn parked at its first gated call and the next persona turn dropped it.
+  // Refused up front instead, with or without (plugin) servers.
+  it.each([
+    ["with MCP servers", { serverIds: ["server-1"] }],
+    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["with no MCP servers", { serverIds: [], pluginServerIds: [] }],
+  ])("refuses requireToolApproval on Claude Code (%s)", async (_label, servers) => {
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
         requireToolApproval: true,
-        serverIds: ["server-1"],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalled();
-  });
-
-  it("counts PLUGIN servers toward the approval gate", async () => {
-    // A target whose MCP servers come solely from a plugin has an empty
-    // `serverIds`, so a selected-servers-only predicate reads `false` and the
-    // target slips the very gate the approval rule exists to close.
-    //
-    // Asserted on Claude Code, and it has to be: Codex refuses on the
-    // native-approval arm BEFORE the server count is ever consulted, so a
-    // Codex fixture here would pass without exercising the counting at all.
-    // Claude Code reaches the MCP arm, so the plugin servers are what decides
-    // — proven by the `supportsMcpToolApproval: false` stub, which turns the
-    // same target into a refusal only because the plugin servers counted.
-    forceNoMcpToolApproval = true;
-
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-        pluginServerIds: ["plugin-server-1"],
+        ...servers,
       })
     );
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /MCP-server tools/i
+      /unattended run/i
     );
-  });
-
-  it("does NOT refuse the same host once the plugin servers are gone", async () => {
-    // The control for the case above: with no servers at all the identical
-    // stubbed host is admitted, so the refusal really did come from counting
-    // the plugin-contributed ones rather than from the stub itself.
-    forceNoMcpToolApproval = true;
-
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-        pluginServerIds: [],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalled();
   });
 
   it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {
@@ -1248,23 +1219,6 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({ harness: "codex", modelId: "gpt-5-nano", serverIds: [] })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
-    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
-  });
-
-  it("still admits an approval target with NO MCP servers", async () => {
-    // The rule is capability-driven, not "approval is unsupported": Claude Code
-    // does gate its own tools. Over-refusing here would silently drop a
-    // configuration the interactive path allows.
-    personaDrivesOneTurn();
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-      })
     );
 
     expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
@@ -1563,6 +1517,36 @@ describe("swarm runner — the attempt's recording comes off before the box does
 
     await startJourneyRun(baseOpts());
 
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+});
+
+describe("swarm attempt box — the attempt's signal", () => {
+  it("a stopped run stops the box's heartbeat, and the release still tears it down", async () => {
+    vi.useFakeTimers();
+    const attempt = new AbortController();
+    const provisioned = await provisionAttemptSandbox({
+      bearer: "bearer",
+      runId: "run-1",
+      targetId: "environment:env-1",
+      sessionIdx: 0,
+      signal: attempt.signal,
+    });
+    if (!provisioned.ok) throw new Error("expected a box");
+    const beat = harnessBoxHeartbeatIntervalMs("swarm");
+    await vi.advanceTimersByTimeAsync(beat);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+
+    // A session that never unwinds to its `finally` must not keep the box
+    // live: the stop alone ends the beat.
+    attempt.abort();
+    await vi.advanceTimersByTimeAsync(beat * 8);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+
+    await provisioned.sandbox.release();
     expect(releaseSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row_1" }),
     );

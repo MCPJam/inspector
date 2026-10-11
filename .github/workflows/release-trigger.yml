@@ -62,12 +62,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout the commit to decide on
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Decide, and dispatch Release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { readFileSync } = require("node:fs");

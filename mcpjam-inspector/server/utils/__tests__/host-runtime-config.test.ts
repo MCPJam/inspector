@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchHostRuntimeConfig } from "../host-runtime-config";
+import { resolveExecutionContext } from "../host-execution-context";
+import { hostSelectionForModel } from "../../routes/v1/chat-session-host-target";
 
 // Unit coverage for the inspector → Convex host runtime-config client. Mirrors
 // the scenario runtime-config contract: POST /web/host/runtime-config with a
@@ -51,6 +53,43 @@ describe("fetchHostRuntimeConfig", () => {
       ok: true,
       config: { hostId: "h1", harness: "claude-code" },
     });
+  });
+
+  it("a response carrying modelSelection reaches both readers through the real parsing path", async () => {
+    // No reader is mocked: the wire body goes through the same normalize and
+    // validators a live runtime-config response does (flat and nested).
+    const selection = {
+      modelId: "anthropic/claude-sonnet-4-6",
+      source: "hosted",
+      settings: { reasoningEffort: "high" },
+      fallback: { provider: "none", model: "none" },
+    };
+    for (const body of [
+      { ok: true, config: { hostId: "h1", modelSelection: selection } },
+      { ok: true, config: { hostId: "h1", hostConfig: { modelSelection: selection } } },
+    ]) {
+      mockFetch(() => Response.json(body));
+      const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "t" });
+      if (!result.ok) throw new Error("expected ok");
+
+      const context = resolveExecutionContext({
+        hostConfig: result.config as Record<string, unknown>,
+        precedence: "host-wins",
+      });
+      expect(context.modelSelection?.settings?.reasoningEffort).toBe("high");
+      expect(
+        hostSelectionForModel(
+          result.config as Record<string, unknown>,
+          "anthropic/claude-sonnet-4-6"
+        )?.settings?.reasoningEffort
+      ).toBe("high");
+      expect(
+        hostSelectionForModel(
+          result.config as Record<string, unknown>,
+          "openai/gpt-5"
+        )
+      ).toBeUndefined();
+    }
   });
 
   it("rejects a blank bearer as 401 without hitting the network", async () => {
