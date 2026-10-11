@@ -136,14 +136,15 @@ export interface SessionPrivacyInputs {
  * The level for this session. Pure: the caller supplies the facts.
  *
  * - npx/Docker and dev builds: `off`.
+ * - Share links: `off`. The page shows an organization the viewer may not
+ *   belong to; the backend answers for the viewer, not the page's owner,
+ *   whose replay might be off.
  * - Everywhere else, `pending` until the backend answers, and `off` when it
  *   answers `off`: no replay for an organization with session replay off, on
  *   any surface.
  * - Packaged desktop: otherwise `masked` for everyone. It records people
  *   debugging their own MCP servers on their own machines, which is the npx
  *   reasoning with replay kept for crash debugging.
- * - Hosted share links: otherwise `masked` — whose data it is cannot be
- *   known here.
  * - Hosted otherwise: the backend's answer. Only a verified non-private
  *   context gets `full`; visitors with no session, and pages with nothing in
  *   view, are `masked`.
@@ -151,10 +152,13 @@ export interface SessionPrivacyInputs {
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
 ): SessionPrivacy {
-  if (inputs.surface === "off") return "off";
+  // A share-link page shows an organization's content to a viewer who may
+  // not belong to it. The backend answers for the viewer, not the page's
+  // owner, whose replay might be off, so nothing records there at all.
+  if (inputs.surface === "off" || inputs.sharedLink) return "off";
   if (inputs.recording === undefined) return "pending";
   if (inputs.recording === "off") return "off";
-  if (inputs.surface === "desktop" || inputs.sharedLink) return "masked";
+  if (inputs.surface === "desktop") return "masked";
   return inputs.recording === "full" ? "full" : "masked";
 }
 

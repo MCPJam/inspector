@@ -10,8 +10,9 @@
  * privacy; `?privacy=off` is one viewing an organization with session replay
  * off; `?privacy=pending` is a first visit whose policy never arrives;
  * `?privacy=full` is a verified non-private context, the positive control
- * that proves the recorders were capturing all along. `__harness.tighten()`
- * moves a running page to a private context, as a navigation would.
+ * that proves the recorders were capturing all along. `&shared=1` makes it a
+ * share-link page. `__harness.tighten()` moves a running page to a private
+ * context, as a navigation would.
  */
 import { StrictMode, useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
@@ -41,7 +42,10 @@ import {
   HARNESS_UNMASKED_MARKER,
 } from "./constants";
 
-const requested = new URLSearchParams(window.location.search).get("privacy");
+const params = new URLSearchParams(window.location.search);
+const requested = params.get("privacy");
+// `&shared=1`: a share-link page (a published study's tester chat).
+const sharedLink = params.get("shared") === "1";
 const mode: "full" | "masked" | "off" | "pending" =
   requested === "full" || requested === "off" || requested === "pending"
     ? requested
@@ -63,7 +67,7 @@ function Harness() {
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
-      sharedLink: false,
+      sharedLink,
       recording,
     }),
   );

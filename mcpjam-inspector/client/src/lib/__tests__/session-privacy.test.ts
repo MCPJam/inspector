@@ -104,12 +104,16 @@ describe("resolveSessionPrivacy", () => {
     expect(resolveSessionPrivacy(base)).toBe("full");
   });
 
-  it("masks a share link whoever is viewing it, once answered", async () => {
+  it("records nothing on a share link, whatever the viewer's own answer", async () => {
+    // The page shows an organization the viewer may not belong to; its
+    // owner's replay might be off, and the backend answers for the viewer.
     const { resolveSessionPrivacy } = await load();
-    for (const recording of ["full", "masked"] as const) {
-      expect(
-        resolveSessionPrivacy({ ...base, recording, sharedLink: true }),
-      ).toBe("masked");
+    for (const recording of ["full", "masked", "off", undefined] as const) {
+      for (const surface of ["hosted", "desktop"] as const) {
+        expect(
+          resolveSessionPrivacy({ surface, recording, sharedLink: true }),
+        ).toBe("off");
+      }
     }
   });
 });

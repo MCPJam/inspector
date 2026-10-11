@@ -498,6 +498,49 @@ test.describe("telemetry privacy in the browser", () => {
     expect(maskedText).not.toContain(SYNTHETIC_PII.domText);
   });
 
+  test("a share-link page records no replay, even with a full answer for the viewer", async ({
+    page,
+  }) => {
+    const captured = await intercept(page);
+    await page.goto("/?privacy=full&shared=1");
+    await exercise(page);
+    await expect
+      .poll(
+        () =>
+          sentryItems(captured, "event").length > 0 &&
+          captured.posthog
+            .flatMap((r) => posthogEvents(r.json))
+            .some((e) => e.event === "$exception"),
+        { timeout: 45_000, intervals: [500] },
+      )
+      .toBe(true);
+    await page.waitForTimeout(3_000);
+
+    expect(snapshotEvents(captured)).toEqual([]);
+    expect(sentryItems(captured, "replay_recording")).toEqual([]);
+    expect(sentryItems(captured, "replay_event")).toEqual([]);
+    // The viewer may be named (the backend granted it for them), but the
+    // page's own content stays out of every payload.
+    const text = allPayloadText(captured);
+    for (const needle of [
+      SYNTHETIC_PII.domText,
+      SYNTHETIC_PII.serverName,
+      SYNTHETIC_PII.organizationName,
+      SYNTHETIC_PII.title,
+      SYNTHETIC_PII.inputValue,
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+    // Stamped off, so the relay drops any replay from this page as well.
+    const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
+    expect(events.length).toBeGreaterThan(0);
+    for (const event of events) {
+      expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
+        r: "off",
+      });
+    }
+  });
+
   test("a credential URL is redacted by the shared credential sanitizer and never recorded", async ({
     page,
   }) => {

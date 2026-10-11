@@ -45,7 +45,7 @@ Three layers enforce the same policy:
 | `electron-forge start` (dev)                                                  | `off`     |
 | Any build with `VITE_DISABLE_POSTHOG_LOCAL`                                   | `off`     |
 | Packaged desktop (Electron), everyone else, once answered                     | `masked`  |
-| Hosted, share link of a published study (the tester chat), once answered      | `masked`  |
+| Hosted or desktop, share link of a published study (the tester chat)          | `off`     |
 | Hosted, the backend answered `masked` for the contexts in view                | `masked`  |
 | Hosted, no context in view, or no session to verify one with                  | `masked`  |
 | Hosted, every context in view verified non-private, viewer in no private org  | `full`    |
@@ -68,8 +68,10 @@ the shell renders that organization's name and projects wherever they are.
   outside collaborator (a `guest` member with a project grant) is judged by
   the project's organization, not their own. The most restrictive context
   wins.
-- **Share links** show a project the viewer may not belong to, so its
-  organization's posture cannot be known from this side.
+- **Share links** show a project the viewer may not belong to. The backend
+  answers for the viewer, not for the page's owner, whose replay might be
+  off, so share-link pages record no replay at all, and their events are
+  stamped `off` so the relay drops any replay from them too.
 - **Guests** are authenticated with a guest token and their own personal
   organization is in view, so their sandbox resolves like anyone's.
 
