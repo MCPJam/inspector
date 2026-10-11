@@ -59,7 +59,7 @@ const normalizeGuestVariant = (
  */
 function GuestCreditWall() {
   const { signIn, signUp } = useAuth();
-  const close = useMCPJamLimitDialogStore((s) => s.close);
+  const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
   const posthog = usePostHog();
   // Reading the variant fires the PostHog exposure ($feature_flag_called).
   const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
@@ -120,7 +120,7 @@ function GuestCreditWall() {
   const trackedVariant = committedVariant ?? "control";
 
   const handleDismiss = () => {
-    close();
+    dismiss();
     track("plan_limit_dialog_dismissed", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",
@@ -199,6 +199,7 @@ export function MCPJamLimitDialog() {
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
   const limitShortfall = useMCPJamLimitDialogStore((s) => s.shortfall);
   const close = useMCPJamLimitDialogStore((s) => s.close);
+  const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
   const { user, isLoading, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -446,7 +447,7 @@ export function MCPJamLimitDialog() {
     const destination = destinations[action];
     // Keep the wall open until there is an organization to navigate to.
     if (orgId) {
-      close();
+      dismiss();
       appNavigate(`/organizations/${orgId}/${destination.path}`);
     }
     track(`plan_limit_${action}_clicked`, {
@@ -459,7 +460,7 @@ export function MCPJamLimitDialog() {
   const handleBYOK = () => navigateToBilling("byok");
   const handleExplorePlans = () => navigateToBilling("explore_plans");
   const handleCreditsDismiss = () => {
-    close();
+    dismiss();
     track("plan_limit_dialog_dismissed", {
       ...creditEventContext,
       organization_id: billingOrgId,
@@ -479,7 +480,7 @@ export function MCPJamLimitDialog() {
           }}
         />
       )}
-      {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={close} />}
+      {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={dismiss} />}
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && (
         <CreditsLimitDialogView

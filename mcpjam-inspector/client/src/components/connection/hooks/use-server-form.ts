@@ -27,6 +27,11 @@ import {
   type PendingCredentialClear,
 } from "@/lib/credential-origin";
 import { parseCommandInput } from "@/lib/command-input";
+import {
+  getConfidentialCimdBlockReason,
+  validateOAuthClientId,
+  validateOAuthClientSecret,
+} from "@/lib/server-form-validation";
 
 /**
  * The single command line the edit form shows for a stored stdio target, and
@@ -112,7 +117,7 @@ function isAuthorizationHeader(key: string): boolean {
 }
 
 function getAuthorizationHeaderValue(
-  headers?: Record<string, unknown>
+  headers?: Record<string, unknown>,
 ): string | undefined {
   if (!headers) {
     return undefined;
@@ -129,7 +134,7 @@ function getAuthorizationHeaderValue(
 
 function getRedactedConfigFlag(
   config: unknown,
-  flag: "hasEnv" | "hasHeaders" | "hasBearerToken"
+  flag: "hasEnv" | "hasHeaders" | "hasBearerToken",
 ): boolean {
   return (
     !!config && typeof config === "object" && (config as any)[flag] === true
@@ -137,7 +142,7 @@ function getRedactedConfigFlag(
 }
 
 function toComparableHeaders(
-  headers: Array<{ key: string; value: string }>
+  headers: Array<{ key: string; value: string }>,
 ): Array<{ key: string; value: string }> {
   return headers.map(({ key, value }) => ({ key, value }));
 }
@@ -150,7 +155,7 @@ export function useServerForm(
     confidentialCimdProbeEnabled?: boolean;
     organizationId?: string | null;
     isSignedIn?: boolean;
-  }
+  },
 ) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
@@ -163,7 +168,7 @@ export function useServerForm(
   const [registrationMode, setOauthRegistrationMode] =
     useState<RegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
   const [xaaClientAuth, setXaaClientAuth] = useState<XaaClientAuthMethod>(
-    DEFAULT_XAA_CLIENT_AUTH
+    DEFAULT_XAA_CLIENT_AUTH,
   );
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -211,11 +216,11 @@ export function useServerForm(
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
-    null
+    null,
   );
 
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    []
+    [],
   );
   const [customHeaders, setCustomHeaders] = useState<HeaderEntry[]>([]);
   const [hasStoredEnv, setHasStoredEnv] = useState(false);
@@ -244,11 +249,11 @@ export function useServerForm(
 
   const initialValues = useRef<InitialFormValues | null>(null);
   const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
-    options?.projectClientConfig
+    options?.projectClientConfig,
   );
 
   const parseCapabilitiesOverride = (
-    value: string
+    value: string,
   ): Record<string, unknown> => {
     const parsed = JSON.parse(value) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -293,10 +298,10 @@ export function useServerForm(
         hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
-          `mcp-oauth-config-${server.name}`
+          `mcp-oauth-config-${server.name}`,
         );
         const storedClientInfo = localStorage.getItem(
-          `mcp-client-${server.name}`
+          `mcp-client-${server.name}`,
         );
         const storedTokens = getStoredTokens(server.name, httpServerUrl);
 
@@ -338,12 +343,12 @@ export function useServerForm(
           typeof server.oauthProtocolMode === "string"
             ? server.oauthProtocolMode
             : typeof oauthConfig.protocolMode === "string"
-            ? oauthConfig.protocolMode
-            : typeof server.oauthFlowProfile?.protocolVersion === "string"
-            ? server.oauthFlowProfile.protocolVersion
-            : typeof oauthConfig.protocolVersion === "string"
-            ? oauthConfig.protocolVersion
-            : undefined;
+              ? oauthConfig.protocolMode
+              : typeof server.oauthFlowProfile?.protocolVersion === "string"
+                ? server.oauthFlowProfile.protocolVersion
+                : typeof oauthConfig.protocolVersion === "string"
+                  ? oauthConfig.protocolVersion
+                  : undefined;
         protocolModeValue =
           storedProtocolMode != null
             ? normalizeOauthProtocolMode(storedProtocolMode)
@@ -358,7 +363,7 @@ export function useServerForm(
           normalizeOauthRegistrationMode(server.registrationMode) ??
           normalizeOauthRegistrationMode(oauthConfig.registrationMode) ??
           normalizeOauthRegistrationMode(
-            server.oauthFlowProfile?.registrationStrategy
+            server.oauthFlowProfile?.registrationStrategy,
           ) ??
           normalizeOauthRegistrationMode(oauthConfig.registrationStrategy) ??
           (savedClientId || savedClientSecret || hasStoredClientSecretValue
@@ -368,7 +373,7 @@ export function useServerForm(
         shouldShowClientCredentials =
           registrationModeValue === "preregistered" ||
           Boolean(
-            savedClientId || savedClientSecret || hasStoredClientSecretValue
+            savedClientId || savedClientSecret || hasStoredClientSecretValue,
           );
       }
 
@@ -379,11 +384,11 @@ export function useServerForm(
       const serverUrl = isHttpServer && config.url ? config.url.toString() : "";
       const fullCommand = formatCommandInput(
         server.config.command ?? "",
-        server.config.args ?? []
+        server.config.args ?? [],
       );
       const authorizationHeader = isHttpServer
         ? getAuthorizationHeaderValue(
-            config.requestInit?.headers as Record<string, unknown> | undefined
+            config.requestInit?.headers as Record<string, unknown> | undefined,
           )
         : undefined;
       const normalizedAuthorizationHeader = authorizationHeader?.trim();
@@ -420,12 +425,12 @@ export function useServerForm(
         (server.useXaa === true
           ? "xaa"
           : hasServerOAuth
-          ? "oauth"
-          : hasBearer || hasStoredBearerTokenValue
-          ? "bearer"
-          : hasOAuth
-          ? "oauth"
-          : "none");
+            ? "oauth"
+            : hasBearer || hasStoredBearerTokenValue
+              ? "bearer"
+              : hasOAuth
+                ? "oauth"
+                : "none");
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
@@ -456,22 +461,22 @@ export function useServerForm(
       setHasStoredBearerToken(hasStoredBearerTokenValue);
       setRequestTimeout(timeoutValue);
       setClientCapabilitiesOverrideEnabled(
-        clientCapabilitiesOverrideValue != null
+        clientCapabilitiesOverrideValue != null,
       );
       setClientCapabilitiesOverrideText(
-        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2)
+        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2),
       );
       setClientCapabilitiesOverrideError(null);
 
       // Read XAA-specific fields (issuer / simulated identity) from the server
       // record so edit mode round-trips them. Client id / scopes reuse the
       // OAuth-credential reads above.
-      setXaaAuthzIssuer(isHttpServer ? server.xaaAuthzIssuer ?? "" : "");
+      setXaaAuthzIssuer(isHttpServer ? (server.xaaAuthzIssuer ?? "") : "");
       setXaaAllowPathScopedIssuer(
-        isHttpServer ? server.xaaAllowPathScopedIssuer === true : false
+        isHttpServer ? server.xaaAllowPathScopedIssuer === true : false,
       );
       setOauthAllowPathScopedIssuer(
-        isHttpServer ? server.oauthAllowPathScopedIssuer === true : false
+        isHttpServer ? server.oauthAllowPathScopedIssuer === true : false,
       );
       setXaaSubject(server.xaaSubject ?? "");
       setXaaEmail(server.xaaEmail ?? "");
@@ -549,7 +554,7 @@ export function useServerForm(
       setShowConfiguration(
         headersArray.length > 0 ||
           timeoutValue.trim() !== "" ||
-          clientCapabilitiesOverrideValue != null
+          clientCapabilitiesOverrideValue != null,
       );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
@@ -580,9 +585,9 @@ export function useServerForm(
         clientCapabilitiesOverrideText: JSON.stringify(
           clientCapabilitiesOverrideValue ?? {},
           null,
-          2
+          2,
         ),
-        xaaAuthzIssuer: isHttpServer ? server.xaaAuthzIssuer ?? "" : "",
+        xaaAuthzIssuer: isHttpServer ? (server.xaaAuthzIssuer ?? "") : "",
         xaaAllowPathScopedIssuer: isHttpServer
           ? server.xaaAllowPathScopedIssuer === true
           : false,
@@ -603,36 +608,14 @@ export function useServerForm(
     authType === "xaa" &&
     effectiveXaaRegistrationMode === "cimd" &&
     xaaClientAuth === "private_key_jwt";
-  const confidentialCimdBlockReason = !wantsConfidentialCimd
-    ? null
-    : confidentialCimdCapability.status === "ready"
-    ? null
-    : confidentialCimdCapability.status === "error"
-    ? "Confidential CIMD is selected, but its client identity could not be loaded. Retry, or switch Client authentication to Public."
-    : confidentialCimdCapability.status === "unavailable"
-    ? "Confidential CIMD requires a signed-in organization member and an enabled deployment. Switch to Public or select an organization."
-    : "Preparing the confidential CIMD client identity. Try again in a moment.";
+  const confidentialCimdBlockReason = getConfidentialCimdBlockReason(
+    wantsConfidentialCimd,
+    confidentialCimdCapability.status,
+  );
 
   // Validation functions
-  const validateClientId = (value: string): string | null => {
-    if (!value || value.trim() === "") {
-      return "Client ID is required when using custom credentials";
-    }
-    if (value.length < 3) {
-      return "Client ID must be at least 3 characters";
-    }
-    return null;
-  };
-
-  const validateClientSecret = (value: string): string | null => {
-    // No minimum length: the OAuth spec doesn't require one, and the
-    // secret is issued by the authorization server, not chosen here — the
-    // server-side schema only rejects a value that's empty after trimming.
-    if (value && value.trim() === "") {
-      return "Client Secret cannot be only whitespace";
-    }
-    return null;
-  };
+  const validateClientId = validateOAuthClientId;
+  const validateClientSecret = validateOAuthClientSecret;
 
   const validateForm = (): string | null => {
     if (!name || name.trim() === "") {
@@ -717,7 +700,7 @@ export function useServerForm(
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     setEnvDirty(true);
     const updated = [...envVars];
@@ -738,7 +721,7 @@ export function useServerForm(
   const updateCustomHeader = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     setHeadersDirty(true);
     const updated = [...customHeaders];
@@ -769,7 +752,7 @@ export function useServerForm(
   };
 
   const revealStoredHeaders = (
-    headers: Record<string, string> | null | undefined
+    headers: Record<string, string> | null | undefined,
   ) => {
     const entries = Object.entries(headers ?? {});
     // Only a bearer-auth server pulls its Authorization header into the bearer
@@ -777,7 +760,7 @@ export function useServerForm(
     // (e.g. Basic auth, or an OAuth access token surfaced as a header), so we
     // don't silently switch their auth type or strip the row.
     const authorizationValue = entries.find(([key]) =>
-      isAuthorizationHeader(key)
+      isAuthorizationHeader(key),
     )?.[1];
     const revealedBearerToken =
       authType === "bearer" &&
@@ -788,7 +771,7 @@ export function useServerForm(
     const nextCustomHeaders = entries
       .filter(
         ([key]) =>
-          !(revealedBearerToken !== undefined && isAuthorizationHeader(key))
+          !(revealedBearerToken !== undefined && isAuthorizationHeader(key)),
       )
       .map(([key, value]) => createHeaderEntry(key, String(value)));
     setCustomHeaders(nextCustomHeaders);
@@ -819,7 +802,7 @@ export function useServerForm(
   };
 
   const replaceEnvVars = (
-    nextEnvVars: Array<{ key: string; value: string }>
+    nextEnvVars: Array<{ key: string; value: string }>,
   ) => {
     setEnvVars(nextEnvVars);
     setHasStoredEnv(false);
@@ -841,7 +824,7 @@ export function useServerForm(
       setClientCapabilitiesOverrideError(null);
     } catch (error) {
       setClientCapabilitiesOverrideError(
-        error instanceof Error ? error.message : "Invalid JSON"
+        error instanceof Error ? error.message : "Invalid JSON",
       );
     }
   };
@@ -997,8 +980,8 @@ export function useServerForm(
         authType === "xaa"
           ? "mcpjam"
           : useXaa
-          ? server?.authServerMode
-          : undefined,
+            ? server?.authServerMode
+            : undefined,
       // Preserve the user's canonical intent. The concrete OAuth version is
       // resolved from explicit pins / fresh MCP negotiation when a flow starts
       // and is stored separately for callback recovery.
@@ -1022,7 +1005,9 @@ export function useServerForm(
       // the saved value itself would silently change a secret that
       // legitimately has leading/trailing whitespace.
       clientSecret: usesClientCredentials
-        ? (hasReplacementClientSecret ? clientSecret : undefined)
+        ? hasReplacementClientSecret
+          ? clientSecret
+          : undefined
         : undefined,
       hasClientSecret: usesClientCredentials ? nextHasClientSecret : undefined,
       clearClientSecret: usesClientCredentials
