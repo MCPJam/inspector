@@ -32,13 +32,18 @@ import {
 } from "lucide-react";
 import {
   CLAUDE_READINESS_LANES,
+  MUSE_READINESS_LANES,
+  MUSE_READINESS_STAGES,
+  MUSE_STAGE_LANES,
   OPENAI_READINESS_LANES,
+  isMuseReadinessResult,
   isOpenAIReadinessResult,
 } from "@mcpjam/sdk/browser";
 import { useDirectoryReadinessRun } from "@/hooks/use-directory-readiness-run";
 import {
   HOSTED_SUBMISSION_MODES,
   type DirectoryReadinessPublisher,
+  type DirectoryReadinessResult,
   type HostedSubmissionMode,
 } from "@/lib/apis/directory-readiness-api";
 import { DirectoryReadinessReport } from "./DirectoryReadinessReport";
@@ -49,6 +54,14 @@ import { ObservationNotice } from "./ObservationNotice";
 const PUBLISHER_LABEL: Record<DirectoryReadinessPublisher, string> = {
   claude: "Claude Directory Readiness",
   openai: "OpenAI Directory Readiness",
+  muse: "Muse Directory Readiness",
+};
+
+/** Whose published rules each section grades against, for the idle line. */
+const PUBLISHER_RULES: Record<DirectoryReadinessPublisher, string> = {
+  claude: "Anthropic's published directory rules",
+  openai: "OpenAI's published directory rules",
+  muse: "Meta's published Muse connector guidelines",
 };
 
 /**
@@ -77,9 +90,29 @@ const ALL_SUBMISSION_MODES = [
 ] as const;
 
 function lanesFor(publisher: DirectoryReadinessPublisher): readonly string[] {
-  return publisher === "openai"
-    ? OPENAI_READINESS_LANES
-    : CLAUDE_READINESS_LANES;
+  if (publisher === "openai") return OPENAI_READINESS_LANES;
+  if (publisher === "muse") return MUSE_READINESS_LANES;
+  return CLAUDE_READINESS_LANES;
+}
+
+/**
+ * The staged rollups a full report carries, for the publishers that have
+ * them. Muse reports its two as fields rather than a list, so they are laid
+ * out the way the run row stores them and one renderer reads both.
+ */
+function reportStages(report: DirectoryReadinessResult) {
+  if (isOpenAIReadinessResult(report)) return report.stages;
+  if (isMuseReadinessResult(report)) {
+    return MUSE_READINESS_STAGES.map((stage) => ({
+      stage,
+      status:
+        stage === "technical-preflight"
+          ? report.technicalStatus
+          : report.status,
+      lanes: [...MUSE_STAGE_LANES[stage]],
+    }));
+  }
+  return undefined;
 }
 
 function gradeBadge(
@@ -267,7 +300,8 @@ export function DirectoryReadinessSection({
                 </label>
               )}
 
-              {hosted && (
+              {/* Muse has no observation catalogue, so there is nothing to opt into. */}
+              {hosted && publisher !== "muse" && (
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <input
                     type="checkbox"
@@ -322,8 +356,8 @@ export function DirectoryReadinessSection({
                 <ReadinessLaneList
                   lanes={state.report ? [] : state.run?.lanes ?? []}
                   stages={
-                    state.report && isOpenAIReadinessResult(state.report)
-                      ? state.report.stages
+                    state.report
+                      ? reportStages(state.report) ?? state.run?.stages ?? []
                       : state.run?.stages ?? []
                   }
                 />
@@ -346,8 +380,7 @@ export function DirectoryReadinessSection({
             ) : (
               <div className="px-1 py-1 text-[10px] text-muted-foreground">
                 {catalogLanes.length} lanes graded against{" "}
-                {publisher === "openai" ? "OpenAI's" : "Anthropic's"} published
-                directory rules — not run yet.
+                {PUBLISHER_RULES[publisher]} — not run yet.
               </div>
             )}
           </div>
