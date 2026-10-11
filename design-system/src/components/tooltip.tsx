@@ -76,4 +76,44 @@ function TooltipContent({
   );
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
+/**
+ * Says why a control is disabled. A disabled button gets no hover and no
+ * focus, so a focusable span carries the tooltip for mouse and keyboard
+ * alike. Without a `reason` the control keeps its plain `fallback` tooltip,
+ * or renders as is.
+ */
+function DisabledReasonTooltip({
+  reason,
+  fallback,
+  children,
+  ...contentProps
+}: Omit<TooltipContentProps, "children"> & {
+  reason?: React.ReactNode;
+  fallback?: React.ReactNode;
+  children: React.ReactElement;
+}) {
+  const content = reason || fallback;
+  if (!content) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {reason ? (
+          <span className="inline-flex" tabIndex={0}>
+            {children}
+          </span>
+        ) : (
+          children
+        )}
+      </TooltipTrigger>
+      <TooltipContent {...contentProps}>{content}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+  DisabledReasonTooltip,
+};

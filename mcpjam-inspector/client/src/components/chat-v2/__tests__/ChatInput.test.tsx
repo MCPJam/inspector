@@ -543,7 +543,9 @@ describe("ChatInput", () => {
 
       const submitButton = screen.getByRole("button", { name: "Send message" });
       expect(submitButton).toBeDisabled();
-      // The disabled button gets no hover; its wrapper carries the tooltip.
+      // The disabled button gets no hover or focus; its wrapper carries the
+      // tooltip, and keyboard users can reach it.
+      expect(submitButton.parentElement).toHaveAttribute("tabindex", "0");
       await userEvent.setup().hover(submitButton.parentElement!);
       expect(await screen.findByRole("tooltip")).toHaveTextContent(
         "Out of MCPJam credits · resets in 3h"

@@ -62,6 +62,7 @@ describe("useCreditBalance", () => {
       outOfCreditsOrganizationId: null,
       outOfCreditsDismissed: false,
       outOfCreditsDismissedOrganizationId: null,
+      balanceOutByOrganization: {},
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -309,5 +310,41 @@ describe("useCreditBalance", () => {
     expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
       false
     );
+  });
+
+  it("ends a dismissal on a fresh view when credits came back while none watched", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    // Last read empty by a view that has since unmounted.
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+      balanceOutByOrganization: { "org-1": true },
+    });
+
+    renderHook(() => useOutOfCredits());
+
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      false
+    );
+  });
+
+  it("keeps an organization's dismissal when another, funded one is read", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-2");
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+      balanceOutByOrganization: { "org-1": true },
+    });
+
+    renderHook(() => useOutOfCredits());
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      outOfCreditsDismissed: true,
+      balanceOutByOrganization: { "org-1": true, "org-2": false },
+    });
   });
 });

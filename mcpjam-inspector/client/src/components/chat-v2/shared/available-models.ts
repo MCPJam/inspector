@@ -79,22 +79,40 @@ export function applyOutOfCreditsLocks(
 
 /**
  * Whether every model a run would use is locked by {@link applyOutOfCreditsLocks},
- * so the run could only be refused. No known model, or any model still usable
- * (a BYOK one), keeps the run available.
+ * so the run could only be refused. A hosted row and a BYOK row can share an
+ * id, so a model counts as locked only when every row it can mean is locked
+ * (narrowed to its provider when one is known). No known model, or any model
+ * still usable, keeps the run available.
  */
 export function allModelsOutOfCredits(
-  modelIds: readonly string[],
-  availableModels: readonly Pick<ModelDefinition, "id" | "disabledReason">[]
+  models: readonly { model: string; provider?: string }[],
+  availableModels: readonly Pick<
+    ModelDefinition,
+    "id" | "provider" | "disabledReason"
+  >[]
 ): boolean {
   return (
-    modelIds.length > 0 &&
-    modelIds.every((modelId) =>
-      availableModels.some(
-        (model) =>
-          String(model.id) === modelId &&
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON
-      )
-    )
+    models.length > 0 &&
+    models.every(({ model, provider }) => {
+      // An older case can name a catalog model without its provider prefix.
+      const ids =
+        provider && !model.startsWith(`${provider}/`)
+          ? [model, `${provider}/${model}`]
+          : [model];
+      const rows = availableModels.filter((row) =>
+        ids.includes(String(row.id))
+      );
+      const sameProvider = provider
+        ? rows.filter((row) => row.provider === provider)
+        : [];
+      const candidates = sameProvider.length > 0 ? sameProvider : rows;
+      return (
+        candidates.length > 0 &&
+        candidates.every(
+          (row) => row.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+        )
+      );
+    })
   );
 }
 

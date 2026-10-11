@@ -1,6 +1,6 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import {
@@ -237,21 +237,17 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
   // Credits came back (a top-up or a reset), so running out again is news and
   // the dialog may open once more. Only a seen change counts: a balance that
   // never read empty (credits held by in-flight work) does not end it.
-  const clearOutOfCreditsDismissed = useMCPJamLimitDialogStore(
-    (state) => state.clearOutOfCreditsDismissed,
+  const observeBalance = useMCPJamLimitDialogStore(
+    (state) => state.observeBalance,
   );
   const balanceLoaded = balance !== undefined;
-  const wasOutRef = useRef(false);
   useEffect(() => {
     if (!balanceLoaded) return;
-    if (wasOutRef.current && !balanceOutOfCredits) {
-      clearOutOfCreditsDismissed(resolvedOrganizationId ?? null);
-    }
-    wasOutRef.current = balanceOutOfCredits;
+    observeBalance(resolvedOrganizationId ?? null, balanceOutOfCredits);
   }, [
     balanceLoaded,
     balanceOutOfCredits,
-    clearOutOfCreditsDismissed,
+    observeBalance,
     resolvedOrganizationId,
   ]);
 

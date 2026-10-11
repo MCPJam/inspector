@@ -24,6 +24,7 @@ beforeEach(() => {
     outOfCreditsOrganizationId: null,
     outOfCreditsDismissed: false,
     outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -688,7 +689,8 @@ describe("a dismissed out-of-credits dialog", () => {
 
   it("opens again once credits come back", () => {
     dismissFirst("org-a");
-    store.getState().clearOutOfCreditsDismissed("org-a");
+    store.getState().observeBalance("org-a", true);
+    store.getState().observeBalance("org-a", false);
 
     exhausted("org-a");
     expect(store.getState().isOpen).toBe(true);

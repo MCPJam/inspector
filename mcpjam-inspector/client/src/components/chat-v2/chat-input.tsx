@@ -34,7 +34,6 @@ import type {
   DragEvent,
   FormEvent,
   KeyboardEvent,
-  ReactElement,
   ReactNode,
 } from "react";
 import { cn } from "@/lib/chat-utils";
@@ -63,6 +62,7 @@ import {
   getFileInputAccept,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -294,13 +294,6 @@ function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
 
 /** Stable identity, so the default never re-triggers a memo downstream. */
 const EMPTY_INPUT_HISTORY: readonly string[] = [];
-
-/** A disabled button gets no hover, so a span carries the tooltip that says why. */
-const withDisabledTooltipTarget = (
-  reason: string | undefined,
-  button: ReactElement,
-): ReactElement =>
-  reason ? <span className="inline-flex">{button}</span> : button;
 
 interface ChatInputProps {
   mentions?: MentionComposer;
@@ -2452,37 +2445,32 @@ export function ChatInput({
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      {withDisabledTooltipTarget(
-                        submitDisabledReason,
-                        <Button
-                          type="submit"
-                          size="icon"
-                          aria-label="Send message"
-                          className={cn(
-                            "size-[34px] rounded-full transition-colors shadow-none",
-                            (value.trim() || hasResults) &&
-                              !disabled &&
-                              !submitDisabled
-                              ? activeSubmitButtonClasses
-                              : inactiveSubmitButtonClasses,
-                            pulseSubmit && "animate-onboarding-pulse",
-                          )}
-                          disabled={
-                            (!value.trim() && !hasResults) ||
-                            disabled ||
-                            submitDisabled
-                          }
-                        >
-                          <ArrowUp size={16} />
-                        </Button>,
+                  <DisabledReasonTooltip
+                    reason={submitDisabledReason}
+                    fallback="Send message"
+                  >
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        (value.trim() || hasResults) &&
+                          !disabled &&
+                          !submitDisabled
+                          ? activeSubmitButtonClasses
+                          : inactiveSubmitButtonClasses,
+                        pulseSubmit && "animate-onboarding-pulse",
                       )}
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {submitDisabledReason ?? "Send message"}
-                    </TooltipContent>
-                  </Tooltip>
+                      disabled={
+                        (!value.trim() && !hasResults) ||
+                        disabled ||
+                        submitDisabled
+                      }
+                    >
+                      <ArrowUp size={16} />
+                    </Button>
+                  </DisabledReasonTooltip>
                 ))
               )}
             </div>

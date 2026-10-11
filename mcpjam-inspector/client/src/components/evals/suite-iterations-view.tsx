@@ -1295,31 +1295,40 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
-  // Out of credits, a run whose every model is a locked MCPJam one could only
-  // be refused, so its buttons say so before the click.
-  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
-  const runOutOfCredits = useMemo(
-    () =>
-      allModelsOutOfCredits(
-        preflightTargets({
-          suite,
-          cases,
-          environments: projectEnvironments ?? [],
-          hosts: namableHosts,
-          environmentServerRefs: [],
-        }).models.map((item) => item.model),
-        availableModels,
-      ),
-    [suite, cases, projectEnvironments, namableHosts, availableModels],
-  );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
     (suitePinsSandboxImage && ephemeralCloudAvailable === false
       ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null) ??
-    (runOutOfCredits
-      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
       : null);
+  // Out of credits, a run whose every model is a locked MCPJam one could only
+  // be refused, so its buttons say so before the click. Each control asks
+  // about the cases it launches: the suite for Run all, one case for its Run.
+  // The editor asks about its own draft models.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const creditsReasonFor = useCallback(
+    (runCases: readonly EvalCase[]) =>
+      allModelsOutOfCredits(
+        preflightTargets({
+          suite,
+          cases: runCases,
+          environments: projectEnvironments ?? [],
+          hosts: namableHosts,
+          environmentServerRefs: [],
+        }).models,
+        availableModels,
+      )
+        ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+        : null,
+    [suite, projectEnvironments, namableHosts, availableModels, outOfCreditsReason],
+  );
+  const caseRunOutOfCreditsReason = useCallback(
+    (testCase: EvalCase) => creditsReasonFor([testCase]),
+    [creditsReasonFor],
+  );
+  const suiteRunsDisabledReason = useMemo(
+    () => evalRunsDisabledReason ?? creditsReasonFor(cases),
+    [evalRunsDisabledReason, creditsReasonFor, cases],
+  );
 
   // Use custom hooks for data calculations
   const legacySuiteData = useSuiteData(
@@ -1923,6 +1932,7 @@ export function SuiteIterationsView({
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
+      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
       connectedServerNames={connectedServerNames}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
@@ -2147,7 +2157,7 @@ export function SuiteIterationsView({
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
-            evalRunsDisabledReason={evalRunsDisabledReason}
+            evalRunsDisabledReason={suiteRunsDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
@@ -2188,6 +2198,7 @@ export function SuiteIterationsView({
               >
                 <TestTemplateEditor
                   outOfCreditsReason={outOfCreditsReason}
+                  runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   readOnly={editingDisabled}
@@ -2375,7 +2386,7 @@ export function SuiteIterationsView({
                       ? undefined
                       : () => navigation.toSuiteEdit(suite._id),
                     disabledReason:
-                      evalRunsDisabledReason ??
+                      suiteRunsDisabledReason ??
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
@@ -2505,7 +2516,7 @@ export function SuiteIterationsView({
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}
-                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  evalRunsDisabledReason={suiteRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
                   configLocked={configLocked}
                   onDuplicateSuite={onDuplicateSuite}
@@ -2682,6 +2693,7 @@ export function SuiteIterationsView({
                         evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
+                      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                       connectedServerNames={connectedServerNames}
                       onGenerateTestCases={onGenerateTestCases}
                       canGenerateTestCases={canGenerateTestCases}

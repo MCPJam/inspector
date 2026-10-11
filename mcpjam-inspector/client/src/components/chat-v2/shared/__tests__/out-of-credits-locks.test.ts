@@ -105,23 +105,34 @@ describe("applyOutOfCreditsLocks", () => {
 });
 
 describe("allModelsOutOfCredits", () => {
+  const locked = (id: string, provider: string) => ({
+    id,
+    provider,
+    disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+  });
   const models = [
-    { id: "anthropic/claude-haiku-4.5", disabledReason: OUT_OF_CREDITS_MODEL_REASON },
-    { id: "openai/gpt-5-mini", disabledReason: OUT_OF_CREDITS_MODEL_REASON },
+    locked("anthropic/claude-haiku-4.5", "anthropic"),
+    locked("openai/gpt-5-mini", "openai"),
     // A BYOK model: never locked for MCPJam credits.
-    { id: "custom:acme:acme-large" },
+    { id: "custom:acme:acme-large", provider: "custom" },
   ];
 
   it("is true only when every model the run uses is locked", () => {
     expect(
       allModelsOutOfCredits(
-        ["anthropic/claude-haiku-4.5", "openai/gpt-5-mini"],
+        [
+          { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          { model: "openai/gpt-5-mini", provider: "openai" },
+        ],
         models
       )
     ).toBe(true);
     expect(
       allModelsOutOfCredits(
-        ["anthropic/claude-haiku-4.5", "custom:acme:acme-large"],
+        [
+          { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          { model: "custom:acme:acme-large", provider: "custom" },
+        ],
         models
       )
     ).toBe(false);
@@ -129,6 +140,39 @@ describe("allModelsOutOfCredits", () => {
 
   it("keeps a run with no known model, or an unknown one, available", () => {
     expect(allModelsOutOfCredits([], models)).toBe(false);
-    expect(allModelsOutOfCredits(["some/unlisted-model"], models)).toBe(false);
+    expect(
+      allModelsOutOfCredits([{ model: "some/unlisted-model" }], models)
+    ).toBe(false);
+  });
+
+  it("never blocks a model a usable BYOK row shares an id with", () => {
+    const shared = [
+      locked("gpt-5-mini", "openai"),
+      { id: "gpt-5-mini", provider: "azure" },
+    ];
+    // The BYOK row is the one this run names.
+    expect(
+      allModelsOutOfCredits([{ model: "gpt-5-mini", provider: "azure" }], shared)
+    ).toBe(false);
+    // No provider to tell them apart: one usable row is enough.
+    expect(allModelsOutOfCredits([{ model: "gpt-5-mini" }], shared)).toBe(
+      false
+    );
+    // The hosted row is the one this run names.
+    expect(
+      allModelsOutOfCredits(
+        [{ model: "gpt-5-mini", provider: "openai" }],
+        shared
+      )
+    ).toBe(true);
+  });
+
+  it("matches an older case's model saved without its provider prefix", () => {
+    expect(
+      allModelsOutOfCredits(
+        [{ model: "claude-haiku-4.5", provider: "anthropic" }],
+        models
+      )
+    ).toBe(true);
   });
 });

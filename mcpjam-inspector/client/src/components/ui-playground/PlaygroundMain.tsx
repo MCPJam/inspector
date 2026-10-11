@@ -3176,6 +3176,15 @@ export function PlaygroundMain({
     (localHarness.phase === "installing" ||
       localHarness.phase === "authorizing" ||
       localHarness.phase === "unavailable");
+  // Out of credits, a send on a locked MCPJam model could only be refused, so
+  // every send path (composer, starter prompts, fullscreen, edits) is off and
+  // Send says why. A compare grid drops locked models itself.
+  const sendOutOfCreditsReason =
+    !isCompareMode &&
+    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null;
+
   // Ongoing App admission excludes only this action's own connection preparation.
   // Read-only, target, history and streaming denials remain live across awaits.
   const pluginActionInteractivity = getChatComposerInteractivity({
@@ -3188,7 +3197,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
@@ -3205,7 +3215,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -6177,14 +6188,6 @@ export function PlaygroundMain({
           reasoningEffortLevels: [],
           onReasoningEffortChange: undefined,
         };
-
-  // Out of credits, a send on a locked MCPJam model could only be refused, so
-  // Send says so before the click. A compare grid drops locked models itself.
-  const sendOutOfCreditsReason =
-    !isCompareMode &&
-    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
-      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
-      : null;
 
   const sharedChatInputProps = {
     mentions: composerMentions.mentions,

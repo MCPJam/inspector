@@ -3187,7 +3187,7 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toBeDisabled();
     });
 
-    it("turns Send off, saying why, for a model locked by credits", () => {
+    it("turns Send off, saying why, for a model locked by credits", async () => {
       const selectedModel = mockUseChatSession.selectedModel;
       try {
         Object.assign(mockUseChatSession, {
@@ -3207,6 +3207,14 @@ describe("PlaygroundMain", () => {
             submitDisabledReason: "Out of MCPJam credits · resets in 3h",
           })
         );
+        // The shared send gate refuses it too, not only the button.
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "hello" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
       } finally {
         Object.assign(mockUseChatSession, {
           selectedModel,

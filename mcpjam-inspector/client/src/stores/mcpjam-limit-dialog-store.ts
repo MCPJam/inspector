@@ -69,6 +69,13 @@ interface MCPJamLimitDialogState {
    */
   outOfCreditsDismissed: boolean;
   outOfCreditsDismissedOrganizationId: string | null;
+  /**
+   * Whether each organization's balance last read empty, keyed by its id (""
+   * for a guest). Kept here, not in a component, so credits that come back
+   * while no view watches (a teammate's top-up, the daily reset on another
+   * page) are still seen as a change by the next view that reads the balance.
+   */
+  balanceOutByOrganization: Readonly<Record<string, boolean>>;
   authStatus: MCPJamLimitAuthStatus;
   intent: MCPJamLimitIntent | null;
   organizationId: string | null;
@@ -100,9 +107,9 @@ interface MCPJamLimitDialogState {
    * organization.
    */
   forgetNotifiedWaves: (organizationId?: string) => void;
-  /** Credits came back for the organization; see
-   * {@link MCPJamLimitDialogState.outOfCreditsDismissed}. */
-  clearOutOfCreditsDismissed: (organizationId?: string | null) => void;
+  /** A view read the organization's balance. Going from empty to funded ends
+   * its {@link MCPJamLimitDialogState.outOfCreditsDismissed}. */
+  observeBalance: (organizationId: string | null, out: boolean) => void;
   close: () => void;
   /** The user closed the dialog: {@link MCPJamLimitDialogState.close}, and an
    * exhaustion it showed stays dismissed. */
@@ -350,6 +357,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     outOfCreditsOrganizationId: null,
     outOfCreditsDismissed: false,
     outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     authStatus: "loading",
     intent: null,
     organizationId: null,
@@ -563,8 +571,22 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           },
         };
       }),
-    clearOutOfCreditsDismissed: (organizationId) =>
-      set((state) => withoutDismissal(state, organizationId ?? undefined)),
+    observeBalance: (organizationId, out) =>
+      set((state) => {
+        const key = organizationId ?? "";
+        const wasOut = state.balanceOutByOrganization[key];
+        if (wasOut === out) return state;
+        return {
+          balanceOutByOrganization: {
+            ...state.balanceOutByOrganization,
+            [key]: out,
+          },
+          // Credits came back, so running out again is news.
+          ...(wasOut && !out
+            ? withoutDismissal(state, organizationId ?? undefined)
+            : {}),
+        };
+      }),
     close: () => set(CLOSED),
     dismiss: () =>
       set((state) => ({

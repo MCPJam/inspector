@@ -11,7 +11,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactElement,
   type ReactNode,
 } from "react";
 import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
@@ -35,11 +34,7 @@ import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
+import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
 import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
 import {
   fundingPreviewRuns,
@@ -886,23 +881,6 @@ function ReusedPersonaCard({
   );
 }
 
-/** Continue blocked by credits says why on hover. A disabled button gets no
- * hover, so a span carries the tooltip; unblocked, the button is left as is. */
-function withLaunchTooltip(
-  reason: string | null,
-  button: ReactElement,
-): ReactElement {
-  if (!reason) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">{button}</span>
-      </TooltipTrigger>
-      <TooltipContent variant="muted">{reason}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 export function NewSwarmConfirmStep({
   proposed,
   onProposedChange,
@@ -1743,8 +1721,7 @@ export function NewSwarmConfirmStep({
           >
             Back
           </Button>
-          {withLaunchTooltip(
-            launchBlockedReason,
+          <DisabledReasonTooltip reason={launchBlockedReason} variant="muted">
             <Button
               type="button"
               disabled={
@@ -1775,8 +1752,8 @@ export function NewSwarmConfirmStep({
               ) : (
                 "Continue"
               )}
-            </Button>,
-          )}
+            </Button>
+          </DisabledReasonTooltip>
         </div>
       </div>
     </div>
