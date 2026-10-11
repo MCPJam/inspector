@@ -9,22 +9,23 @@ const clientSrc = join(here, "../..");
 const repoRoot = join(clientSrc, "../../..");
 
 /**
- * Sentry Replay records stylesheet text — a `<style>` element's text, an
- * inlined stylesheet, CSSOM rule changes — exactly as the page holds it, and
- * offers no option that masks it or hook that edits it (see "Known gaps" in
- * docs/session-replay-masking.md). So the app never writes a credential URL
- * into CSS: every CSS `url(` in app source is a fragment reference
- * (`url(#gradient)`), a literal that holds no credential, or one of the
- * dynamic sites below, each with the reason its value is not stylesheet text
- * carrying a credential. A new `url(${…})` fails here until it is reviewed.
+ * Both recorders capture stylesheet text (a `<style>` element's text, an
+ * inlined stylesheet, CSSOM rule changes) exactly as the page holds it, and
+ * scrub credential URLs out of it on the way out: PostHog in `before_send`,
+ * Sentry Replay in its transport (`scrubRrwebCredentials`). As a second line,
+ * the app never writes a credential URL into CSS: every CSS `url(` in app
+ * source is a fragment reference (`url(#gradient)`), a literal that holds no
+ * credential, or one of the dynamic sites below, each with the reason its
+ * value is not stylesheet text carrying a credential. A new `url(${…})` fails
+ * here until it is reviewed.
  */
 const DYNAMIC_URL_SITES = new Map<string, string>([
   [
     "mcpjam-inspector/client/src/components/host-workspace/ExtensionIcon.tsx",
     "An extension's own SVG icon, drawn as an inline `style` mask, never " +
       "stylesheet text. Sentry blocks any element whose `style` has `url(` " +
-      "(SENTRY_UNMASKABLE_URL_ELEMENTS); PostHog's `before_send` scrubs " +
-      "`style` attributes in replay batches.",
+      "(SENTRY_UNMASKABLE_URL_ELEMENTS); both recorders scrub `style` " +
+      "attributes on the way out.",
   ],
 ]);
 
