@@ -53,7 +53,9 @@ describe("the accepted actor", () => {
       authorizationHeader: "bearer   good-token  ",
       deps: deps(verify),
     });
-    expect(verify).toHaveBeenCalledWith("good-token");
+    expect(verify).toHaveBeenCalledWith("good-token", undefined, {
+      allowMcpResourceAudience: true,
+    });
   });
 });
 

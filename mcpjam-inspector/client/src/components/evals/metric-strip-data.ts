@@ -7,8 +7,12 @@ import {
   sumIterationCost,
 } from "./helpers";
 import type { CaseRunBatch } from "./runs/group-case-iterations";
-import type { EvalIteration, EvalSuiteRun } from "./types";
-import { poolLatency, type RunMetrics, type RunMetricsByRun } from "./run-metrics";
+import type { EvalIteration, EvalSuiteRunListItem } from "./types";
+import {
+  poolLatency,
+  type RunMetrics,
+  type RunMetricsByRun,
+} from "./run-metrics";
 
 /** One run's aggregated metrics, in chronological order across the series. */
 export interface MetricStripPoint {
@@ -80,16 +84,16 @@ function metricPointFromCellTrend(
 ): MetricStripPoint {
   const hasCounts = point.total != null && point.total > 0;
   const passed = hasCounts
-    ? point.passed ?? 0
+    ? (point.passed ?? 0)
     : point.result === "passed"
-    ? 1
-    : 0;
+      ? 1
+      : 0;
   const failed = hasCounts
-    ? point.failed ?? 0
+    ? (point.failed ?? 0)
     : point.result === "failed"
-    ? 1
-    : 0;
-  const total = hasCounts ? point.total ?? 1 : 1;
+      ? 1
+      : 0;
+  const total = hasCounts ? (point.total ?? 1) : 1;
   return {
     passRate: hasCounts
       ? Math.round((passed / total) * 100)
@@ -274,14 +278,14 @@ function finalizeMetricStripData(
  * evidence the backend judged insufficient, so plotting them would draw a
  * regression — or a recovery — out of measurements that were never trusted.
  */
-function measuredRuns(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+function measuredRuns(runs: EvalSuiteRunListItem[]): EvalSuiteRunListItem[] {
   return runs.filter((run) => run.result !== "inconclusive");
 }
 
 export function buildSuiteMetricStripData(
-  allRuns: EvalSuiteRun[],
+  allRuns: EvalSuiteRunListItem[],
   allIterations: EvalIteration[],
-  labelRun?: (run: EvalSuiteRun) => string,
+  labelRun?: (run: EvalSuiteRunListItem) => string,
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
@@ -303,8 +307,8 @@ export function buildSuiteMetricStripData(
     const runName = labelRun
       ? labelRun(run)
       : run.runNumber
-      ? `#${run.runNumber}`
-      : `Run ${run._id.slice(0, 8)}`;
+        ? `#${run.runNumber}`
+        : `Run ${run._id.slice(0, 8)}`;
     runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
     const summary = computeIterationSummary(its);
     const total = run.summary?.total ?? summary.runs;
@@ -329,7 +333,7 @@ export function buildSuiteMetricStripData(
  * so it reads as one point-in-time aggregate, not an N-point per-host "trend".
  */
 export function buildAggregateMetricStripData(
-  allRuns: EvalSuiteRun[],
+  allRuns: EvalSuiteRunListItem[],
   allIterations: EvalIteration[],
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);
@@ -416,9 +420,9 @@ function pointFromMetrics(
 
 /** `buildSuiteMetricStripData`, read from per-run metrics. */
 export function buildSuiteMetricStripDataFromMetrics(
-  allRuns: EvalSuiteRun[],
+  allRuns: EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
-  labelRun?: (run: EvalSuiteRun) => string,
+  labelRun?: (run: EvalSuiteRunListItem) => string,
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
@@ -432,8 +436,8 @@ export function buildSuiteMetricStripDataFromMetrics(
     const runName = labelRun
       ? labelRun(run)
       : run.runNumber
-      ? `#${run.runNumber}`
-      : `Run ${run._id.slice(0, 8)}`;
+        ? `#${run.runNumber}`
+        : `Run ${run._id.slice(0, 8)}`;
     runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
     series.push(
       pointFromMetrics([metrics], {
@@ -452,7 +456,7 @@ export function buildSuiteMetricStripDataFromMetrics(
 
 /** `buildAggregateMetricStripData`, read from per-run metrics. */
 export function buildAggregateMetricStripDataFromMetrics(
-  allRuns: EvalSuiteRun[],
+  allRuns: EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);

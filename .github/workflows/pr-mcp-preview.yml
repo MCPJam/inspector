@@ -26,6 +26,9 @@ on:
       - closed
     paths:
       - "mcp/**"
+      # Deliberately not the workspaces mcp bundles (sdk/, design-system/,
+      # evaluators/): every PR already typechecks and tests the worker, and
+      # deploy-mcp-staging.yml redeploys it when they change on main.
       - ".github/workflows/pr-mcp-preview.yml"
 
 permissions:

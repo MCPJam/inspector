@@ -1,3 +1,4 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -181,6 +182,8 @@ export interface DriveHostedEvalTurnParams {
   /** Host harness selector (resolvedExecution.harness). When set (claude-code |
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
+  /** The case's saved selection, read by the harness turn only. */
+  modelSelection?: RunAssistantTurnOptions["modelSelection"];
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
    *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
    *  an interactive approval flow; a gated call can fail during streaming.
@@ -540,6 +543,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
+  const appContext = browser.getModelContext?.();
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -767,7 +771,7 @@ export async function driveHostedEvalTurn(
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
     turnResult = await runAssistantTurn({
-      messages: inputMessages,
+      messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
       // in as `modelId`. The engine reads `modelDefinition.id` for the wire
@@ -805,6 +809,9 @@ export async function driveHostedEvalTurn(
       ...(params.harness
         ? {
             harness: params.harness,
+            ...(params.modelSelection
+              ? { modelSelection: params.modelSelection }
+              : {}),
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }

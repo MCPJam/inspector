@@ -470,6 +470,7 @@ export type {
  */
 export {
   GRADING_POLICY_READ_REFUSALS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   gradingPolicyForReportedRun,
   gradingPolicyFromLoadedSuiteFile,
@@ -716,6 +717,12 @@ export {
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// Muse (Meta) connector readiness. The barrel is pure data and grading; the
+// gatherer dials, so it is exported only from this Node entry.
+export * from "./muse-readiness/index.js";
+export { gatherMuseReadinessEvidence } from "./muse-readiness/gather.js";
+export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather.js";
 
 // The OpenAI readiness modules that touch the network, exported only from the
 // Node entry. They are deliberately absent from `openai-readiness/index.ts` so

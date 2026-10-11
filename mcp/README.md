@@ -37,7 +37,7 @@ beta; they are listed [after the table](#held-tools).
 | `list_project_servers` | List the MCP servers saved in an MCPJam project. | — |
 | `create_project_server` | Save a new MCP server in a project, including optional credentials. | — |
 | `get_project_server` | Read one saved MCP server by project and server id. | — |
-| `update_project_server` | Update saved MCP server metadata or rotate/clear credentials. | — |
+| `update_project_server` | Update a saved MCP server's configuration, or rotate or clear its credentials (sparse update). | — |
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
@@ -180,7 +180,8 @@ is resolved per caller, these are held off this surface for **everyone**
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
 - Conformance and readiness: `start_claude_readiness_run`,
-  `start_openai_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
+  `start_openai_readiness_run`, `start_muse_readiness_run`,
+  `get_readiness_run`, `list_readiness_runs`,
   `cancel_readiness_run`, `get_readiness_report`, `start_conformance_run`,
   `get_conformance_run`, `list_conformance_runs`, `get_conformance_report`
 - Unified sessions: `search_sessions`
@@ -226,9 +227,16 @@ recently updated accessible project. The eval-run polling tools
 (`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`)
 require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
-The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
-(the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
-hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
+Every tool carries `annotations.title` (Claude's directory reads the title
+there, not from the top-level `title`) and an explicit hint: reads are
+`readOnlyHint: true`, and writes announce `destructiveHint: true` unless they
+are purely additive (create a row or start new work) — updates, replacements,
+cancels, revokes, forced regenerations and anything that runs a third party's
+tool all say destructive. `idempotentHint: true` is claimed only where an
+identical retry was verified to land on the same outcome. The lists live in
+`src/tools/platformTools.ts` (`ADDITIVE_WRITE_NAMES`,
+`IDEMPOTENT_WRITE_NAMES`), and both are opt-in so an unreviewed write gets the
+conservative claim. Two of them SPEND: `run_eval_suite` and `run_eval_case`
 start LLM iterations against the organization's credits.
 `generate_eval_cases` and `import_eval_cases` also call a model, but those are
 on MCPJam — no credits are consumed; generation counts against the
@@ -369,10 +377,15 @@ Three things about that are deliberate:
 | Target | `AUTHKIT_DOMAIN` |
 | --- | --- |
 | Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`) | `login.mcpjam.com` |
-| Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `dynamic-echo-14-staging.authkit.app` |
-| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `dynamic-echo-14-staging.authkit.app` |
+| Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `deep-vanilla-68-test.authkit.app` |
+| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `deep-vanilla-68-test.authkit.app` |
 
-Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
+Production uses its own tenant. Staging, PR previews, and local development share
+`deep-vanilla-68-test`, matching the tenant that `backend-staging` configures in
+Convex and the staging Inspector. Keep these deployment settings aligned.
+Register both `http://localhost:8787/mcp` and
+`https://mcp-staging.mcpjam.com/mcp` as MCP Resource Indicators in that tenant;
+each preview also needs its own origin-based resource registered for OAuth.
 
 `npm run dev` uses `--env staging` so local development binds against staging.
 For developing against the **Home/MCPJam agent** locally, use `npm run dev:local`

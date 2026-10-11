@@ -389,7 +389,7 @@ export function CiEvalsTab({
         (entry) => entry.suite._id === suiteId,
       );
       navigateApp(
-        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target)
+        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target),
       );
     },
     [visibleSuites],
@@ -814,6 +814,8 @@ export function CiEvalsTab({
                     allIterations={queries.sortedIterations}
                     runs={queries.runsForSelectedSuite}
                     runsLoading={queries.isSuiteRunsLoading}
+                    runHistoryStatus={queries.runHistoryStatus}
+                    onLoadMoreRuns={queries.loadMoreRuns}
                     aggregate={suiteAggregate}
                     runDetailSortByOverride={
                       isRunDetailView ? runDetailSidebarSortBy : undefined

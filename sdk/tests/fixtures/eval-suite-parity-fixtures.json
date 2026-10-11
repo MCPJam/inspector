@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the versioned eval SUITE FILE contract. Loaded by sdk/tests/eval-suite-file.test.ts in mcpjam-inspector (Zod: evalSuiteFileSchema in sdk/src/contract/suite-file.ts) and intended to be loaded VERBATIM by the hand-mirrored Convex validators in mcpjam-backend. The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why, __kind, __structural) and every object in this contract is closed, so a row that still carries them would be rejected for the wrong reason — turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator; every row here is 'suiteFile'. DIALECT: each row declares its own schemaVersion (\"1\" or \"2\"); the Zod validator is a discriminated union over both, and the JSON Schema test picks the dialect's own document (eval-suite.schema.json for \"1\", eval-suite.v2.schema.json for \"2\") by that field. Dialect 2 spells the configured count `iterations` and the rule list `assertions`; dialect 1 spells them `repetitions` and `checks` (alias `assertions`). A dialect-1 row is FROZEN: never edit one to teach it a dialect-2 word. '__structural' on a reject row records whether the GENERATED JSON Schema (sdk/src/contract/eval-suite.schema.json) must also reject it: true means the rejection is expressible in JSON Schema, false means it is a cross-field rule only the Zod validator (and a hand-mirrored equivalent) enforces. A false-flagged row is asserted to be ACCEPTED by the JSON Schema, so the flag can never rot into decoration. 'roundTrip' rows are validated, canonicalized, re-parsed and re-validated; they must deep-equal the original, which is what proves no default was materialized. When the contract shape changes, edit the Zod schema, regenerate the JSON Schema, AND edit this fixture in the same PR.",
+  "__readme": "Shared parity fixtures for the versioned eval SUITE FILE contract. Loaded by sdk/tests/eval-suite-file.test.ts in mcpjam-inspector (Zod: evalSuiteFileSchema in sdk/src/contract/suite-file.ts) and intended to be loaded VERBATIM by the hand-mirrored Convex validators in mcpjam-backend. The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why, __kind, __structural) and every object in this contract is closed, so a row that still carries them would be rejected for the wrong reason — turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator; every row here is 'suiteFile'. DIALECT: each row declares its own schemaVersion (\"1\" or \"2\"); the Zod validator is a discriminated union over both, and the JSON Schema test picks the dialect's own document (eval-suite.schema.json for \"1\", eval-suite.v2.schema.json for \"2\") by that field. Dialect 2 spells the configured count `iterations` and the rule list `assertions`; dialect 1 spells them `repetitions` and `checks` (alias `assertions`). A dialect-1 row keeps the dialect-1 count/rule vocabulary; do not edit it to add dialect-2 spellings. Shared optional case metadata is represented in both dialects. '__structural' on a reject row records whether the GENERATED JSON Schema (sdk/src/contract/eval-suite.schema.json) must also reject it: true means the rejection is expressible in JSON Schema, false means it is a cross-field rule only the Zod validator (and a hand-mirrored equivalent) enforces. A false-flagged row is asserted to be ACCEPTED by the JSON Schema, so the flag can never rot into decoration. 'roundTrip' rows are validated, canonicalized, re-parsed and re-validated; they must deep-equal the original, which is what proves no default was materialized. When the contract shape changes, edit the Zod schema, regenerate the JSON Schema, AND edit this fixture in the same PR.",
   "accept": [
     {
       "__kind": "suiteFile",
@@ -140,8 +140,13 @@
         },
         "toolPolicy": {
           "mode": "readOnly",
-          "allow": ["get_charge", "search_invoices"],
-          "deny": ["delete_customer"]
+          "allow": [
+            "get_charge",
+            "search_invoices"
+          ],
+          "deny": [
+            "delete_customer"
+          ]
         },
         "captureLevel": "full"
       },
@@ -231,7 +236,8 @@
             "status": "exact",
             "sourceCaseKey": "upstream/refunds/duplicate-charge",
             "note": "1:1 with the upstream single-turn assertion form."
-          }
+          },
+          "scenario": "checkout"
         },
         {
           "id": "c_approximated_negative",
@@ -533,8 +539,13 @@
         },
         "toolPolicy": {
           "mode": "readOnly",
-          "allow": ["get_charge", "search_invoices"],
-          "deny": ["delete_customer"]
+          "allow": [
+            "get_charge",
+            "search_invoices"
+          ],
+          "deny": [
+            "delete_customer"
+          ]
         },
         "captureLevel": "full"
       },
@@ -624,7 +635,8 @@
             "status": "exact",
             "sourceCaseKey": "upstream/refunds/duplicate-charge",
             "note": "1:1 with the upstream single-turn assertion form."
-          }
+          },
+          "scenario": "checkout"
         },
         {
           "id": "c_approximated_negative",
@@ -2414,8 +2426,13 @@
         },
         "toolPolicy": {
           "mode": "readOnly",
-          "allow": ["get_charge", "search_invoices"],
-          "deny": ["delete_customer"]
+          "allow": [
+            "get_charge",
+            "search_invoices"
+          ],
+          "deny": [
+            "delete_customer"
+          ]
         },
         "captureLevel": "full"
       },
@@ -2593,6 +2610,84 @@
               "prompt": "Refund the duplicate charge on invoice 4471."
             }
           ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "round trip — scenario field dialect 1",
+      "__why": "The optional scenario/context field survives validation, canonical serialization and re-load in each supported dialect.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "scenario": "checkout"
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "round trip — scenario field dialect 2",
+      "__why": "The optional scenario/context field survives validation, canonical serialization and re-load in each supported dialect.",
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "scenario": "checkout"
         }
       ]
     }

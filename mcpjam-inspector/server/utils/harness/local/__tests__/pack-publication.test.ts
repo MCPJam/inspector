@@ -10,7 +10,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
   attestationVerifyArgs,
@@ -21,6 +21,9 @@ import {
   equivalenceFileName,
   failureIssueBody,
   failureIssueTitle,
+  GITHUB_READ_ATTEMPTS,
+  githubClient,
+  setGithubRetryDelayForTests,
   missingEvidence,
   nextPatchVersion,
   checkPinIntent,
@@ -441,3 +444,49 @@ describe("a workflow-only change publishes nothing, and the release passes on th
   });
 });
 
+
+describe("GitHub reads survive a transient 5xx; writes never repeat", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    setGithubRetryDelayForTests(null);
+  });
+
+  const stubFetch = (statuses: number[]) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit = {}) => {
+      calls.push(init.method ?? "GET");
+      const status = statuses.shift() ?? 200;
+      return new Response(status === 200 ? "{}" : "oops", { status });
+    });
+    return calls;
+  };
+
+  it("retries a read that got a 500, and succeeds", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "t");
+    setGithubRetryDelayForTests(async () => {});
+    const calls = stubFetch([500, 502, 200]);
+    const response = await githubClient().api("/releases/assets/1");
+    expect(response.ok).toBe(true);
+    expect(calls).toEqual(["GET", "GET", "GET"]);
+  });
+
+  it("gives up after a bounded number of reads, naming the status", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "t");
+    setGithubRetryDelayForTests(async () => {});
+    const calls = stubFetch(Array(GITHUB_READ_ATTEMPTS + 2).fill(500));
+    await expect(githubClient().api("/releases")).rejects.toThrow(/GET \/releases: 500/);
+    expect(calls).toHaveLength(GITHUB_READ_ATTEMPTS);
+  });
+
+  it("never retries a write (a second POST could open a second issue), nor a 4xx read", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "t");
+    setGithubRetryDelayForTests(async () => {});
+    const writes = stubFetch([500, 200]);
+    await expect(githubClient().api("/issues", { method: "POST", body: "{}" })).rejects.toThrow(/POST \/issues: 500/);
+    expect(writes).toEqual(["POST"]);
+    const reads = stubFetch([404, 200]);
+    await expect(githubClient().api("/releases/tags/x")).rejects.toThrow(/404/);
+    expect(reads).toEqual(["GET"]);
+  });
+});

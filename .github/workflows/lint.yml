@@ -25,6 +25,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 20
     name: Build and Test
 
     steps:
@@ -40,6 +43,9 @@ jobs:
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
+      - name: Verify MCP deploy workflow path filters
+        run: node --test .github/scripts/mcp-workflow-paths.test.mjs
+
       # The scripts behind prepare-release.yml, release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.
@@ -47,9 +53,11 @@ jobs:
         run: |
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
+            .github/scripts/release-plan.test.mjs \
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
-            .github/scripts/local-harness-bot-pr.test.mjs
+            .github/scripts/local-harness-bot-pr.test.mjs \
+            .github/scripts/check-workos-loopback.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
@@ -94,6 +102,14 @@ jobs:
 
       - name: Typecheck inspector client
         run: npm run typecheck:client -w @mcpjam/inspector
+
+      # A ratchet, not a clean gate: server/tsc-baseline.json holds each
+      # server file's current error count, and a file may only go down. Runs
+      # before the build so the count matches a fresh checkout.
+      - name: Typecheck inspector server
+        run: |
+          node --test mcpjam-inspector/scripts/__tests__/typecheck-server.test.mjs
+          npm run typecheck:server -w @mcpjam/inspector
 
       - name: Build inspector package
         run: npm run build:inspector

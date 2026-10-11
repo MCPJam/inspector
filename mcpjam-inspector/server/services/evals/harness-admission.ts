@@ -43,6 +43,11 @@ import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
+  selectionCacheKey,
+  selectionForModel,
+} from "./harness-admission-selection.js";
+import { withSelectionRouting } from "../../utils/selection-rail.js";
+import {
   checkHarnessRuntimeAvailable,
   selectionReasoningEffort,
   type HarnessUnavailableKind,
@@ -76,9 +81,11 @@ export interface EvalHarnessCase {
   /**
    * The case's saved model-entry selection, exactly as the recorder's
    * `config.tests` rows carry it (`selection`). This is where a persisted
-   * effort actually lives, so it is read when `reasoningEffort` is absent.
+   * effort actually lives, so it is read when `reasoningEffort` is absent;
+   * its `source` decides whether the case runs on MCPJam's key or an
+   * organization connection's.
    */
-  selection?: { settings?: { reasoningEffort?: string } } | null;
+  selection?: unknown;
 }
 
 /** The effort a case's own model entry asks for: explicit, else its selection. */
@@ -118,29 +125,6 @@ export function harnessOfHostConfig(
 ): Harness | undefined {
   if (!hostConfig) return undefined;
   return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
-}
-
-/**
- * A harness eval iteration runs on ONE disposable box — and a SUITE RUN is the
- * only surface that boots one.
- *
- * A single-case run passes `runId: null`, and both provisioning sites require a
- * run, so no box is ever booted for it. Without one, `runHarnessTurn` falls
- * through to `resolveHarnessSandbox` and runs on the acting member's PERSONAL
- * computer — stateful, shared, and belonging to a person rather than to the run.
- * That fallback is exactly what eval execution must never take, so the surface
- * is refused instead. Pinning an image would not help: the surface itself is
- * the constraint.
- */
-function harnessNeedsSuiteRunReason(harness: Harness): string {
-  const name = getHarnessAdapter(harness).displayName;
-  return (
-    `the ${name} harness runs each eval iteration on a fresh, disposable ` +
-    "computer, and a single-case run never provisions one. Run this case as " +
-    "part of a suite. There is deliberately no fallback to your personal " +
-    "computer: it is shared and stateful, and a run nobody pointed at it " +
-    "must not put it to work."
-  );
 }
 
 /**
@@ -312,6 +296,15 @@ export function checkEvalHarnessStaticAdmission(args: {
       ? hostConfig.modelId.trim()
       : undefined;
 
+  // The host's saved selection, when it is for the pinned model: an org
+  // connection on the harness's own vendor runs on the organization's key.
+  const pinnedSelection = selectionForModel(
+    hostConfig.modelSelection,
+    hostModelId,
+  );
+
+  const pinnedRow: { id: string; hosted?: boolean } = { id: hostModelId ?? "" };
+  const pinnedModel = withSelectionRouting(pinnedRow, pinnedSelection);
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
@@ -320,7 +313,8 @@ export function checkEvalHarnessStaticAdmission(args: {
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
     // rules rather than fail on a model nobody named: `checkModelEligibility`
     // below owns that decision once the run's cases are known.
-    model: { id: hostModelId ?? "" },
+    model: pinnedModel,
+    ...(pinnedSelection ? { selection: pinnedSelection } : {}),
     // The same id again, under the name the external-account rule reads. It is
     // not redundant on the FULL check below, where `model` becomes a per-case
     // model and this stays the host's — an external-account host must carry the
@@ -418,18 +412,29 @@ export function checkEvalHarnessAdmission(args: {
   >();
   for (const test of modelCases) {
     const effort = caseReasoningEffort(test) ?? hostSavedReasoningEffort(hostConfig);
-    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}`;
+    // The case's own saved selection, only when it is for the case's model.
+    const selection = selectionForModel(
+      test.selection,
+      String(test.model).trim(),
+    );
+    const key = `${test.provider ?? ""}::${test.model}::${effort ?? ""}::${selectionCacheKey(selection)}`;
     let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
+      // Routed by the selection: without it, a case saved to run on an org
+      // key reads as hosted when its id has a hosted twin, and admission
+      // passes a case the turn then refuses.
+      const caseRow: { id: string; provider?: string; hosted?: boolean } = {
+        id: String(test.model),
+        ...(test.provider ? { provider: test.provider } : {}),
+      };
+      const routedCaseModel = withSelectionRouting(caseRow, selection);
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
-        model: {
-          id: String(test.model),
-          ...(test.provider ? { provider: test.provider } : {}),
-        },
+        model: routedCaseModel,
+        ...(selection ? { selection } : {}),
         // The HOST's id, not the case's: the external-account rule is about
         // this host carrying the runtime's sentinel, and a case model can no
         // more answer that than a request body can.
@@ -567,10 +572,10 @@ const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set([
  * selected, so a rule placed there would never fire for an emulated run — and
  * emulated runs are precisely the ones this is about.
  *
- * A HARNESS run is exempt on the run surface: it provisions its own disposable
- * box whether or not an image is pinned, so the premise of the rule ("there
- * will be no computer") is simply false for it. It is refused on the
- * single-case surface instead, where no box is booted at all.
+ * A HARNESS run is exempt on both surfaces: it provisions its own disposable
+ * box whether or not an image is pinned (keyed to the iteration on a
+ * single-case run), so the premise of the rule ("there will be no computer")
+ * is simply false for it.
  */
 export function checkEvalExecutionAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
@@ -593,8 +598,8 @@ export function checkEvalExecutionAdmission(args: {
    * run's environment pins an image, so an image is exactly what it lacks.
    *
    * `"single-case"` — a quick or streamed one-off. These pass `runId: null`,
-   * and BOTH provisioning sites require `runId !== null`, so no box is ever
-   * booted for them. That makes "pin an image" the wrong advice: pinning one
+   * and boot a box only for a HARNESS (keyed to the iteration). Without one,
+   * no box is booted, which makes "pin an image" the wrong advice: pinning one
    * would change nothing. The surface itself is the constraint, so the refusal
    * has to say so and point at running the case in a suite instead.
    */
@@ -603,18 +608,13 @@ export function checkEvalExecutionAdmission(args: {
   const singleCase = args.surface === "single-case";
   const harness = harnessOfHostConfig(args.hostConfig);
 
-  // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
-  // this surface would run on the acting member's personal computer no matter
-  // which tools the host grants.
-  if (singleCase && harness && !(args.localExecution === true && isLocalHarnessVenue(harness, "unattended"))) {
-    return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
-  }
-
   const ids = args.hostConfig?.builtInToolIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: true };
-  // A pinned image only helps the surface that can actually boot from it — and
-  // a harness run boots a box with or without one.
-  if (!singleCase && (args.pinnedComputerImageId || harness)) {
+  // A HARNESS boots its own disposable box on BOTH surfaces — per iteration on
+  // a run, keyed to the iteration on a single-case run — so a computer-backed
+  // tool has a machine either way. A pinned image only helps the surface that
+  // boots from it, which a single-case run without a harness does not.
+  if (harness || (!singleCase && args.pinnedComputerImageId)) {
     return { ok: true };
   }
 
@@ -667,6 +667,7 @@ export function executionEngineLabel(
 function isModelKind(kind: HarnessUnavailableKind): boolean {
   return (
     kind === "model-not-hosted" ||
+    kind === "model-provider-unsupported" ||
     kind === "model-unsupported" ||
     kind === "model-unverified"
   );

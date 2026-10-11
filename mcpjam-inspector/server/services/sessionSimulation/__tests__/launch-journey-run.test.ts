@@ -112,6 +112,85 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes expectedSponsored to the create and returns the funding it reports", async () => {
+    createRunMock.mockResolvedValue(
+      created({ funding: { sponsored: 1, credits: 0, total: 1 } }),
+    );
+
+    const result = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 1,
+    });
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).toMatchObject({
+      expectedSponsored: 1,
+    });
+    expect(result).toEqual({
+      runId: "run_1",
+      funding: { sponsored: 1, credits: 0, total: 1 },
+    });
+  });
+
+  it("omits expectedSponsored when the caller did not supply one", async () => {
+    createRunMock.mockResolvedValue(created());
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("hands the runner the per-conversation funding the backend allocated", async () => {
+    const sessions = [{ targetId: "t1", sessionIdx: 0, funding: "starter" }];
+    createRunMock.mockResolvedValue(created({ sessions }));
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(startRunMock.mock.calls[0]![0]).toMatchObject({
+      sessionFunding: sessions,
+    });
+  });
+
+  it("surfaces a funding mismatch as a typed 409 with its details, before any runner starts", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "swarm_funding_changed",
+          message: "changed",
+          details: {
+            expectedSponsored: 5,
+            actualSponsored: 3,
+            totalConversations: 15,
+          },
+        }),
+        "swarm-agent failed (409)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("hands the runner a THUNK, not a captured token", async () => {
     // The run outlives the JWT that authorized it — a delegated token lives
     // about two hours and a wide fan-out runs longer. A captured string here
@@ -312,6 +391,57 @@ describe("launchJourneyRun", () => {
         environmentId: "env-1",
         hostId: "host-1",
       },
+    });
+  });
+
+  describe("a hosted harness target whose pinned image cannot boot", () => {
+    // The backend refuses the whole launch (BB-56) through the same
+    // `invalid_request` 400 wrapper as every other ConvexError.
+    const refusal = (message: string) =>
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+            message,
+            details: {
+              environmentId: "env-1",
+              hostName: "Claude Code",
+              reason: "The selected computer environment is a personal draft.",
+            },
+          },
+        }),
+        "nope"
+      );
+
+    it("shows the backend's sentence, which names the target and the fix", async () => {
+      const message =
+        'Client "Claude Code" can\'t launch: The selected computer environment is a personal draft. Fix that computer image or remove this target, then launch again.';
+      createRunMock.mockRejectedValue(refusal(message));
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message,
+        details: {
+          code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+          environmentId: "env-1",
+        },
+      });
+      expect(startRunMock).not.toHaveBeenCalled();
+    });
+
+    it("still names the fix when a long name pushes the sentence past the bound", async () => {
+      createRunMock.mockRejectedValue(
+        refusal(`Client "${"x".repeat(400)}" can't launch: draft.`)
+      );
+      const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
+        message: string;
+      };
+      expect(err.message).not.toBe("This journey can't be launched.");
+      expect(err.message).toMatch(/computer image that can't boot/);
+      expect(err.message).toMatch(/remove the target/);
     });
   });
 
