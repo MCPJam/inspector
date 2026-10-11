@@ -23,6 +23,12 @@ function fakeGateway(order: string[], id = "gw"): LocalModelGateway {
     close: async () => {
       order.push(`${id}:close`);
     },
+    hold: () => {
+      order.push(`${id}:hold`);
+    },
+    rebind: () => {
+      order.push(`${id}:rebind`);
+    },
     stats: () => ({
       requests: 0,
       rejected: 0,
@@ -491,3 +497,29 @@ describe("the stop-all brake", () => {
     });
   });
 });
+
+describe("ending a session notifies its owner first", () => {
+  afterEach(() => resetLocalHarnessRegistryForTests());
+
+  it("runs onEnded before any teardown step, once", async () => {
+    // A session parked on an approval must stop accepting that decision the
+    // moment a Stop begins — not after a SIGTERM grace.
+    const order: string[] = [];
+    registerLocalHarnessSession(
+      record({
+        gateway: fakeGateway(order),
+        onEnded: () => order.push("ended"),
+        stop: async () => {
+          order.push("stop");
+          return { stopped: true };
+        },
+      }),
+    );
+    await endLocalHarnessSession("s1");
+    await endLocalHarnessSession("s1");
+    expect(order[0]).toBe("ended");
+    expect(order.filter((step) => step === "ended")).toHaveLength(1);
+    expect(order).toContain("stop");
+  });
+});
+

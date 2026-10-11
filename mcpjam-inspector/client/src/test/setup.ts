@@ -129,14 +129,16 @@ if (typeof Range !== "undefined") {
 }
 
 // Mock IntersectionObserver (required for lazy loading/virtual lists)
-global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-  root: null,
-  rootMargin: "",
-  thresholds: [],
-}));
+global.IntersectionObserver = vi.fn().mockImplementation(function () {
+  return {
+    observe: vi.fn(),
+    unobserve: vi.fn(),
+    disconnect: vi.fn(),
+    root: null,
+    rootMargin: "",
+    thresholds: [],
+  };
+});
 
 // Mock localStorage
 const localStorageMock = (() => {
@@ -159,6 +161,19 @@ const localStorageMock = (() => {
   };
 })();
 Object.defineProperty(window, "localStorage", { value: localStorageMock });
+
+// Tests override these with vi.spyOn(window.localStorage, ...). Vitest 4's
+// spyOn returns this mock itself rather than wrapping it, and restoreAllMocks
+// leaves a vi.fn's implementation in place, so an override (a throwing
+// setItem, say) would leak into the next test. mockReset restores the
+// store-backed implementation and clears the calls.
+afterEach(() => {
+  localStorageMock.getItem.mockReset();
+  localStorageMock.setItem.mockReset();
+  localStorageMock.removeItem.mockReset();
+  localStorageMock.clear.mockReset();
+  localStorageMock.key.mockReset();
+});
 
 // Mock fetch globally (can be overridden in individual tests)
 global.fetch = vi.fn().mockImplementation(() =>

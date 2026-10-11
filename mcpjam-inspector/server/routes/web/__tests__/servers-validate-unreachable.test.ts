@@ -38,14 +38,16 @@ vi.mock("@mcpjam/sdk", async () => {
   );
   return {
     ...actual,
-    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
-      getToolsForAiSdk: getToolsForAiSdkMock,
-      disconnectAllServers: disconnectAllServersMock,
-      setPerRequestLogLevel: vi.fn(),
-      getInitializationInfo: vi.fn(() => ({
-        serverInfo: { name: "test-server", version: "1.0.0" },
-      })),
-    })),
+    MCPClientManager: mcpClientManagerMock.mockImplementation(function () {
+      return {
+        getToolsForAiSdk: getToolsForAiSdkMock,
+        disconnectAllServers: disconnectAllServersMock,
+        setPerRequestLogLevel: vi.fn(),
+        getInitializationInfo: vi.fn(() => ({
+          serverInfo: { name: "test-server", version: "1.0.0" },
+        })),
+      };
+    }),
   };
 });
 

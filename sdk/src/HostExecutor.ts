@@ -49,7 +49,7 @@ export interface PromptOptions {
    * The runtime creates an internal abort signal. Tools can stop early if they
    * respect the `abortSignal` passed to `execute()`.
    */
-  timeout?: TimeoutConfiguration;
+  timeout?: TimeoutConfiguration<ToolSet>;
 
   /** Shortcut for a total prompt timeout in milliseconds. */
   timeoutMs?: number;
