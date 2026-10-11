@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { meticulousMiddleware } from "./vite-meticulous-middleware";
 import { shouldRecordWithMeticulous } from "./vite-meticulous-recorder";
 import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
@@ -190,6 +191,9 @@ export default defineConfig(({ mode }) => {
               // preview builds get here.
               attributes: { "data-is-production-environment": "false" },
             }),
+            // Masks credentials before a recording leaves the browser. See
+            // `src/lib/meticulous-middleware.ts` for what it covers.
+            meticulousMiddleware(),
           ]
         : []),
       react(),

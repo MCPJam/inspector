@@ -10,6 +10,7 @@
   "include": [
     "vite.config.ts",
     "vite-lexer-safe-minify.ts",
+    "vite-meticulous-middleware.ts",
     "vite-meticulous-recorder.ts",
     "vite-posthog-warn-only.ts"
   ]
