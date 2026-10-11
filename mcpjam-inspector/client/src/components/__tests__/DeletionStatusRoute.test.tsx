@@ -68,7 +68,7 @@ it("refreshes authority and preserves a visible failure when cancellation is ref
     await screen.findByRole("button", { name: "Cancel deletion" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Cancellation was not confirmed",
+    "Cancellation could not be confirmed. Refresh status to check this request.",
   );
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(cancel).toHaveBeenCalledWith("request_1", token);

@@ -359,9 +359,8 @@ export function ProjectManagementDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Project?</AlertDialogTitle>
             <AlertDialogDescription>
-              Starting deletion immediately blocks access to the project.
-              Data removal runs in the background and may not be cancellable
-              once it starts.
+              Starting deletion blocks access to the project right away. Data removal
+              runs in the background and cannot be cancelled once it starts.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -369,8 +369,9 @@ export function ProjectSettingsTab({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete project?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Starting deletion immediately blocks access to &ldquo;{projectName}
-                    &rdquo;. Data removal proceeds in the background and may not be cancellable once it starts.
+                    Starting deletion blocks access to &ldquo;{projectName}&rdquo; right
+                    away. Data removal runs in the background and cannot be cancelled
+                    once it starts.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

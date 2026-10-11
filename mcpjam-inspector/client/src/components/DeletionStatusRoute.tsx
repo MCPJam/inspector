@@ -121,8 +121,8 @@ function DeletionReceipt({
       )}
       {cancelFailed && (
         <p className="text-sm text-destructive" role="alert">
-          Cancellation was not confirmed. Your permission or the deletion state
-          may have changed.
+          Cancellation could not be confirmed. Refresh status to check this
+          request.
         </p>
       )}
       <div className="flex flex-wrap gap-2">
