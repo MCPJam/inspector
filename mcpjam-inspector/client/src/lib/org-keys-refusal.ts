@@ -6,13 +6,14 @@
  * server and mirrored from the backend), the plain-language copy in
  * `@/shared/ai-refusal-copy`. This module adds what only the browser needs: which codes the
  * chat banner treats as org-key refusals, how to pull one out of an error
- * envelope, and the short next-step sentences.
+ * envelope, the short next-step sentences, and the "Not analyzed" lines an
+ * analysis the policy stopped reads as.
  */
 import {
   AI_EXECUTION_REFUSAL_CODES,
   AI_RETRYABLE_REFUSAL_CODES,
   findOrgKeyPolicyRefusalCode,
-  type AiRefusalCode,
+  type AiExecutionRefusalCode,
   type AiRefusalRemediation,
   type AiRefusalSelection,
 } from "@/shared/ai-execution-refusal";
@@ -34,7 +35,9 @@ export type {
  * policy codes, plus `credential_missing`, which `/stream/org` answers with
  * when the org connection a selection names is gone or has no key.
  */
-export const ORG_KEYS_REFUSAL_CODES: readonly AiRefusalCode[] = [
+export type OrgKeysRefusalCode = AiExecutionRefusalCode | "credential_missing";
+
+export const ORG_KEYS_REFUSAL_CODES: readonly OrgKeysRefusalCode[] = [
   ...AI_EXECUTION_REFUSAL_CODES,
   "credential_missing",
 ];
@@ -244,4 +247,146 @@ export function isOrgPolicyLockReason(
   return (
     reason === ORG_KEYS_MODEL_REASON || reason === ORG_POLICY_LOADING_REASON
   );
+}
+
+/**
+ * The automatic findings skip the backend records (`status: "skipped"`) when
+ * the organization requires its own provider keys and nothing it has can run
+ * the analysis. Not a refusal code: one of the backend's
+ * `EvalFindingsSkipReason` values.
+ */
+export const ORG_ANALYSIS_SKIP_REASON = "org_model_unavailable";
+
+/** What a share-link visitor reads: no configuration details, no codes. */
+export const VISITOR_ANALYSIS_UNAVAILABLE = describeAiRefusal(
+  null,
+  "visitor",
+).body;
+
+type NotAnalyzedCode = OrgKeysRefusalCode | typeof ORG_ANALYSIS_SKIP_REASON;
+
+/** Who reads a "Not analyzed" line: an admin can fix it, a member asks one. */
+export type NotAnalyzedAudience = "admin" | "member";
+
+type NotAnalyzedCopy = {
+  /** "Not analyzed: <cause>." */
+  cause: string;
+  /**
+   * The next step, per audience. Absent when the reader has nothing to do:
+   * work that can't run on the organization's providers yet, an owner that
+   * could not be determined, or a refusal whose cause already says to try
+   * again.
+   */
+  fix?: Readonly<Record<NotAnalyzedAudience, string>>;
+};
+
+const ADD_PROVIDER_FIX = {
+  admin: "Add an organization provider in Organization → AI providers.",
+  member: "Ask an organization admin to add an organization provider.",
+} as const;
+
+/**
+ * "Not analyzed: …" for an analysis an org-key refusal stopped, as a status
+ * line reads it: the cause, then the next step for the reader. A share-link
+ * visitor never reads these; surfaces show {@link VISITOR_ANALYSIS_UNAVAILABLE}.
+ */
+const NOT_ANALYZED_BY_CODE: Readonly<Record<NotAnalyzedCode, NotAnalyzedCopy>> =
+  {
+    org_keys_required: {
+      cause:
+        "Not analyzed: this organization requires its own provider keys for AI features.",
+      fix: ADD_PROVIDER_FIX,
+    },
+    org_model_unconfigured: {
+      cause:
+        "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    },
+    org_model_unavailable: {
+      cause:
+        "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    },
+    org_runtime_unsupported: {
+      cause:
+        "Not analyzed: this analysis can't run on the organization's providers yet.",
+    },
+    ai_scope_unresolved: {
+      cause:
+        "Not analyzed: the organization that owns these sessions could not be determined.",
+    },
+    ai_key_policy_unavailable: {
+      cause:
+        "Not analyzed: the organization's AI settings could not be read. Try again.",
+    },
+    provider_auth_failed: {
+      cause: "Not analyzed: the organization's provider rejected its API key.",
+      fix: {
+        admin: "Update the key in Organization → AI providers.",
+        member: "Ask an organization admin to update the provider's API key.",
+      },
+    },
+    provider_unavailable: {
+      cause:
+        "Not analyzed: the organization's provider is temporarily unavailable. Try again shortly.",
+    },
+    credential_missing: {
+      cause:
+        "Not analyzed: the organization provider this analysis uses is no longer available.",
+      fix: {
+        admin: "Add or reconnect a provider in Organization → AI providers.",
+        member: "Ask an organization admin to add or reconnect a provider.",
+      },
+    },
+  };
+
+const NOT_ANALYZED_FALLBACK: NotAnalyzedCopy = {
+  cause:
+    "Not analyzed: this organization's AI settings don't allow this analysis.",
+  fix: {
+    admin: "Check its providers in Organization → AI providers.",
+    member: "Ask an organization admin to check its AI providers.",
+  },
+};
+
+function notAnalyzedText(
+  copy: NotAnalyzedCopy,
+  audience: NotAnalyzedAudience,
+): string {
+  return copy.fix ? `${copy.cause} ${copy.fix[audience]}` : copy.cause;
+}
+
+function isNotAnalyzedCode(key: string): key is NotAnalyzedCode {
+  return Object.prototype.hasOwnProperty.call(NOT_ANALYZED_BY_CODE, key);
+}
+
+/**
+ * {@link NOT_ANALYZED_BY_CODE}'s line for `code`, for `audience`; a generic
+ * one otherwise. Surfaces that don't know the reader's role get the member
+ * wording.
+ */
+export function notAnalyzedReason(
+  code: string | null | undefined,
+  audience: NotAnalyzedAudience = "member",
+): string {
+  const key = normalizeCode(code);
+  return notAnalyzedText(
+    key && isNotAnalyzedCode(key)
+      ? NOT_ANALYZED_BY_CODE[key]
+      : NOT_ANALYZED_FALLBACK,
+    audience,
+  );
+}
+
+/**
+ * {@link notAnalyzedReason} for a status line under an analysis, or
+ * `undefined` when `code` is neither an org-key refusal nor the automatic
+ * findings skip {@link ORG_ANALYSIS_SKIP_REASON}.
+ */
+export function notAnalyzedLine(
+  code: string | null | undefined,
+  audience: NotAnalyzedAudience = "member",
+): string | undefined {
+  const key = normalizeCode(code);
+  return key && isNotAnalyzedCode(key)
+    ? notAnalyzedText(NOT_ANALYZED_BY_CODE[key], audience)
+    : undefined;
 }

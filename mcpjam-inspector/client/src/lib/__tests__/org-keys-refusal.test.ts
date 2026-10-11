@@ -3,10 +3,13 @@ import {
   describeOrgKeysRefusal,
   isOrgKeysRefusalCode,
   isRetryableOrgKeysRefusal,
+  notAnalyzedLine,
+  notAnalyzedReason,
   orgKeysRefusalCodeFromError,
   orgKeysRefusalCodeOf,
   orgKeysRefusalSentence,
   ORG_KEYS_REFUSAL_CODES,
+  VISITOR_ANALYSIS_UNAVAILABLE,
 } from "../org-keys-refusal";
 
 describe("org-keys refusal helpers", () => {
@@ -87,6 +90,49 @@ describe("org-keys refusal helpers", () => {
       "This organization's analysis is unavailable.",
     );
   });
+
+  it("words a skipped analysis as Not analyzed", () => {
+    expect(notAnalyzedReason("org_model_unavailable")).toBe(
+      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    );
+    expect(notAnalyzedReason("org_runtime_unsupported")).toBe(
+      "Not analyzed: this analysis can't run on the organization's providers yet.",
+    );
+    expect(notAnalyzedReason("org_keys_required")).toMatch(/^Not analyzed: /);
+    expect(notAnalyzedReason("something_new")).toMatch(/^Not analyzed: /);
+  });
+
+  it("adds the next step for the reader, and none where there is nothing to do", () => {
+    expect(notAnalyzedReason("org_keys_required", "admin")).toBe(
+      "Not analyzed: this organization requires its own provider keys for AI features. Add an organization provider in Organization → AI providers.",
+    );
+    expect(notAnalyzedReason("org_keys_required")).toBe(
+      "Not analyzed: this organization requires its own provider keys for AI features. Ask an organization admin to add an organization provider.",
+    );
+    expect(notAnalyzedReason("provider_auth_failed", "admin")).toBe(
+      "Not analyzed: the organization's provider rejected its API key. Update the key in Organization → AI providers.",
+    );
+    expect(notAnalyzedReason("provider_auth_failed", "member")).toBe(
+      "Not analyzed: the organization's provider rejected its API key. Ask an organization admin to update the provider's API key.",
+    );
+    expect(notAnalyzedReason("credential_missing", "member")).toMatch(
+      /Ask an organization admin to add or reconnect a provider\.$/,
+    );
+    // No fix: nothing the organization can do yet, or nothing anyone can.
+    for (const code of ["org_runtime_unsupported", "ai_scope_unresolved"]) {
+      for (const audience of ["admin", "member"] as const) {
+        expect(notAnalyzedReason(code, audience)).not.toMatch(
+          /Add |Ask an organization admin|Update /,
+        );
+      }
+    }
+  });
+
+  it("gives a share-link visitor the shared visitor sentence", () => {
+    expect(VISITOR_ANALYSIS_UNAVAILABLE).toBe(
+      "This organization's analysis is unavailable.",
+    );
+  });
 });
 
 describe("orgKeysRefusalSentence", () => {
@@ -124,5 +170,20 @@ describe("orgKeysRefusalSentence", () => {
     ).toBeUndefined();
     expect(orgKeysRefusalSentence("boom")).toBeUndefined();
     expect(orgKeysRefusalSentence(undefined)).toBeUndefined();
+  });
+});
+
+describe("notAnalyzedLine", () => {
+  it("is the colon form for refusals and the findings skip, else undefined", () => {
+    expect(notAnalyzedLine("org_model_unavailable")).toBe(
+      "Not analyzed: this organization requires its own provider keys and has no model configured for analysis.",
+    );
+    expect(notAnalyzedLine("credential_missing")).toMatch(/^Not analyzed: /);
+    expect(notAnalyzedLine(" ORG_RUNTIME_UNSUPPORTED ")).toMatch(
+      /can't run on the organization's providers yet/,
+    );
+    expect(notAnalyzedLine("auto_limit_reached")).toBeUndefined();
+    expect(notAnalyzedLine("invalid_model")).toBeUndefined();
+    expect(notAnalyzedLine(undefined)).toBeUndefined();
   });
 });
