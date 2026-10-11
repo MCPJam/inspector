@@ -209,7 +209,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/score/BenchRunProgress.tsx", 1],
   ["components/score/ScoreResultsPage.tsx", 3],
   ["components/score/ScoreSuiteBreakdown.tsx", 2],
-  ["components/server-connections/ServerConnectionHandoff.tsx", 2],
+  ["components/server-connections/ClaimRefusal.tsx", 2],
   ["components/ServersAutoConnectSwitch.tsx", 1],
   ["components/settings/github-pr-server-oauth-control.tsx", 1],
   ["components/settings/GithubChecksRoute.tsx", 5],
