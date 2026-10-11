@@ -33,6 +33,10 @@ const ROOT = dirname(dirname(HERE));
 const ROOT_ALLOWLIST = new Set([
   ".gitattributes",
   ".gitignore",
+  // Each tool reads these only from the repo root: Claude Code's project MCP
+  // servers and Meticulous's per-project ignore file.
+  ".mcp.json",
+  ".meticulousignore.inspector",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",

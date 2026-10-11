@@ -70,7 +70,7 @@ export function resolveScope(argv) {
   return { base, head };
 }
 
-function changedPaths(
+export function changedPaths(
   base,
   head,
   { trackedOnly = false, ignoreUntracked } = {},
