@@ -25,10 +25,10 @@ import { AuthenticationSection } from "@/components/connection/shared/Authentica
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 import {
   getConfidentialCimdBlockReason,
-  SERVER_INPUT_TRANSPORT_HINT,
   validateOAuthClientId,
   validateOAuthClientSecret,
 } from "@/lib/server-form-validation";
+import { SERVER_INPUT_TRANSPORT_HINT } from "@/lib/hosted-ui";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import type {
   ServerFormAuthType,
@@ -1377,24 +1377,25 @@ function ConnectionFailureNotice({
           <p className="text-[12px] leading-4 font-semibold text-card-foreground">
             {isValidationError ? error : "Failed to connect to MCP server"}
           </p>
-          <Button
-            hidden={isValidationError}
-            type="button"
-            variant="ghost"
-            className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
-            aria-expanded={isExpanded}
-            aria-controls={detailsId}
-            onClick={() => setIsExpanded((current) => !current)}
-          >
-            {isExpanded ? "Hide technical details" : "View technical details"}
-            <ChevronDown
-              className={cn(
-                "size-3 transition-transform",
-                isExpanded && "rotate-180",
-              )}
-              aria-hidden
-            />
-          </Button>
+          {isValidationError ? null : (
+            <Button
+              type="button"
+              variant="ghost"
+              className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
+              aria-expanded={isExpanded}
+              aria-controls={detailsId}
+              onClick={() => setIsExpanded((current) => !current)}
+            >
+              {isExpanded ? "Hide technical details" : "View technical details"}
+              <ChevronDown
+                className={cn(
+                  "size-3 transition-transform",
+                  isExpanded && "rotate-180",
+                )}
+                aria-hidden
+              />
+            </Button>
+          )}
         </div>
       </div>
       {isExpanded ? (

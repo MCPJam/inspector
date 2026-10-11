@@ -66,14 +66,14 @@ describe("validateServerFormData", () => {
     const validate = await importValidator(true);
     expect(validate(httpForm())).toBeNull();
   });
-});
 
-const importFirstRunValidator = async (hosted: boolean) => {
-  vi.resetModules();
-  vi.doMock("@/lib/config", () => ({ HOSTED_MODE: hosted }));
-  return (await import("../server-form-validation"))
-    .validateFirstRunServerFormData;
-};
+  it("allows STDIO in hosted mode for plugin components", async () => {
+    const validate = await importValidator(true);
+    expect(
+      validate({ name: "x", type: "stdio", command: "node" } as ServerFormData),
+    ).toBeNull();
+  });
+});
 
 const stdioForm = {
   name: "everything",
@@ -82,15 +82,17 @@ const stdioForm = {
 } as ServerFormData;
 
 describe("validateFirstRunServerFormData", () => {
-  it("refuses STDIO in hosted mode before the connect starts", async () => {
-    const validate = await importFirstRunValidator(true);
-    expect(validate(stdioForm)).toMatch(/cannot start STDIO servers/i);
-  });
+  const importFirstRunValidator = async (hosted: boolean) => {
+    vi.resetModules();
+    vi.doMock("@/lib/config", () => ({ HOSTED_MODE: hosted }));
+    return (await import("../server-form-validation"))
+      .validateFirstRunServerFormData;
+  };
 
-  it("refuses a bare host that onboarding read as a STDIO command", async () => {
+  it("refuses STDIO in hosted mode and asks for a full HTTPS URL", async () => {
     const validate = await importFirstRunValidator(true);
-    expect(validate({ ...stdioForm, command: "mcp.example.com/mcp" })).toMatch(
-      /Enter a full HTTPS URL/i,
+    expect(validate(stdioForm)).toMatch(
+      /cannot start STDIO servers.*Enter a full HTTPS URL/i,
     );
   });
 
@@ -104,12 +106,6 @@ describe("validateFirstRunServerFormData", () => {
     expect(validate(httpForm({ url: "http://mcp.example.com/mcp" }))).toMatch(
       /hosted web app requires an HTTPS/i,
     );
-    expect(validate(httpForm())).toBeNull();
-  });
-
-  it("leaves the shared validator open to hosted STDIO", async () => {
-    const validate = await importValidator(true);
-    expect(validate(stdioForm)).toBeNull();
   });
 });
 

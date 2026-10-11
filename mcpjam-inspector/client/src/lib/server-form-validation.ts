@@ -62,6 +62,9 @@ export function validateBearerTargetUrl(url: string): string | null {
  * would close, and the save would fail downstream — silently discarding
  * everything they typed. Both sides calling this means that can't happen.
  */
+const RUN_LOCALLY =
+  "run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+
 export function validateServerFormData(
   formData: ServerFormData,
 ): string | null {
@@ -81,17 +84,12 @@ export function validateServerFormData(
     return "Enter a complete server URL, such as https://example.com/mcp.";
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
-    return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+    return `MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, ${RUN_LOCALLY}`;
   }
   return null;
 }
 
-export const SERVER_INPUT_TRANSPORT_HINT = HOSTED_MODE
-  ? "Enter an HTTPS URL. STDIO works only in the local and desktop apps."
-  : "HTTP, SSE, and stdio all work.";
-
-const HOSTED_STDIO_ERROR =
-  "MCPJam’s hosted web app cannot start STDIO servers. Enter a full HTTPS URL, such as https://mcp.example.com/mcp. To connect over STDIO, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+const HOSTED_STDIO_ERROR = `MCPJam’s hosted web app cannot start STDIO servers. Enter a full HTTPS URL, such as https://mcp.example.com/mcp. To connect over STDIO, ${RUN_LOCALLY}`;
 
 /**
  * First-run onboarding adds only a server the user typed, never a plugin
