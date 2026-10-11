@@ -28,6 +28,7 @@ const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 const trackMock = vi.hoisted(() => vi.fn());
+const readDeletionAvailabilityMock = vi.hoisted(() => vi.fn());
 const navigateToSupportMock = vi.hoisted(() => vi.fn());
 
 function mockReservedBillingTab() {
@@ -318,6 +319,11 @@ vi.mock("convex/react", () => ({
   useQueries: () => ({}),
 }));
 
+vi.mock("@/lib/apis/deletion-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/apis/deletion-api")>()),
+  readDeletionAvailability: readDeletionAvailabilityMock,
+}));
+
 vi.mock("@/hooks/useOrgSharePolicy", () => ({
   useOrgSharePolicy: () => ({
     policy: {
@@ -399,6 +405,7 @@ vi.mock("../organization/OrganizationMemberRow", () => ({
 describe("OrganizationsTab billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    readDeletionAvailabilityMock.mockResolvedValue(true);
     // A successful delete leaves the org gated for the rest of the session.
     useOrganizationDeletionStore.setState({ deletingOrganizationIds: [] });
     addMemberMock.mockResolvedValue({ isPending: false });
@@ -3561,15 +3568,16 @@ describe("OrganizationsTab billing", () => {
     within(dialog)
       .getAllByRole("checkbox")
       .forEach((checkbox) => fireEvent.click(checkbox));
-    fireEvent.click(
-      within(dialog).getByRole("button", {
-        name: "Permanently delete organization",
-      }),
-    );
+    const confirm = within(dialog).getByRole("button", {
+      name: "Permanently delete organization",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
 
     await waitFor(() => {
       expect(deleteOrganizationMock).toHaveBeenCalledWith({
         organizationId: "org-1",
+        expectedAvailable: true,
       });
     });
     await waitFor(() => {
@@ -3593,11 +3601,11 @@ describe("OrganizationsTab billing", () => {
       within(dialog)
         .getAllByRole("checkbox")
         .forEach((checkbox) => fireEvent.click(checkbox));
-      fireEvent.click(
-        within(dialog).getByRole("button", {
-          name: "Permanently delete organization",
-        }),
-      );
+      const confirm = within(dialog).getByRole("button", {
+        name: "Permanently delete organization",
+      });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
     }
 
     beforeEach(() => {
