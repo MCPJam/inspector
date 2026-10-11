@@ -109,7 +109,7 @@ The repo is not Prettier-clean: format only the lines you change, never whole
 files or the tree.
 
 Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
-`run-inspector`, `ui-change`, `server-change`, `fix-ci`,
+`run-inspector`, `ui-change`, `ui-copy`, `server-change`, `fix-ci`,
 `investigate-production`. `REVIEW.md` lists
 what reviewers check.
 

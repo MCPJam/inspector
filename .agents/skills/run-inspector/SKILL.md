@@ -17,7 +17,7 @@ npm run dev:app -w @mcpjam/inspector
 ```
 
 - Client: Vite on `http://localhost:5173`. Server: Hono on `:6274`.
-- `npm run dev` also starts the platform MCP worker on `:8787`. Use it only when
+- `npm run dev -w @mcpjam/inspector` also starts the platform MCP worker on `:8787`. Use it only when
   the change touches the Home agent's workspace tools or `mcp/`.
 - Run it in the background and wait for the client and server to log ready.
 
@@ -56,7 +56,7 @@ servers such as `https://mcp.deepwiki.com/mcp` work for read-only checks.
 
 ## Production build
 
-E2E tests run against `npm run start` (production mode on `:6274`):
+E2E tests run against `npm run start -w @mcpjam/inspector` (production mode on `:6274`):
 
 ```bash
 npm run build -w @mcpjam/inspector
