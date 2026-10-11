@@ -63,18 +63,15 @@ export function buildIterationUsageMetadata(
  *
  * Returns `undefined` when there is no token signal at all: an empty object
  * would claim the iteration reported usage when it reported nothing.
+ *
+ * The reasoning and cached-input breakdown rides along when the provider
+ * reported it (the backend sums `reasoningTokens` per model × effort).
  */
 export function buildIterationUsagePayload(
   usage: UsageTotals,
-):
-  | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-  | undefined {
+): UsageTotals | undefined {
   const reconciled = buildIterationUsageMetadata(usage);
-  const payload: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  } = {};
+  const payload: UsageTotals = {};
 
   // ALL-ZERO IS NOT A MEASUREMENT. A runner that reported nothing arrives
   // here as `{ inputTokens: 0, outputTokens: 0, totalTokens: 0 }`, and
@@ -101,6 +98,12 @@ export function buildIterationUsagePayload(
     }
     if (typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
       payload.totalTokens = usage.totalTokens;
+    }
+    if (typeof usage.reasoningTokens === "number") {
+      payload.reasoningTokens = usage.reasoningTokens;
+    }
+    if (typeof usage.cachedInputTokens === "number") {
+      payload.cachedInputTokens = usage.cachedInputTokens;
     }
   }
 

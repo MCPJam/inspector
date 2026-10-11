@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import type {
@@ -244,6 +245,80 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
       timeout: 10_000,
     });
     await expect(manager.pingServer("fixture")).resolves.toEqual({});
+  });
+
+  describe("legacy-only extension claims", () => {
+    const legacyForm = (claim = "fixture/elicitation") => ({
+      fixture: [
+        {
+          method: `${claim}/create`,
+          schemas: {
+            params: z.object({}).passthrough(),
+            result: z.object({}).passthrough(),
+          },
+          handler: async () => ({ action: "cancel" }),
+          legacyClaim: claim,
+        },
+      ],
+    });
+    const exact = {
+      extensions: {
+        "fixture/elicitation": { form: {} },
+        "fixture/other": {},
+      },
+    };
+
+    it("withholds a legacy handler's claim once AUTO negotiation lands modern", async () => {
+      // No server-to-client request exists on 2026-07-28, so a claim only
+      // such a request could honor must not ride the per-request envelope.
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const info = manager.getInitializationInfo("fixture");
+      expect(info?.protocolVersion).toBe("2026-07-28");
+      const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual({ "fixture/other": {} });
+    });
+
+    it("drops the extensions field when the claim was its only key", async () => {
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: { extensions: { "fixture/elicitation": { form: {} } } },
+      });
+      const caps = (manager.getInitializationInfo("fixture")?.clientCapabilities ??
+        {}) as Record<string, unknown>;
+      expect(caps.extensions).toBeUndefined();
+    });
+
+    it("keeps the claim on a 2025-era connection, where the handler answers", async () => {
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        mcpProtocolVersion: "2025-11-25",
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const info = manager.getInitializationInfo("fixture");
+      expect(info?.protocolVersion).toBe("2025-11-25");
+      const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual(exact.extensions);
+    });
+
+    it("leaves a claim no binding marks as legacy-only untouched", async () => {
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const caps = (manager.getInitializationInfo("fixture")?.clientCapabilities ??
+        {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual(exact.extensions);
+    });
   });
 
   it("also applies the overlay on a PINNED modern connection", async () => {
