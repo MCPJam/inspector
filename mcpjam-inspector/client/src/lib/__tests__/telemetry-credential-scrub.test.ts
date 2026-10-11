@@ -117,7 +117,17 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
   describe("$snapshot batches", () => {
     it("scrubs meta, custom and plugin events, passes DOM events through", async () => {
       const { scrubCaptureEvent } = await loadAt("full");
-      const compressed = "\u001f\u008b\u0008compressed/results/abc";
+      const fullSnapshot = {
+        type: 2,
+        data: {
+          node: {
+            type: 0,
+            id: 1,
+            childNodes: [{ type: 3, id: 2, textContent: "Results" }],
+          },
+          initialOffset: { top: 0, left: 0 },
+        },
+      };
       const out = scrubCaptureEvent(
         event("$snapshot", {
           $session_id: "s1",
@@ -126,7 +136,7 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
               type: 4,
               data: { href: `https://app.mcpjam.com/results/${SECRET}` },
             },
-            { type: 2, cv: "2024-10", data: compressed },
+            fullSnapshot,
             {
               type: 5,
               data: {
@@ -151,9 +161,191 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
       expect(JSON.stringify(out)).not.toContain(SECRET);
       const data = out?.properties.$snapshot_data as unknown[];
       expect(data).toHaveLength(4);
-      // A compressed DOM payload is never rewritten: that would corrupt it.
-      expect((data[1] as { data: string }).data).toBe(compressed);
+      // A DOM event with no stylesheet credential is forwarded as it came.
+      expect(data[1]).toBe(fullSnapshot);
       expect(out?.properties.$session_id).toBe("s1");
+    });
+
+    const styleUrl = `url("https://example.test/media?token=${SECRET}")`;
+    const sheetUrl = `url(/results/${SECRET})`;
+
+    it("scrubs stylesheet text in a full snapshot", async () => {
+      const { scrubCaptureEvent } = await loadAt("full");
+      const styleText = {
+        type: 3,
+        id: 4,
+        isStyle: true,
+        textContent: `.hero { background: ${styleUrl}; color: red; }`,
+      };
+      const untouched = { type: 3, id: 9, textContent: "Plain words" };
+      const snapshot = {
+        type: 2,
+        timestamp: 1,
+        data: {
+          node: {
+            type: 0,
+            id: 1,
+            childNodes: [
+              {
+                type: 2,
+                id: 2,
+                tagName: "head",
+                attributes: {},
+                childNodes: [
+                  {
+                    type: 2,
+                    id: 3,
+                    tagName: "style",
+                    attributes: {},
+                    childNodes: [styleText],
+                  },
+                  {
+                    type: 2,
+                    id: 5,
+                    tagName: "link",
+                    attributes: {
+                      rel: "stylesheet",
+                      _cssText: `.a { mask: ${sheetUrl}; }`,
+                    },
+                    childNodes: [],
+                  },
+                ],
+              },
+              {
+                type: 2,
+                id: 6,
+                tagName: "div",
+                attributes: { style: `background-image: ${styleUrl};` },
+                childNodes: [untouched],
+              },
+            ],
+          },
+          initialOffset: { top: 0, left: 0 },
+        },
+      };
+      const out = scrubCaptureEvent(
+        event("$snapshot", { $snapshot_data: [snapshot] }),
+      );
+
+      expect(out).not.toBeNull();
+      const json = JSON.stringify(out);
+      expect(json).not.toContain(SECRET);
+      expect(json).toContain("https://example.test/media?token=[redacted]");
+      expect(json).toContain("color: red;");
+      expect(json).toContain("/results/[redacted]");
+      // rrweb's mirror holds the emitted nodes: they are copied, not edited.
+      expect(styleText.textContent).toContain(SECRET);
+      const [scrubbed] = out?.properties.$snapshot_data as (typeof snapshot)[];
+      const div = scrubbed.data.node.childNodes[1];
+      expect(div.childNodes[0]).toBe(untouched);
+    });
+
+    it("scrubs stylesheet text in incremental events", async () => {
+      const { scrubCaptureEvent } = await loadAt("full");
+      const incremental = (data: Record<string, unknown>) => ({
+        type: 3,
+        timestamp: 2,
+        data,
+      });
+      const out = scrubCaptureEvent(
+        event("$snapshot", {
+          $snapshot_data: [
+            incremental({
+              source: 0,
+              texts: [{ id: 4, value: `.x { background: ${styleUrl}; }` }],
+              attributes: [
+                { id: 5, attributes: { _cssText: `.a { mask: ${sheetUrl}; }` } },
+                {
+                  id: 6,
+                  attributes: {
+                    style: { "background-image": [styleUrl, "important"] },
+                  },
+                },
+                { id: 7, attributes: { style: `background: ${styleUrl}` } },
+              ],
+              removes: [],
+              adds: [
+                {
+                  parentId: 2,
+                  nextId: null,
+                  node: {
+                    type: 2,
+                    id: 8,
+                    tagName: "style",
+                    attributes: {},
+                    childNodes: [
+                      {
+                        type: 3,
+                        id: 10,
+                        isStyle: true,
+                        textContent: `@import ${sheetUrl};`,
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            incremental({
+              source: 8,
+              id: 8,
+              adds: [{ rule: `.y { background: ${styleUrl}; }`, index: 0 }],
+              replace: `.z { background: ${sheetUrl}; }`,
+            }),
+            incremental({
+              source: 13,
+              id: 8,
+              index: [0],
+              set: { property: "background", value: styleUrl },
+            }),
+            incremental({
+              source: 15,
+              id: 1,
+              styleIds: [1],
+              styles: [{ styleId: 1, rules: [{ rule: `.w { mask: ${sheetUrl}; }` }] }],
+            }),
+            incremental({
+              source: 10,
+              family: "Brand",
+              fontSource: styleUrl,
+              buffer: false,
+            }),
+            incremental({ source: 1, positions: [{ x: 1, y: 2, id: 3 }] }),
+          ],
+        }),
+      );
+
+      expect(out).not.toBeNull();
+      expect(JSON.stringify(out)).not.toContain(SECRET);
+      const data = out?.properties.$snapshot_data as { data: unknown }[];
+      expect(data).toHaveLength(6);
+      expect(data[5]?.data).toEqual({
+        source: 1,
+        positions: [{ x: 1, y: 2, id: 3 }],
+      });
+    });
+
+    it("never receives packed DOM events, and drops a batch that has one", async () => {
+      const { scrubCaptureEvent, posthogPrivacyConfig } = await loadAt("full");
+      for (const profile of ["full", "masked"] as const) {
+        const recording = posthogPrivacyConfig(profile).session_recording as {
+          compress_events?: boolean;
+        };
+        expect(recording.compress_events).toBe(false);
+      }
+      const packed = "\u001f\u008b\u0008packed";
+      for (const item of [
+        { type: 2, cv: "2024-10", data: packed },
+        {
+          type: 3,
+          cv: "2024-10",
+          data: { source: 0, texts: packed, adds: packed },
+        },
+        { type: 2, data: packed },
+      ]) {
+        expect(
+          scrubCaptureEvent(event("$snapshot", { $snapshot_data: [item] })),
+        ).toBeNull();
+      }
     });
 
     it.each([
@@ -242,6 +434,24 @@ describe("replay callbacks", () => {
     expect(scrubNamesFromUrl("/bench/results/0123456789abcdef0123456789")).toBe(
       "/bench/results/[redacted]",
     );
+  });
+
+  it("scrubs a percent-encoded credential from a replay text node and attribute", async () => {
+    const { posthogPrivacyConfig } = await loadAt("full");
+    const recording = posthogPrivacyConfig("full").session_recording as {
+      maskTextFn: (text: string, element?: Element) => string;
+      maskAttributeFn: (name: string, value: string) => string;
+    };
+    // Neither a `/` nor an `=` survives encoding.
+    const encoded = encodeURIComponent(`/results/${SECRET}`);
+    expect(encoded).not.toMatch(/[/=]/);
+
+    const text = recording.maskTextFn(`Share link: ${encoded}`);
+    expect(text).not.toContain(SECRET);
+    expect(text).toContain("Share link: %2Fresults%2F");
+    const attribute = recording.maskAttributeFn("data-link", encoded);
+    expect(attribute).not.toContain(SECRET);
+    expect(attribute).toContain("%2Fresults%2F");
   });
 
   it("attributes keep their content at full, minus credentials", async () => {

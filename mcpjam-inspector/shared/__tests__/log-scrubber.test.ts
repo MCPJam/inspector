@@ -60,6 +60,32 @@ describe("scrubLogPayload", () => {
       });
     });
 
+    it("matches credential key names whatever their separators", () => {
+      for (const key of [
+        "api_key",
+        "api-key",
+        "API Key",
+        "X-API-Key",
+        "x_api_key",
+        "private_key",
+        "privateKey",
+        "PRIVATE-KEY",
+        "X-MCP-Session-Auth",
+        "x_mcpjam_harness_lease",
+        "user_email",
+      ]) {
+        expect(scrubLogPayload({ [key]: "value" })).toEqual({
+          [key]: "[redacted]",
+        });
+      }
+    });
+
+    it("keeps an allowlisted key in any spelling", () => {
+      expect(
+        scrubLogPayload({ email_domain: "b.com", "email-domain": "b.com" }),
+      ).toEqual({ email_domain: "b.com", "email-domain": "b.com" });
+    });
+
     it("redacts stripeCustomer key", () => {
       expect(scrubLogPayload({ stripeCustomer: "cus_123" })).toEqual({
         stripeCustomer: "[redacted]",
@@ -522,10 +548,37 @@ describe("describeShape", () => {
     );
   });
 
-  it("redacts emails used as keys", () => {
-    expect(describeShape({ "jane@acme.com": 1 })).toBe(
-      "{[redacted-email]: number}",
+  it("names a key only when it reads as a field name", () => {
+    expect(
+      describeShape({
+        "jane@acme.com": 1,
+        "/results/SNTLq7Zxkey": 1,
+        "https://mcp.acme.com/tenants/42": 1,
+        "a sentence someone typed": 1,
+        "50%": 1,
+        ["x".repeat(65)]: 1,
+        city: "Lisbon",
+        tool_name: "search",
+        "content-type": "json",
+        sk_live: 1,
+      }),
+    ).toBe(
+      "{[key]: number, [key]: number, [key]: number, [key]: number, " +
+        "[key]: number, [key]: number, city: string(6), " +
+        "tool_name: string(6), content-type: string(4), sk_live: number}",
     );
+  });
+
+  it("redacts a secret shaped like a field name", () => {
+    expect(describeShape({ "sk-proj-abcdefghijklmnopqrstuvwxyz": 1 })).toBe(
+      "{[redacted-secret]: number}",
+    );
+  });
+
+  it("never names a customer's key in a content summary", () => {
+    expect(scrubLogPayload({ args: { "/results/SNTLq7Zxkey": 1 } })).toEqual({
+      args: "{[key]: number}",
+    });
   });
 
   it("marks cycles and survives a throwing getter", () => {
