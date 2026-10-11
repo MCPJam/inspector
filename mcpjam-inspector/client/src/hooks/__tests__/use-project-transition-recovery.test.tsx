@@ -140,3 +140,19 @@ it("captures an already-open route when a sibling tab changes the account", () =
   view.rerender(input());
   expect(view.result.current.location.pathname).toBe(`/p/${B}/home`);
 });
+
+it("remembers a ready guest route even before member-only recovery is ready", () => {
+  const view = mount(
+    input({
+      actor: "guest:old",
+      ready: false,
+      routeReady: true,
+      membershipProjectIds: undefined,
+    }),
+  );
+  view.rerender(input({ ready: false, membershipProjectIds: undefined }));
+  expect(recovery.store.getState().marker?.sourceActor).toBe("guest:old");
+  expect(view.result.current.pending).toBe(true);
+  view.rerender(input());
+  expect(view.result.current.location.pathname).toBe(`/p/${B}/home`);
+});

@@ -1,3 +1,4 @@
+import * as memberActor from "../hooks/use-is-member-actor";
 import { projectTransitionRecovery } from "../lib/auth/project-transition-recovery";
 import { type ReactNode, useLayoutEffect, useState } from "react";
 import {
@@ -2442,6 +2443,79 @@ describe("App hosted OAuth callback handling", () => {
       expect(window.location.pathname).toBe(`/p/${currentProjectId}/home`);
     });
   });
+
+  it.each([
+    ["callback", undefined],
+    ["callback", false],
+    ["sibling", undefined],
+    ["sibling", false],
+  ] as const)(
+    "keeps %s recovery unresolved while member confirmation is %s",
+    async (flow, confirmed) => {
+      const member = vi
+        .spyOn(memberActor, "useIsMemberActor")
+        .mockReturnValue(confirmed);
+      clearScenarioSession();
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      const staleProjectId = "k5700000000000000000000000a";
+      const currentProjectId = "k5700000000000000000000000b";
+      projectTransitionRecovery.remember(
+        `/p/${staleProjectId}/servers`,
+        "guest:old",
+      );
+      writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+      const initialPath =
+        flow === "callback"
+          ? "/callback?code=oauth-code"
+          : `/p/${staleProjectId}/servers`;
+      window.history.replaceState({}, "", initialPath);
+
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        activeProjectId: currentProjectId,
+        projects: {
+          [currentProjectId]: {
+            id: currentProjectId,
+            name: "Current Project",
+            sharedProjectId: currentProjectId,
+            organizationId: "org-1",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return [
+            {
+              _id: currentProjectId,
+              name: "Current Project",
+              organizationId: "org-1",
+              ownerId: "user-1",
+              servers: {},
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ];
+        }
+        return undefined;
+      });
+
+      const view = render(<App />);
+      expect(window.location.pathname).toBe(initialPath.split("?")[0]);
+      expect(projectTransitionRecovery.store.getState().marker).not.toBeNull();
+
+      member.mockReturnValue(true);
+      view.rerender(<App />);
+
+      await waitFor(() => {
+        expect(window.location.pathname).toBe(`/p/${currentProjectId}/home`);
+      });
+    },
+  );
+
 
   it("does not automatically recover a stale URL outside the callback", async () => {
     clearScenarioSession();

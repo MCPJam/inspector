@@ -1,3 +1,7 @@
+import {
+  consumeCallbackProjectReturn,
+  useCallbackProjectReturnRecovery,
+} from "./lib/callback-project-return";
 import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
 import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
@@ -281,20 +285,11 @@ import {
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
-import {
-  createProjectSignInReturnRecoveryIntent,
-  resolveProjectSignInReturnRecovery,
-  type ProjectSignInReturnRecoveryIntent,
-} from "./lib/project-route-recovery";
+import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
-  consumeAppSignInReturnPath,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
-import {
-  trackSignInReturnRestored,
-  trackStaleProjectReturnRecovered,
-} from "./lib/project-route-telemetry";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -320,18 +315,9 @@ import {
   getFirstRunOAuthReturnServerName,
 } from "./lib/first-run-oauth-return";
 import {
-  clearScenarioSignInReturnPath,
   readScenarioSession,
   readScenarioSignInReturnPath,
 } from "./lib/scenario-session";
-import {
-  clearCliSignInReturnPath,
-  readCliSignInReturnPath,
-} from "./lib/cli-signin-return-path";
-import {
-  clearApiKeysSignInReturnPath,
-  readApiKeysSignInReturnPath,
-} from "./lib/api-keys-signin-return-path";
 import {
   OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
   sanitizeHostedOAuthErrorMessage,
@@ -3427,61 +3413,9 @@ export default function App() {
       !callbackReturnConsumedRef.current
     ) {
       callbackReturnConsumedRef.current = true;
-      const scenarioReturnPath = readScenarioSignInReturnPath();
-      const persistedCheckoutIntent = readPersistedCheckoutIntent();
-      const billingReturnPath = persistedCheckoutIntent
-        ? readBillingSignInReturnPath()
-        : null;
-      const cliReturnPath = readCliSignInReturnPath();
-      const apiKeysReturnPath = readApiKeysSignInReturnPath();
-      // Consumed (read AND cleared) whether or not it wins: a path left in
-      // storage would outlive this sign-in and hijack the next one.
-      const transition = projectTransitionRecovery.store.getState().marker;
-      const appReturnPath =
-        consumeAppSignInReturnPath() ??
-        (transition && projectTransitionRecovery.isValid(transition)
-          ? transition.path
-          : null);
-      clearScenarioSignInReturnPath();
-      clearBillingSignInReturnPath();
-      clearCliSignInReturnPath();
-      clearApiKeysSignInReturnPath();
-      // LAST in precedence, deliberately. The scenario, billing, CLI and
-      // API-key flows encode an intent, not just a location, and each has its
-      // own documented ordering; the generic path only says "put me back", so
-      // it fills in for the ordinary case those four do not cover.
-      const restoredPath =
-        scenarioReturnPath ??
-        billingReturnPath ??
-        cliReturnPath ??
-        apiKeysReturnPath ??
-        appReturnPath ??
-        "/";
-      trackSignInReturnRestored(
-        !appReturnPath
-          ? "absent"
-          : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
-      );
-      const projectReturnIntent =
-        createProjectSignInReturnRecoveryIntent(restoredPath);
-      const specialReturn =
-        scenarioReturnPath ??
-        billingReturnPath ??
-        cliReturnPath ??
-        apiKeysReturnPath;
-      const recoverToHome =
-        !specialReturn &&
-        transition?.path === restoredPath &&
-        projectTransitionRecovery.isValid(transition);
-      if (!recoverToHome) projectTransitionRecovery.clear();
+      const { restoredPath, projectReturnIntent } =
+        consumeCallbackProjectReturn();
       if (projectReturnIntent) {
-        projectReturnIntent.fallback = specialReturn
-          ? "preserve"
-          : recoverToHome
-            ? "home"
-            : "none";
         setPendingProjectReturnRecovery(projectReturnIntent);
         return;
       }
@@ -5983,12 +5917,14 @@ export default function App() {
     }
   }, [shouldRouteToFirstRunHome]);
 
-  const authoritativeMembershipProjectIds =
+  const isProjectRecoveryReady =
+    isFeedbackMember === true &&
     isAuthenticated &&
     !isAuthLoading &&
     !isWorkOsLoading &&
-    isUserReady &&
-    !isLoadingRemoteProjects
+    isUserReady;
+  const authoritativeMembershipProjectIds =
+    isProjectRecoveryReady && !isLoadingRemoteProjects
       ? allMembershipProjectIds
       : undefined;
   const fallbackProjectIdForStaleReturn =
@@ -5997,43 +5933,28 @@ export default function App() {
       : (allMembershipProjects?.[0]?._id ?? null);
   const projectTransitionPending = useProjectTransitionRecovery({
     actor: actorKey ? `${workOsUser ? "workos" : "guest"}:${actorKey}` : null,
-    ready: isAuthenticated && !isAuthLoading && !isWorkOsLoading && isUserReady,
-    routeReady: projectRouteState.status === "ready",
+    ready: isProjectRecoveryReady,
+    routeReady:
+      isAuthenticated &&
+      !isAuthLoading &&
+      !isWorkOsLoading &&
+      isUserReady &&
+      projectRouteState.status === "ready",
     membershipProjectIds: authoritativeMembershipProjectIds,
     fallbackProjectId: fallbackProjectIdForStaleReturn,
   });
-  const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
+  useCallbackProjectReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
     fallbackProjectId: fallbackProjectIdForStaleReturn,
+    isCallback: isOAuthCallback,
+    ready: isProjectRecoveryReady,
+    onResolved: () => {
+      setPendingProjectReturnRecovery(null);
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+    },
   });
-
-  // Resolve while `/callback` still owns the screen. Clear the one-shot intent
-  // before the only navigation so a bad destination can never loop.
-  useLayoutEffect(() => {
-    if (
-      !isOAuthCallback ||
-      projectReturnRecoveryDecision.kind === "none" ||
-      projectReturnRecoveryDecision.kind === "wait"
-    ) {
-      return;
-    }
-    projectTransitionRecovery.clear();
-    setPendingProjectReturnRecovery(null);
-    setCallbackCompleted(true);
-    setCallbackRecoveryExpired(false);
-
-    if (projectReturnRecoveryDecision.kind === "home") {
-      trackStaleProjectReturnRecovered("no-fallback");
-      navigateApp(routePaths.root, { replace: true, unscoped: true });
-      return;
-    }
-
-    if (projectReturnRecoveryDecision.kind === "switch") {
-      trackStaleProjectReturnRecovered("switched");
-    }
-    navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-  }, [projectReturnRecoveryDecision, isOAuthCallback]);
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch

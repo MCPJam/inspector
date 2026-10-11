@@ -59,14 +59,11 @@ export function useProjectTransitionRecovery(args: {
     args.fallbackProjectId,
     navigate,
   ]);
+  // Remember accessible guest routes too; only resolving recovery requires a member.
   useLayoutEffect(() => {
     if (!args.actor) return;
     projectTransitionRecovery.observeActor(args.actor, path);
-    if (
-      args.ready &&
-      args.routeReady &&
-      !projectTransitionRecovery.store.getState().marker
-    ) {
+    if (args.routeReady && !projectTransitionRecovery.store.getState().marker) {
       projectTransitionRecovery.remember(path, args.actor);
     }
   }, [path, args.actor, args.ready, args.routeReady]);
