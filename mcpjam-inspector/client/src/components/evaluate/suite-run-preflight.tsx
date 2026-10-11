@@ -16,7 +16,10 @@ import {
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
+  CHOOSE_ORG_JUDGE_MODEL,
   orgKeyProblemsOf,
+  preflightJudgeOf,
+  type PreflightJudge,
   type PreflightModel,
   type PreflightOrgConfig,
   type PreflightSelection,
@@ -55,8 +58,9 @@ export type RunPreflight = {
   /**
    * While the organization requires its own provider keys: each required AI
    * dependency that cannot run on its providers (an MCPJam-provided or
-   * personal target model, or an organization connection that can't run it).
-   * The run cannot start; the backend refuses the same launch.
+   * personal target model, a hosted judge, a judge nobody chose, a harness
+   * client's model that is not an organization model on the harness's own
+   * vendor). The run cannot start; the backend refuses the same launch.
    * Absent when there are none.
    */
   orgKeyProblems?: string[];
@@ -74,6 +78,11 @@ export type RunPreflightState = RunPreflight & {
   manageModels?: () => void;
 };
 
+// The policy's checks live in `./suite-run-preflight-org-keys`; these stay
+// importable from here.
+export { CHOOSE_ORG_JUDGE_MODEL, preflightJudgeOf };
+export type { PreflightJudge };
+
 /** What a run would fail on, judged only from what the browser already knows. */
 export function runPreflight(input: {
   serverRefs: readonly string[];
@@ -84,6 +93,8 @@ export function runPreflight(input: {
   availableModelIds?: readonly string[];
   /** Absent while loading: no provider reads as disabled. */
   orgConfig?: PreflightOrgConfig;
+  /** The suite's judge, when grading is required for this launch. */
+  judge?: PreflightJudge;
   refused?: readonly string[];
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /**
@@ -112,7 +123,7 @@ export function runPreflight(input: {
   if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
     // Under the policy the organization's own connections are the only
     // source; "is the provider enabled" is subsumed by these problems.
-    const problems = orgKeyProblemsOf(orgConfig, input.models);
+    const problems = orgKeyProblemsOf(orgConfig, input.models, input.judge);
     return {
       disconnected,
       removed,
@@ -194,11 +205,15 @@ export function preflightTargets({
   suite: EvalSuite;
   cases: readonly EvalCase[];
   environments: readonly PreflightEnvironment[];
-  /** A client's model, and its saved selection when the browser knows it. */
+  /**
+   * A client's model, its saved selection when the browser knows it, and the
+   * harness it runs.
+   */
   hosts: readonly {
     hostId: string;
     modelId?: string | null;
     modelSelection?: PreflightSelection | null;
+    harness?: string | null;
   }[];
   environmentServerRefs: readonly string[];
   /** The client/model cells the run will launch; else the attached ones. */
@@ -253,6 +268,7 @@ export function preflightTargets({
         model,
         provider: provider.provider,
         ...(selection ? { selection } : {}),
+        ...(client?.harness ? { harness: client.harness } : {}),
       },
     ];
   });
@@ -472,6 +488,7 @@ export function useSuiteRunPreflight({
     availableModelIds: availableModels.map((model) => String(model.id)),
     // Pending reads as loading: nothing is judged before the policy is known.
     orgConfig: loadedOrgModelConfig(orgConfig),
+    judge: preflightJudgeOf(suite),
   });
   // The models are locked in `availableModels` only while the org is out.
   const creditsReasonFor = (models: typeof targets.models) =>

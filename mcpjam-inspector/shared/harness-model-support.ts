@@ -205,7 +205,8 @@ const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   cursor: "Cursor CLI",
 };
 
-function harnessDisplayName(harnessId: string): string {
+/** The runtime's human-facing name ("Claude Code"), or the id itself. */
+export function harnessDisplayName(harnessId: string): string {
   return HARNESS_DISPLAY_NAMES[harnessId] ?? harnessId;
 }
 

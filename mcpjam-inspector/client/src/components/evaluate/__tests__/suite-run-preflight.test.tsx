@@ -3,8 +3,10 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import {
+  CHOOSE_ORG_JUDGE_MODEL,
   connectOutcome,
   hasBlockingPreflight,
+  preflightJudgeOf,
   preflightTargets,
   readEnvironmentResolutions,
   runPreflight,
@@ -707,7 +709,7 @@ describe("runPreflight while the organization requires its own keys", () => {
     aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
   };
 
-  it("blocks a hosted target and a personal-key target", () => {
+  it("blocks a hosted target, a personal-key target and a hosted judge", () => {
     const preflight = runPreflight({
       serverRefs: [],
       servers: {},
@@ -732,10 +734,11 @@ describe("runPreflight while the organization requires its own keys", () => {
         },
       ],
       orgConfig: policy,
+      judge: { kind: "explicit", modelId: "openai/gpt-5-mini" },
     });
 
     expect(preflight.disabledProviders).toEqual([]);
-    expect(preflight.orgKeyProblems).toHaveLength(3);
+    expect(preflight.orgKeyProblems).toHaveLength(4);
     expect(preflight.orgKeyProblems!.join("\n")).toMatch(
       /anthropic\/claude-haiku-4\.5 is an MCPJam-provided model/,
     );
@@ -745,6 +748,9 @@ describe("runPreflight while the organization requires its own keys", () => {
     expect(preflight.orgKeyProblems!.join("\n")).toMatch(
       /openai\/gpt-4o uses an organization provider connection that can't run it/,
     );
+    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+      /The judge is an MCPJam-provided model/,
+    );
     expect(
       preflight.orgKeyProblems!.every((problem) =>
         problem.endsWith("Choose a model from an organization provider."),
@@ -753,12 +759,20 @@ describe("runPreflight while the organization requires its own keys", () => {
     expect(hasBlockingPreflight(preflight)).toBe(true);
   });
 
-  it("lets an eligible org model through", () => {
+  it("lets an eligible org model and an org judge through", () => {
     const preflight = runPreflight({
       serverRefs: [],
       servers: {},
       models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
       orgConfig: policy,
+      judge: {
+        kind: "explicit",
+        modelId: "anthropic/claude-sonnet-4.5",
+        selection: {
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+        },
+      },
     });
     expect(preflight.orgKeyProblems).toBeUndefined();
     expect(hasBlockingPreflight(preflight)).toBe(false);
@@ -821,6 +835,90 @@ describe("runPreflight while the organization requires its own keys", () => {
         },
       }).orgKeyProblems,
     ).toHaveLength(1);
+  });
+
+  it("blocks a required judge nobody chose: there is no default judge on the organization's keys", () => {
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
+      orgConfig: policy,
+      judge: { kind: "default" },
+    });
+    expect(preflight.orgKeyProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
+    expect(CHOOSE_ORG_JUDGE_MODEL).toBe(
+      "Choose a judge model from an organization provider.",
+    );
+    expect(hasBlockingPreflight(preflight)).toBe(true);
+  });
+
+  it("leaves the default judge alone with the policy off", () => {
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [],
+      orgConfig: { ...policy, aiKeyPolicy: { requireOrgKeys: false } },
+      judge: { kind: "default" },
+    });
+    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(hasBlockingPreflight(preflight)).toBe(false);
+  });
+
+  it("reads the suite's judge only when grading is required", () => {
+    // Grading is on and automatic by default, so untouched settings still
+    // need a judge: under the policy, one nobody chose is flagged.
+    expect(preflightJudgeOf({ judgeConfig: undefined })).toEqual({
+      kind: "default",
+    });
+    expect(
+      preflightJudgeOf({
+        judgeConfig: { goalCompletion: { enabled: true, autoRun: true } },
+      }),
+    ).toEqual({ kind: "default" });
+    expect(
+      preflightJudgeOf({ judgeConfig: { goalCompletion: { autoRun: false } } }),
+    ).toBeUndefined();
+    expect(
+      preflightJudgeOf({
+        judgeConfig: { goalCompletion: { autoRun: false, role: "required" } },
+      }),
+    ).toEqual({ kind: "default" });
+    expect(
+      preflightJudgeOf({
+        judgeConfig: {
+          goalCompletion: {
+            autoRun: true,
+            judgeSelection: {
+              modelId: "claude-sonnet-4-5",
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+            },
+          },
+        },
+      } as never),
+    ).toMatchObject({ kind: "explicit", modelId: "claude-sonnet-4-5" });
+    expect(
+      preflightJudgeOf({
+        judgeConfig: {
+          goalCompletion: { autoRun: true, judgeModel: "openai/gpt-5-mini" },
+        },
+      }),
+    ).toEqual({
+      kind: "explicit",
+      modelId: "openai/gpt-5-mini",
+      selection: null,
+    });
+    expect(
+      preflightJudgeOf({
+        judgeConfig: {
+          goalCompletion: {
+            role: "gating",
+            enabled: false,
+            judgeModel: "openai/gpt-5-mini",
+          },
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("renders the problems as blocking notices with the admin action", async () => {
@@ -1019,6 +1117,130 @@ describe("an organization model chosen for an environment or matrix cell, under 
         },
       }).hostModelSelections,
     ).toEqual({ claude: orgGpt5 });
+  });
+});
+
+// Claude Code and Codex run on the organization's own key for their vendor
+// (#6135), so under the policy a harness client is a problem only when its
+// model isn't an organization model on that vendor.
+describe("a harness client under the policy", () => {
+  const fallback = { provider: "none", model: "none" } as const;
+  const strict = {
+    providers: [
+      {
+        id: "conn_anthropic",
+        providerKey: "anthropic",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: { eligible: true },
+      },
+      {
+        id: "conn_openai",
+        providerKey: "openai",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: { eligible: true },
+      },
+    ],
+    aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+  };
+  const org = (modelId: string, connection: string) => ({
+    modelId,
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: connection },
+    fallback,
+  });
+  const hosts = [
+    { hostId: "claude", harness: "claude-code" },
+    { hostId: "codex", harness: "codex" },
+    { hostId: "cursor", harness: "cursor" },
+    { hostId: "emulated" },
+  ];
+  const suite = {
+    _id: "suite",
+    name: "S",
+    environmentIds: ["env"],
+  } as unknown as EvalSuite;
+  const problemsFor = (
+    hostId: string,
+    modelId: string,
+    modelSelection?: unknown,
+    orgConfig: Parameters<typeof runPreflight>[0]["orgConfig"] = strict,
+  ) =>
+    runPreflight({
+      ...preflightTargets({
+        suite,
+        cases: [],
+        environments: [],
+        hosts,
+        environmentServerRefs: [],
+        targets: [
+          {
+            hostId,
+            modelId,
+            ...(modelSelection
+              ? { modelSelection: modelSelection as never }
+              : {}),
+          },
+        ],
+      }),
+      servers: {},
+      orgConfig,
+    }).orgKeyProblems;
+
+  it("lets an organization model on the harness's own vendor through", () => {
+    expect(
+      problemsFor(
+        "claude",
+        "anthropic/claude-sonnet-4.5",
+        org("anthropic/claude-sonnet-4.5", "conn_anthropic"),
+      ),
+    ).toBeUndefined();
+    expect(
+      problemsFor("codex", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
+    ).toBeUndefined();
+  });
+
+  it("names the vendor the harness needs for another vendor's organization model", () => {
+    expect(
+      problemsFor("claude", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
+    ).toEqual([
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+    ]);
+  });
+
+  it("says the same for an MCPJam-provided model, instead of the generic line", () => {
+    const problems = problemsFor("codex", "openai/gpt-5", {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback,
+    });
+    expect(problems).toEqual([
+      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider.",
+    ]);
+  });
+
+  it("leaves an emulated client and a harness on its own account to the model check", () => {
+    for (const hostId of ["emulated", "cursor"]) {
+      expect(
+        problemsFor(hostId, "openai/gpt-5", {
+          modelId: "openai/gpt-5",
+          source: "hosted",
+          fallback,
+        })?.join("\n"),
+      ).toMatch(/openai\/gpt-5 is an MCPJam-provided model/);
+    }
+  });
+
+  it("raises nothing with the policy off", () => {
+    expect(
+      problemsFor(
+        "claude",
+        "openai/gpt-5",
+        { modelId: "openai/gpt-5", source: "hosted", fallback },
+        { providers: strict.providers },
+      ),
+    ).toBeUndefined();
   });
 });
 
