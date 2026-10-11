@@ -38,6 +38,9 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // POST actions that intentionally carry no request body (so the requestBody
 // assertion below doesn't flag them). Keep this list tiny and explicit.
 const BODYLESS_WRITES = new Set([
+  // Receipt authorization and cancellation take only the path request ID.
+  "post /deletions/{requestId}/authorize",
+  "post /deletions/{requestId}/cancel",
   "post /projects/{projectId}/tunnels/{serverId}/close",
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
