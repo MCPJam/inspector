@@ -476,3 +476,107 @@ describe("repo hygiene", async () => {
     assert.deepEqual([failures, warnings], [[], []]);
   });
 });
+
+describe("pr-size verdict", async () => {
+  const { verdict, parseNumstat, countPatchLines, parseLabels, LARGE, LIMIT } =
+    await import("./pr-size.mjs");
+
+  it("counts NUL-delimited paths, including non-ASCII and tab ones", () => {
+    const output = [
+      "10\t2\tsdk/src/caf\u00e9.ts",
+      "5\t0\tsdk/src/a.test.ts",
+      "-\t-\tdocs/logo.png",
+      "3\t3\tmcpjam-inspector/client/src/App.tsx",
+      "4\t0\tsdk/src/weird\tname.ts",
+      "-\t-\tsdk/src/opaque.ts",
+      "",
+    ].join("\0");
+    const { files, uncounted } = parseNumstat(output);
+    assert.deepEqual(
+      files.map((file) => [file.path, file.lines]),
+      [
+        ["sdk/src/caf\u00e9.ts", 12],
+        ["mcpjam-inspector/client/src/App.tsx", 6],
+        ["sdk/src/weird\tname.ts", 4],
+      ]
+    );
+    assert.deepEqual(uncounted, ["sdk/src/opaque.ts"]);
+  });
+
+  it("counts patch lines inside hunks only", () => {
+    const patch = [
+      "diff --git a/x.ts b/x.ts",
+      "--- a/x.ts",
+      "+++ b/x.ts",
+      "@@ -1 +1,2 @@",
+      "-old",
+      "+--flag",
+      "+++counter",
+    ].join("\n");
+    assert.equal(countPatchLines(patch), 3);
+  });
+
+  it("counts source files a -diff attribute marks as binary", () => {
+    const repo = mkdtempSync(join(tmpdir(), "slop-size-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+      writeFileSync(join(repo, ".gitattributes"), "*.ts -diff\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(
+        join(repo, "sdk/src/a.ts"),
+        "export const a = 1;\n".repeat(5)
+      );
+      git("add", ".");
+      git("commit", "-qm", "add");
+      const out = execFileSync(
+        "node",
+        [
+          join(dirname(fileURLToPath(import.meta.url)), "pr-size.mjs"),
+          "--base",
+          "HEAD^1",
+        ],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
+        }
+      );
+      assert.match(out, /\*\*5\*\* changed lines/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a label with a comma in its name whole", () => {
+    assert.deepEqual(parseLabels('["review,mechanical"]'), [
+      "review,mechanical",
+    ]);
+    assert.equal(
+      verdict(LIMIT + 1, parseLabels('["review,mechanical"]')),
+      "fail"
+    );
+    assert.deepEqual(parseLabels(undefined), []);
+    assert.throws(() => parseLabels('"mechanical"'), /JSON array/);
+  });
+
+  it("is ok within budget", () => {
+    assert.equal(verdict(LARGE, []), "ok");
+  });
+
+  it("flags a large PR and accepts either label", () => {
+    assert.equal(verdict(LARGE + 1, []), "large");
+    assert.equal(verdict(LARGE + 1, ["large-pr"]), "large-labelled");
+    assert.equal(verdict(LARGE + 1, ["mechanical"]), "large-labelled");
+  });
+
+  it("fails over the hard limit unless mechanical", () => {
+    assert.equal(verdict(LIMIT + 1, ["large-pr"]), "fail");
+    assert.equal(verdict(LIMIT + 1, ["mechanical"]), "large-labelled");
+  });
+});
