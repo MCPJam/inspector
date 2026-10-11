@@ -119,7 +119,9 @@
     "dev:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:app:processes": "run-script-os",
     "dev:app:processes:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:app:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\""
+    "dev:app:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
+    "test:visual:app": "node scripts/visual/build.mjs && playwright test --config playwright.visual.config.ts && node scripts/visual/check-app-archives.mjs",
+    "visual:app:upload": "node scripts/visual/check-app-archives.mjs && CHROMATIC_ARCHIVE_LOCATION=.playwright/visual-results chromatic --playwright --exit-zero-on-changes"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.106",
@@ -239,6 +241,7 @@
   },
   "devDependencies": {
     "@alwaysmeticulous/recorder-plugin": "^2.346.0",
+    "@chromatic-com/playwright": "1.0.0",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
@@ -272,6 +275,7 @@
     "@vitest/coverage-v8": "^4.1.11",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
+    "chromatic": "18.12.0",
     "concurrently": "^10.0.5",
     "electron": "43.6.0",
     "es-module-lexer": "1.7.0",
