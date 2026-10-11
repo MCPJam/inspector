@@ -52,7 +52,7 @@ import {
  *
  * Auth to the platform worker: the worker verifies AuthKit JWTs from the
  * same issuer the inspector authenticates with (prod `login.mcpjam.com`,
- * staging `dynamic-echo-14-staging`), so the caller's bearer is forwarded
+ * staging `deep-vanilla-68-test`), so the caller's bearer is forwarded
  * as the MCP `accessToken`. Local dev tokens come from the dev AuthKit app,
  * which only the LOCAL worker (`wrangler dev --env dev`) trusts — `npm run
  * dev` starts that worker automatically, so the agent talks to it on
@@ -86,6 +86,10 @@ import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
 import {
   validateUiToolEntries,
   UiToolValidationError,
@@ -336,6 +340,17 @@ mcpjamAgent.post("/", async (c) => {
       return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
     }
     if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+
+    // Before the MCP manager exists: a continuation this turn's step budget
+    // cannot serve is refused without connecting the docs servers, calling the
+    // model or persisting a turn. `AGENT_MAX_STEPS` is the ceiling the engine
+    // enforces below, so the two cannot disagree about when the budget is gone.
+    const loopVerdict = checkAgentLoopGuard({
+      messages: body.messages,
+      maxSteps: AGENT_MAX_STEPS,
+    });
+    if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "mcpjam_agent");
+
     const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(

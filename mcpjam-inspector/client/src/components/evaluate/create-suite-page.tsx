@@ -286,7 +286,7 @@ export function CreateSuitePage({
             hostId,
             {
               includeClientDefaults: inherited.includeClientDefaults,
-              explicitModelIds: [...inherited.explicitModelIds],
+              explicitTargets: [...inherited.explicitTargets],
             },
           ];
         }),
