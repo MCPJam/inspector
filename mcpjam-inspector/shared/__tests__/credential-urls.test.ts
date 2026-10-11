@@ -52,6 +52,9 @@ const GENERIC_CORPUS = [
   `mcpjam://oauth/callback?code=${sentinel("electron")}`,
   `/oauth/callback/debug#access_token=${sentinel("implicit")}`,
   `/#/results/${sentinel("hashroute")}`,
+  `https://app.mcpjam.com/%52esults/${sentinel("upperescape")}`,
+  `/%43onformance/%73hared/${sentinel("mixedescape")}`,
+  `/%55ser-testing/acme-study/${sentinel("testerescape")}`,
   `/p/proj/servers?redirect=${encodeURIComponent(`https://app.mcpjam.com/results/${sentinel("nested")}?code=${sentinel("nestedcode")}`)}`,
 ];
 
@@ -426,6 +429,14 @@ describe("review findings", () => {
     for (const path of [
       "/RESULTS/tok_1",
       "/%72esults/tok_1",
+      // An escape of the other case: `%52` is `R`, which the router folds.
+      "/%52esults/tok_1",
+      "/%52%45SULTS/tok_1",
+      "/%52%65sults/tok_1",
+      "/%62ench/%52esults/ff00",
+      "/%55ser-%54esting/acme/tok_1",
+      "/%43onnect/%53erver/tok_1",
+      "/api/web/%53core/runs/tok_1",
       "/Bench/Results/ff00",
       "/User-Testing/acme/tok_1",
     ]) {
@@ -438,7 +449,23 @@ describe("review findings", () => {
       ).not.toMatch(/tok_1|ff00/);
     }
     expect(isReplayBlockedLocation({ pathname: "/OAuth/Callback" })).toBe(true);
+    expect(isReplayBlockedLocation({ pathname: "/%4fauth/%43allback" })).toBe(
+      true,
+    );
     expect(matchCredentialPath("/user-testing/acme/EDIT")).toBeNull();
+  });
+
+  it("keeps an encoded route's spelling outside the redacted segment", () => {
+    expect(scrubCredentialUrl("/%52esults/tok_1?tab=x")).toBe(
+      "/%52esults/[redacted]?tab=x",
+    );
+    expect(
+      scrubCredentialsInText(
+        "GET https://app.mcpjam.com/%52%45sults/tok_1 and /%42ench/results/ff00 then",
+      ),
+    ).toBe(
+      "GET https://app.mcpjam.com/%52%45sults/[redacted] and /%42ench/results/[redacted] then",
+    );
   });
 
   it("leaves its own encoded output readable and clean", () => {

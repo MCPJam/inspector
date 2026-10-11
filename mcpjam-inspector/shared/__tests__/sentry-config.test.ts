@@ -955,6 +955,8 @@ describe("scrubServerSentryEvent", () => {
 });
 
 describe("scrubSentryBreadcrumb", () => {
+  const APP_ORIGIN = "https://app.mcpjam.test";
+
   it("keeps a console breadcrumb's level, category and label but not its arguments", () => {
     const payload = { messages: [{ content: "private words" }] };
     const crumb = {
@@ -968,7 +970,7 @@ describe("scrubSentryBreadcrumb", () => {
       },
     };
 
-    expect(scrubClientSentryBreadcrumb(crumb)).toEqual({
+    expect(scrubClientSentryBreadcrumb(crumb, APP_ORIGIN)).toEqual({
       category: "console",
       level: "error",
       message: "[chat] stream failed: (+1 args)",
@@ -980,16 +982,22 @@ describe("scrubSentryBreadcrumb", () => {
 
   it("describes a console call whose first argument is not a string", () => {
     expect(
-      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>({
-        category: "console",
-        data: { arguments: [new Error("for jane@acme.com")] },
-      })!.message,
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [new Error("for jane@acme.com")] },
+        },
+        APP_ORIGIN,
+      )!.message,
     ).toBe("Error: for [redacted-email]");
     expect(
-      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>({
-        category: "console",
-        data: { arguments: [{ toolArgs: { city: "Lisbon" } }] },
-      })!.message,
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [{ toolArgs: { city: "Lisbon" } }] },
+        },
+        APP_ORIGIN,
+      )!.message,
     ).toBe("{toolArgs: {city: string(6)}}");
   });
 
@@ -1016,21 +1024,67 @@ describe("scrubSentryBreadcrumb", () => {
 
   it("keeps the browser's own API paths but drops queries and fragments", () => {
     expect(
-      scrubClientSentryBreadcrumb({
-        category: "fetch",
-        data: {
-          url: "/api/web/servers/srv_1/tools?cursor=abc#x",
-          method: "GET",
+      scrubClientSentryBreadcrumb(
+        {
+          category: "fetch",
+          data: {
+            url: "/api/web/servers/srv_1/tools?cursor=abc#x",
+            method: "GET",
+          },
         },
-      })!.data,
+        APP_ORIGIN,
+      )!.data,
     ).toEqual({ url: "/api/web/servers/srv_1/tools", method: "GET" });
 
     expect(
-      scrubClientSentryBreadcrumb({
-        category: "navigation",
-        data: { from: "/oauth/callback?code=c0de&state=s", to: "/servers" },
-      })!.data,
+      scrubClientSentryBreadcrumb(
+        {
+          category: "xhr",
+          data: { url: `${APP_ORIGIN}/api/web/servers/srv_1?cursor=abc` },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ url: `${APP_ORIGIN}/api/web/servers/srv_1` });
+
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "navigation",
+          data: { from: "/oauth/callback?code=c0de&state=s", to: "/servers" },
+        },
+        APP_ORIGIN,
+      )!.data,
     ).toEqual({ from: "/oauth/callback", to: "/servers" });
+  });
+
+  it("keeps only the origin of a browser request to another origin", () => {
+    const crumb = (url: string) => ({ category: "fetch", data: { url } });
+
+    for (const url of [
+      "https://mcp.acme.com/tenants/42/mcp?api_key=k",
+      // Protocol-relative: no scheme of its own, still another host.
+      "//mcp.acme.com/tenants/42/mcp",
+      // Same host, different port is a different origin.
+      "https://app.mcpjam.test:8443/tenants/42",
+    ]) {
+      const expected = new URL(url, APP_ORIGIN).origin;
+      expect(
+        scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data,
+      ).toEqual({ url: expected });
+    }
+
+    // No app origin known: every absolute URL is someone else's.
+    expect(
+      scrubClientSentryBreadcrumb(
+        crumb(`${APP_ORIGIN}/api/web/servers/srv_1`),
+        undefined,
+      )!.data,
+    ).toEqual({ url: APP_ORIGIN });
+    // An opaque origin never matches, even its own.
+    expect(
+      scrubClientSentryBreadcrumb(crumb("file:///Users/jane/notes.txt"), "null")!
+        .data,
+    ).toEqual({ url: "null" });
   });
 
   it("redacts the message of any other breadcrumb", () => {
@@ -1043,12 +1097,20 @@ describe("scrubSentryBreadcrumb", () => {
     ).toBe("Child process errored with 'connect https://db.acme.com/…'");
   });
 
-  it("is wired into the browser config", () => {
+  it("is wired into the browser config with the app's origin", () => {
     const config = buildClientSentryConfig({
       environment: "prod",
       deployment: "hosted",
+      documentOrigin: APP_ORIGIN,
     });
-    expect(config.beforeBreadcrumb).toBe(scrubClientSentryBreadcrumb);
+    const scrub = (url: string) =>
+      config.beforeBreadcrumb({ category: "fetch", data: { url } })!.data;
+    expect(scrub(`${APP_ORIGIN}/api/web/servers/srv_1?x=1`)).toEqual({
+      url: `${APP_ORIGIN}/api/web/servers/srv_1`,
+    });
+    expect(scrub("https://mcp.acme.com/tenants/42/mcp")).toEqual({
+      url: "https://mcp.acme.com",
+    });
   });
 });
 
@@ -1123,7 +1185,10 @@ describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
       },
       { category: "ui.click", message: `a[href="/connect/server/${SECRET}"]` },
     ]) {
-      const client = scrubClientSentryBreadcrumb(structuredClone(crumb));
+      const client = scrubClientSentryBreadcrumb(
+        structuredClone(crumb),
+        "https://app.mcpjam.com",
+      );
       const server = scrubServerSentryBreadcrumb(structuredClone(crumb));
       expect(JSON.stringify(client)).not.toContain(SECRET);
       expect(JSON.stringify(server)).not.toContain(SECRET);
