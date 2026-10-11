@@ -100,6 +100,11 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
@@ -893,6 +898,26 @@ chatV2.post("/", async (c) => {
       // precedence can't leak them from the body).
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+
+    // A continuation whose step budget is already spent is refused here,
+    // before any MCP server is connected (see `utils/agent-loop-guard.ts`).
+    // Every non-harness engine behind this route runs with the default
+    // per-message ceiling. A harness counts its own steps from the last user
+    // message, and an explicit MRTR / scope step-up continuation is a
+    // one-shot answer the user gave, not an automatic resume — neither is
+    // checked.
+    const explicitContinuation =
+      rawBody.mrtrResume !== undefined ||
+      rawBody.scopeStepUpResume !== undefined ||
+      rawBody.scopeStepUpCancel !== undefined;
+    if (!resolvedExecution.harness && !explicitContinuation) {
+      const loopVerdict = checkAgentLoopGuard({
+        messages,
+        maxSteps: DEFAULT_TURN_MAX_STEPS,
+      });
+      if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "chat_v2");
+    }
+
     // What this turn will RECORD about the configuration it ran with. Computed
     // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
     // above), so it reflects what actually ran rather than what the environment
@@ -1215,6 +1240,9 @@ chatV2.post("/", async (c) => {
           // stamp) then runs the turn on the org's key — emulated, silently.
           hosted: modelDefinition.hosted,
         },
+        // The saved selection: an org connection on the harness's own vendor
+        // runs the real runtime on the organization's key.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
         // should: it asks whether this HOST carries the runtime's sentinel, a
@@ -1346,6 +1374,9 @@ chatV2.post("/", async (c) => {
         // bare-id harness turn would be mis-detected as emulated and get the
         // emulated skill tools on top of adapter-delivered skills.
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        // A harness on the org's own key runs the real runtime too.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         hasProjectId: Boolean(hostedBody.projectId),
       });
 
@@ -2254,6 +2285,7 @@ chatV2.post("/", async (c) => {
         ...(playgroundEnvironmentId
           ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
+        harness: resolvedExecution.harness,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {
@@ -2267,7 +2299,7 @@ chatV2.post("/", async (c) => {
           playgroundBoxReason,
           acquired.refusal,
         );
-        throw new WebRouteError(
+        const refusalError = new WebRouteError(
           described.status,
           described.status === 429
             ? ErrorCode.RATE_LIMITED
@@ -2284,6 +2316,15 @@ chatV2.post("/", async (c) => {
             ...(described.code ? { code: described.code } : {}),
           },
         );
+        const retryAfterMs =
+          described.status === 429 || described.status === 503
+            ? acquired.refusal.retryAfterMs
+            : undefined;
+        throw retryAfterMs !== undefined
+          ? refusalError.withHeaders({
+              "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
+            })
+          : refusalError;
       }
       scenarioBox = acquired.box;
       // The model's own `bash` rides the same machine as the harness's Shell:

@@ -135,6 +135,28 @@ vi.mock("../../../utils/harness/harness-availability.js", async () => {
   };
 });
 
+// Every cloud harness turn now runs on the conversation's throwaway box. The
+// box holder and its refusals are the module's own (tested there); these tests
+// are about which skill set reaches which engine, so a box that provisions.
+vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/playground-box.js")
+  >()),
+  playgroundHarnessBoxUnavailableReason: () => null,
+  acquirePlaygroundHarnessBox: async () => ({
+    ok: true as const,
+    box: {
+      surface: "playground" as const,
+      binding: {
+        sandboxRowId: "row_pg",
+        sandboxId: "sbx_pg",
+        runtimeKind: "terminal" as const,
+      },
+      release: async () => {},
+    },
+  }),
+}));
+
 vi.mock("../apps.js", () => ({ default: new Hono() }));
 
 // Spied, not replaced: what the route hands the tool registry is how the

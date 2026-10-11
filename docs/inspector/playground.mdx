@@ -63,7 +63,7 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 **Right rail — Logs / Shell**
 
 - **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
+- **Shell** (shown when the previewed host has a Project Computer and is not a harness client) — A live terminal on the personal computer. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
@@ -107,12 +107,16 @@ The picker opens on the tab that matches your currently selected model. When you
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
 
+The **Send** button is disabled with an "Out of MCPJam credits · resets in …" tooltip when the selected model is a locked MCPJam model. Switching to a model from your own providers re-enables Send immediately.
+
 If the out-of-credits dialog appears, the actions available depend on your plan and role:
 
 - **Free plan (owner)** — The dialog shows **Compare plans** (opens your organization's Plans settings) and **Learn more about BYOK** (opens the BYOK and credits explainer under Usage & billing).
 - **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+Dismissing the dialog keeps it closed for subsequent automatic notices until credits come back or a purchase begins. Buttons you press explicitly — such as **View credit options** or the credits button in a chat error — still open it. A "not enough credits" notice (one request too large for your balance) always opens the dialog regardless of whether you previously dismissed it.
 
 ### Frontier models and sign-in
 
@@ -306,7 +310,7 @@ Click **Edit** on a tool-result card to make the **Input** and **Result** JSON e
 
 ## Right Rail
 
-The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached and is not a harness client (Claude Code, Codex, or Cursor). Harness clients run on disposable per-conversation boxes, not a personal computer, so the Shell tab is not shown for them.
 
 ### Logs tab
 
@@ -333,7 +337,7 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 ### Shell tab
 
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+When the previewed host has a Project Computer and is not a harness client (Claude Code, Codex, or Cursor), a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
 
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 

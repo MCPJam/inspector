@@ -178,6 +178,13 @@ export function SkillsTab({
   const [pluginSkill, setPluginSkill] = useState<PluginSkillSelection | null>(
     null
   );
+  // A plugin skill belongs to the project it was opened in; kept across a
+  // switch, its detail would read that skill under the new project's id.
+  const [pluginSkillProjectId, setPluginSkillProjectId] = useState(projectId);
+  if (pluginSkillProjectId !== projectId) {
+    setPluginSkillProjectId(projectId);
+    setPluginSkill(null);
+  }
   const [pluginSkills, setPluginSkills] = useState<{
     count: number;
     pending: boolean;

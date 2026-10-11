@@ -149,6 +149,25 @@ describe("source-owned App previews", () => {
     expect(a.widgetContent.html).toBe("<p>Disposable</p>");
     expect(f.runtime.release).toHaveBeenCalledTimes(2);
   });
+  it.each([
+    ["a 1.1 MB UI", 1_150_000, true],
+    ["a UI over 5 MB", 5 * 1024 * 1024 + 1, false],
+  ])(
+    "previews %s only within the App UI bound",
+    async (_label, bytes, opens) => {
+      const f = await fixture();
+      const html = "<p>" + "x".repeat(bytes - 7) + "</p>";
+      f.readResource.mockResolvedValue({
+        contents: [{ uri: "ui://preview", mimeType: "text/html", text: html }],
+      });
+      const preview = openPluginFormAppPreview(f.options);
+      if (opens) {
+        expect((await preview).widgetContent.html.length).toBe(bytes);
+      } else {
+        await expect(preview).rejects.toBeTruthy();
+      }
+    },
+  );
   it("opens on the server that asked for the form, with arguments defaulting to {}", async () => {
     const f = await fixture({ type: "mcp_app_tool", name: "preview" });
     const opened = await openPluginFormAppPreview(f.options);

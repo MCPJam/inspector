@@ -117,6 +117,11 @@ export const ErrorCode = {
   // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
   // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
   SESSION_REVOKED: "SESSION_REVOKED",
+  // A chat continuation refused before any model call (409): the user
+  // message's step budget is spent, or the model keeps sending the same tool
+  // call with input that cannot run. The browser stops resuming on it and the
+  // user continues by sending a message. See `utils/agent-loop-guard.ts`.
+  AGENT_STEP_LIMIT: "AGENT_STEP_LIMIT",
   // The USER'S MCP server answered with an HTTP error status (a 404 for a
   // wrong endpoint path, a 405, its own 500). Served at 424 by
   // `mapTargetServerError`. Not SERVER_UNREACHABLE: the chat client words that

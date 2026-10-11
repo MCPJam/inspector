@@ -144,6 +144,7 @@ import {
   withPluginRequestTimings,
 } from "../../services/plugin-host/timing.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
+import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 
 const id = z.string().min(1).max(256);
 const scopeSchema = z.strictObject({
@@ -1167,7 +1168,7 @@ instances.post("/activation/open", (c) =>
       const widgetContent = widgetResourceContent(content, listingMeta);
       if (
         !widgetContent.mimeTypeValid ||
-        Buffer.byteLength(widgetContent.html) > 1024 * 1024
+        Buffer.byteLength(widgetContent.html) > PLUGIN_APP_UI_MAX_BYTES
       )
         throw new PluginInvocationError("INSTANCE_UI_UNAVAILABLE");
       const opened = await pluginInstances.openActivationPersistent(

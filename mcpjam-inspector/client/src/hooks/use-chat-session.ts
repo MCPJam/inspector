@@ -52,7 +52,13 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
-import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
+import {
+  autoResumeStopReason,
+  describeAutoResumeStop,
+  lastStepHasPendingApproval,
+  type AutoResumeStopReason,
+} from "@/lib/chat-auto-resume";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   useAppToolsRegistryApi,
   recordAppToolInvocation,
@@ -99,6 +105,8 @@ import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -111,7 +119,10 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -308,7 +319,7 @@ import { fetchArtifact } from "@/lib/artifact-urls";
 // attempted) and intentionally maps to no toast.
 const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "sandbox-replaced":
-    "Started a new session — the project computer was reset, so earlier context isn't available.",
+    "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
@@ -727,6 +738,11 @@ export interface UseChatSessionReturn {
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
+  /**
+   * One line when a browser-fulfilled tool step was NOT resumed on its own —
+   * the reply was cut off, or the turn spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
   chatSessionId: string;
 
   // Model state
@@ -749,6 +765,9 @@ export interface UseChatSessionReturn {
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
+  /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -2173,6 +2192,26 @@ export function useChatSession(
    * false), so a finished turn always overwrites a stopped predecessor.
    */
   const turnAbortedRef = useRef(false);
+  /**
+   * How the last response ended, from the same `onFinish`, and in which
+   * session. A finish reason reaches the browser nowhere else — it is not
+   * stored on the message — and the SDK runs `onFinish` before it asks
+   * `sendAutomaticallyWhen`, so the auto-resume bound below always weighs the
+   * response it is deciding about.
+   */
+  const lastFinishRef = useRef<{
+    chatSessionId: string;
+    finishReason: string | undefined;
+  } | null>(null);
+  /**
+   * What the latest auto-resume decision held back, and for which session.
+   * Recorded by `sendAutomaticallyWhen` itself — the SDK makes that decision
+   * before the settled response renders — and read at render for the notice.
+   */
+  const autoResumeHeldBackRef = useRef<{
+    chatSessionId: string;
+    reason: AutoResumeStopReason;
+  } | null>(null);
   const [, setHydrationTick] = useState(0);
   const [resumedVersionState, setResumedVersion] = useState<{
     sessionId: string;
@@ -2879,7 +2918,8 @@ export function useChatSession(
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
-  const outOfCredits = useOutOfCredits();
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -2978,7 +3018,11 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all (a harness host none of the rows runs on):
+      // a disabled stand-in, never `undefined`, which every reader below
+      // dereferences. The chat refuses to send on it (`submitBlocked`).
+      noRunnableHarnessModel(harnessId ?? "");
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -3978,8 +4022,12 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort, message }) => {
+    onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
+      lastFinishRef.current = {
+        chatSessionId: chatSessionIdRef.current,
+        finishReason,
+      };
       baseSetMessages((current) =>
         timestampMessageById(current, message.id, Date.now()),
       );
@@ -4174,8 +4222,11 @@ export function useChatSession(
     // already have their result in this response; posting them again would
     // create a redundant turn and can reuse a one-shot scope continuation.
     // Preserve main's BUG-4 guard: a pending approval must never be answered
-    // by an automatic follow-up.
+    // by an automatic follow-up. Bounded like the agent surface: never past a
+    // cut-off reply or a spent step budget, or a turn the server can no
+    // longer serve is re-posted indefinitely (`autoResumeStopReason`).
     sendAutomaticallyWhen: (options) => {
+      autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
         shouldAutoSendCompletedClientToolCalls(
@@ -4183,7 +4234,22 @@ export function useChatSession(
           scopeStepUpResumeInFlightRef.current,
         )
       ) {
-        return true;
+        const lastFinish = lastFinishRef.current;
+        const reason = autoResumeStopReason({
+          ...options,
+          finishReason:
+            lastFinish?.chatSessionId === chatSessionIdRef.current
+              ? lastFinish.finishReason
+              : undefined,
+          maxSteps: DEFAULT_TURN_MAX_STEPS,
+        });
+        if (reason && chatSessionIdRef.current) {
+          autoResumeHeldBackRef.current = {
+            chatSessionId: chatSessionIdRef.current,
+            reason,
+          };
+        }
+        return reason === null;
       }
       return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
@@ -5985,8 +6051,17 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    isNoRunnableHarnessModel(selectedModel);
   const inputDisabled = submitBlocked;
+
+  // Only once the response has settled, and only for the session it was
+  // recorded on — the ref outlives a switch to another conversation.
+  const heldBack = autoResumeHeldBackRef.current;
+  const autoResumeNotice =
+    status === "ready" && heldBack && heldBack.chatSessionId === chatSessionId
+      ? describeAutoResumeStop(heldBack.reason)
+      : null;
 
   return {
     // Chat state
@@ -5997,6 +6072,7 @@ export function useChatSession(
     stop: stopChat,
     status,
     error,
+    autoResumeNotice,
     chatSessionId,
 
     // Model state
@@ -6009,6 +6085,7 @@ export function useChatSession(
     setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
+    outOfCreditsReason,
 
     // Auth state
     isAuthenticated,
