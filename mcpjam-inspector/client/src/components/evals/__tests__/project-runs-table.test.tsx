@@ -218,7 +218,9 @@ describe("ProjectRunsTable", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Delete run #5" }));
-    expect(await screen.findByText(/all 2 runs in this launch/)).toBeVisible();
+    expect(
+      await screen.findByText(/Delete the 2 selected runs in this launch/),
+    ).toBeVisible();
     expect(onDeleteRun).not.toHaveBeenCalled();
     expect(mocks.query).toHaveBeenCalledWith(
       "testSuites:listTestSuiteRunSummaries",
