@@ -7,13 +7,25 @@ eval harness — this layer drives the real app in a browser.
 ## Run locally
 
 ```bash
-npm run test:e2e -w @mcpjam/inspector
+MCPJAM_GUEST_SESSION_SHARED_SECRET=... npm run test:e2e -w @mcpjam/inspector
 ```
 
 Playwright boots the inspector in production mode via its `webServer` config
 (`npm run start -- --no-open` on `http://localhost:6274`), runs the specs, and
 shuts the server down. The build artifacts must exist first — run
 `npm run build -w @mcpjam/inspector` once if you have not built recently.
+
+## Backend
+
+A locally booted inspector runs against MCPJam's community backend, which runs
+backend `main` and admits guests, never against production. A packaged build
+reads `.env.production`, so the configs override every backend origin (Convex,
+Convex HTTP actions, the guest authority, the WorkOS client) and launch Chromium
+with production's hosts unresolvable. The values live in `community-backend.ts`;
+`community-backend.spec.ts` fails if they stop taking effect.
+
+Guests are minted by the community backend itself, which is why a local boot
+needs its guest-session secret in `MCPJAM_GUEST_SESSION_SHARED_SECRET`.
 
 ## Run against a deployed URL
 

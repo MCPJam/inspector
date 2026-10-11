@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import {
+  communityBackendEnv,
+  NO_PRODUCTION_BROWSER_ARGS,
+} from "./e2e/community-backend";
 
 // When PLAYWRIGHT_BASE_URL is set (e.g. the post-deploy staging lane), tests run
 // against that deployed URL and no local server is booted. Otherwise we boot the
@@ -54,6 +58,8 @@ export default defineConfig({
               },
             ],
           },
+          // A local boot must never reach production; see e2e/community-backend.ts.
+          launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
       : {}),
     ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
@@ -78,6 +84,7 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
+          ...communityBackendEnv(),
           NODE_ENV: "production",
           MCPJAM_SESSION_TOKEN: testSessionToken,
           MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",

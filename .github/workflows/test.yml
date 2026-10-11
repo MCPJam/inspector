@@ -308,9 +308,17 @@ jobs:
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
-    # This job builds the PR's code and runs it against prod Convex. Keep its
-    # errors out of prod Sentry, which pages us: the build flag turns off the
-    # browser SDK, DO_NOT_TRACK turns off the server's.
+    # This job boots the PR's build against the community backend, which runs
+    # backend main, and bars the browser from production
+    # (e2e/community-backend.ts). Minting a guest there takes its guest-session
+    # secret, which GitHub withholds from fork and Dependabot PRs, so those
+    # skip the job rather than fail it. Keep its errors out of prod Sentry,
+    # which pages us: the build flag turns off the browser SDK, DO_NOT_TRACK
+    # turns off the server's.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
     env:
       VITE_DISABLE_SENTRY: "true"
       DO_NOT_TRACK: "1"
@@ -356,12 +364,18 @@ jobs:
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
         run: npm run build -w @mcpjam/inspector
 
+      # The secret goes on these two steps only, so `npm ci`'s lifecycle
+      # scripts never see it.
       - name: Run Playwright smoke
+        env:
+          MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
         run: npm run test:e2e -w @mcpjam/inspector
 
       - name: Run local access e2e
         # Its own config: the smoke config seeds every page with the access key,
         # and this spec proves what a browser without one sees.
+        env:
+          MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
         run: npm run test:e2e:local-access -w @mcpjam/inspector
 
       - name: Run OAuth Debugger e2e
