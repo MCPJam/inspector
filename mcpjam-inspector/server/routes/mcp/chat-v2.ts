@@ -1090,7 +1090,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client requireToolApproval differs from host; using resolved override value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1099,7 +1099,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1108,7 +1108,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1120,7 +1120,7 @@ chatV2.post("/", async (c) => {
           `[mcp/chat-v2] client ${entry.field} differs from host; using host value`,
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1193,7 +1193,7 @@ chatV2.post("/", async (c) => {
         "[mcp/chat-v2] client model differs from host; using host model",
         {
           scenarioId: bodyScenarioId,
-          body: model.id,
+          client: model.id,
           host: hostModelId,
           provider: hostModel.provider,
         },
