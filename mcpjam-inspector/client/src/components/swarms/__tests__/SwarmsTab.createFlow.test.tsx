@@ -513,7 +513,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: /create a swarm of your users/i,
+        name: /set up your user testing swarm/i,
       }),
     ).toBeInTheDocument();
     expect(
@@ -2393,7 +2393,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
 
     expect(
-      screen.getByRole("heading", { name: /create a swarm of your users/i }),
+      screen.getByRole("heading", { name: /set up your user testing swarm/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
