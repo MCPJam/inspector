@@ -1,7 +1,7 @@
 import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessOfHostConfig } from "./harness-admission.js";
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
@@ -113,9 +113,11 @@ export async function prepareSuiteReplayFromRun(
       ? await loadSuiteHostConfig(convexClient, replayMetadata.suiteId)
       : { harness: typeof replayMetadata.executionEngine === "string" && replayMetadata.executionEngine.startsWith("harness:")
           ? replayMetadata.executionEngine.slice("harness:".length) : undefined };
+    const replayHarness = harnessOfHostConfig(launchHostConfig);
     const runtimeVenue = await shouldUseLocalHarness(
-      harnessOfHostConfig(launchHostConfig), convexAuthToken, replayMetadata.projectId,
+      replayHarness, convexAuthToken, replayMetadata.projectId, { scope: "unattended" },
     ) ? "local" : "hosted";
+    const replayLocalHarness = runtimeVenue === "local" ? localHarnessIdOf(replayHarness) : null;
 
     const {
       runId,
@@ -133,6 +135,7 @@ export async function prepareSuiteReplayFromRun(
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
       runtimeVenue,
+      ...(replayLocalHarness ? { localHarnessIds: [replayLocalHarness] } : {}),
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
@@ -258,7 +261,7 @@ export async function prepareSuiteReplayFromRun(
 }
 
 /**
- * Full suite replay used by synchronous `/replay-run` callers and trace repair.
+ * Full suite replay used by synchronous `/replay-run` callers.
  */
 export async function executeSuiteReplayFromRun(
   params: ExecuteSuiteReplayFromRunParams,

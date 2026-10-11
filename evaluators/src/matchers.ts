@@ -279,6 +279,26 @@ function callsCompatible(
   );
 }
 
+/**
+ * How arguments are compared: one mode for every expected call, or a resolver
+ * that picks the mode of expected call `i`. The resolver form exists so a
+ * caller that carries a mode per expectation (`tool-expectations`) pairs
+ * through this same code instead of a copy of it; `evaluateToolCalls` always
+ * passes the single-mode form.
+ */
+export type EvalArgumentMatchingSpec =
+  | NonNullable<EvalMatchOptions["argumentMatching"]>
+  | ((
+      expectedIndex: number,
+    ) => NonNullable<EvalMatchOptions["argumentMatching"]>);
+
+function argumentModeOf(
+  spec: EvalArgumentMatchingSpec,
+  expectedIndex: number,
+): NonNullable<EvalMatchOptions["argumentMatching"]> {
+  return typeof spec === "function" ? spec(expectedIndex) : spec;
+}
+
 type PairResult = {
   /** expected index → actual index, for every successful pairing */
   expectedToActual: Map<number, number>;
@@ -304,7 +324,7 @@ function pair(
   expected: EvalToolCall[],
   actual: EvalToolCall[],
   mode: NonNullable<EvalMatchOptions["toolCallOrder"]>,
-  argumentMatching: NonNullable<EvalMatchOptions["argumentMatching"]>,
+  argumentMatching: EvalArgumentMatchingSpec,
 ): PairResult {
   const expectedToActual = new Map<number, number>();
 
@@ -312,7 +332,8 @@ function pair(
     // Index-aligned positional match.
     const min = Math.min(expected.length, actual.length);
     for (let i = 0; i < min; i++) {
-      if (callsCompatible(expected[i], actual[i], argumentMatching)) {
+      const modeOfI = argumentModeOf(argumentMatching, i);
+      if (callsCompatible(expected[i], actual[i], modeOfI)) {
         expectedToActual.set(i, i);
       }
     }
@@ -330,8 +351,9 @@ function pair(
     const supersetCursorByExpected: number[] = new Array(expected.length);
     for (let i = 0; i < expected.length; i++) {
       supersetCursorByExpected[i] = k;
+      const modeOfI = argumentModeOf(argumentMatching, i);
       while (k < actual.length) {
-        if (callsCompatible(expected[i], actual[k], argumentMatching)) {
+        if (callsCompatible(expected[i], actual[k], modeOfI)) {
           expectedToActual.set(i, k);
           k++;
           break;
@@ -358,9 +380,10 @@ function pair(
   // practice. See plan §"Precise semantics" / Phase 1.
   const consumedActual = new Set<number>();
   for (let i = 0; i < expected.length; i++) {
+    const modeOfI = argumentModeOf(argumentMatching, i);
     for (let j = 0; j < actual.length; j++) {
       if (consumedActual.has(j)) continue;
-      if (callsCompatible(expected[i], actual[j], argumentMatching)) {
+      if (callsCompatible(expected[i], actual[j], modeOfI)) {
         expectedToActual.set(i, j);
         consumedActual.add(j);
         break;
@@ -368,6 +391,107 @@ function pair(
     }
   }
   return { expectedToActual };
+}
+
+/**
+ * The result of {@link pairToolCalls}: which actual call each expected call
+ * was paired with, and which of those pairings were argument mismatches.
+ */
+export type ToolCallPairing = {
+  /**
+   * expected index → actual index, for every expected call that was paired
+   * with an actual one — rightly (pass 1) or wrongly (pass 2). An expected
+   * index absent from the map is missing; an actual index absent from its
+   * values is an extra.
+   */
+  expectedToActual: Map<number, number>;
+  /**
+   * The expected indices (ascending) that pass 2 paired with a same-name call
+   * whose arguments were NOT compatible under that expected call's mode: "the
+   * tool was called with the wrong arguments". A subset of the keys of
+   * `expectedToActual`.
+   */
+  argumentMismatchExpected: number[];
+};
+
+/**
+ * Pair expected calls with actual calls: pass 1 by name + arguments under the
+ * order mode, then pass 2 for each still-unpaired expected call, a same-name
+ * pairing that reports "called with the wrong arguments".
+ *
+ * This is the pairing `evaluateToolCalls` grades with, lifted out unchanged so
+ * that anything else that reports per-call results (`tool-expectations`) reads
+ * the same pairing instead of re-deriving one that could disagree on greedy
+ * corner cases. `argumentMatching` may be a resolver so each expected call can
+ * carry its own mode; a single mode reproduces `evaluateToolCalls` exactly.
+ */
+export function pairToolCalls(
+  expected: EvalToolCall[],
+  actual: EvalToolCall[],
+  toolCallOrder: NonNullable<EvalMatchOptions["toolCallOrder"]>,
+  argumentMatching: EvalArgumentMatchingSpec,
+): ToolCallPairing {
+  // Pass 1: trajectory-aware pairing on toolName + args.
+  const { expectedToActual, supersetCursorByExpected } = pair(
+    expected,
+    actual,
+    toolCallOrder,
+    argumentMatching,
+  );
+  const matchedExpectedIndices = new Set<number>(expectedToActual.keys());
+  const matchedActualIndices = new Set<number>(expectedToActual.values());
+  const argumentMismatchExpected: number[] = [];
+
+  // Pass 2: for any still-unpaired expected, scan unconsumed actuals for
+  // a same-name pairing and report it as an argument mismatch. This keeps
+  // the "tool was called with wrong args" diagnostic that existed before
+  // the trajectory rework. Order of scan mirrors the per-mode primitive:
+  // strict checks the same index; superset preserves the pass 1 cursor so
+  // a missing-expected is never paired against an actual that occurred
+  // before the previous successful superset match; ignore scans
+  // left-to-right.
+  for (let ei = 0; ei < expected.length; ei++) {
+    if (matchedExpectedIndices.has(ei)) continue;
+    const exp = expected[ei];
+
+    // In strict mode, only the same-index actual is eligible. In superset,
+    // start the scan at the pass 1 cursor for this expected — anything to
+    // the left of it was already considered (and skipped or consumed) by
+    // pass 1's monotonic walk. In ignore, any unconsumed actual is eligible.
+    let scanStart = 0;
+    let scanEnd = actual.length;
+    if (toolCallOrder === "strict") {
+      scanStart = ei;
+      scanEnd = Math.min(ei + 1, actual.length);
+    } else if (toolCallOrder === "superset" && supersetCursorByExpected) {
+      scanStart = Math.min(
+        supersetCursorByExpected[ei] ?? 0,
+        actual.length,
+      );
+    }
+
+    for (let ai = scanStart; ai < scanEnd; ai++) {
+      if (matchedActualIndices.has(ai)) continue;
+      const act = actual[ai];
+      if (act.toolName !== exp.toolName) continue;
+
+      matchedExpectedIndices.add(ei);
+      matchedActualIndices.add(ai);
+      expectedToActual.set(ei, ai);
+
+      // We're in Pass 2 because callsCompatible already returned false in
+      // Pass 1, so any non-"ignore" mode here is a real argument mismatch
+      // — including the exact-mode case where expected is {} but actual is
+      // non-empty (partial mode never reaches here with empty expected
+      // since argsCompatible short-circuits to true).
+      if (argumentModeOf(argumentMatching, ei) !== "ignore") {
+        argumentMismatchExpected.push(ei);
+      }
+      break;
+    }
+  }
+
+  return { expectedToActual, argumentMismatchExpected };
 }
 
 /**
@@ -446,8 +570,10 @@ export function evaluateToolCalls(
     };
   }
 
-  // Pass 1: trajectory-aware pairing on toolName + args.
-  const { expectedToActual, supersetCursorByExpected } = pair(
+  // Pass 1 (trajectory-aware pairing on toolName + args) and pass 2
+  // (same-name pairing, reported as an argument mismatch) live in
+  // `pairToolCalls`, the one pairing implementation.
+  const { expectedToActual, argumentMismatchExpected } = pairToolCalls(
     normalizedExpected,
     normalizedActual,
     toolCallOrder,
@@ -455,62 +581,12 @@ export function evaluateToolCalls(
   );
   const matchedExpectedIndices = new Set<number>(expectedToActual.keys());
   const matchedActualIndices = new Set<number>(expectedToActual.values());
-  const argumentMismatches: EvalArgumentMismatch[] = [];
-
-  // Pass 2: for any still-unpaired expected, scan unconsumed actuals for
-  // a same-name pairing and report it as an argument mismatch. This keeps
-  // the "tool was called with wrong args" diagnostic that existed before
-  // the trajectory rework. Order of scan mirrors the per-mode primitive:
-  // strict checks the same index; superset preserves the pass 1 cursor so
-  // a missing-expected is never paired against an actual that occurred
-  // before the previous successful superset match; ignore scans
-  // left-to-right.
-  for (let ei = 0; ei < normalizedExpected.length; ei++) {
-    if (matchedExpectedIndices.has(ei)) continue;
-    const exp = normalizedExpected[ei];
-    const expectedArgs = exp.arguments || {};
-
-    // In strict mode, only the same-index actual is eligible. In superset,
-    // start the scan at the pass 1 cursor for this expected — anything to
-    // the left of it was already considered (and skipped or consumed) by
-    // pass 1's monotonic walk. In ignore, any unconsumed actual is eligible.
-    let scanStart = 0;
-    let scanEnd = normalizedActual.length;
-    if (toolCallOrder === "strict") {
-      scanStart = ei;
-      scanEnd = Math.min(ei + 1, normalizedActual.length);
-    } else if (toolCallOrder === "superset" && supersetCursorByExpected) {
-      scanStart = Math.min(
-        supersetCursorByExpected[ei] ?? 0,
-        normalizedActual.length,
-      );
-    }
-
-    for (let ai = scanStart; ai < scanEnd; ai++) {
-      if (matchedActualIndices.has(ai)) continue;
-      const act = normalizedActual[ai];
-      if (act.toolName !== exp.toolName) continue;
-      const actualArgs = act.arguments || {};
-
-      matchedExpectedIndices.add(ei);
-      matchedActualIndices.add(ai);
-      expectedToActual.set(ei, ai);
-
-      // We're in Pass 2 because callsCompatible already returned false in
-      // Pass 1, so any non-"ignore" mode here is a real argument mismatch
-      // — including the exact-mode case where expected is {} but actual is
-      // non-empty (partial mode never reaches here with empty expected
-      // since argsCompatible short-circuits to true).
-      if (argumentMatching !== "ignore") {
-        argumentMismatches.push({
-          toolName: exp.toolName,
-          expectedArgs,
-          actualArgs,
-        });
-      }
-      break;
-    }
-  }
+  const argumentMismatches: EvalArgumentMismatch[] =
+    argumentMismatchExpected.map((ei) => ({
+      toolName: normalizedExpected[ei].toolName,
+      expectedArgs: normalizedExpected[ei].arguments || {},
+      actualArgs: normalizedActual[expectedToActual.get(ei)!].arguments || {},
+    }));
 
   // Order analysis is folded into the per-mode primitive: `strict` only
   // pairs at the same index, so it can't produce out-of-order pairings;

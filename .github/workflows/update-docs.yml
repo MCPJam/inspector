@@ -10,6 +10,7 @@ jobs:
     # merged docs PRs prevents a generate -> auto-merge -> generate loop.
     if: github.event.pull_request.merged == true && github.event.pull_request.user.login != 'mintlify[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Get PR details
@@ -70,7 +71,7 @@ jobs:
           echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
 
       - name: Call Mintlify Agent API
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           MINTLIFY_API_KEY: ${{ secrets.MINTLIFY_API_KEY }}
           PROJECT_ID: ${{ secrets.MINTLIFY_PROJECT_ID }}

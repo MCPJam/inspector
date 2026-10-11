@@ -31,20 +31,24 @@ describe("the test environment's AbortSignal realm", () => {
     expect(Request.name).toBe("BridgedSignalRequest");
   });
 
-  it("leaves the AbortController global to jsdom", () => {
-    // Swapping the global for Node's class would fix Request and break
-    // `addEventListener(type, fn, { signal })`, which brand-checks the other
-    // way — ~80 component tests. The bridge exists so neither side moves.
-    const symbols = Object.getOwnPropertySymbols(
-      new AbortController().signal
-    ).map(String);
-    expect(symbols).toContain("Symbol(impl)");
+  it("lets jsdom listeners take this environment's signal", () => {
+    // `addEventListener(type, fn, { signal })` brand-checks the signal against
+    // the DOM's own class — ~80 component tests rely on it. Vitest 4's jsdom
+    // environment supplies Node's AbortController, so this pins the behavior
+    // rather than which realm the global comes from: the listener is accepted
+    // and an abort removes it.
+    const controller = new AbortController();
+    const element = document.createElement("div");
+    let clicks = 0;
     expect(() => {
-      const controller = new AbortController();
-      document.createElement("div").addEventListener("click", () => {}, {
+      element.addEventListener("click", () => clicks++, {
         signal: controller.signal,
       });
     }).not.toThrow();
+    element.click();
+    controller.abort();
+    element.click();
+    expect(clicks).toBe(1);
   });
 
   it("still propagates an abort through to the request", () => {

@@ -274,8 +274,9 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
     handler: ManagedMcpClientRequestHandler,
+    schemas?: Parameters<ManagedMcpClient["setRequestHandler"]>[2],
   ): void {
-    this.inner.setRequestHandler(method, handler);
+    this.inner.setRequestHandler(method, handler, schemas);
   }
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void {
     this.inner.removeRequestHandler(method);

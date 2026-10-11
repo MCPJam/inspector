@@ -1,0 +1,9 @@
+{
+  "name": "codex-appserver-probes-2026-10-02",
+  "private": true,
+  "type": "module",
+  "description": "Empirical probes of codex app-server 0.149.1 (see mcpjam-inspector/server/utils/harness/codex-appserver/PROBES.md). Not part of any build.",
+  "dependencies": {
+    "@openai/codex": "0.149.1"
+  }
+}
