@@ -470,6 +470,11 @@ export const SESSION_RECORDING_OPTIONS = {
   recordHeaders: false,
   recordBody: false,
   maskCapturedNetworkRequestFn: maskReplayRequestFull,
+  // DOM events reach `before_send` as plain JSON, not gzip strings, so its
+  // pass can scrub the stylesheet text rrweb masks nowhere
+  // (`scrubCaptureEvent` in lib/PosthogUtils.ts). posthog-js still gzips
+  // the request body by default.
+  compress_events: false,
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
@@ -581,6 +586,8 @@ export const MASKED_SESSION_RECORDING_OPTIONS = {
   captureJsonLd: false,
   recordCrossOriginIframes: false,
   maskCapturedNetworkRequestFn: maskReplayRequest,
+  // See SESSION_RECORDING_OPTIONS.
+  compress_events: false,
 } as const;
 
 /**
