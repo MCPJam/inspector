@@ -78,7 +78,9 @@ test("reads bounded API history and propagates API failures", async () => {
   let pagesRead = 0;
   const github = {
     rest: { actions: { listWorkflowRuns() {} } },
-    paginate: { async *iterator() {
+    paginate: { async *iterator(_method, params) {
+      assert.equal(params.branch, "main");
+      assert.equal(params.event, "push");
       for (let page = 0; page < 10; page++) {
         pagesRead++;
         yield { data: [run(newest)] };

@@ -38,18 +38,16 @@ jobs:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
-            const { dailyReleaseDecision } = await import(`${workspace}/.github/scripts/daily-release.mjs`);
+            const { activeRunUrl, dailyReleaseDecision } = await import(`${workspace}/.github/scripts/daily-release.mjs`);
             const { VERSION_PR_BRANCH } = await import(`${workspace}/.github/scripts/release-pr.mjs`);
             const { unpublishedVersions } = await import(`${workspace}/.github/scripts/unpublished-versions.mjs`);
             const { owner, repo } = context.repo;
             let activeRun = null;
             for (const workflow_id of ["prepare-release.yml", "release.yml"]) {
-              for (const status of ["in_progress", "queued", "waiting", "pending", "requested"]) {
-                const { data } = await github.rest.actions.listWorkflowRuns({
-                  owner, repo, workflow_id, branch: "main", status, per_page: 1,
-                });
-                activeRun = data.workflow_runs[0]?.html_url ?? activeRun;
-              }
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id, per_page: 20,
+              });
+              activeRun ??= activeRunUrl(data.workflow_runs);
             }
             const { data: prs } = await github.rest.pulls.list({
               owner, repo, state: "open", base: "main", head: `${owner}:${VERSION_PR_BRANCH}`,

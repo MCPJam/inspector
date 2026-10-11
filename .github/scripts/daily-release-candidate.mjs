@@ -49,8 +49,11 @@ export function selectDailyCandidate({ commits, runsByWorkflow, repository, now 
 export async function readDailyCandidate({ github, context, commits, now }) {
   const entries = await Promise.all(DAILY_RELEASE_CHECKS.map(async (workflow_id) => {
     const runs = [];
+    // Server-side filters keep pull-request runs from filling the bounded window. Index lag can
+    // hide the newest main runs, which only selects an older healthy commit; latestRuns still
+    // rechecks branch, event and repository.
     const pages = github.paginate.iterator(github.rest.actions.listWorkflowRuns, {
-      ...context.repo, workflow_id, per_page: 100,
+      ...context.repo, workflow_id, branch: "main", event: "push", per_page: 100,
     });
     let count = 0;
     for await (const { data } of pages) {

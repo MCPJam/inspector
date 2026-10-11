@@ -12,3 +12,8 @@ export function dailyReleaseDecision({ activeRun, versionPr, unpublished, releas
   }
   return { dispatch: true, reason: "Prepare an Inspector release with backend and webapp production deploys and all verification gates enabled." };
 }
+
+/** Runs come from an unfiltered listing: status filters use a search index that can lag minutes behind. */
+export function activeRunUrl(runs) {
+  return runs.find(({ status }) => status !== "completed")?.html_url ?? null;
+}
