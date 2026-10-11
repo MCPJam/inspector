@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   desktopSentryFallback,
+  filterSentryEventIdentity,
   setSentryActor,
-  setSentryIdOnlyIdentity,
   setSentryOrganization,
 } from "../sentry-identity";
+import {
+  resetTelemetryIdentity,
+  setTelemetryActor,
+  setTelemetryIdentity,
+} from "../telemetry-context";
 
 afterEach(() => {
   delete window.electronAPI;
+  setTelemetryActor(null);
 });
 
 const mocks = vi.hoisted(() => ({
@@ -34,7 +40,20 @@ describe("setSentryActor", () => {
     expect(mocks.setTag).toHaveBeenCalledWith("actor_kind", "guest");
   });
 
+  it("starts id-only: no email or name before the backend clears this actor", () => {
+    setSentryActor({
+      kind: "signedIn",
+      id: "workos-1",
+      email: "someone@example.com",
+      name: "Some One",
+    });
+
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
+  });
+
   it("mirrors the email into username so the issue list shows a person", () => {
+    setTelemetryActor("workos-1");
+    setTelemetryIdentity("workos-1", "full");
     setSentryActor({
       kind: "signedIn",
       id: "workos-1",
@@ -106,52 +125,101 @@ describe("setSentryActor", () => {
   });
 });
 
-describe("setSentryIdOnlyIdentity", () => {
+describe("the identity grant", () => {
   const member = {
     kind: "signedIn" as const,
     id: "workos-1",
     email: "someone@example.com",
     name: "Some One",
   };
+  const named = {
+    id: "workos-1",
+    email: "someone@example.com",
+    username: "someone@example.com",
+    name: "Some One",
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setTelemetryActor("workos-1");
   });
 
   afterEach(() => {
-    setSentryIdOnlyIdentity(false);
     setSentryActor(null);
   });
 
-  it("drops email and name from the current actor at once", () => {
-    // A member of an organization with enterprise privacy: id only.
-    setSentryActor(member);
-    setSentryIdOnlyIdentity(true);
-
-    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
-    expect(mocks.setTag).toHaveBeenLastCalledWith("actor_kind", "signedIn");
-  });
-
-  it("keeps later actors id-only until turned off, then restores them", () => {
-    setSentryIdOnlyIdentity(true);
+  it("names the actor once the backend answers full for them, and unnames at once when the grant goes", () => {
     setSentryActor(member);
     expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
 
-    setSentryIdOnlyIdentity(false);
-    expect(mocks.setUser).toHaveBeenLastCalledWith({
-      id: "workos-1",
-      email: "someone@example.com",
-      username: "someone@example.com",
-      name: "Some One",
-    });
+    setTelemetryIdentity("workos-1", "full");
+    expect(mocks.setUser).toHaveBeenLastCalledWith(named);
+
+    // A membership reload: id-only until the next answer.
+    resetTelemetryIdentity();
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
+
+    setTelemetryIdentity("workos-1", "full");
+    setTelemetryIdentity("workos-1", "id_only");
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
   });
 
-  it("does nothing when the answer has not changed", () => {
+  it("ignores a late answer for a previous actor", () => {
+    setTelemetryActor("workos-2");
+    setSentryActor({ ...member, id: "workos-2" });
+    setTelemetryIdentity("workos-1", "full");
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-2" });
+  });
+
+  it("drops the grant the moment the actor changes", () => {
+    setTelemetryIdentity("workos-1", "full");
+    setSentryActor(member);
+    expect(mocks.setUser).toHaveBeenLastCalledWith(named);
+
+    setTelemetryActor("workos-2");
+    // Re-applied for the current Sentry actor, now without a grant.
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-1" });
+    setSentryActor({ ...member, id: "workos-2" });
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "workos-2" });
+  });
+
+  it("never names a guest", () => {
+    setTelemetryActor("guest-1");
+    setTelemetryIdentity("guest-1", "full");
+    setSentryActor({ kind: "guest", id: "guest-1" });
+    expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "guest-1" });
+  });
+
+  it("does nothing when the grant has not changed", () => {
     setSentryActor(member);
     mocks.setUser.mockClear();
 
-    setSentryIdOnlyIdentity(false);
+    setTelemetryIdentity("workos-1", "id_only");
+    resetTelemetryIdentity();
     expect(mocks.setUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("filterSentryEventIdentity", () => {
+  it("strips naming fields unless names are allowed, keeping the id", () => {
+    const event = () => ({
+      user: {
+        id: "workos-1",
+        email: "e@example.com",
+        username: "e@example.com",
+        name: "N",
+        ip_address: "203.0.113.9",
+        geo: { city: "X" },
+      },
+    });
+    expect(filterSentryEventIdentity(event(), false).user).toEqual({
+      id: "workos-1",
+    });
+    expect(filterSentryEventIdentity(event(), true).user).toEqual(event().user);
+  });
+
+  it("leaves events without a user alone", () => {
+    expect(filterSentryEventIdentity({}, false)).toEqual({});
   });
 });
 
