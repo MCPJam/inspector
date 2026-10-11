@@ -351,6 +351,16 @@ describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
     });
   });
 
+  it("keeps the row's own code when the message only mentions a refusal", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        "Rate limited while retrying after org_keys_required",
+        "rate_limited",
+        "Anthropic",
+      ).slug,
+    ).not.toBe("swarm/ai_refused");
+  });
+
   it("offers another run for a transient refusal", () => {
     expect(
       describeSwarmAttemptFailure("busy", "provider_unavailable", "OpenAI"),

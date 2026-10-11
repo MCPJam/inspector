@@ -143,11 +143,14 @@ export function describeSwarmAttemptFailure(
   // The organization's AI key policy (or its own provider) refused the
   // session's model. Checked first: read by status it would card as a
   // provider credential failure or an MCPJam limit, and offer a top-up for
-  // what is configuration.
+  // what is configuration. A stored code is the answer; the message is read
+  // only when the row has none, since it may mention a code incidentally.
   const orgKeysCode =
     orgKeysRefusalCodeOf(errorCode) ??
-    orgKeysRefusalCodeOf(info.code) ??
-    orgKeysRefusalCodeInText(rawMessage);
+    (errorCode == null
+      ? (orgKeysRefusalCodeOf(info.code) ??
+        orgKeysRefusalCodeInText(rawMessage))
+      : undefined);
   if (orgKeysCode) {
     const described = describeOrgKeysRefusal(orgKeysCode, "member");
     const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
