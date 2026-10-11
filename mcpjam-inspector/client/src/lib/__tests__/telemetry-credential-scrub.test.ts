@@ -254,7 +254,10 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
               source: 0,
               texts: [{ id: 4, value: `.x { background: ${styleUrl}; }` }],
               attributes: [
-                { id: 5, attributes: { _cssText: `.a { mask: ${sheetUrl}; }` } },
+                {
+                  id: 5,
+                  attributes: { _cssText: `.a { mask: ${sheetUrl}; }` },
+                },
                 {
                   id: 6,
                   attributes: {
@@ -301,7 +304,9 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
               source: 15,
               id: 1,
               styleIds: [1],
-              styles: [{ styleId: 1, rules: [{ rule: `.w { mask: ${sheetUrl}; }` }] }],
+              styles: [
+                { styleId: 1, rules: [{ rule: `.w { mask: ${sheetUrl}; }` }] },
+              ],
             }),
             incremental({
               source: 10,
