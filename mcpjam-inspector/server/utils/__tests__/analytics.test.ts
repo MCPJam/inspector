@@ -6,11 +6,13 @@ const flagMock = vi.fn();
 const shutdownMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => ({
-    capture: captureMock,
-    shutdown: shutdownMock,
-    isFeatureEnabled: flagMock,
-  })),
+  PostHog: vi.fn(function () {
+    return {
+      capture: captureMock,
+      shutdown: shutdownMock,
+      isFeatureEnabled: flagMock,
+    };
+  }),
 }));
 
 // HOSTED_MODE is a module-load-time const computed from the ambient

@@ -17,6 +17,11 @@ import { handleRoute } from "./auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
 import { resolveWorkosApiBaseUrl } from "../../services/workos-api-base.js";
 import {
+  ApiKeysRelayError,
+  relayApiKeysRequest,
+  shouldRelayApiKeys,
+} from "../../services/api-keys-relay.js";
+import {
   lookupWorkosKeyBinding,
   createWorkosKeyBinding,
   removeWorkosKeyBinding,
@@ -96,6 +101,36 @@ apiKeys.use("*", async (c, next) => {
     );
   }
   return next();
+});
+
+// A local build holds neither `WORKOS_API_KEY` nor `INSPECTOR_SERVICE_TOKEN`,
+// so it cannot do any of the work below. It relays to the hosted app, which
+// verifies the same session token and does it. This sits BEFORE
+// `bearerAuthMiddleware` on purpose: that middleware resolves the caller
+// through the Convex service token a local build does not have. The `sk_…`
+// rejection above has already run, so keys still cannot manage keys.
+apiKeys.use("*", async (c, next) => {
+  if (!shouldRelayApiKeys()) return next();
+  try {
+    return await relayApiKeysRequest(c.req.raw);
+  } catch (error) {
+    if (error instanceof ApiKeysRelayError) {
+      logger.warn("API key relay to the hosted app failed", {
+        reason: error.reason,
+      });
+      return c.json(
+        {
+          code: ErrorCode.INTERNAL_ERROR,
+          message:
+            error.reason === "misconfigured"
+              ? error.message
+              : "Could not reach MCPJam to manage API keys. Check your connection and try again.",
+        },
+        error.reason === "timeout" ? 504 : 502,
+      );
+    }
+    throw error;
+  }
 });
 
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),

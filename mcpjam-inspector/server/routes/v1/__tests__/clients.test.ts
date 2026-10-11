@@ -53,11 +53,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
 // (directly and through `createConvexClients`), so a single mock here backs
 // both the read (`query`) and write (`mutation`) paths.
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";
@@ -595,6 +597,60 @@ describe("v1 client routes", () => {
         "hosts:updateHostFields",
         expect.objectContaining({ set: { harness: null } })
       );
+    });
+
+    it("forwards `set.modelSelection` and pins its model when modelId is omitted", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const selection = {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        settings: { reasoningEffort: "high" },
+        fallback: { provider: "none", model: "none" },
+      };
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: { expectedConfigId: "hc1", set: { modelSelection: selection } },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHostFields",
+        expect.objectContaining({
+          set: { modelSelection: selection, modelId: "openai/gpt-5" },
+        })
+      );
+    });
+
+    it("clears the saved selection with `set.modelSelection: null`", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: { expectedConfigId: "hc1", set: { modelSelection: null } },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHostFields",
+        expect.objectContaining({ set: { modelSelection: null } })
+      );
+    });
+
+    it("refuses a selection for another model, an unknown effort and a secret-bearing key", async () => {
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const base = {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      };
+      for (const set of [
+        { modelId: "anthropic/claude-sonnet-4.5", modelSelection: base },
+        { modelSelection: { ...base, settings: { reasoningEffort: "turbo" } } },
+        { modelSelection: { ...base, apiKey: "sk-secret" } },
+      ]) {
+        const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+          body: { expectedConfigId: "hc1", set },
+        });
+        expect(res.status).toBe(400);
+      }
+      expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
     it("rejects a config edit with no `expectedConfigId` (400)", async () => {

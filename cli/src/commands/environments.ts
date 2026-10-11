@@ -22,6 +22,11 @@ import {
   type PlatformOptions,
 } from "../lib/platform-command.js";
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
+import {
+  EFFORT_FLAG_DESCRIPTION,
+  effortShorthand,
+  parseModelSelectionFlag,
+} from "../lib/model-selection-flags.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -325,12 +330,16 @@ export function registerEnvironmentsCommands(program: Command): void {
         "Model this environment runs, overriding the model pinned on its host. Omit to inherit the host's. Stored verbatim — pass exactly the id the provider request should carry"
       )
       .option(
+        "--model-selection <json>",
+        "Whole saved model selection behind the override (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for the model named; sent alone it pins its own model."
+      )
+      .option(
         "--sandbox-image <id>",
         "Project-shared sandbox image (see `mcpjam cloud images`) to pin: eval runs boot a fresh sandbox from it"
       )
       .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/secretSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/modelSelection/skillSelection/secretSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)").action(
     async (
@@ -340,6 +349,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         hostId?: string;
         description?: string;
         model?: string;
+        modelSelection?: string;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -382,6 +392,9 @@ export function registerEnvironmentsCommands(program: Command): void {
           ? { description: options.description }
           : {}),
         ...(options.model !== undefined ? { modelId: options.model } : {}),
+        ...(options.modelSelection !== undefined
+          ? { modelSelection: parseModelSelectionFlag(options.modelSelection) }
+          : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),
@@ -416,6 +429,10 @@ export function registerEnvironmentsCommands(program: Command): void {
         "Model to run instead of the host's pinned one (stored verbatim)"
       )
       .option(
+        "--model-selection <json>",
+        "Whole saved model selection (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Different efforts of one model are different environments."
+      )
+      .option(
         "--computer <id-or-name>",
         "Project-shared sandbox image to pin, so runs boot a fresh computer from it"
       )
@@ -433,6 +450,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         host: string;
         serverGroup?: string;
         model?: string;
+        modelSelection?: string;
         computer?: string;
         skill?: string[];
         secret?: string[];
@@ -457,6 +475,9 @@ export function registerEnvironmentsCommands(program: Command): void {
           ? { serverGroup: options.serverGroup }
           : {}),
         ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(options.modelSelection !== undefined
+          ? { modelSelection: parseModelSelectionFlag(options.modelSelection) }
+          : {}),
         ...(options.computer !== undefined
           ? { computer: options.computer }
           : {}),
@@ -552,6 +573,15 @@ export function registerEnvironmentsCommands(program: Command): void {
         "Clear the model override so the environment inherits its host's model again"
       )
       .option(
+        "--model-selection <json>",
+        "Whole saved model selection for the override (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for the model named."
+      )
+      .option("--effort <level>", EFFORT_FLAG_DESCRIPTION)
+      .option(
+        "--clear-effort",
+        "Remove the reasoning effort from the environment's model selection"
+      )
+      .option(
         "--sandbox-image <id>",
         "New sandbox-image pin (clear via --json '{\"sandboxImageId\": null}')"
       )
@@ -570,6 +600,9 @@ export function registerEnvironmentsCommands(program: Command): void {
         description?: string;
         model?: string;
         clearModel?: boolean;
+        modelSelection?: string;
+        effort?: string;
+        clearEffort?: boolean;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -578,6 +611,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const body = loadJsonObject(options) ?? {};
+      const reasoningEffort = effortShorthand(options);
       // The two flags say opposite things about the same field, and picking a
       // winner would silently discard half of what was asked for.
       if (options.model !== undefined && options.clearModel) {
@@ -619,6 +653,10 @@ export function registerEnvironmentsCommands(program: Command): void {
         // both this command and the API already accept; neither is removed.
         ...(options.clearModel ? { modelId: null } : {}),
         ...(options.model !== undefined ? { modelId: options.model } : {}),
+        ...(options.modelSelection !== undefined
+          ? { modelSelection: parseModelSelectionFlag(options.modelSelection) }
+          : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),
