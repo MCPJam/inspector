@@ -1,3 +1,4 @@
+import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 /**
  * An infra failure travels from its TYPED producer to the written row.
  *
@@ -67,7 +68,7 @@ import {
   codexProviderEvidenceFromNotification,
   harnessFailureEvidenceOf,
 } from "../../../utils/harness/harness-provider-error";
-import { HARNESS_PROXY_REFUSAL_STATUS } from "../infra-error-classification";
+import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
 
 type Turn = (opts: any) => Promise<unknown>;
 
@@ -147,10 +148,11 @@ async function runSuite(
         {
           title: "Case",
           query: "Hello",
-          // `gpt-5-mini` is MCPJam-provided: the HOSTED runner, through
-          // `/stream`. `gpt-4-turbo` runs LOCALLY on the caller's key.
           model,
           provider,
+          ...(model === LOCAL_EVAL_MODEL.model
+            ? { legacySelection: LOCAL_EVAL_MODEL.legacySelection }
+            : {}),
           runs,
           testCaseId: "case-1",
           expectedToolCalls: [],

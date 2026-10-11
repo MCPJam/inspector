@@ -5,7 +5,7 @@ import {
   type RunMetrics,
 } from "./run-metrics";
 import { useProjectRunHistory } from "./use-project-run-history";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 
 /**
  * One metrics object per listed run, for the suite page's history views.
@@ -18,9 +18,16 @@ import type { EvalSuiteRun } from "./types";
  */
 export function useSuiteRunMetrics(
   projectId: string | null | undefined,
-  runs: readonly EvalSuiteRun[] | undefined,
+  runs: readonly EvalSuiteRunListItem[] | undefined,
   enabled: boolean,
-): { metricsByRun: ReadonlyMap<string, RunMetrics>; loading: boolean } {
+): {
+  metricsByRun: ReadonlyMap<string, RunMetrics>;
+  loading: boolean;
+  iterations: import("./types").EvalIteration[];
+  iterationsByRun: ReadonlyMap<string, import("./types").EvalIteration[]>;
+  errorCount: number;
+  retry: () => void;
+} {
   const foldRows = useMemo(
     () => (runs ?? []).filter(runNeedsIterationFold),
     [runs],
@@ -31,17 +38,32 @@ export function useSuiteRunMetrics(
     projectId ?? "no-project",
     foldRows,
     enabled,
+    { includeRunSnapshot: false },
   );
 
   const metricsByRun = useMemo(() => {
     const map = new Map<string, RunMetrics>();
     for (const run of runs ?? []) {
       const detail = history.details.get(run._id);
-      const metrics = resolveRunMetrics(run, detail?.iterations);
+      const metrics = resolveRunMetrics(
+        run,
+        detail?.statusWhenRead === run.status ? detail.iterations : undefined,
+      );
       if (metrics) map.set(run._id, metrics);
     }
     return map;
   }, [runs, history.details]);
 
-  return { metricsByRun, loading: history.loading };
+  return {
+    metricsByRun,
+    loading: history.loading,
+    iterations: [...history.details.values()].flatMap(
+      (detail) => detail.iterations,
+    ),
+    iterationsByRun: new Map(
+      [...history.details].map(([id, detail]) => [id, detail.iterations]),
+    ),
+    errorCount: history.errorCount,
+    retry: history.retry,
+  };
 }

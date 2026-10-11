@@ -5,7 +5,7 @@ import {
   EvalIterationCostBasis,
   EvalSuite,
   EvalSuiteOverviewEntry,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
   EvalSuiteConfigTest,
   RunClientDescriptor,
   SuiteAggregate,
@@ -260,7 +260,7 @@ export function formatRunId(runId: string): string {
 
 /**
  * The launch provenance the context helpers below read. Structurally narrower
- * than `EvalSuiteRun` on purpose: case-history and rail code carries partial
+ * than `EvalSuiteRunListItem` on purpose: case-history and rail code carries partial
  * run rows, and callers only need the descriptor and launch context.
  *
  * NOTE `configSnapshot.environment` (the flat `{ servers }` bag) is a THIRD,
@@ -434,9 +434,11 @@ export function runRevisionLabel(run: RunContextSource): string | null {
  */
 export function buildHostNamesById(
   attachments:
-    Array<{ namedHostId: string; hostName: string | null }> | undefined,
+    | Array<{ namedHostId: string; hostName: string | null }>
+    | undefined,
   projectHosts:
-    Array<{ hostId: string; name: string; displayName?: string }> | undefined,
+    | Array<{ hostId: string; name: string; displayName?: string }>
+    | undefined,
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
   const projectHostById = new Map(
@@ -589,9 +591,7 @@ export function isSubsetRerunRun(
  * with no run (quick runs) are kept. Returns the input array itself when no
  * run is a subset rerun.
  */
-export function withoutSubsetRerunIterations<
-  T extends { suiteRunId?: string },
->(
+export function withoutSubsetRerunIterations<T extends { suiteRunId?: string }>(
   iterations: T[],
   runs: ReadonlyArray<{ _id: string; rerunScope?: string }>,
 ): T[] {
@@ -1087,13 +1087,13 @@ export const formatters = {
  * the ones still asking for attention).
  */
 export function orderCommitGroupRunsByOutcome(
-  runs: EvalSuiteRun[],
-): EvalSuiteRun[] {
-  const failed: EvalSuiteRun[] = [];
-  const running: EvalSuiteRun[] = [];
-  const inconclusive: EvalSuiteRun[] = [];
-  const passed: EvalSuiteRun[] = [];
-  const notRun: EvalSuiteRun[] = [];
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem[] {
+  const failed: EvalSuiteRunListItem[] = [];
+  const running: EvalSuiteRunListItem[] = [];
+  const inconclusive: EvalSuiteRunListItem[] = [];
+  const passed: EvalSuiteRunListItem[] = [];
+  const notRun: EvalSuiteRunListItem[] = [];
 
   for (const run of runs) {
     if (run.status === "running" || run.status === "pending") {
@@ -1118,7 +1118,7 @@ export function orderCommitGroupRunsByOutcome(
  * creation provenance.
  */
 export function getRunMetricSource(
-  run: { source?: EvalSuiteRun["source"] } | null | undefined,
+  run: { source?: EvalSuiteRunListItem["source"] } | null | undefined,
   suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
   return (run?.source ?? suiteSource) === "sdk" ? "sdk" : "ui";
@@ -1129,10 +1129,10 @@ export function getRunMetricSource(
  * the newest run's source — a mixed suite reads as whatever it did last.
  */
 export function getLatestRunMetricSource(
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
-  let latest: EvalSuiteRun | null = null;
+  let latest: EvalSuiteRunListItem | null = null;
   let latestTs = -1;
   for (const run of runs) {
     const ts = run.completedAt ?? run.createdAt ?? 0;
@@ -1153,7 +1153,7 @@ export function groupRunsByCommit(
 ): CommitGroup[] {
   const buckets = new Map<
     string,
-    { runs: EvalSuiteRun[]; suiteMap: Map<string, string> }
+    { runs: EvalSuiteRunListItem[]; suiteMap: Map<string, string> }
   >();
 
   for (const entry of overview) {
@@ -1374,16 +1374,16 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
 
 /** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
 export function compareRunsBySequence(
-  a: EvalSuiteRun,
-  b: EvalSuiteRun,
+  a: EvalSuiteRunListItem,
+  b: EvalSuiteRunListItem,
 ): number {
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). Subset reruns never count. */
 export function pickLatestCompletedRun(
-  runs: EvalSuiteRun[],
-): EvalSuiteRun | null {
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem | null {
   const completed = runs.filter(
     (r) => r.status === "completed" && !isSubsetRerunRun(r),
   );

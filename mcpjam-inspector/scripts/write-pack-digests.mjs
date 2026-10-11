@@ -24,7 +24,7 @@
  * `--permit-previous` keeps the pack this pin replaces selectable as the
  * target's ONE permitted previous pack. Pass it only once conformance has passed
  * for this build's Inspector layer against both packs (the publication
- * workflow's pin PR does exactly that); without it the previous pack is no
+ * pipeline's pin, applied by prepare-release, does exactly that); without it the previous pack is no
  * longer selectable at all.
  *
  * `--conformance <stamp>` and `--evidence <url>` record the conformance run

@@ -308,6 +308,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
               { type: "null" },
             ],
           },
+          scenario: { type: "string", minLength: 1 },
           kind: {
             anyOf: [
               { type: "string", enum: ["capability", "regression"] },

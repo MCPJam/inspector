@@ -25,6 +25,8 @@ import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest"
  */
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: () => vi.fn(),
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),

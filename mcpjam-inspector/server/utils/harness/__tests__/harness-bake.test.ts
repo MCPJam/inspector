@@ -102,15 +102,18 @@ const CLAUDE_AUTH = {
   ANTHROPIC_BASE_URL: "http://x",
 };
 const CODEX_AUTH = { CODEX_API_KEY: "x", OPENAI_BASE_URL: "http://x" };
+const CURSOR_AUTH = { CURSOR_API_KEY: "x" };
 
 /** The hosted runtimes exactly as `run-harness-turn` builds them. */
 function hostedHarnesses(): Record<
-  "claude-code" | "codex",
+  "claude-code" | "codex" | "cursor",
   HarnessWithBootstrap
 > {
   const claude = getHarnessAdapter("claude-code")
     .createHarness as unknown as CreateHarness;
   const codex = getHarnessAdapter("codex")
+    .createHarness as unknown as CreateHarness;
+  const cursor = getHarnessAdapter("cursor")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": claude({
@@ -119,6 +122,7 @@ function hostedHarnesses(): Record<
       mcpJson: { mcpServers: {} },
     }),
     codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
+    cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
   };
 }
 
@@ -128,12 +132,14 @@ function hostedHarnesses(): Record<
  * them may reach the recipe, or one template could not cover every turn.
  */
 function hostedHarnessVariants(): Record<
-  "claude-code" | "codex",
+  "claude-code" | "codex" | "cursor",
   HarnessWithBootstrap[]
 > {
   const claude = getHarnessAdapter("claude-code")
     .createHarness as unknown as CreateHarness;
   const codex = getHarnessAdapter("codex")
+    .createHarness as unknown as CreateHarness;
+  const cursor = getHarnessAdapter("cursor")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": [
@@ -156,6 +162,16 @@ function hostedHarnessVariants(): Record<
         sandboxPolicy: HOSTED_APPROVAL_SANDBOX_POLICY,
       }),
     ],
+    cursor: [
+      cursor({
+        auth: { CURSOR_API_KEY: "a-different-key" },
+        mcpJson: {
+          mcpServers: {
+            probe: { type: "http", url: "https://example.invalid/mcp" },
+          },
+        },
+      }),
+    ],
   };
 }
 
@@ -170,7 +186,7 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "cursor"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
       const harness = hostedHarnesses()[id];
@@ -181,7 +197,7 @@ describe("harnessRecipeIdentity", () => {
     },
   );
 
-  it("bakes exactly the hosted Claude Code and Codex app-server recipes", async () => {
+  it("bakes exactly the hosted Claude Code, Codex app-server and Cursor recipes", async () => {
     const harnesses = hostedHarnesses();
     const dirs = await Promise.all(
       Object.values(harnesses).map(
@@ -191,7 +207,7 @@ describe("harnessRecipeIdentity", () => {
     expect([...dirs].sort()).toEqual([...HARNESS_BAKED_BOOTSTRAP_DIRS].sort());
   });
 
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "cursor"] as const)(
     "does not depend on the turn's settings (%s)",
     async (id) => {
       const base = harnessRecipeIdentity(
@@ -290,10 +306,91 @@ describe("the toolchain pins", () => {
   });
 
   it("pin the providers' pnpm fallback too", () => {
-    expect(harnessPnpmGuardCommand()).toBe(
-      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
-    );
+    const installs = harnessPnpmGuardCommand().match(/npm install -g pnpm@[\d.]+/g);
+    // Both attempts (own rights, then sudo) install the same pinned version.
+    expect(installs).toEqual([
+      `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+      `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+    ]);
   });
+
+  describe.skipIf(process.platform === "win32")(
+    "the pnpm guard, executed",
+    () => {
+      // The guard is shell, so it is RUN here against fake `npm` / `sudo` on a
+      // PATH that holds nothing else. The fake npm succeeds only when the
+      // prefix is writable (NPM_SHIM_WRITABLE=1, which the fake sudo grants);
+      // the fake sudo succeeds only when SUDO_SHIM_ALLOWED=1.
+      let shimDir: string;
+      beforeAll(() => {
+        shimDir = mkdtempSync(join(tmpdir(), "pnpm-guard-"));
+        writeFileSync(
+          join(shimDir, "npm"),
+          '#!/bin/sh\necho "npm $*" >> "$SHIM_LOG"\n[ "$NPM_SHIM_WRITABLE" = 1 ] || exit 243\n',
+          { mode: 0o755 },
+        );
+        writeFileSync(
+          join(shimDir, "sudo"),
+          '#!/bin/sh\necho "sudo $*" >> "$SHIM_LOG"\n[ "$SUDO_SHIM_ALLOWED" = 1 ] || exit 1\n[ "$1" = -n ] && shift\nNPM_SHIM_WRITABLE=1 exec "$@"\n',
+          { mode: 0o755 },
+        );
+      });
+      afterAll(() => rmSync(shimDir, { recursive: true, force: true }));
+
+      const runGuard = (env: Record<string, string>) => {
+        const log = join(shimDir, `log-${Math.random().toString(36).slice(2)}`);
+        writeFileSync(log, "");
+        const result = spawnSync("/bin/sh", ["-c", harnessPnpmGuardCommand()], {
+          env: { PATH: shimDir, SHIM_LOG: log, ...env },
+          encoding: "utf8",
+        });
+        const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+        return { status: result.status, calls };
+      };
+      const install = `install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+
+      it("installs with the user's own rights when the prefix is writable — even one npm still has to create — and never touches sudo", () => {
+        // A custom image with an empty user-owned prefix: `lib/node_modules`
+        // does not exist yet, which `[ -w ]` would have read as unwritable.
+        const { status, calls } = runGuard({ NPM_SHIM_WRITABLE: "1" });
+        expect(status).toBe(0);
+        expect(calls).toEqual([`npm ${install}`]);
+      });
+
+      it("falls back to sudo when the prefix is root's (the desktop template)", () => {
+        const { status, calls } = runGuard({
+          NPM_SHIM_WRITABLE: "0",
+          SUDO_SHIM_ALLOWED: "1",
+        });
+        expect(status).toBe(0);
+        expect(calls).toEqual([
+          `npm ${install}`,
+          `sudo -n npm ${install}`,
+          `npm ${install}`,
+        ]);
+      });
+
+      it("fails, without prompting, when the prefix is root's and sudo needs a password", () => {
+        const { status, calls } = runGuard({
+          NPM_SHIM_WRITABLE: "0",
+          SUDO_SHIM_ALLOWED: "0",
+        });
+        expect(status).not.toBe(0);
+        expect(calls).toEqual([`npm ${install}`, `sudo -n npm ${install}`]);
+      });
+
+      it("does nothing when pnpm is already there", () => {
+        writeFileSync(join(shimDir, "pnpm"), "#!/bin/sh\n", { mode: 0o755 });
+        try {
+          const { status, calls } = runGuard({});
+          expect(status).toBe(0);
+          expect(calls).toEqual([]);
+        } finally {
+          rmSync(join(shimDir, "pnpm"));
+        }
+      });
+    },
+  );
 
   it("match the hosted-harness CI test image", () => {
     const dockerfile = readFileSync(
@@ -403,6 +500,7 @@ describe("the generated bake context", () => {
     ).toEqual({
       "claude-code": HARNESS_PINNED_VERSIONS["claude-code"],
       codex: HARNESS_PINNED_VERSIONS.codex,
+      cursor: HARNESS_PINNED_VERSIONS.cursor,
     });
     expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
     expect(manifest.runtimeUser).toBe("user");

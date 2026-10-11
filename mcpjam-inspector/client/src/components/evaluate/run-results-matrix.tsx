@@ -1,3 +1,4 @@
+import { useSelectedRun } from "../evals/use-selected-run";
 import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
@@ -33,7 +34,11 @@ import {
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import { computeIterationResult } from "../evals/pass-criteria";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import {
   ALL_EVAL_FILTER_VALUES,
   EvalListFilter,
@@ -240,7 +245,7 @@ export function RunResultsMatrix({
   /** Target keys to show (`comparisonKey`; the bare model id when default). */
   modelIds?: readonly string[];
   run: EvalSuiteRun;
-  runs?: readonly EvalSuiteRun[];
+  runs?: readonly EvalSuiteRunListItem[];
   iterations: readonly EvalIteration[];
   hostNamesById?: ReadonlyMap<string, string | null>;
   diagnostics?: readonly EvalRunDecisionDiagnostic[];
@@ -255,7 +260,7 @@ export function RunResultsMatrix({
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
-    const matrix = buildRunResultsMatrix({
+    const matrix = buildRunResultsMatrix<EvalSuiteRunListItem>({
       run,
       runs,
       iterations,
@@ -856,10 +861,11 @@ function IterationDrawer({
   onEditEvaluator?: () => void;
 }) {
   const result = computeIterationResult(iteration);
+  const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
   const authored = authoredForTrial({
     trial: { kind: "persisted", iteration, source: "route" },
     draft: { steps: [], toolsChoice: "unset" },
-    run: target.run,
+    run: "tests" in (target.run.configSnapshot ?? {}) ? target.run as EvalSuiteRun : fullRun,
     forceSnapshot: true,
   }).authored;
   const decisionChain = diagnostic?.chain ?? chain;

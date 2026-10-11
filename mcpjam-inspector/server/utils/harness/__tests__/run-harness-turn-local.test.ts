@@ -210,6 +210,13 @@ import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js
 import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
+import { stampOrgCredentialRevision } from "../org-credential-continuity";
+import { logger } from "../../logger.js";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  MCPJamEngineErrorEvent,
+  MCPJamHandlerOptions,
+} from "../../mcpjam-stream-handler";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -316,6 +323,17 @@ describe("runHarnessTurn local continuity", () => {
         skillsBase: "/private/local/home/.claude/skills",
       }));
     }
+  });
+
+  it("runs a scenario-scoped turn on a local target: only a CLOUD scenario harness needs a box", async () => {
+    await runHarnessTurn(baseOptions({
+      executionScope: {
+        kind: "swarm", swarmId: "cb_1", accessVersion: 1,
+        projectId: "project-1", workspaceId: "ws_1",
+      },
+    }) as any, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
   });
 
   it("binds preparation and first SDK session to one id without any cloud reservation", async () => {
@@ -858,4 +876,180 @@ describe("runHarnessTurn local continuity", () => {
     expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
   });
 
+
+  describe("on the organization's own key", () => {
+    const ORG_SELECTION: ModelSelection = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.6",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const ADAPTER_STATE = { data: { bridge: { sandboxId: "local-session" } } };
+    /** Each preparation's lease names the next revision in `revisions`. */
+    function leasesOn(...revisions: string[]) {
+      for (const revision of revisions) leaseOn(revision);
+    }
+    function leaseOn(revision: string) {
+      vi.mocked(prepareLocalHarnessTurn).mockImplementationOnce(
+        async () =>
+          ({
+            ok: true,
+            prepared: {
+              plan: { runtime: { runtimeId: "runtime-1" } },
+              sandbox: {},
+              auth: {},
+              sandboxWorkDir: "project",
+              skillsBaseDir: "/private/local/home/.claude/skills",
+              permissionMode: "allow-reads",
+              sessionStateExists: harnessState.stateExists,
+              teardown: harnessState.teardown,
+              discardState: harnessState.discardState,
+              park: harnessState.park,
+              unpark: harnessState.unpark,
+              brokerRunId: "run_local",
+              orgUpstream: {
+                credentialSource: "org",
+                profile: "anthropic-native",
+                nativeModelId: "claude-sonnet-4-6",
+                credentialRevision: revision,
+              },
+            },
+          }) as never,
+      );
+    }
+    function claimStampedWith(revision: string) {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, revision),
+        },
+      } as never);
+    }
+    /** The local org turn, typed: overrides replace any field. */
+    const orgOptions = (
+      overrides: Partial<MCPJamHandlerOptions> = {},
+    ): MCPJamHandlerOptions =>
+      ({
+        ...baseOptions({
+          modelId: "claude-sonnet-4-6",
+          modelSelection: ORG_SELECTION,
+        }),
+        ...overrides,
+      }) as MCPJamHandlerOptions;
+    const runOwnedTarget = () => ({
+      ...orgOptions().harnessExecutionTarget!,
+      localSessionId: "local-session",
+    });
+
+    it("a renamed connection (same key) resumes the same local session", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_a");
+      await runHarnessTurn(orgOptions(), "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "local-session",
+          modelSelection: ORG_SELECTION,
+        }),
+      );
+      expect(harnessState.create).toHaveBeenLastCalledWith({
+        sessionId: "local-session",
+        resumeFrom: ADAPTER_STATE,
+      });
+    });
+
+    it("a replaced key prepares again under a FRESH session id and starts fresh", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b", "rev_b");
+      await runHarnessTurn(orgOptions(), "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledTimes(2);
+      const calls = vi.mocked(prepareLocalHarnessTurn).mock.calls;
+      expect(calls[0]![0].sessionId).toBe("local-session");
+      const freshId = calls[1]![0].sessionId;
+      expect(freshId).not.toBe("local-session");
+      expect(freshId).toMatch(/^local-/);
+      // The first preparation, on the old session, was torn down.
+      expect(harnessState.teardown).toHaveBeenCalled();
+      // The runtime starts a fresh session under the new id — never the old
+      // account's session, never resuming its transcript.
+      expect(harnessState.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionId: freshId }),
+      );
+      expect(
+        (harnessState.create.mock.lastCall?.[0] as Record<string, unknown>)
+          ?.resumeFrom,
+      ).toBeUndefined();
+    });
+
+    it("a run that owns its session id fails the attempt on a replaced key", async () => {
+      // A run's cleanup removes ITS session id's state and no other, so a
+      // fresh id would outlive the run: the attempt fails instead.
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.teardown).toHaveBeenCalled();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
+    it("a teardown that fails is logged; the turn still reports the key change", async () => {
+      claimStampedWith("rev_a");
+      leasesOn("rev_b");
+      harnessState.teardown.mockRejectedValueOnce(new Error("stop failed"));
+      const warn = vi.spyOn(logger, "warn");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({
+          harnessExecutionTarget: runOwnedTarget(),
+          onEngineError: (event) => events.push(event),
+        }),
+        "none",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[harness] local preparation teardown failed",
+        { error: "stop failed" },
+      );
+      expect(events.at(-1)?.message).toMatch(/replaced during this run/);
+    });
+
+    it("an approval waiting across a key replacement does not run", async () => {
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true,
+        leaseId: "lease-1",
+        stateVersion: 1,
+        fingerprintChanged: false,
+        state: {
+          harnessSessionId: "local-session",
+          computerId: "machine-1:runtime-1",
+          resumeState: stampOrgCredentialRevision(ADAPTER_STATE, "rev_a"),
+          awaitingApproval: true,
+        },
+      } as never);
+      harnessState.continuations = [
+        { approvalId: "approval-1", approved: true },
+      ];
+      leasesOn("rev_b");
+      const events: MCPJamEngineErrorEvent[] = [];
+      await runHarnessTurn(
+        orgOptions({ onEngineError: (event) => events.push(event) }),
+        "none",
+      );
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+      expect(harnessState.create).not.toHaveBeenCalled();
+      expect(events.at(-1)?.message).toMatch(/key was replaced/);
+    });
+  });
 });

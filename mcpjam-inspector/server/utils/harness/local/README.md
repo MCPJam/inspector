@@ -404,8 +404,9 @@ enforced in code, not by convention.
    proves it: conformance evidence for the build's layer digest × each pack it
    may select × every advertised target (`check-local-harness-release.mjs
    --evidence`), attested as `runtime-contract.json`. A pack becomes desired
-   only through its harness's pin PR, which `local-harness-pack-pipeline.yml`
-   opens after this layer passed conformance on it; the pack being replaced
+   only through the version PR that pins it: `prepare-release.yml` runs
+   `local-harness-pack-pipeline.yml` per harness and writes the pin once this
+   layer passed conformance on the pack; the pack being replaced
    stays permitted only if it passed too and its provenance verifies. On the
    machine, selection is per build with no shared pointer (`runtime-selection.ts`),
    a revoked digest is never selected — not even as a fallback — and the
