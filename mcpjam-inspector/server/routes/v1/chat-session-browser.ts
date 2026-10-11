@@ -8,7 +8,10 @@ import {
   type EffectiveBrowserPolicy,
 } from "../../../shared/browser-session-policy";
 import { parseBrowserToolPolicy } from "../../services/evals/browser-tool-policy";
-import { BrowserSessionService } from "../../services/browserd/session-service";
+import {
+  BrowserSessionService,
+  BrowserSessionServiceError,
+} from "../../services/browserd/session-service";
 import { ensureHostedConversationSession } from "../../utils/built-in-tools/browser";
 
 export class SessionBrowserError extends Error {
@@ -21,6 +24,35 @@ export class SessionBrowserError extends Error {
   ) {
     super(message);
   }
+}
+/**
+ * The backend's refusal because the hosted browser is not enabled for the
+ * caller's organization, as the v1 answer gives it: 403 `FORBIDDEN` with the
+ * gate's own message, and the reason in `details` (the same shape
+ * `convex-errors.ts` gives every other `FEATURE_UNAVAILABLE`). Undefined for
+ * any other error. Not a 422 `BROWSER_NOT_AVAILABLE`: the request is fine and
+ * the browser exists; this organization may not use it yet.
+ */
+export function browserFeatureUnavailable(error: unknown):
+  | {
+      message: string;
+      details: { code: "FEATURE_UNAVAILABLE"; feature?: string };
+    }
+  | undefined {
+  if (
+    !(error instanceof BrowserSessionServiceError) ||
+    error.code !== "FEATURE_UNAVAILABLE"
+  )
+    return undefined;
+  return {
+    message:
+      error.detail ||
+      "The hosted browser is not available for your organization.",
+    details: {
+      code: "FEATURE_UNAVAILABLE",
+      ...(error.feature ? { feature: error.feature } : {}),
+    },
+  };
 }
 export type ConversationBrowser = {
   sessionId: string;
@@ -208,6 +240,8 @@ export async function provisionConversationBrowser(args: {
       signal: AbortSignal.any([args.signal, AbortSignal.timeout(120_000)]),
     });
   } catch (error) {
+    // The gate's refusal keeps its own answer (see `browserFeatureUnavailable`).
+    if (browserFeatureUnavailable(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     if (
       error instanceof BrowserAdmissionError &&

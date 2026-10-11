@@ -90,6 +90,12 @@ export type ManagedMcpClientRequestHandler = (
   request: ManagedMcpClientIncomingRequest
 ) => unknown | Promise<unknown>;
 
+/** Injected extension schemas keep adapter-specific dependencies out of the SDK. */
+export interface ManagedMcpClientRequestSchemas {
+  params: StandardSchemaV1;
+  result: StandardSchemaV1;
+}
+
 /**
  * The single surface the manager talks to. Every method here corresponds
  * to a verified call site in the SDK:
@@ -286,7 +292,8 @@ export interface ManagedMcpClient {
   ): void;
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
-    handler: ManagedMcpClientRequestHandler
+    handler: ManagedMcpClientRequestHandler,
+    schemas?: ManagedMcpClientRequestSchemas
   ): void;
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void;
 }
