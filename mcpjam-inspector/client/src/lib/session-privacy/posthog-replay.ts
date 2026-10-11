@@ -5,11 +5,19 @@
  */
 import {
   scrubCredentialsInText,
-  scrubCredentialUrl,
   type LocationLike,
 } from "../../../../shared/credential-urls";
-import { currentSessionPrivacy, isCredentialBearingPath } from "./level";
-import { scrubNamesFromUrl } from "./url-names";
+import {
+  MASKED_REPLAY_BLOCKED_TAGS,
+  maskReplayAttribute,
+  maskReplayText,
+} from "../../../../shared/telemetry-privacy";
+import {
+  currentSessionPrivacy,
+  isCredentialBearingPath,
+  recordingSurface,
+} from "./level";
+import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
 
 export type PostHogProfile = "full" | "masked";
 
@@ -25,11 +33,6 @@ export type PostHogProfile = "full" | "masked";
  * it is opted out of autocapture AND masked in replay.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
-
-/** rrweb's own masking: every non-space character becomes `*`. */
-function maskAllCharacters(text: string): string {
-  return text.replace(/[\S]/g, "*");
-}
 
 function isUnderSecretSurface(element: Element | null | undefined): boolean {
   try {
@@ -47,7 +50,7 @@ function isUnderSecretSurface(element: Element | null | undefined): boolean {
  * the page is a credential whatever the level.
  */
 export function maskReplayTextFull(text: string, element?: Element): string {
-  if (isUnderSecretSurface(element)) return maskAllCharacters(text);
+  if (isUnderSecretSurface(element)) return maskReplayText(text);
   // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
   // a narrower copy let `encodeURIComponent("/results/<token>")` through.
   return scrubCredentialsInText(text);
@@ -55,7 +58,7 @@ export function maskReplayTextFull(text: string, element?: Element): string {
 
 /** `maskTextFn` at `masked`: every text node, as `maskTextSelector: "*"` did. */
 export function maskReplayTextMasked(text: string): string {
-  return maskAllCharacters(text);
+  return maskReplayText(text);
 }
 
 /**
@@ -66,86 +69,6 @@ export function maskReplayTextMasked(text: string): string {
 export function maskReplayAttributeFull(_name: string, value: string): string {
   return scrubCredentialsInText(value);
 }
-
-/**
- * The page URL a replay meta event may carry when nothing else can be shown.
- * posthog-js uses whatever `maskCapturedNetworkRequestFn` returns as the
- * `href`; an empty one breaks the player, so a placeholder stands in.
- */
-export const REPLAY_PLACEHOLDER_HREF = "https://redacted.invalid/";
-
-/**
- * The fields of a captured network entry a replay keeps: its URL (scrubbed)
- * and its timing. Everything else is dropped — request and response headers
- * and bodies above all, but also `serverTiming`, which a server can fill with
- * anything. posthog-js uses this callback INSTEAD of its own body scrubber,
- * so nothing it used to scrub may pass through here.
- */
-const KEPT_NETWORK_FIELDS = [
-  "entryType",
-  "initiatorType",
-  "method",
-  "status",
-  "responseStatus",
-  "isInitial",
-  "startTime",
-  "endTime",
-  "duration",
-  "timeOrigin",
-  "timestamp",
-  "fetchStart",
-  "domainLookupStart",
-  "domainLookupEnd",
-  "connectStart",
-  "secureConnectionStart",
-  "connectEnd",
-  "requestStart",
-  "responseStart",
-  "responseEnd",
-  "redirectStart",
-  "redirectEnd",
-  "workerStart",
-  "transferSize",
-  "encodedBodySize",
-  "decodedBodySize",
-  "nextHopProtocol",
-  "renderBlockingStatus",
-  "deliveryType",
-] as const;
-
-type CapturedRequest = { name?: string; url?: string } & Record<
-  string,
-  unknown
->;
-
-function buildReplayRequestMasker(profile: PostHogProfile) {
-  const scrubUrl = (url: string) =>
-    profile === "masked" ? scrubNamesFromUrl(url) : scrubCredentialUrl(url);
-  return function maskRequest<T extends CapturedRequest>(request: T): T | null {
-    // posthog-js calls this with `{ name: href }` alone for the page URL of
-    // a meta or URL-change event, and with a full entry for network requests.
-    const isPageUrl = request.entryType === undefined && !request.isInitial;
-    try {
-      const out: Record<string, unknown> = {};
-      for (const field of KEPT_NETWORK_FIELDS) {
-        if (request[field] !== undefined) out[field] = request[field];
-      }
-      if (typeof request.name === "string") {
-        out.name = scrubUrl(request.name);
-      }
-      if (typeof request.url === "string") out.url = scrubUrl(request.url);
-      if (isPageUrl && !out.name) out.name = REPLAY_PLACEHOLDER_HREF;
-      return out as T;
-    } catch {
-      // Cannot show it clean: drop a request, and give a page URL the
-      // placeholder (an empty href breaks the player).
-      return isPageUrl ? ({ name: REPLAY_PLACEHOLDER_HREF } as T) : null;
-    }
-  };
-}
-
-/** `maskCapturedNetworkRequestFn` at `full`: credentials out of the URL. */
-export const maskReplayRequestFull = buildReplayRequestMasker("full");
 
 export const SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
@@ -167,98 +90,9 @@ export const SESSION_RECORDING_OPTIONS = {
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
-export const MASKED_BLOCK_SELECTOR =
-  "img, picture, video, audio, canvas, svg image, iframe, object, embed";
-
-/**
- * Attributes a `masked` replay keeps: the ones layout and styling need and
- * that never hold user text. Everything else — `title`, `alt`, `href`, `src`,
- * `placeholder`, `aria-label`, `id`, most `data-*` — is masked.
- * `maskAllElementAttributes` would also mask `class` and `style`, which
- * leaves a replay of unstyled boxes.
- */
-const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "class",
-  "style",
-  "role",
-  "type",
-  "dir",
-  "lang",
-  "rel",
-  "tabindex",
-  "width",
-  "height",
-  "colspan",
-  "rowspan",
-  "disabled",
-  "checked",
-  "selected",
-  "hidden",
-  "open",
-  "viewbox",
-  "xmlns",
-  "d",
-  "fill",
-  "stroke",
-  "stroke-width",
-  "stroke-linecap",
-  "stroke-linejoin",
-  "points",
-  "cx",
-  "cy",
-  "r",
-  "rx",
-  "ry",
-  "x",
-  "y",
-  "x1",
-  "x2",
-  "y1",
-  "y2",
-  "transform",
-  "opacity",
-  "aria-hidden",
-  "aria-expanded",
-  "aria-selected",
-  "aria-checked",
-  "aria-disabled",
-  "aria-pressed",
-  "aria-current",
-  "aria-orientation",
-  "data-state",
-  "data-side",
-  "data-align",
-  "data-orientation",
-  "data-disabled",
-  "data-highlighted",
-  "data-selected",
-  "data-active",
-  "data-open",
-  "data-slot",
-  "data-variant",
-  "data-size",
-]);
-
-const MASKED_ATTRIBUTE_VALUE = "***";
-
-/**
- * `maskAttributeFn` at `masked`: the kept attributes keep their value (with
- * any credential URL scrubbed — a `style` can carry a `url(…)`), every other
- * attribute is masked.
- */
-export function maskReplayAttribute(name: string, value: string): string {
-  return MASKED_REPLAY_KEPT_ATTRIBUTES.has(name.toLowerCase())
-    ? maskReplayAttributeFull(name, value)
-    : MASKED_ATTRIBUTE_VALUE;
-}
-
-/**
- * `maskCapturedNetworkRequestFn` at `masked`. posthog-js routes BOTH the
- * recorded page URL (rrweb meta and URL-change events) and every captured
- * network request through this callback: credentials and names scrubbed from
- * the URL, a host that is not ours replaced, and only timing kept.
- */
-export const maskReplayRequest = buildReplayRequestMasker("masked");
+export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
+  .map((tag) => (tag === "image" ? "svg image" : tag))
+  .join(", ");
 
 export const MASKED_SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
@@ -321,6 +155,40 @@ export function lastSyncedPostHogClient(): PostHogRecorder | null {
   return lastPostHogClient;
 }
 
+// Stopping the recorder flushes its buffer through `before_send` — after the
+// level has already tightened, so those frames would be stamped with the new,
+// stricter label. Set only while a tightening stop runs.
+let discardingReplayBuffer = false;
+// When the recorder last started on the masked profile: older frames were
+// recorded under another profile and arrive here only through a late flush.
+let maskedReplayStartedAt: number | null = null;
+
+interface ReplayFrameLike {
+  timestamp?: unknown;
+}
+
+/**
+ * The `$snapshot_data` frames a `$snapshot` captured now may carry, or `null`
+ * to drop the event. Frames recorded before privacy tightened are dropped:
+ * the stop's synchronous flush outright, and any later flush (posthog-js
+ * defers it while compression drains) by timestamp against the masked
+ * recorder's start. A full-profile frame must never leave under a masked
+ * label, because the relay passes a masked-labelled replay as it is.
+ */
+export function replayFramesToSend(frames: unknown): unknown[] | null {
+  if (discardingReplayBuffer) return null;
+  if (!Array.isArray(frames)) return null;
+  if (posthogProfile !== "masked" || maskedReplayStartedAt === null) {
+    return frames;
+  }
+  const startedAt = maskedReplayStartedAt;
+  const kept = frames.filter((frame: ReplayFrameLike) => {
+    const timestamp = frame?.timestamp;
+    return typeof timestamp === "number" && timestamp >= startedAt;
+  });
+  return kept.length > 0 ? kept : null;
+}
+
 /**
  * Bring PostHog in line with the level in effect and the current path.
  *
@@ -333,8 +201,9 @@ export function lastSyncedPostHogClient(): PostHogRecorder | null {
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
- * declined. `pending` and credential locations (`isCredentialBearingPath`:
- * path, query and fragment) hold the recorder stopped.
+ * declined. `pending`, `off` and credential locations
+ * (`isCredentialBearingPath`: path, query and fragment) hold the recorder
+ * stopped; an `off` surface never configures it at all.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
@@ -345,22 +214,30 @@ export function syncSessionRecording(
 ): void {
   lastPostHogClient = client;
   try {
+    if (recordingSurface() === "off") return;
     const privacy = currentSessionPrivacy();
-    if (privacy === "off") return;
     // Analytics masking follows the level even while replay is held off:
-    // `pending` analytics are masked.
+    // `pending` and `off` analytics are masked.
     const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
-        client.stopSessionRecording?.();
+        discardingReplayBuffer = profile === "masked";
+        try {
+          client.stopSessionRecording?.();
+        } finally {
+          discardingReplayBuffer = false;
+        }
         posthogRecording = false;
       }
       client.set_config?.(posthogPrivacyConfig(profile));
       posthogProfile = profile;
     }
     const shouldRecord =
-      privacy !== "pending" && !isCredentialBearingPath(location);
+      privacy !== "pending" &&
+      privacy !== "off" &&
+      !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
+      if (profile === "masked") maskedReplayStartedAt = Date.now();
       client.startSessionRecording?.();
       posthogRecording = true;
     } else if (!shouldRecord && posthogRecording) {

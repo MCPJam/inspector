@@ -1792,8 +1792,10 @@ describe("ScenarioChatPage", () => {
       screen.getByRole("button", { name: "Trigger OAuth" }),
     );
 
+    // The gate re-enters after the OAuth-required report settles, so wait
+    // for the heading rather than read it on the click's own tick.
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      await screen.findByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText("You'll return here automatically after consent."),
@@ -1868,7 +1870,7 @@ describe("ScenarioChatPage", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      await screen.findByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(screen.getByText("asana")).toBeInTheDocument();
     expect(

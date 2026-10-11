@@ -1,11 +1,13 @@
 /**
  * The level: which one this session gets (`resolveSessionPrivacy`), where
- * it records at all, and the level in effect that both recorders read.
+ * it records at all, the person a remembered `off` belongs to, and the level
+ * in effect that both recorders read.
  */
 import {
   isReplayBlockedLocation,
   type LocationLike,
 } from "../../../../shared/credential-urls";
+import type { TelemetryRecording } from "../../../../shared/telemetry-privacy";
 import { HOSTED_MODE } from "../config";
 
 export type PrivacyLevel = "off" | "masked" | "full";
@@ -89,83 +91,100 @@ export function recordingSurface(): RecordingSurface {
 export interface SessionPrivacyInputs {
   surface: RecordingSurface;
   /**
-   * The WorkOS session. A guest has none: `signed_out` covers both visitors
-   * and guests, whose data is their own and who belong to no organization
-   * that could ask for privacy.
-   */
-  account: "loading" | "signed_out" | "signed_in";
-  /**
    * A share-link page (a published study's tester chat) that shows a project
    * the viewer may not belong to, so its organization's posture is unknown.
    */
   sharedLink: boolean;
-  /** `resolveEnterprisePrivacyInView`; `undefined` = not known yet. */
-  enterprisePrivacyInView: boolean | undefined;
+  /**
+   * The backend's recording level for the contexts in view, for the current
+   * actor (`useTelemetryPrivacyContext`). `undefined` = not answered yet.
+   * Anything the backend could not verify — no context in view, no access,
+   * no authentication — already arrives as `masked`.
+   */
+  recording: TelemetryRecording | undefined;
 }
 
 /**
  * The level for this session. Pure: the caller supplies the facts.
  *
  * - npx/Docker and dev builds: `off`.
- * - Packaged desktop: `masked` for everyone. It records people debugging their
- *   own MCP servers on their own machines, which is the npx reasoning with
- *   replay kept for crash debugging.
- * - Hosted share links: `masked` — whose data it is cannot be known here.
- * - Hosted, signed out (visitors, guests): `full`. Landing pages and a
- *   guest's own sandbox carry no organization's data.
- * - Hosted, signed in: `masked` when any organization in view has enterprise
- *   privacy, `full` when none does, `pending` until that is known.
+ * - Share links: `off`. The page shows an organization the viewer may not
+ *   belong to; the backend answers for the viewer, not the page's owner,
+ *   whose replay might be off.
+ * - Everywhere else, `pending` until the backend answers, and `off` when it
+ *   answers `off`: no replay for an organization with session replay off, on
+ *   any surface.
+ * - Packaged desktop: otherwise `masked` for everyone. It records people
+ *   debugging their own MCP servers on their own machines, which is the npx
+ *   reasoning with replay kept for crash debugging.
+ * - Hosted otherwise: the backend's answer. Only a verified non-private
+ *   context gets `full`; visitors with no session, and pages with nothing in
+ *   view, are `masked`.
  */
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
 ): SessionPrivacy {
-  if (inputs.surface === "off") return "off";
+  // A share-link page shows an organization's content to a viewer who may
+  // not belong to it. The backend answers for the viewer, not the page's
+  // owner, whose replay might be off, so nothing records there at all.
+  if (inputs.surface === "off" || inputs.sharedLink) return "off";
+  if (inputs.recording === undefined) return "pending";
+  if (inputs.recording === "off") return "off";
   if (inputs.surface === "desktop") return "masked";
-  if (inputs.sharedLink) return "masked";
-  if (inputs.account === "loading") return "pending";
-  if (inputs.account === "signed_out") return "full";
-  if (inputs.enterprisePrivacyInView === undefined) return "pending";
-  return inputs.enterprisePrivacyInView ? "masked" : "full";
+  return inputs.recording === "full" ? "full" : "masked";
+}
+
+// ── Remembered `off` ───────────────────────────────────────────────────
+
+const REPLAY_OFF_STORAGE_KEY = "mcpjam.telemetry.replayOffActor";
+let replayOffActor: string | null | undefined;
+
+function readReplayOffActor(): string | null {
+  if (replayOffActor !== undefined) return replayOffActor;
+  try {
+    replayOffActor = window.localStorage.getItem(REPLAY_OFF_STORAGE_KEY);
+  } catch {
+    replayOffActor = null;
+  }
+  return replayOffActor;
 }
 
 /**
- * The organization fields this module reads. `enterprisePrivacy` is on the
- * organization row `organizations:getMyOrganizations` returns; it switches on
- * when an organization moves to Enterprise and can be set explicitly.
+ * Record the backend's answer for `actorId`: whether replay is `off` for
+ * them. Kept in memory and, where storage works, across reloads, so a person
+ * whose organization has replay off is never recorded while the answer is
+ * slow, failing or not asked yet. Only real answers belong here.
  */
-export interface PrivacyOrganization {
-  _id: string;
-  enterprisePrivacy?: boolean;
+export function rememberReplayOff(actorId: string | null, off: boolean): void {
+  if (actorId === null) return;
+  const current = readReplayOffActor();
+  const next = off ? actorId : current === actorId ? null : current;
+  if (next === current) return;
+  replayOffActor = next;
+  try {
+    if (next === null) window.localStorage.removeItem(REPLAY_OFF_STORAGE_KEY);
+    else window.localStorage.setItem(REPLAY_OFF_STORAGE_KEY, next);
+  } catch {
+    // Memory still holds it for this page.
+  }
 }
 
 /**
- * Whether an organization in view (the route's, the active one, the active
- * project's) has enterprise privacy: any one is enough. `undefined` while
- * the list has not loaded or nothing is in view — never a guess.
+ * Whether `actorId` was last answered `off` in this browser. `undefined` is
+ * an actor not known yet (sign-in still loading): it counts when anyone was,
+ * because it is most likely the same person.
  */
-export function resolveEnterprisePrivacyInView(
-  organizations: readonly PrivacyOrganization[] | undefined,
-  organizationIdsInView: ReadonlyArray<string | null | undefined>,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  const inView = organizationIdsInView.filter((id): id is string => !!id);
-  if (inView.length === 0) return undefined;
-  return organizations.some(
-    (org) => org.enterprisePrivacy === true && inView.includes(org._id),
-  );
+export function replayOffRemembered(
+  actorId: string | null | undefined,
+): boolean {
+  const remembered = readReplayOffActor();
+  if (remembered === null) return false;
+  return actorId === undefined || actorId === remembered;
 }
 
-/**
- * Whether the signed-in person belongs to ANY organization with enterprise
- * privacy. Identity follows membership, not the organization in view,
- * because person properties outlive the page. `undefined` until the list
- * has loaded; `usePostHogIdentify` sends the id alone until this is `false`.
- */
-export function resolveEnterprisePrivacyMember(
-  organizations: readonly PrivacyOrganization[] | undefined,
-): boolean | undefined {
-  if (!organizations) return undefined;
-  return organizations.some((org) => org.enterprisePrivacy === true);
+/** Tests only. */
+export function resetRememberedReplayOffForTests(): void {
+  replayOffActor = undefined;
 }
 
 // ── The level in effect ────────────────────────────────────────────────
@@ -184,9 +203,11 @@ export function setSessionPrivacy(level: SessionPrivacy): void {
 
 /**
  * Whether analytics must keep names out right now: on a recording surface,
- * anything short of a resolved `full`. `off` surfaces keep today's analytics.
+ * anything short of a resolved `full` — replay `off` included. `off`
+ * surfaces keep today's analytics.
  */
 export function shouldMaskAnalytics(): boolean {
   const privacy = currentSessionPrivacy();
-  return privacy === "masked" || privacy === "pending";
+  if (privacy === "full") return false;
+  return privacy !== "off" || recordingSurface() !== "off";
 }

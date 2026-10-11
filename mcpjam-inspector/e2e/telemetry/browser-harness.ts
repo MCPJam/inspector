@@ -40,8 +40,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { guestSessionBody, installConvexStandIn } from "./convex-stand-in";
+import { TELEMETRY_CONTEXT_PROPERTY } from "../../shared/telemetry-privacy";
 import {
   containsSentinel,
+  posthogEvents,
   posthogRemoteConfigScript,
   scanAll,
   SENTINEL_STEM,
@@ -310,6 +312,34 @@ export async function fireUnloadFlush(page: Page): Promise<void> {
  * delay (5s), read the SDKs' storage, run the unload flush, then unload the
  * page.
  */
+/**
+ * Waits until PostHog is sending replay captured at `full`. The level starts
+ * `pending` until the backend answers, records `masked` until the page has
+ * loaded, and reaches `full` only after `MASKED_TO_FULL_SETTLE_MS`
+ * (hooks/useSessionPrivacy.ts), so a test that drives the page sooner would
+ * be checking a masked recording. posthog-js holds a recording that started
+ * without user activity until there is some, so the mouse keeps moving.
+ */
+export async function waitForFullReplay(
+  page: Page,
+  recorder: EgressRecorder,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (let step = 0; Date.now() < deadline; step++) {
+    const atFull = posthogEvents(scanAll(recorder.telemetry).decoded).some(
+      (event) =>
+        event.event === "$snapshot" &&
+        (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })
+          ?.r === "full",
+    );
+    if (atFull) return;
+    await page.mouse.move(20 + (step % 40), 20 + (step % 40));
+    await page.waitForTimeout(500);
+  }
+  throw new Error("PostHog never sent replay recorded at full");
+}
+
 export async function drain(
   page: Page,
   recorder: EgressRecorder,
