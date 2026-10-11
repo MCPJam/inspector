@@ -1,13 +1,13 @@
 /**
  * Cross-host group quality hook. Distinct from `useInsight` (which assumes the
- * insight lives on a single `EvalSuiteRun` document) — group quality lives in
+ * insight lives on a single `EvalSuiteRunListItem` document) — group quality lives in
  * its own `runGroupQuality` row keyed by (suiteId, runGroupId) and is gated on
  * EVERY sibling run being terminal.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import type { EvalSuiteRun, RunGroupQualityResult } from "./types";
+import type { EvalSuiteRunListItem, RunGroupQualityResult } from "./types";
 
 type GroupStatus = "pending" | "completed" | "failed" | undefined;
 
@@ -33,7 +33,7 @@ export interface RunGroupQualityState {
 export function useRunGroupQuality(params: {
   suiteId: string | null | undefined;
   runGroupId: string | null | undefined;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   /** Defaults to true. Set false to require an explicit click (cost control). */
   autoRequest?: boolean;
 }): RunGroupQualityState {
@@ -71,16 +71,21 @@ export function useRunGroupQuality(params: {
       if (!enabled || !allRunsTerminal || unavailable) return;
       setError(null);
       setRequested(true);
-      requestMut({ suiteId, runGroupId, force } as any).catch((err: unknown) => {
-        setRequested(false);
-        const raw = err instanceof Error ? err.message : String(err);
-        // Feature not deployed — permanent for the session, hide the surface.
-        if (raw.includes("Could not find") || raw.includes("is not a function")) {
-          setUnavailable(true);
-        } else {
-          setError(raw);
-        }
-      });
+      requestMut({ suiteId, runGroupId, force } as any).catch(
+        (err: unknown) => {
+          setRequested(false);
+          const raw = err instanceof Error ? err.message : String(err);
+          // Feature not deployed — permanent for the session, hide the surface.
+          if (
+            raw.includes("Could not find") ||
+            raw.includes("is not a function")
+          ) {
+            setUnavailable(true);
+          } else {
+            setError(raw);
+          }
+        },
+      );
     },
     [enabled, allRunsTerminal, unavailable, requestMut, suiteId, runGroupId],
   );
