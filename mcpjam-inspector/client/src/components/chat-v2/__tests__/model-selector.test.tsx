@@ -6,6 +6,7 @@ import { defaultFilter } from "cmdk";
 import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
+import { noRunnableHarnessModel } from "@/lib/harness-model-locks";
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -701,6 +702,35 @@ describe("ModelSelector", () => {
     // cmdk's Empty would otherwise claim the search found nothing.
     expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
 
+    await user.click(
+      screen.getByRole("button", { name: /manage organization models/i })
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  // A harness host none of the rows runs on: the stand-in says why, never
+  // "No matching models", and the hand-off to add a key stays.
+  it("explains a harness host's empty list and keeps the hand-off", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={noRunnableHarnessModel("claude-code")}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      await screen.findByText(
+        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models."
+      )
+    ).toBeVisible();
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /manage organization models/i })
     );

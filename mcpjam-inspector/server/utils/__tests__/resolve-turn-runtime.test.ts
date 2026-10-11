@@ -480,6 +480,25 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
     });
   });
 
+  it("a harness turn's runtime carries its org selection, typed", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: ORG_SELECTION,
+        harness: "claude-code",
+      }),
+    );
+    expect(rt.runtime).toMatchObject({
+      endpointPath: "/stream/org",
+      harness: "claude-code",
+      modelSelection: ORG_SELECTION,
+    });
+  });
+
   it("a selection is only sent on the rail it names", async () => {
     // A hosted selection that somehow resolves to an org rail (and the
     // reverse) is not sent: the backend would refuse it on that route.
