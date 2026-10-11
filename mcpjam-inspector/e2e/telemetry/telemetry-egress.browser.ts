@@ -7,10 +7,11 @@
  * `popstate`, and the app's own pages and boot paths instead of a stand-in
  * page.
  *
- * The visitor is a signed-out hosted guest — the `full` level — so both
- * recorders run (`resolveSessionPrivacy`). `full` → `masked` needs a signed-in
- * member of an enterprise organization, which needs WorkOS; that switch is
- * covered in jsdom (`session-egress.test.tsx`).
+ * The visitor is a signed-out hosted guest the backend answers `full` for
+ * (the Convex stand-in answers `telemetryPrivacy:getContext`), so both
+ * recorders run at the level where the most reaches the vendors
+ * (`resolveSessionPrivacy`). The `masked` and `off` levels are covered in
+ * jsdom (`session-egress.test.tsx`) and by the telemetry privacy browser test.
  *
  * Every test reads every PostHog and Sentry request its page made, decoded
  * all the way down, and fails on any planted sentinel, naming the sink and
@@ -27,6 +28,7 @@ import {
   ORIGIN,
   spaNavigate,
   storageReport,
+  waitForFullReplay,
   type EgressRecorder,
 } from "./browser-harness";
 import {
@@ -116,12 +118,16 @@ function expectClean(
   return scan;
 }
 
-async function openNormalPage(page: Page): Promise<void> {
+async function openNormalPage(
+  page: Page,
+  recorder: EgressRecorder,
+): Promise<void> {
   await page.goto(`${ORIGIN}${NORMAL_PAGE}`);
   await expect(page.getByText(NORMAL_PAGE_TEXT)).toBeVisible({
     timeout: 30_000,
   });
   await interact(page);
+  await waitForFullReplay(page, recorder);
 }
 
 /** An uncaught error, the way a real one reaches both SDKs' handlers. */
@@ -142,7 +148,7 @@ test("share links on a normal page at full: text, href and iframe src", async ({
   page,
 }) => {
   const recorder = await installEgressRecorder(page);
-  await openNormalPage(page);
+  await openNormalPage(page, recorder);
   await page.evaluate(
     (urls) => {
       const section = document.createElement("section");
@@ -231,7 +237,7 @@ test("SPA navigation from a normal page onto every credential page and back", as
   const recorder = await installEgressRecorder(page, {
     sentryLatencyMs: SENTRY_LATENCY_MS,
   });
-  await openNormalPage(page);
+  await openNormalPage(page, recorder);
   // One entry per return to the normal page: from the moment the visitor
   // left the credential page until they leave the normal page again.
   const returns: Array<{
@@ -335,7 +341,7 @@ test("SPA navigation from a normal page onto every credential page and back", as
 
 test("a secret query key and fragment on a normal page", async ({ page }) => {
   const recorder = await installEgressRecorder(page);
-  await openNormalPage(page);
+  await openNormalPage(page, recorder);
   await spaNavigate(page, `${NORMAL_PAGE}?code=${sentinel("pwquery")}`);
   await interact(page);
   await page.goBack();
@@ -362,7 +368,7 @@ test("a tab closed on a credential page ships nothing planted", async ({
   page,
 }) => {
   const recorder = await installEgressRecorder(page);
-  await openNormalPage(page);
+  await openNormalPage(page, recorder);
   await page.waitForTimeout(2_500);
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
@@ -393,7 +399,7 @@ test("a visitor who reads a page, then opens a share link", async ({
   // guard stops on the way in (it drops a first segment under 5s) — so the
   // segment, and the replay event that describes it, are actually sent.
   const recorder = await installEgressRecorder(page);
-  await openNormalPage(page);
+  await openNormalPage(page, recorder);
   await page.waitForTimeout(3_500);
   await interact(page);
   await page.waitForTimeout(3_500);

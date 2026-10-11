@@ -67,6 +67,11 @@ function queryResult(udfPath: string, state: StandInState): unknown {
       };
     case "projects:getMyProjects":
       return state.projects;
+    case "telemetryPrivacy:getContext":
+      // The backend's answer for a verified non-private context: replay at
+      // `full`, identity by id. `full` is where the most reaches the
+      // vendors, so it is the level the credential proof runs at.
+      return { recording: "full", identity: "id_only" };
     case "organizations:getMyOrganizations":
     case "servers:getProjectServers":
       return [];

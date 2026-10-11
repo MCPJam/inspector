@@ -41,6 +41,7 @@ import {
   type ModelSelectionPurpose,
   type RequestedModelSelection,
 } from "@mcpjam/sdk";
+import type { HarnessOrgKeyRefusalReason } from "@/shared/harness-proxy-refusal-reasons";
 
 /** Refusal codes of the model selection contract. */
 export type ModelRefusalCode =
@@ -54,7 +55,10 @@ export type ModelRefusalCode =
   | "credential_missing"
   | "free_tier_model_restricted"
   | "guest_model_not_allowed"
-  | "fallback_prohibited";
+  | "fallback_prohibited"
+  /** The org connection's provider cannot serve the selected harness. */
+  | "provider_mismatch"
+  | HarnessOrgKeyRefusalReason;
 
 export type ModelRefusal = {
   code: ModelRefusalCode;

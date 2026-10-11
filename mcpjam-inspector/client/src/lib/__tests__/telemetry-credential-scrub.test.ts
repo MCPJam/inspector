@@ -427,7 +427,7 @@ describe("replay callbacks", () => {
   it("masks a foreign host at masked, keeps ours", async () => {
     const { scrubNamesFromUrl } = await loadAt("masked");
     expect(scrubNamesFromUrl("https://mcp.acme.example/tenants/42")).toBe(
-      "https://[name]/[name]/42",
+      "https://[host]/[name]/42",
     );
     expect(
       scrubNamesFromUrl("https://app.mcpjam.com/p/k17abc9z/servers"),
@@ -477,7 +477,7 @@ describe("replay callbacks", () => {
 });
 
 describe("sentryTransactionName", () => {
-  it("names routes by template, never by value", async () => {
+  it("names credential routes by template; other paths keep their words", async () => {
     vi.stubGlobal("__APP_VERSION__", "test");
     vi.stubGlobal("__BUILD_SURFACE__", "local");
     await loadAt("full");
@@ -488,8 +488,13 @@ describe("sentryTransactionName", () => {
     expect(sentryTransactionName(`/user-testing/acme/${SECRET}`)).toBe(
       "/user-testing/:slug/:token",
     );
+    // Names in other paths are the privacy level's to decide: kept at full,
+    // scrubbed on the way out short of it.
     expect(sentryTransactionName("/p/k17abc/servers/srv_1")).toBe(
-      "/p/:projectId/servers/:serverId",
+      "/p/k17abc/servers/srv_1",
+    );
+    expect(sentryTransactionName(`/servers?code=${SECRET}`)).not.toContain(
+      SECRET,
     );
     expect(sentryTransactionName("/settings/api-keys")).toBe(
       "/settings/api-keys",

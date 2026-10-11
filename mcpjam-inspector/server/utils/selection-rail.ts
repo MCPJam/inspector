@@ -34,6 +34,12 @@ import {
   readStoredLegacySelection,
   type ModelSelectionOrigin,
 } from "./model-resolution-local.js";
+import {
+  orgHarnessSelection,
+  runsHarness,
+  type OrgHarnessSelection,
+} from "./harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 
 export { readRoutingSelection, readSelectionOrigin, readStoredLegacySelection };
 export type { ModelSelectionOrigin };
@@ -144,4 +150,66 @@ export function forwardableSelection(
     return undefined;
   }
   return selection;
+}
+
+/**
+ * How a chat turn on a harness host runs, decided once for the web and MCP
+ * chat routes so their routing, refusals and persisted spend cannot disagree.
+ *
+ *  - `externalAccount`: the runtime pays on the customer's own vendor account.
+ *  - `orgSelection`: a brokered harness on the ORGANIZATION'S own key (its
+ *    saved selection names an org connection on the harness's vendor), already
+ *    narrowed: it is what the lease is minted for. Such a turn runs the REAL
+ *    runtime, never the org-BYOK branch, which would run the emulated engine
+ *    under the harness's name.
+ *  - `orgStepUpResume`: a scope step-up resume on an org-key harness turn. A
+ *    resume runs the emulated engine; on MCPJam's `/stream` it would spend
+ *    MCPJam's credits past an org that requires its own keys, so it takes the
+ *    org path (`/stream/org`) on the organization's key.
+ *  - `usesFreePath`: the MCPJam path (an MCPJam-provided model, or a harness
+ *    runtime) rather than the org-BYOK branch.
+ *  - `modelSource`: whose spend the turn is.
+ */
+export type HarnessTurnRail = {
+  externalAccount: boolean;
+  orgSelection: OrgHarnessSelection | undefined;
+  orgStepUpResume: boolean;
+  usesFreePath: boolean;
+  modelSource: "external-account" | "byok" | "mcpjam";
+};
+
+export function harnessTurnRail(args: {
+  harness: string | undefined;
+  model: { id: string; provider?: string; hosted?: boolean };
+  selection: RequestedModelSelection | null | undefined;
+  mcpjamProvided: boolean;
+  stepUpResume: boolean;
+}): HarnessTurnRail {
+  const externalAccount =
+    !!args.harness && harnessUsesExternalAccount(args.harness);
+  const orgSelection =
+    args.harness &&
+    !externalAccount &&
+    runsHarness({
+      harness: args.harness,
+      model: args.model,
+      selection: args.selection,
+    })
+      ? orgHarnessSelection(args.selection)
+      : undefined;
+  const orgStepUpResume = !!orgSelection && args.stepUpResume;
+  return {
+    externalAccount,
+    orgSelection,
+    orgStepUpResume,
+    usesFreePath:
+      args.mcpjamProvided ||
+      externalAccount ||
+      (!!orgSelection && !orgStepUpResume),
+    modelSource: externalAccount
+      ? "external-account"
+      : orgSelection
+        ? "byok"
+        : "mcpjam",
+  };
 }
