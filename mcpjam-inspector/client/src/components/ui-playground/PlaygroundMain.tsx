@@ -363,6 +363,7 @@ import {
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { artifactStableKey } from "@/lib/artifact-urls";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -1392,6 +1393,7 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
     hiddenEnvironmentOffReason,
+    outOfCreditsReason,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -3174,6 +3176,15 @@ export function PlaygroundMain({
     (localHarness.phase === "installing" ||
       localHarness.phase === "authorizing" ||
       localHarness.phase === "unavailable");
+  // Out of credits, a send on a locked MCPJam model could only be refused, so
+  // every send path (composer, starter prompts, fullscreen, edits) is off and
+  // Send says why. A compare grid drops locked models itself.
+  const sendOutOfCreditsReason =
+    !isCompareMode &&
+    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null;
+
   // Ongoing App admission excludes only this action's own connection preparation.
   // Read-only, target, history and streaming denials remain live across awaits.
   const pluginActionInteractivity = getChatComposerInteractivity({
@@ -3186,7 +3197,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
@@ -3203,7 +3215,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -6245,7 +6258,11 @@ export function PlaygroundMain({
       // refused by this flag before `onSubmit` runs, so disabling for those
       // would make first-send setup unreachable. The composer notice above
       // carries the explanation for each state that does disable.
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
+    ...(sendOutOfCreditsReason
+      ? { submitDisabledReason: sendOutOfCreditsReason }
+      : {}),
     notice: composerNotice,
     ...(executionTargetChip ? { executionTarget: executionTargetChip } : {}),
     tokenUsage,
