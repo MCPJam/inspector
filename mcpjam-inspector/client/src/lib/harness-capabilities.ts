@@ -1,3 +1,4 @@
+import { harnessReasoningEfforts } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   harnessMcpDelivery,
@@ -68,6 +69,7 @@ export const HARNESS_DISPLAY_NAME: Record<HostConfigHarnessV2, string> = {
 export type HarnessGatedControl =
   | "modelId"
   | "temperature"
+  | "reasoningEffort"
   | "requireToolApproval"
   | "respectToolVisibility"
   | "progressiveToolDiscovery";
@@ -84,7 +86,10 @@ const ENFORCED = ENFORCED_CONTROL;
 
 /** Controls owned by the harness's own agent loop — no MCPJam-side mediation
  *  can change these answers, so they are declared per harness. */
-type HarnessLoopControl = Exclude<HarnessGatedControl, "respectToolVisibility">;
+type HarnessLoopControl = Exclude<
+  HarnessGatedControl,
+  "respectToolVisibility" | "reasoningEffort"
+>;
 
 // Keyed by harness id. A host with no harness (emulated engine) enforces
 // everything — callers pass `undefined` and get ENFORCED for every control.
@@ -125,14 +130,9 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
       enforced: false,
       note: "Codex runs its own loop and ignores temperature.",
     },
-    // Codex can't pause for interactive tool approval on ANY surface (allow-all
-    // only) — not its native built-ins, not host-executed tools. The pre-flight
-    // refuses the turn outright, so "not enforced" would describe an outcome
-    // (run anyway, unapproved) that cannot occur.
-    requireToolApproval: {
-      enforced: false,
-      note: "Codex can't pause for tool approval, so a turn on this host is refused rather than run unapproved.",
-    },
+    // Codex runs on MCPJam's app-server adapter, which pauses on every command
+    // and file change and gates host-executed MCP tools before they run.
+    requireToolApproval: ENFORCED,
     // The real Codex owns its own tool discovery.
     progressiveToolDiscovery: {
       enforced: false,
@@ -203,6 +203,16 @@ export function harnessControlState(
   control: HarnessGatedControl,
 ): HarnessControlState {
   if (!harness) return ENFORCED;
+  if (control === "reasoningEffort") {
+    // Derived, not restated: an adapter enforces an effort exactly when the
+    // SDK's evidence table lists at least one verified level for it.
+    return harnessReasoningEfforts(harness).length > 0
+      ? ENFORCED
+      : {
+          enforced: false,
+          note: `${HARNESS_DISPLAY_NAME[harness] ?? "This harness"} doesn't support a reasoning effort yet, so a saved one would be refused.`,
+        };
+  }
   if (control === "respectToolVisibility") {
     const delivery = harnessMcpDelivery(harness);
     // Same fail-open contract as below: an id with no delivery declaration is
