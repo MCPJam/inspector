@@ -26,7 +26,11 @@ export const MASKED_TO_FULL_SETTLE_MS = 3_000;
  *   context whose answer has not arrived — records `masked` at once rather
  *   than stopping: the destination is unknown, so it is treated as private.
  *   Replay `off` follows membership, so on an organization's own pages
- *   anyone it applies to was already answered `off`.
+ *   anyone it applies to was already answered `off`. That holds only for
+ *   the actor and memberships the earlier answer was for (`permissionKey`):
+ *   after a sign-in change or a membership reload — joining an organization
+ *   with replay off, say — `pending` stops both recorders until the new
+ *   answer arrives.
  * - Toward MORE privacy (`full` → `masked`, anything → `pending`) the change
  *   lands in a layout effect: in the same commit that rendered the content
  *   the new level is for, before rrweb's mutation observer reports that
@@ -38,17 +42,21 @@ export const MASKED_TO_FULL_SETTLE_MS = 3_000;
  */
 export function useSessionPrivacy(
   resolved: SessionPrivacy,
-  options: { contextReady?: boolean } = {},
+  options: { contextReady?: boolean; permissionKey?: string | null } = {},
 ): void {
   const contextReady = options.contextReady ?? true;
+  const permissionKey = options.permissionKey ?? null;
   const posthog = usePostHog();
   // The last level that let anything record. `pending` does not count, so
   // masked → pending → full still waits out the settle period.
   const lastRecordingLevelRef = useRef<SessionPrivacy | null>(null);
+  // The scope that level was answered for.
+  const permittedForRef = useRef<string | null>(null);
 
   const hasRecorded =
-    lastRecordingLevelRef.current === "masked" ||
-    lastRecordingLevelRef.current === "full";
+    permittedForRef.current === permissionKey &&
+    (lastRecordingLevelRef.current === "masked" ||
+      lastRecordingLevelRef.current === "full");
   let effective: SessionPrivacy = resolved;
   if (resolved === "pending" && hasRecorded) {
     effective = "masked";
@@ -58,7 +66,10 @@ export function useSessionPrivacy(
 
   useLayoutEffect(() => {
     const apply = (level: SessionPrivacy) => {
-      if (level !== "pending") lastRecordingLevelRef.current = level;
+      if (level !== "pending") {
+        lastRecordingLevelRef.current = level;
+        permittedForRef.current = permissionKey;
+      }
       setSessionPrivacy(level);
       // BOTH recorders, and the Sentry half even without a PostHog client:
       // PostHog is routinely ad-blocked, Sentry Replay is not gated on it.
@@ -71,5 +82,5 @@ export function useSessionPrivacy(
       return () => clearTimeout(timer);
     }
     apply(effective);
-  }, [posthog, effective]);
+  }, [posthog, effective, permissionKey]);
 }

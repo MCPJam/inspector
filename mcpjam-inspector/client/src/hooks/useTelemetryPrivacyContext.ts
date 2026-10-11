@@ -59,6 +59,13 @@ export interface TelemetryPrivacyContextState {
    * `policy` is the conservative stand-in.
    */
   answered: boolean;
+  /**
+   * The actor and memberships this state is for. It changes exactly when an
+   * earlier answer stops counting, so a permission granted under one scope
+   * (`useSessionPrivacy`'s `permissionKey`) can be dropped with it. `null`
+   * while the actor is still resolving.
+   */
+  scope: string | null;
 }
 
 /**
@@ -155,6 +162,7 @@ export function useTelemetryPrivacyContext(
       identity: undefined,
       actor: null,
       answered: false,
+      scope: subscriptionKey,
     };
   }
   const actor = actorKey === ANONYMOUS_TELEMETRY_ACTOR ? null : actorKey;
@@ -165,6 +173,7 @@ export function useTelemetryPrivacyContext(
       identity: last?.key === subscriptionKey ? last.identity : undefined,
       actor,
       answered: false,
+      scope: subscriptionKey,
     };
   }
   const answered = !(raw instanceof Error) && isTelemetryPolicy(raw);
@@ -172,5 +181,11 @@ export function useTelemetryPrivacyContext(
     ? { recording: raw.recording, identity: raw.identity }
     : { ...CONSERVATIVE_TELEMETRY_POLICY };
   lastIdentityRef.current = { key: subscriptionKey, identity: policy.identity };
-  return { policy, identity: policy.identity, actor, answered };
+  return {
+    policy,
+    identity: policy.identity,
+    actor,
+    answered,
+    scope: subscriptionKey,
+  };
 }

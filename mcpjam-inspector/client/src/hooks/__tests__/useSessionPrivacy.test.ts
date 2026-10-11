@@ -33,10 +33,13 @@ function render(initial: SessionPrivacy, contextReady = true) {
     ({
       level,
       contextReady: ready = true,
+      scope = "user_A\norg_1",
     }: {
       level: SessionPrivacy;
       contextReady?: boolean;
-    }) => useSessionPrivacy(level, { contextReady: ready }),
+      scope?: string | null;
+    }) =>
+      useSessionPrivacy(level, { contextReady: ready, permissionKey: scope }),
     { initialProps: { level: initial, contextReady } },
   );
 }
@@ -144,6 +147,25 @@ describe("useSessionPrivacy", () => {
     const { rerender } = render("full");
     rerender({ level: "pending" });
     expect(applied()).toEqual(["full", "masked"]);
+  });
+
+  it("pending after a membership reload or sign-in change stops, not masks", () => {
+    // The earlier answer was for other memberships: joining an organization
+    // with replay off must not inherit its permission to record.
+    const { rerender } = render("full");
+    rerender({ level: "pending", scope: "user_A\norg_1,org_off" });
+    expect(applied()).toEqual(["full", "pending"]);
+
+    rerender({ level: "pending", scope: "user_B\norg_1" });
+    expect(applied().at(-1)).toBe("pending");
+  });
+
+  it("an answer under the new scope grants the shortcut again", () => {
+    const { rerender } = render("full");
+    rerender({ level: "pending", scope: "user_A\norg_2" });
+    rerender({ level: "masked", scope: "user_A\norg_2" });
+    rerender({ level: "pending", scope: "user_A\norg_2" });
+    expect(applied()).toEqual(["full", "pending", "masked"]);
   });
 
   it("holds full back until the destination has finished loading, then settles", () => {

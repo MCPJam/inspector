@@ -4801,6 +4801,7 @@ export default function App() {
         !isAuthLoading &&
         !isLoadingOrganizations &&
         !isProjectServerConfigLoading,
+      permissionKey: telemetryPrivacy.scope,
     },
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;

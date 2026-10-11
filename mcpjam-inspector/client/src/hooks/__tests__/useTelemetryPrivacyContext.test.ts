@@ -58,6 +58,7 @@ describe("useTelemetryPrivacyContext", () => {
       identity: "full",
       actor: "user_A",
       answered: true,
+      scope: "user_A\norg_1:member:0",
     });
     expect(server.subscriptions.at(-1)).toEqual({
       projectIds: ["proj_1"],
@@ -79,6 +80,7 @@ describe("useTelemetryPrivacyContext", () => {
       identity: "id_only",
       actor: null,
       answered: true,
+      scope: "anonymous\norg_1:member:0",
     });
   });
 
@@ -130,6 +132,8 @@ describe("useTelemetryPrivacyContext", () => {
       identity: undefined,
       actor: "user_A",
       answered: false,
+      // A new scope: permissions granted under the old one stop counting.
+      scope: "user_A\norg_1:member:1",
     });
   });
 
@@ -142,6 +146,8 @@ describe("useTelemetryPrivacyContext", () => {
       identity: "full",
       actor: "user_A",
       answered: false,
+      // Same actor and memberships: the same scope.
+      scope: "user_A\norg_1:member:0",
     });
   });
 

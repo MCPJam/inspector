@@ -7,8 +7,16 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionPrivacyInputs } from "@/lib/session-privacy";
 
-const { usePostHog } = vi.hoisted(() => ({ usePostHog: vi.fn() }));
+const { usePostHog, server } = vi.hoisted(() => ({
+  usePostHog: vi.fn(),
+  /** What `telemetryPrivacy:getContext` answers right now; `undefined` = not yet. */
+  server: { answer: undefined as unknown },
+}));
 vi.mock("posthog-js/react", () => ({ usePostHog }));
+vi.mock("convex/react", () => ({
+  useQueries: (queries: Record<string, unknown>) =>
+    queries.policy ? { policy: server.answer } : {},
+}));
 vi.mock("@sentry/react", () => ({
   init: vi.fn(),
   getClient: vi.fn(() => undefined),
@@ -171,5 +179,81 @@ describe("useSessionPrivacy with the real recorders", () => {
     const { posthog, levelFor, hook } = await setup("npx");
     hook.rerender({ level: levelFor("org_private") });
     expect(posthog.log).toEqual([]);
+  });
+});
+
+describe("useSessionPrivacy composed with the policy subscription", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, "", "/servers");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    server.answer = undefined;
+  });
+
+  /** App's wiring, minus remembered `off`: the subscription feeds the level. */
+  async function setupComposed() {
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.resetModules();
+    const privacy = await import("@/lib/session-privacy");
+    const { useSessionPrivacy } = await import("../useSessionPrivacy");
+    const { useTelemetryPrivacyContext } =
+      await import("../useTelemetryPrivacyContext");
+    const posthog = recordingPosthog();
+    usePostHog.mockReturnValue(posthog);
+    const hook = renderHook(
+      ({ membershipKey }: { membershipKey: string }) => {
+        const policy = useTelemetryPrivacyContext({
+          enabled: true,
+          actor: "user_A",
+          membershipKey,
+          projectIds: [],
+          organizationIds: ["org_plain"],
+        });
+        useSessionPrivacy(
+          privacy.resolveSessionPrivacy({
+            surface: privacy.recordingSurface(),
+            sharedLink: false,
+            recording: policy.answered ? policy.policy?.recording : undefined,
+          }),
+          { permissionKey: policy.scope },
+        );
+      },
+      { initialProps: { membershipKey: "org_plain:owner:0" } },
+    );
+    return { privacy, posthog, hook };
+  }
+
+  it("joining an organization with replay off stops recording until the new answer", async () => {
+    server.answer = { recording: "full", identity: "full" };
+    const { privacy, posthog, hook } = await setupComposed();
+    expect(posthog.log.at(-1)).toBe("start");
+    posthog.log.length = 0;
+
+    // The membership reload drops the answer; the new one does not come.
+    server.answer = undefined;
+    await act(async () => {
+      hook.rerender({ membershipKey: "org_off:member:0,org_plain:owner:0" });
+    });
+    expect(privacy.currentSessionPrivacy()).toBe("pending");
+    expect(posthog.log).toEqual(["stop", "masked"]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(60 * 60 * 1000);
+    });
+    expect(posthog.log).toEqual(["stop", "masked"]);
+
+    // When it does come, it is off: still nothing records.
+    server.answer = { recording: "off", identity: "id_only" };
+    await act(async () => {
+      hook.rerender({ membershipKey: "org_off:member:0,org_plain:owner:0" });
+    });
+    expect(privacy.currentSessionPrivacy()).toBe("off");
+    expect(posthog.startSessionRecording).toHaveBeenCalledTimes(1);
   });
 });

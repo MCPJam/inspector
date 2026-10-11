@@ -146,9 +146,13 @@ and the backend has to answer for the new ones.
 
 **Navigation** (`full` → `pending`) records `masked` at once, rather than
 stopping: the destination is unknown, so it is treated as private. This
-applies only after an answer has let the session record. Replay `off`
-follows membership, so on an organization's own pages anyone it applies to
-was already answered `off`.
+applies only after an answer has let the session record, and only for the
+actor and memberships that answer was for (`useTelemetryPrivacyContext`'s
+`scope`). Replay `off` follows membership, so on an organization's own pages
+anyone it applies to was already answered `off`. A sign-in change or a
+membership reload (joining an organization with replay off, say) starts a
+new scope, and `pending` then stops both recorders until the new answer
+arrives.
 
 **`full` → `masked`** is applied in a layout effect, in the same React commit
 that rendered the new organization. That is before rrweb's mutation observer
