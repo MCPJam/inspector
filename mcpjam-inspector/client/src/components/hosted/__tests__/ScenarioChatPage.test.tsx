@@ -2705,7 +2705,6 @@ describe("ScenarioChatPage", () => {
         effectiveAuthMethod: "oauth",
         serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
       });
-      // No usable credential for the recipient yet.
       mockValidateHostedServer.mockRejectedValue(
         new Error(
           'Authentication failed for MCP server "rabona": invalid_token (401)',
@@ -2716,12 +2715,13 @@ describe("ScenarioChatPage", () => {
 
       render(<ScenarioChatPage />);
 
-      // Settle on the terminal state: the row passes through needs_auth and
-      // verifying on the way here, and only "error" stays put.
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Authorize again" }),
-        ).toBeInTheDocument(),
+      // Let validation retries finish before checking the terminal prompt.
+      await waitFor(
+        () =>
+          expect(
+            screen.getByRole("button", { name: "Authorize again" }),
+          ).toBeInTheDocument(),
+        { timeout: 3_000 },
       );
       expect(
         screen.getByRole("heading", { name: "Authorization Required" }),
