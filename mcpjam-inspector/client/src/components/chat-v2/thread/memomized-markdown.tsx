@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { Streamdown, defaultUrlTransform, type UrlTransform } from "streamdown";
+import { useChatMarkdownLinks } from "./chat-links";
 
 // Per-surface markdown rendering knobs for surfaces that inline content
 // authored elsewhere — e.g. the MCPJam Agent home, which streams docs from
@@ -79,6 +80,8 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
 const MemoizedMarkdownBlock = memo(
   ({ content }: { content: string }) => {
     const { linkBase, trustLinks } = useContext(MarkdownSurfaceContext);
+    // Plugin files and deep links in a chat with extensions (null elsewhere).
+    const prepareChatLinks = useChatMarkdownLinks();
     const urlTransform = useMemo(
       () => buildUrlTransform(linkBase),
       [linkBase],
@@ -87,9 +90,17 @@ const MemoizedMarkdownBlock = memo(
       () => (trustLinks ? { enabled: false } : undefined),
       [trustLinks],
     );
+    const chatLinks = useMemo(
+      () => prepareChatLinks?.(content) ?? null,
+      [prepareChatLinks, content],
+    );
     return (
-      <Streamdown linkSafety={linkSafety} urlTransform={urlTransform}>
-        {content}
+      <Streamdown
+        linkSafety={linkSafety}
+        urlTransform={urlTransform}
+        {...(chatLinks ? { components: chatLinks.components } : {})}
+      >
+        {chatLinks ? chatLinks.content : content}
       </Streamdown>
     );
   },
