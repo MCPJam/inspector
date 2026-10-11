@@ -27,39 +27,77 @@ function git(args) {
   });
 }
 
-function resolveBase(argv) {
-  const index = argv.indexOf("--base");
-  if (index !== -1 && argv[index + 1]) return argv[index + 1];
-  return git(["merge-base", "HEAD", "origin/main"]).trim();
+export const WORKTREE = "worktree";
+export const INDEX = "index";
+
+function argValue(argv, name) {
+  const index = argv.indexOf(name);
+  return index !== -1 && argv[index + 1] ? argv[index + 1] : undefined;
 }
 
-function changedPaths(base) {
-  const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
-    .split("\0")
-    .filter(Boolean);
-  const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"])
-    .split("\0")
-    .filter(Boolean);
-  return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
+/**
+ * What the change is compared against, and what it is:
+ *   default:      base = merge-base with origin/main, change = the working
+ *                 tree plus untracked files (CI and the Stop hook).
+ *   --staged:     base = HEAD, change = what is staged (git pre-commit).
+ *   --head REF:   base = merge-base of REF with origin/main, change = REF
+ *                 (git pre-push).
+ * --base REF overrides the base in every mode.
+ */
+export function resolveScope(argv) {
+  const staged = argv.includes("--staged");
+  const head = staged ? INDEX : (argValue(argv, "--head") ?? WORKTREE);
+  const base =
+    argValue(argv, "--base") ??
+    (staged
+      ? "HEAD"
+      : git([
+          "merge-base",
+          head === WORKTREE ? "HEAD" : head,
+          "origin/main",
+        ]).trim());
+  return { base, head };
 }
 
-function readAtBase(base, path) {
+function changedPaths(base, head) {
+  if (head === WORKTREE) {
+    const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
+      .split("\0")
+      .filter(Boolean);
+    const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"])
+      .split("\0")
+      .filter(Boolean);
+    return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
+  }
+  const range = head === INDEX ? ["--cached", base] : [base, head];
+  return git(["diff", "--name-only", "--no-renames", "-z", ...range])
+    .split("\0")
+    .filter((path) => path && isMeasuredFile(path));
+}
+
+/** `path` at `ref`; an empty ref reads the index. Missing reads as empty. */
+function readAt(ref, path) {
   try {
-    return git(["show", `${base}:${path}`]);
+    return git(["show", `${ref}:${path}`]);
   } catch {
-    // Added since the base: it had nothing to count.
+    // Not there: added since the base, or deleted in the change.
     return "";
   }
 }
 
-export function compare(base) {
+function readChanged(head, path) {
+  if (head === WORKTREE) {
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+  return readAt(head === INDEX ? "" : head, path);
+}
+
+export function compare(base, head = WORKTREE) {
   const deltas = Object.fromEntries(RULES.map((rule) => [rule.id, 0]));
   const increases = [];
-  for (const path of changedPaths(base)) {
-    const before = countFile(path, readAtBase(base, path));
-    const after = existsSync(path)
-      ? countFile(path, readFileSync(path, "utf8"))
-      : countFile(path, "");
+  for (const path of changedPaths(base, head)) {
+    const before = countFile(path, readAt(base, path));
+    const after = countFile(path, readChanged(head, path));
     for (const rule of RULES) {
       const delta = after[rule.id] - before[rule.id];
       deltas[rule.id] += delta;
@@ -87,7 +125,7 @@ function report({ deltas, increases }, waived) {
       "",
       waived
         ? "Waived by the `slop-waiver` label."
-        : "Remove the additions, or remove as many elsewhere in the same change. A CODEOWNER can apply `slop-waiver` with a reason."
+        : "Remove the additions, or remove as many elsewhere in the same change. A CODEOWNER can apply `slop-waiver` with a reason.",
     );
   } else {
     lines.push("", "No rule went up.");
@@ -102,7 +140,7 @@ function report({ deltas, increases }, waived) {
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const base = resolveBase(process.argv.slice(2));
+  const { base, head } = resolveScope(process.argv.slice(2));
   const waived = process.env.SLOP_WAIVER === "true";
-  process.exitCode = report(compare(base), waived);
+  process.exitCode = report(compare(base, head), waived);
 }

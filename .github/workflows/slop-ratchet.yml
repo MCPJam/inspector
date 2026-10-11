@@ -35,7 +35,7 @@ jobs:
           node-version: "24.14.0"
 
       - name: Test the ratchet
-        run: node --test scripts/slop/slop.test.mjs
+        run: node --test scripts/slop/slop.test.mjs scripts/git-hooks/git-hooks.test.mjs
 
       - name: Compare with the base branch
         env:
