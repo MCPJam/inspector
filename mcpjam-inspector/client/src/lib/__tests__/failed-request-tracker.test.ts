@@ -6,7 +6,7 @@ import {
   getLastFailedRequest,
   installFailedRequestTracker,
 } from "../failed-request-tracker";
-import { options } from "../PosthogUtils";
+import { sanitizeAnalyticsProperties } from "../PosthogUtils";
 
 const realFetch = window.fetch;
 let uninstall: () => void;
@@ -99,10 +99,9 @@ describe("failed request tracker", () => {
 });
 
 describe("PostHog $exception enrichment", () => {
-  const sanitize = options.sanitize_properties as (
-    properties: Record<string, any>,
-    eventName: string,
-  ) => Record<string, any>;
+  // `before_send` (scrubCaptureEvent) runs this enrichment pass before the
+  // credential walker; it replaced the deprecated `sanitize_properties`.
+  const sanitize = sanitizeAnalyticsProperties;
 
   const loadFailedException = () => ({
     $exception_list: [

@@ -43,7 +43,45 @@ export type UsageTotals = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Reasoning tokens (part of `outputTokens`). Absent when never reported. */
+  reasoningTokens?: number;
+  /** Prompt-cache reads (part of `inputTokens`). Absent when never reported. */
+  cachedInputTokens?: number;
 };
+
+const USAGE_BREAKDOWN_KEYS = ["reasoningTokens", "cachedInputTokens"] as const;
+
+/**
+ * Adds `delta` into `target` in place. The three totals always sum (a missing
+ * side counts as zero, as before); the reasoning / cached breakdown is summed
+ * only once some turn reported it, so "never reported" stays absent rather
+ * than turning into a confident zero.
+ */
+export function addUsageTotals(
+  target: UsageTotals,
+  delta: UsageTotals | null | undefined,
+): void {
+  target.inputTokens = (target.inputTokens ?? 0) + (delta?.inputTokens ?? 0);
+  target.outputTokens = (target.outputTokens ?? 0) + (delta?.outputTokens ?? 0);
+  target.totalTokens = (target.totalTokens ?? 0) + (delta?.totalTokens ?? 0);
+  for (const key of USAGE_BREAKDOWN_KEYS) {
+    const value = delta?.[key];
+    if (typeof value === "number") target[key] = (target[key] ?? 0) + value;
+  }
+}
+
+/** A detached copy of `usage`, keeping the breakdown fields only when set. */
+export function copyUsageTotals(usage: UsageTotals): UsageTotals {
+  const copy: UsageTotals = {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+  };
+  for (const key of USAGE_BREAKDOWN_KEYS) {
+    if (typeof usage[key] === "number") copy[key] = usage[key];
+  }
+  return copy;
+}
 
 export type EvaluationResult = {
   expectedToolCalls: ToolCall[];

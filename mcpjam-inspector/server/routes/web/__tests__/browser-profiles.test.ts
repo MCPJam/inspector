@@ -359,7 +359,11 @@ describe("POST /api/web/browser-profiles/download", () => {
 
     const res = await download(IDS);
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      details: { reason: "FEATURE_REQUIRES_HOSTED" },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
