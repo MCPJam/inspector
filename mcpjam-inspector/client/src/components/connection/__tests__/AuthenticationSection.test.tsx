@@ -49,6 +49,30 @@ describe("AuthenticationSection", () => {
     xaaFlagValue = undefined;
   });
 
+  it("uses distinct error IDs when multiple bearer forms are mounted", () => {
+    render(
+      <>
+        <AuthenticationSection
+          {...hostedSecretProps}
+          authType="bearer"
+          bearerTokenError="Token required"
+        />
+        <AuthenticationSection
+          {...hostedSecretProps}
+          authType="bearer"
+          bearerTokenError="Token required"
+        />
+      </>,
+    );
+    const inputs = screen.getAllByPlaceholderText("Enter your bearer token");
+    const errorIds = inputs.map((input) => input.getAttribute("aria-describedby"));
+    expect(errorIds[0]).toBeTruthy();
+    expect(errorIds[0]).not.toBe(errorIds[1]);
+    for (const errorId of errorIds) {
+      expect(document.getElementById(errorId!)).toHaveTextContent("Token required");
+    }
+  });
+
   it("hides the Cross-App Access (XAA) option when the xaa flag is off", async () => {
     xaaFlagValue = false;
     render(

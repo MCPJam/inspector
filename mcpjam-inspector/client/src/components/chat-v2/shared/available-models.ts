@@ -77,6 +77,46 @@ export function applyOutOfCreditsLocks(
   });
 }
 
+/**
+ * Whether every model a run would use is locked by {@link applyOutOfCreditsLocks},
+ * so the run could only be refused. A hosted row and a BYOK row can share an
+ * id, so a model counts as locked only when every row it can mean is locked
+ * (narrowed to its provider when one is known). No known model, or any model
+ * still usable, keeps the run available.
+ */
+export function allModelsOutOfCredits(
+  models: readonly { model: string; provider?: string }[],
+  availableModels: readonly Pick<
+    ModelDefinition,
+    "id" | "provider" | "disabledReason"
+  >[]
+): boolean {
+  return (
+    models.length > 0 &&
+    models.every(({ model, provider }) => {
+      // An older case can name a catalog model without its provider prefix.
+      const ids =
+        provider && !model.startsWith(`${provider}/`)
+          ? [model, `${provider}/${model}`]
+          : [model];
+      const rows = availableModels.filter((row) =>
+        ids.includes(String(row.id))
+      );
+      // A named provider with no row of its own is not one of these rows, so
+      // nothing here can say it is locked.
+      const candidates = provider
+        ? rows.filter((row) => row.provider === provider)
+        : rows;
+      return (
+        candidates.length > 0 &&
+        candidates.every(
+          (row) => row.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+        )
+      );
+    })
+  );
+}
+
 export const FREE_TIER_MODEL_REASON = "Sign in to use this model";
 
 /**

@@ -1,3 +1,4 @@
+import type { PluginWorkspaceRecording } from "./plugin-workspace-recording";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { PromptTurnToolCall } from "./steps";
@@ -5,12 +6,7 @@ import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
-  | "step"
-  | "llm"
-  | "tool"
-  | "error"
-  | "connection"
-  | "discovery";
+  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
@@ -297,9 +293,7 @@ export type EvalTraceBrowserAction =
   | "wait";
 
 export type EvalTraceBrowserStepNote =
-  | "no_rendered_widget"
-  | "step_budget_exceeded"
-  | "screenshot_budget_exceeded";
+  "no_rendered_widget" | "step_budget_exceeded" | "screenshot_budget_exceeded";
 
 const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
   "no_rendered_widget",
@@ -464,6 +458,7 @@ export type BrowserInteractionStepPayload = Omit<
 // Convex doc id; the UI keys on `toolName` / `toolCallId` for display.
 
 export type EvalTraceWidgetRenderObservationView = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId?: string;
@@ -483,6 +478,7 @@ export type EvalTraceWidgetRenderObservationView = {
 };
 
 export type EvalTraceBrowserInteractionStepView = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   stepIndex: number;
   promptIndex: number;
@@ -568,14 +564,7 @@ export const evalTraceSpanZ = z.object({
   id: z.string(),
   parentId: z.string().optional(),
   name: z.string(),
-  category: z.enum([
-    "step",
-    "llm",
-    "tool",
-    "error",
-    "connection",
-    "discovery",
-  ]),
+  category: z.enum(["step", "llm", "tool", "error", "connection", "discovery"]),
   startMs: z.number(),
   endMs: z.number(),
   promptIndex: z.number().optional(),

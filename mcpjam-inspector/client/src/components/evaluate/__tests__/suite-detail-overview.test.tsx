@@ -365,7 +365,7 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(onRerun).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
-      { iterationOverride: 5 },
+      { iterationOverride: 5, throwOnFailure: true },
     );
   });
 

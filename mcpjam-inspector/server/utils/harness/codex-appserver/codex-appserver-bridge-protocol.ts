@@ -30,6 +30,25 @@ export const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
   /** Force a fresh thread even when one is parked (the turn's configuration
    *  changed in a way a resumed thread would not pick up). */
   restartThread: z.boolean().optional(),
+  /**
+   * An explicit Codex command-sandbox policy for the turn, sent as
+   * `turn/start.sandboxPolicy` (see `shared/sandbox-policy.ts`).
+   *
+   * Set ONLY by the local unattended arm. It is deliberately not a permission
+   * mode — `HarnessV1PermissionMode` is a closed union — and only the
+   * workspace-write arm is accepted: there is no reason for MCPJam to send a
+   * looser policy, so a message that tries is refused at the schema.
+   */
+  sandboxPolicy: z
+    .object({
+      type: z.literal("workspaceWrite"),
+      writableRoots: z.array(z.string()),
+      networkAccess: z.boolean(),
+      excludeSlashTmp: z.boolean(),
+      excludeTmpdirEnvVar: z.boolean(),
+    })
+    .strict()
+    .optional(),
 });
 export type StartMessage = z.infer<typeof startMessageSchema>;
 

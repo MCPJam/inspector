@@ -3,16 +3,22 @@ vi.mock("../../config.js", () => ({ get HOSTED_MODE() { return deployment.hosted
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { SignJWT, generateKeyPair } from "jose";
 
 const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
+  realVerify:
+    null as unknown as typeof import("../../services/authkit-jwt.js").verifyAuthKitToken,
   query: vi.fn(),
   setAuth: vi.fn(),
 }));
-vi.mock("../../services/authkit-jwt.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../services/authkit-jwt.js")>()),
-  verifyAuthKitToken: mocks.verify,
-}));
+vi.mock("../../services/authkit-jwt.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../services/authkit-jwt.js")
+  >();
+  mocks.realVerify = actual.verifyAuthKitToken;
+  return { ...actual, verifyAuthKitToken: mocks.verify };
+});
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
     setAuth = mocks.setAuth;
@@ -20,7 +26,10 @@ vi.mock("convex/browser", () => ({
   },
 }));
 
-import { AuthKitVerificationError } from "../../services/authkit-jwt.js";
+import {
+  AuthKitVerificationError,
+  type AuthKitVerifyDeps,
+} from "../../services/authkit-jwt.js";
 import { getBackgroundRunBearerForRequest } from "../v1-convex-token.js";
 import {
   RevokedSessionCache,
@@ -31,7 +40,7 @@ const mint = vi.fn();
 let userNumber = 0;
 let subject: string;
 
-async function authorize(seed?: (c: Context) => void) {
+async function authorize(seed?: (c: Context) => void, token = "browser-token") {
   let getBearer: (() => Promise<string>) | undefined;
   let error: unknown;
   const app = new Hono();
@@ -45,7 +54,7 @@ async function authorize(seed?: (c: Context) => void) {
     return c.json({ ok: !error });
   });
   await app.request("/", {
-    headers: { Authorization: "Bearer browser-token" },
+    headers: { Authorization: `Bearer ${token}` },
   });
   return { getBearer, error };
 }
@@ -81,6 +90,41 @@ afterEach(() => {
 });
 
 describe("browser authorization for detached runs", () => {
+  it("accepts a real MCP resource token for a detached run", async () => {
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const issuer = "https://login.mcpjam.com";
+    const clientId = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
+    const resource = "https://mcp.mcpjam.com/mcp";
+    const token = await new SignJWT({ sid: "session-mcp-run", org_id: "org_1" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setIssuer(issuer)
+      .setSubject(subject)
+      .setAudience(resource)
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const verifyDeps: AuthKitVerifyDeps = {
+      clientId,
+      resolveKey: (candidate) => (candidate === issuer ? publicKey : null),
+    };
+    mocks.verify.mockImplementation((bearer, _deps, options) =>
+      mocks.realVerify(bearer, verifyDeps, options),
+    );
+
+    const { getBearer, error } = await authorize(undefined, token);
+
+    expect(error).toBeUndefined();
+    expect(getBearer).toBeDefined();
+    expect(mocks.verify).toHaveBeenCalledWith(token, undefined, {
+      allowMcpResourceAudience: true,
+    });
+    expect(mocks.setAuth).toHaveBeenCalledWith(token);
+    expect(mint.mock.calls[0][1].headers).toMatchObject({
+      "x-mcpjam-acting-as": subject,
+      "x-mcpjam-acting-in-org": "project-org",
+    });
+  });
+
   it("uses the verified user and authorized project's organization, then renews without the browser", async () => {
     vi.useFakeTimers();
     const { getBearer, error } = await authorize((c) => {
@@ -88,7 +132,9 @@ describe("browser authorization for detached runs", () => {
       c.set("mcpjamOrganizationId", "untrusted-context-org");
     });
     expect(error).toBeUndefined();
-    expect(mocks.verify).toHaveBeenCalledWith("browser-token");
+    expect(mocks.verify).toHaveBeenCalledWith("browser-token", undefined, {
+      allowMcpResourceAudience: true,
+    });
     expect(mocks.setAuth).toHaveBeenCalledWith("browser-token");
     expect(mint.mock.calls[0][1].headers).toMatchObject({
       "x-mcpjam-acting-as": subject,
