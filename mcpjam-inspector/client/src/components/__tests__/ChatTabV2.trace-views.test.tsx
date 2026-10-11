@@ -349,6 +349,7 @@ describe("ChatTabV2 trace views", () => {
       hasLiveTimelineContent: false,
       traceViewsSupported: false,
       isStreaming: false,
+      autoResumeNotice: null,
     });
   });
 
@@ -368,6 +369,22 @@ describe("ChatTabV2 trace views", () => {
     rerender(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
     expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+  });
+
+  it("shows a withheld auto-resume's notice under the ordinary chat thread", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.autoResumeNotice =
+      "This reply reached its step limit. Send a message to continue.";
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    expect(
+      screen.getByText(
+        "This reply reached its step limit. Send a message to continue.",
+      ),
+    ).toBeInTheDocument();
   });
 
   describe("starter prompt tracking", () => {

@@ -37,16 +37,27 @@ describe("HostRunner stopWhen integration", () => {
                 input: JSON.stringify({ a: 2, b: 3 }),
               },
             ],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            finishReason: { unified: "tool-calls" as const, raw: "tool_use" },
+            usage: {
+              inputTokens: {
+                total: 5,
+                noCache: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 3, text: 3, reasoning: 0 },
+            },
             warnings: [],
           };
         }
 
         return {
           content: [{ type: "text" as const, text: "The result is 5" }],
-          finishReason: "stop",
-          usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+          finishReason: { unified: "stop" as const, raw: "end_turn" },
+          usage: {
+            inputTokens: { total: 4, noCache: 4, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 2, text: 2, reasoning: 0 },
+          },
           warnings: [],
         };
       },
