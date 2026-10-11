@@ -23,16 +23,24 @@ vi.mock("@/lib/sentry", () => ({ syncSentryReplay }));
 
 import {
   MASKED_TO_FULL_SETTLE_MS,
-  PRIVACY_PENDING_TIMEOUT_MS,
   useSessionPrivacy,
 } from "../useSessionPrivacy";
 
 const posthogClient = { startSessionRecording: vi.fn() };
 
-function render(initial: SessionPrivacy) {
+function render(initial: SessionPrivacy, contextReady = true) {
   return renderHook(
-    ({ level }: { level: SessionPrivacy }) => useSessionPrivacy(level),
-    { initialProps: { level: initial } },
+    ({
+      level,
+      contextReady: ready = true,
+      scope = "user_A\norg_1",
+    }: {
+      level: SessionPrivacy;
+      contextReady?: boolean;
+      scope?: string | null;
+    }) =>
+      useSessionPrivacy(level, { contextReady: ready, permissionKey: scope }),
+    { initialProps: { level: initial, contextReady } },
   );
 }
 
@@ -69,27 +77,23 @@ describe("useSessionPrivacy", () => {
     );
   });
 
-  it("holds the recorders while pending, and fails closed to masked", () => {
+  it("holds the recorders while the first answer is pending, however long", () => {
+    // Only an answer can say an organization has replay off, so no timeout
+    // ever starts a replay on its own.
     render("pending");
-    expect(applied()).toEqual(["pending"]);
-
     act(() => {
-      vi.advanceTimersByTime(PRIVACY_PENDING_TIMEOUT_MS - 1);
+      vi.advanceTimersByTime(60 * 60 * 1000);
     });
-    expect(applied()).toEqual(["pending"]);
 
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(applied()).toEqual(["pending", "masked"]);
+    expect(applied()).toEqual(["pending"]);
   });
 
-  it("an answer that arrives in time is applied as is", () => {
+  it("applies the first answer as is, whenever it arrives", () => {
     const { rerender } = render("pending");
-    rerender({ level: "full" });
     act(() => {
-      vi.advanceTimersByTime(PRIVACY_PENDING_TIMEOUT_MS);
+      vi.advanceTimersByTime(60_000);
     });
+    rerender({ level: "full" });
 
     expect(applied()).toEqual(["pending", "full"]);
   });
@@ -114,6 +118,19 @@ describe("useSessionPrivacy", () => {
     expect(applied()).toEqual(["masked", "full"]);
   });
 
+  it("off → full waits out the settle period too, recording nothing meanwhile", () => {
+    // Leaving an organization with replay off: its content can still be on
+    // screen while the next one loads.
+    const { rerender } = render("off");
+    rerender({ level: "pending" });
+    rerender({ level: "full" });
+    expect(applied()).toEqual(["off", "pending"]);
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
+    });
+    expect(applied()).toEqual(["off", "pending", "full"]);
+  });
+
   it("going back to masked inside the settle period cancels the switch", () => {
     const { rerender } = render("masked");
     rerender({ level: "full" });
@@ -125,17 +142,70 @@ describe("useSessionPrivacy", () => {
     expect(applied()).not.toContain("full");
   });
 
-  it("masked → pending → full still waits out the settle period", () => {
+  it("masked → pending → full stays masked through pending and still waits out the settle period", () => {
     const { rerender } = render("masked");
     rerender({ level: "pending" });
-    expect(applied()).toEqual(["masked", "pending"]);
+    // A navigation whose destination has not answered: masked, not stopped.
+    expect(applied()).toEqual(["masked"]);
 
     rerender({ level: "full" });
-    expect(applied()).toEqual(["masked", "pending"]);
+    expect(applied()).toEqual(["masked"]);
     act(() => {
       vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
     });
-    expect(applied()).toEqual(["masked", "pending", "full"]);
+    expect(applied()).toEqual(["masked", "full"]);
+  });
+
+  it("full → pending (a navigation) goes masked in the same commit", () => {
+    const { rerender } = render("full");
+    rerender({ level: "pending" });
+    expect(applied()).toEqual(["full", "masked"]);
+  });
+
+  it("pending after a membership reload or sign-in change stops, not masks", () => {
+    // The earlier answer was for other memberships: joining an organization
+    // with replay off must not inherit its permission to record.
+    const { rerender } = render("full");
+    rerender({ level: "pending", scope: "user_A\norg_1,org_off" });
+    expect(applied()).toEqual(["full", "pending"]);
+
+    rerender({ level: "pending", scope: "user_B\norg_1" });
+    expect(applied().at(-1)).toBe("pending");
+  });
+
+  it("an answer under the new scope grants the shortcut again", () => {
+    const { rerender } = render("full");
+    rerender({ level: "pending", scope: "user_A\norg_2" });
+    rerender({ level: "masked", scope: "user_A\norg_2" });
+    rerender({ level: "pending", scope: "user_A\norg_2" });
+    expect(applied()).toEqual(["full", "pending", "masked"]);
+  });
+
+  it("holds full back until the destination has finished loading, then settles", () => {
+    const { rerender } = render("masked");
+    rerender({ level: "full", contextReady: false });
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS * 3);
+    });
+    expect(applied()).toEqual(["masked"]);
+
+    rerender({ level: "full", contextReady: true });
+    expect(applied()).toEqual(["masked"]);
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
+    });
+    expect(applied()).toEqual(["masked", "full"]);
+  });
+
+  it("drops back to masked at once when the destination starts loading again", () => {
+    const { rerender } = render("full");
+    rerender({ level: "full", contextReady: false });
+    expect(applied()).toEqual(["full", "masked"]);
+  });
+
+  it("at startup, a full answer whose context is still loading records masked", () => {
+    render("full", false);
+    expect(applied()).toEqual(["masked"]);
   });
 
   it("still applies the Sentry half when PostHog is unavailable", () => {

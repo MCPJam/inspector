@@ -5,6 +5,8 @@ import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { getLastFailedRequest } from "./failed-request-tracker";
+import { scrubSensitiveUrl } from "../../../shared/credential-url";
+import { stampPostHogEvent } from "./telemetry-context";
 import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
@@ -89,36 +91,6 @@ const SERVER_EVALUATED_FLAG_OPTIONS = {
   advanced_disable_feature_flags: true,
   advanced_disable_feature_flags_on_first_load: true,
 } as const;
-
-/**
- * A score result link is a bearer credential — the token in `/results/<token>`
- * is the only thing standing between a private run and anyone who has the URL.
- * Autocapture attaches `$current_url` to every captured event, so a single
- * click on that page would ship the credential to analytics, where it lands in
- * logs and exports that no one thinks of as secret-bearing. Replace the token
- * with a placeholder before anything leaves the browser; the path itself is
- * still useful, and the token never was.
- */
-// Every path whose LAST segment is a bearer credential. Autocapture attaches
-// `$current_url` to each event, so a share viewer's address bar would ship the
-// redeem token to PostHog on every click if these were not redacted.
-const CREDENTIAL_PATH_PREFIXES = [
-  "/results/",
-  "/conformance/shared/",
-  "/evals/shared/",
-];
-
-export function scrubSensitiveUrl(value: string): string {
-  let out = value;
-  for (const prefix of CREDENTIAL_PATH_PREFIXES) {
-    const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
-    out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
-  }
-  // Organization ids are internal identifiers and organization routes are
-  // captured automatically by PostHog on otherwise privacy-safe events.
-  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
-  return out;
-}
 
 // What browsers say when a request never got a response. Matched exactly so
 // our own errors like "Failed to fetch tools" don't get tagged.
@@ -252,6 +224,9 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
+// The credential-URL sanitizer lives in shared/ so the relay can use it too.
+export { scrubSensitiveUrl };
+
 // The recording policy — surfaces, privacy levels, replay profiles — lives in
 // lib/session-privacy.ts. Re-exported here for the modules that have always
 // imported these from this file.
@@ -284,7 +259,10 @@ export const options = {
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
-  before_send: dropInjectedScriptException,
+  // In order: drop browser-injected crashes, then stamp what survives with
+  // the context it was captured under (lib/telemetry-context.ts), which the
+  // relay checks against the backend before forwarding.
+  before_send: [dropInjectedScriptException, stampPostHogEvent],
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe

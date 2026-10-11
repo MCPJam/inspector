@@ -2,6 +2,10 @@ import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEnsureDbUser } from "../useEnsureDbUser";
+import {
+  setTelemetryActor,
+  setTelemetryIdentity,
+} from "@/lib/telemetry-context";
 
 const mockState = vi.hoisted(() => ({
   actorKey: "guest-1" as string | null,
@@ -62,7 +66,17 @@ vi.mock("@sentry/react", () => ({
   setTag: mockState.sentrySetTag,
 }));
 
+/** The backend has cleared this actor to be named (lib/telemetry-context). */
+function grantNames(actorId: string) {
+  setTelemetryActor(actorId);
+  setTelemetryIdentity(actorId, "full");
+}
+
 describe("useEnsureDbUser", () => {
+  afterEach(() => {
+    setTelemetryActor(null);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.ensureUser.mockResolvedValue(undefined);
@@ -157,7 +171,7 @@ describe("useEnsureDbUser", () => {
     });
   });
 
-  it("identifies a signed-in user by WorkOS id only, never by email or name", async () => {
+  it("identifies a signed-in user by id alone until the backend clears them", async () => {
     mockState.auth.user = {
       id: "workos-user-1",
       email: "someone@example.com",
@@ -172,13 +186,77 @@ describe("useEnsureDbUser", () => {
         id: "workos-user-1",
       });
     });
+    expect(mockState.sentrySetUser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ email: "someone@example.com" })
+    );
+  });
+
+  it("identifies a signed-in user by email so Sentry issues name a person", async () => {
+    grantNames("workos-user-1");
+    mockState.auth.user = {
+      id: "workos-user-1",
+      email: "someone@example.com",
+      firstName: "Some",
+      lastName: "One",
+    };
+    mockState.actorKey = "workos-user-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
+        id: "workos-user-1",
+        email: "someone@example.com",
+        username: "someone@example.com",
+        name: "Some One",
+      });
+    });
     expect(mockState.sentrySetTag).toHaveBeenCalledWith(
       "actor_kind",
       "signedIn"
     );
-    expect(mockState.sentrySetUser).not.toHaveBeenCalledWith(
-      expect.objectContaining({ email: "someone@example.com" })
-    );
+  });
+
+  it.each([
+    ["only a first name", { firstName: "Some", lastName: null }, "Some"],
+    ["only a last name", { firstName: null, lastName: "One" }, "One"],
+    ["a whitespace-only half", { firstName: "Some", lastName: "  " }, "Some"],
+  ])("builds the display name from %s", async (_label, names, expected) => {
+    grantNames("workos-user-1");
+    mockState.auth.user = { id: "workos-user-1", ...names };
+    mockState.actorKey = "workos-user-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
+        expect.objectContaining({ name: expected })
+      );
+    });
+  });
+
+  it.each([
+    ["both halves are null", { firstName: null, lastName: null }],
+    ["both halves are empty", { firstName: "", lastName: "" }],
+    ["AuthKit supplies neither", {}],
+  ])("omits the name key entirely when %s", async (_label, names) => {
+    // Omitted rather than empty: Sentry renders a user block from whatever
+    // keys are present, and `name: ""` shows as a blank line where the email
+    // would otherwise be.
+    grantNames("workos-user-1");
+    mockState.auth.user = {
+      id: "workos-user-1",
+      email: "someone@example.com",
+      ...names,
+    };
+    mockState.actorKey = "workos-user-1";
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
+        id: "workos-user-1",
+        email: "someone@example.com",
+        username: "someone@example.com",
+      });
+    });
   });
 
   it("identifies the actor before ensureUser resolves", async () => {
@@ -186,15 +264,16 @@ describe("useEnsureDbUser", () => {
     // ensureUser round-trip, so anything that crashed during boot — or on a
     // session whose ensureUser never succeeded — reported anonymously.
     mockState.ensureUser.mockImplementation(() => new Promise<void>(() => {}));
+    grantNames("workos-user-1");
     mockState.auth.user = { id: "workos-user-1", email: "someone@example.com" };
     mockState.actorKey = "workos-user-1";
 
     renderHook(() => useEnsureDbUser());
 
     await waitFor(() => {
-      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
-        id: "workos-user-1",
-      });
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(
+        expect.objectContaining({ email: "someone@example.com" })
+      );
     });
     expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
   });
