@@ -590,6 +590,12 @@ export function SwarmsTab({
         environmentIds?: string[];
         /** Iterations for THIS run; leaves the journey's own config alone. */
         sessionsPerTarget?: number;
+        /**
+         * Sponsored conversations the person was shown for THIS run. Not cached
+         * with the launch key: a replay returns the run the backend already
+         * created and never re-checks it.
+         */
+        expectedSponsored?: number;
       },
     ): Promise<
       | { status: "launched"; runId?: string; swarmRunGroupId?: string }
@@ -626,6 +632,9 @@ export function SwarmsTab({
             : {}),
           ...(opts?.sessionsPerTarget !== undefined
             ? { sessionsPerTarget: opts.sessionsPerTarget }
+            : {}),
+          ...(opts?.expectedSponsored !== undefined
+            ? { expectedSponsored: opts.expectedSponsored }
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx

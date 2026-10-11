@@ -19,7 +19,11 @@
  *     and call caps, spend, its own failures) with
  *     {@link HARNESS_PROXY_REFUSAL_STATUS}; a lease budget is a turn budget, so
  *     it counts like a turn timeout. Its transient in-flight cap keeps a 429,
- *     which is our own throttle and may classify as `rate_limited`.
+ *     which is our own throttle and may classify as `rate_limited`. A refusal
+ *     REASON a producer read off the proxy (or the lease start) classifies by
+ *     the shared vocabulary (`@/shared/harness-proxy-refusal-reasons`): an
+ *     organization's key or policy failing is `configuration` or `auth`, kept
+ *     apart from a provider outage.
  *
  * A turn timeout never reaches this: the runner records it as measured first.
  */
@@ -28,15 +32,15 @@ import type {
   EvalInfraErrorClass,
   EvalInfraErrorLayer,
 } from "@/shared/eval-infra-error";
+import {
+  HARNESS_PROXY_REFUSAL_REASONS,
+  HARNESS_PROXY_REFUSAL_STATUS,
+  isHarnessProxyRefusalReason,
+  type HarnessProxyRefusalReason,
+} from "@/shared/harness-proxy-refusal-reasons";
 import { accountLimitCode } from "@/shared/swarm-attempt-error";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { classifyRetry } from "../../utils/run-supervisor/retry.js";
-
-/**
- * The status the backend's harness model proxy answers ITS OWN refusals with
- * (`HARNESS_PROXY_REFUSAL_STATUS` in `convex/http.ts`): never a provider's.
- */
-export const HARNESS_PROXY_REFUSAL_STATUS = 409;
 
 type Row = {
   class: EvalInfraErrorClass;
@@ -180,12 +184,58 @@ const CODEX_CONNECTION_CODES = new Set([
   "codex_responseTooManyFailedAttempts",
 ]);
 
+/**
+ * Each refusal of the harness model proxy as the classifier reads it. The
+ * organization's own key failing is the model credential's layer, its policy
+ * the platform's; `null` — spend, lease caps, a transport limit — is not an
+ * infrastructure failure, so the trial keeps counting. Exhaustive over the
+ * shared vocabulary: a reason the backend adds is classified here first.
+ */
+const PROXY_REFUSAL_ROWS: Record<
+  HarnessProxyRefusalReason,
+  Omit<Row, "retryable"> | null
+> = {
+  spend_budget_reached: null,
+  spending_limit_reached: null,
+  spend_admission: null,
+  pricing_unavailable: null,
+  gateway_not_configured: null,
+  lease_budget_exhausted: null,
+  lease_max_calls: null,
+  lease_daily_harness_spend: null,
+  lease_daily_harness_calls: null,
+  no_billable_usage: null,
+  proxy_error: null,
+  org_keys_required: { class: "configuration", layer: "platform" },
+  ai_key_policy_unavailable: { class: "configuration", layer: "platform" },
+  byok_credential_rejected: { class: "auth", layer: MODEL },
+  byok_credential_unavailable: { class: "configuration", layer: MODEL },
+  byok_connection_changed: { class: "configuration", layer: MODEL },
+  transport_request_too_large: null,
+  transport_response_too_large: null,
+  upstream_timeout: { class: "provider_unavailable", layer: MODEL },
+  upstream_interrupted: { class: "provider_unavailable", layer: MODEL },
+  upstream_unreachable: { class: "provider_unavailable", layer: MODEL },
+  upstream_redirect: { class: "configuration", layer: MODEL },
+};
+
+function classifyProxyRefusal(code: string | undefined): Row | undefined {
+  if (!isHarnessProxyRefusalReason(code)) return undefined;
+  const row = PROXY_REFUSAL_ROWS[code];
+  if (!row) return undefined;
+  // The proxy's own `x-should-retry` for the reason: a timed-out or
+  // interrupted call may have run on the provider, so it is never re-sent.
+  return { ...row, retryable: HARNESS_PROXY_REFUSAL_REASONS[code].retry };
+}
+
 function classifyHarnessRuntime(
   code: string | undefined,
   status: number | undefined,
 ): Row | undefined {
-  // The model proxy's own refusal: a lease cap or a proxy failure.
-  if (status === HARNESS_PROXY_REFUSAL_STATUS || !code) return undefined;
+  // The model proxy's own refusal: classified only by its stamped reason.
+  if (status === HARNESS_PROXY_REFUSAL_STATUS)
+    return classifyProxyRefusal(code);
+  if (!code) return undefined;
   const row = HARNESS_CODE_TABLE[code];
   if (row) return row;
   if (!CODEX_CONNECTION_CODES.has(code)) return undefined;
@@ -228,6 +278,14 @@ function classifySetup(
   code: string | undefined,
   status: number | undefined,
 ): Row | undefined {
+  // A lease start refuses an org selection with the proxy's own vocabulary
+  // (the org requires its own keys, its key could not be opened or was
+  // replaced) — or names a provider that cannot serve the harness.
+  const refusal = classifyProxyRefusal(code);
+  if (refusal) return refusal;
+  if (code === "provider_mismatch") {
+    return { class: "configuration", layer: "platform", retryable: false };
+  }
   if (code && CAPACITY_CODES.has(code)) {
     return { class: "capacity", layer, retryable: true };
   }

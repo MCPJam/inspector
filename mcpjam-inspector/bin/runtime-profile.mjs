@@ -36,7 +36,7 @@ import { dirname, join, resolve } from "node:path";
 export const RESOLVED_RUNTIME_MARKER = "MCPJAM_RESOLVED_RUNTIME";
 
 /** Public, non-secret identifiers. Client ids are not credentials. */
-export const STAGING_WORKOS_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
+export const STAGING_WORKOS_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
 export const STAGING_HOSTED_ORIGIN = "https://staging.mcpjam.com";
 const KNOWN_AUTHKIT_DOMAINS = {
   client_01K4C1TVPBE7JTBFQJF9SDW9P9: "login.mcpjam.com",

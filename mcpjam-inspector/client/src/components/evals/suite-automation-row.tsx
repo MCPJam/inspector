@@ -37,7 +37,7 @@ import {
   ScheduleEditor,
   type SuiteSchedule,
 } from "./schedule-editor";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRun, EvalSuiteRunListItem } from "./types";
 
 /** How many past scheduled runs the row shows as result dots. */
 const RECENT_SCHEDULED_RUNS = 5;
@@ -109,7 +109,7 @@ export function SuiteAutomationRow({
   /** Epoch ms of the next due firing, from the suite document. */
   scheduleNextDueAt?: number;
   /** The suite's runs; this row reads only the scheduled ones. */
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   /** Display names, already loaded by the suite page. */
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -197,9 +197,7 @@ export function SuiteAutomationRow({
             ) : null}
           </div>
           {chip.detail ? (
-            <p className="text-[11px] text-warning">
-              {chip.detail}
-            </p>
+            <p className="text-[11px] text-warning">{chip.detail}</p>
           ) : null}
           <p className="text-[11px] text-muted-foreground/60">
             Next run: {enabled ? formatNextDue(scheduleNextDueAt) : "—"}
@@ -316,8 +314,8 @@ export function SuiteAutomationRow({
             <DialogHeader>
               <DialogTitle>Schedule</DialogTitle>
               <DialogDescription>
-                Saves immediately — this editor writes as you change it, with its
-                own validation.
+                Saves immediately — this editor writes as you change it, with
+                its own validation.
               </DialogDescription>
             </DialogHeader>
             <ScheduleEditor

@@ -364,6 +364,8 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     return null;
   }
   if (!isLaunchIdentity(value.launch)) return null;
+  const reusedIds = value.reusedIds;
+  const proposed = value.proposed;
 
   return {
     step: step as NewSwarmFlowStep,
@@ -383,7 +385,20 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     generatingSince: value.generatingSince,
     attachingFile:
       typeof value.attachingFile === "string" ? value.attachingFile : null,
-    launch: value.launch,
+    launch: {
+      ...value.launch,
+      targets: value.launch.targets?.map((target) => {
+        if (target.iterationsKey !== undefined) return target;
+        if (reusedIds.includes(target.personaId))
+          return { ...target, iterationsKey: target.personaId };
+        const matches = proposed.filter((persona) =>
+          persona.name === target.personaName && persona.role === target.personaRole,
+        );
+        return matches.length === 1
+          ? { ...target, iterationsKey: matches[0]!.key }
+          : target;
+      }) ?? null,
+    },
   };
 }
 

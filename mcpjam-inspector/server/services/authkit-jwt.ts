@@ -29,11 +29,11 @@ import { resolveWorkosApiBaseUrl } from "./workos-api-base.js";
 
 // Mirrors mcpjam-backend/convex/lib/authkit.ts.
 const PRODUCTION_WORKOS_CLIENT_ID = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
-const STAGING_WORKOS_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
-const DEVELOPMENT_WORKOS_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
+const LEGACY_STAGING_WORKOS_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
+const STAGING_WORKOS_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
 const PRODUCTION_AUTHKIT_DOMAIN = "login.mcpjam.com";
-const STAGING_AUTHKIT_DOMAIN = "dynamic-echo-14-staging.authkit.app";
-const DEVELOPMENT_AUTHKIT_DOMAIN = "deep-vanilla-68-test.authkit.app";
+const LEGACY_STAGING_AUTHKIT_DOMAIN = "dynamic-echo-14-staging.authkit.app";
+const STAGING_AUTHKIT_DOMAIN = "deep-vanilla-68-test.authkit.app";
 const PRODUCTION_MCP_RESOURCE = "https://mcp.mcpjam.com/mcp";
 const STAGING_MCP_RESOURCE = "https://mcp-staging.mcpjam.com/mcp";
 const DEVELOPMENT_MCP_RESOURCE = "http://localhost:8787/mcp";
@@ -71,26 +71,27 @@ function deriveAuthkitDomain(clientId: string): string | undefined {
   switch (clientId) {
     case PRODUCTION_WORKOS_CLIENT_ID:
       return PRODUCTION_AUTHKIT_DOMAIN;
+    case LEGACY_STAGING_WORKOS_CLIENT_ID:
+      return LEGACY_STAGING_AUTHKIT_DOMAIN;
     case STAGING_WORKOS_CLIENT_ID:
       return STAGING_AUTHKIT_DOMAIN;
-    case DEVELOPMENT_WORKOS_CLIENT_ID:
-      return DEVELOPMENT_AUTHKIT_DOMAIN;
     default:
       return undefined;
   }
 }
 
-/** The exact MCP OAuth resource registered for each AuthKit client. */
+/** The exact MCP OAuth resources registered for each AuthKit client. */
 export function resolveMcpResourceIndicator(
   clientId: string,
-): string | undefined {
+): readonly string[] | undefined {
   switch (clientId) {
     case PRODUCTION_WORKOS_CLIENT_ID:
-      return PRODUCTION_MCP_RESOURCE;
+      return [PRODUCTION_MCP_RESOURCE];
+    case LEGACY_STAGING_WORKOS_CLIENT_ID:
+      return [STAGING_MCP_RESOURCE];
     case STAGING_WORKOS_CLIENT_ID:
-      return STAGING_MCP_RESOURCE;
-    case DEVELOPMENT_WORKOS_CLIENT_ID:
-      return DEVELOPMENT_MCP_RESOURCE;
+      // Deep-vanilla is shared by staging and the local development worker.
+      return [DEVELOPMENT_MCP_RESOURCE, STAGING_MCP_RESOURCE];
     default:
       return undefined;
   }
@@ -241,7 +242,9 @@ export async function verifyAuthKitToken(
     unverifiedIssuer === resolveAuthkitIssuer(deps.clientId)
       ? resolveMcpResourceIndicator(deps.clientId)
       : undefined;
-  const audiences = mcpResource ? [deps.clientId, mcpResource] : deps.clientId;
+  const audiences = mcpResource
+    ? [deps.clientId, ...mcpResource]
+    : deps.clientId;
 
   let payload;
   try {
