@@ -56,6 +56,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -102,6 +103,10 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
   createInspectorCommandClientError,
@@ -419,6 +424,10 @@ interface TestTemplateEditorProps {
   >;
   /** Shared quota, sandbox, or launch-in-progress block from the suite view. */
   evalRunsDisabledReason?: string | null;
+  /** The org's out-of-credits wording, with its reset time, from the suite view. */
+  outOfCreditsReason?: string | null;
+  /** Why the saved case's own run is off for credits; see `TestCasesOverview`. */
+  runTestCaseOutOfCreditsReason?: (testCase: EvalCase) => string | null;
   /**
    * Launch a run of THIS case only, as a suite run.
    *
@@ -1039,6 +1048,8 @@ export function TestTemplateEditor({
   onRunCase,
   launchReview,
   evalRunsDisabledReason: evalRunsDisabledReasonProp,
+  outOfCreditsReason = null,
+  runTestCaseOutOfCreditsReason,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -2305,6 +2316,24 @@ export function TestTemplateEditor({
     return { promptChars, stepCount: Math.max(1, stepCount) };
   }, [editForm?.steps]);
 
+  // Out of credits, a run of only locked MCPJam models could only be refused.
+  // Quick Run asks about the models it will run; a Retry about its own model;
+  // Run test about the saved case it launches (unsaved edits, which it saves
+  // first, are not judged here).
+  const creditsReason = outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON;
+  const runOutOfCredits = allModelsOutOfCredits(
+    draftRunEstimateModels,
+    availableModels,
+  );
+  const retryOutOfCreditsReason = (modelValue: string) =>
+    allModelsOutOfCredits([parseModelValue(modelValue)], availableModels)
+      ? creditsReason
+      : null;
+  const runTestOutOfCreditsReason =
+    currentTestCase && !hasUnsavedChanges
+      ? (runTestCaseOutOfCreditsReason?.(currentTestCase) ?? null)
+      : null;
+
   const runPrimaryDisabled =
     isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
@@ -2312,6 +2341,7 @@ export function TestTemplateEditor({
     // Run for it with an explanatory tooltip instead of letting it fail.
     casePinnedOnly ||
     selectedModelValues.length === 0 ||
+    runOutOfCredits ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid ||
@@ -2330,6 +2360,9 @@ export function TestTemplateEditor({
     }
     if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
+    }
+    if (runOutOfCredits) {
+      return creditsReason;
     }
     if (!canRun) {
       return "Configure suite servers before running.";
@@ -2367,6 +2400,8 @@ export function TestTemplateEditor({
     ensureServersReady,
     isDraft,
     simpleToolsBlock,
+    runOutOfCredits,
+    creditsReason,
   ]);
 
   // Bulk replace of all steps — the flat StepListEditor edits the `TestStep[]`
@@ -5122,21 +5157,27 @@ export function TestTemplateEditor({
                       runControl={
                         onRunCase ? (
                           <div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8"
-                              data-testid="case-run-test"
-                              disabled={
-                                isDraft ||
-                                runTestPending ||
-                                Boolean(simpleToolsBlock)
-                              }
-                              onClick={() => void runTest()}
+                            <DisabledReasonTooltip
+                              reason={runTestOutOfCreditsReason}
+                              variant="muted"
                             >
-                              <Play className="size-3.5 fill-current" />
-                              Run test
-                            </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8"
+                                data-testid="case-run-test"
+                                disabled={
+                                  isDraft ||
+                                  runTestPending ||
+                                  Boolean(simpleToolsBlock) ||
+                                  runTestOutOfCreditsReason !== null
+                                }
+                                onClick={() => void runTest()}
+                              >
+                                <Play className="size-3.5 fill-current" />
+                                Run test
+                              </Button>
+                            </DisabledReasonTooltip>
                           </div>
                         ) : null
                       }
@@ -5401,6 +5442,9 @@ export function TestTemplateEditor({
                       <RunColumn
                         record={workspaceLiveRecord}
                         testCase={currentTestCase}
+                        retryDisabledReason={retryOutOfCreditsReason(
+                          workspaceLiveRecord.modelValue,
+                        )}
                         authoredSteps={editForm?.steps ?? currentSteps}
                         trialChainSlot={trialChainSlotFor(
                           workspaceLiveRecord.iteration ?? null,
@@ -5772,6 +5816,9 @@ export function TestTemplateEditor({
                         <RunColumn
                           record={previewRecord}
                           testCase={currentTestCase}
+                          retryDisabledReason={retryOutOfCreditsReason(
+                            previewRecord.modelValue,
+                          )}
                           authoredSteps={editForm?.steps ?? currentSteps}
                           trialChainSlot={trialChainSlotFor(
                             previewRecord.iteration ?? null,
@@ -6029,6 +6076,9 @@ export function TestTemplateEditor({
                       <RunColumn
                         record={record}
                         testCase={currentTestCase}
+                        retryDisabledReason={retryOutOfCreditsReason(
+                          record.modelValue,
+                        )}
                         authoredSteps={editForm?.steps ?? currentSteps}
                         serverNames={connectedServerList}
                         projectId={projectId}
@@ -6110,6 +6160,7 @@ function RunColumn({
   activeTab,
   onTabChange,
   onRetry,
+  retryDisabledReason = null,
   baselineHostStyle,
   syncedStepId,
   onSyncStep,
@@ -6136,6 +6187,8 @@ function RunColumn({
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
+  /** Why Retry is off: its model is out of credits. */
+  retryDisabledReason?: string | null;
   /** Left↔right Steps sync (shared with the editor's step list). */
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
@@ -6649,29 +6702,35 @@ function RunColumn({
           actionsSlot={
             <>
               {/* Continue in Chat is temporarily hidden while guest playground testing is in progress. */}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 shrink-0 px-2 text-[11px]"
-                onClick={onRetry}
-                disabled={
-                  record.status === "running" &&
-                  record.iteration == null &&
-                  !hasStreamingTrace
-                }
+              <DisabledReasonTooltip
+                reason={retryDisabledReason}
+                variant="muted"
               >
-                <RotateCw
-                  className={cn(
-                    "mr-1 h-3 w-3",
-                    record.status === "running" &&
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  onClick={onRetry}
+                  disabled={
+                    retryDisabledReason !== null ||
+                    (record.status === "running" &&
                       record.iteration == null &&
-                      !hasStreamingTrace &&
-                      "animate-spin",
-                  )}
-                />
-                Retry
-              </Button>
+                      !hasStreamingTrace)
+                  }
+                >
+                  <RotateCw
+                    className={cn(
+                      "mr-1 h-3 w-3",
+                      record.status === "running" &&
+                        record.iteration == null &&
+                        !hasStreamingTrace &&
+                        "animate-spin",
+                    )}
+                  />
+                  Retry
+                </Button>
+              </DisabledReasonTooltip>
             </>
           }
         />

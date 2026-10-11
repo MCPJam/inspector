@@ -1,5 +1,6 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
 import { AccessRequired } from "./components/AccessRequired";
@@ -451,16 +452,18 @@ if (isInIframe) {
       }}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
-        <GuestTabTransitionListener />
-        <SignOutBoundary>
-          <AuthRecoveryBoundary>
-            <AuthBootstrap>
-              <AppRouterProvider />
-            </AuthBootstrap>
-          </AuthRecoveryBoundary>
-        </SignOutBoundary>
-      </ConvexProviderWithAuth>
+      <HostedAuthEntry>
+        <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
+          <GuestTabTransitionListener />
+          <SignOutBoundary>
+            <AuthRecoveryBoundary>
+              <AuthBootstrap>
+                <AppRouterProvider />
+              </AuthBootstrap>
+            </AuthRecoveryBoundary>
+          </SignOutBoundary>
+        </ConvexProviderWithAuth>
+      </HostedAuthEntry>
     </AuthKitProvider>
   );
 
