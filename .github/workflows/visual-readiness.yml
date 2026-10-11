@@ -81,6 +81,20 @@ jobs:
           test -n "$CHROMATIC_PROJECT_TOKEN" || { echo 'Missing CHROMATIC_PROJECT_TOKEN'; exit 1; }
           test "$(git rev-parse HEAD)" = "$CHROMATIC_SHA"
           npm run visual:app:upload -- --branch-name "$CHROMATIC_BRANCH" --repository-slug "$CHROMATIC_SLUG"
+      - name: Verify staging login and refresh
+        if: >-
+          steps.eligibility.outputs.run == 'true' &&
+          github.actor != 'dependabot[bot]' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.user.login != 'dependabot[bot]'))
+        working-directory: mcpjam-inspector
+        env:
+          VISUAL_TEST_EMAIL: ${{ secrets.VISUAL_TEST_EMAIL }}
+          VISUAL_TEST_PASSWORD: ${{ secrets.VISUAL_TEST_PASSWORD }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: npx playwright test --config playwright.visual-auth.config.ts
       - name: Summarize coverage
         if: always()
         env:
@@ -90,7 +104,7 @@ jobs:
           {
             echo '### Visual pipeline'
             echo "Pipeline result: $RESULT. Capture eligible: $ELIGIBLE."
-            echo 'Expected coverage: 26 application snapshots (13 screens, two themes).'
+            echo 'Expected coverage: 26 application snapshots (13 screens, two themes) plus staging login/refresh.'
             echo 'Chromatic UI Tests owns visual-diff review; this job owns pipeline health.'
             echo 'Snapshots use the PR application build with synthetic guest and signed-in hosted data.'
           } >> "$GITHUB_STEP_SUMMARY"
