@@ -94,6 +94,25 @@ No scratch files in the repo: no `NOTES-*.md`, no `.spike-*` folders, no new
 root files. Keep working notes in your scratch directory and put the
 conclusions in the PR description.
 
+## Commands
+
+Node 24.14.0 (`mcpjam-inspector/.nvmrc`). Run everything from the repo root.
+
+```
+npm install --legacy-peer-deps
+npm run dev -w @mcpjam/inspector                       # open the printed access link
+npm run test -w @mcpjam/inspector -- <path>            # targeted Vitest run
+npm run typecheck && npm run typecheck:client -w @mcpjam/inspector
+```
+
+The repo is not Prettier-clean: format only the lines you change, never whole
+files or the tree.
+
+Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
+`run-inspector`, `ui-change`, `ui-copy`, `server-change`, `fix-ci`,
+`investigate-production`. `REVIEW.md` lists
+what reviewers check.
+
 ## Design
 
 **Read [`DESIGN.md`](./DESIGN.md) before any UI or styling work.** It describes the

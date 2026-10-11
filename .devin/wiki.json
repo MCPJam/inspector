@@ -1,0 +1,92 @@
+{
+  "repo_notes": [
+    {
+      "content": "MCPJam/inspector is an npm workspaces monorepo for testing and debugging MCP servers. Most product work happens in mcpjam-inspector/ (React client in client/, Hono server in server/, code shared by both in shared/, Electron shell in src/). Prioritize mcpjam-inspector/, sdk/, cli/ and design-system/ over the internal apps (soundcheck/, slack-app/, discord-app/, surface-core/). Ignore the untracked HTML, Markdown and spreadsheet files at the repo root; they are not part of the product.",
+      "author": "MCPJam"
+    },
+    {
+      "content": "design-system/src/tokens.css is the single source of truth for colors. DESIGN.md's front matter and the token blocks in docs/style.css and chat-ui/src/styles.css are generated from it by npm run design:sync. Document this as a rule, not as an implementation detail.",
+      "author": "MCPJam"
+    },
+    {
+      "content": "Server logging and error reporting is a deliberate design: logger.error goes to Sentry and Axiom, warnings go to Axiom only, and route catch sites call reportRouteFailure (server/utils/route-error-report.ts) with a hop of user_server_hop or mcpjam_internal so a user's broken MCP server does not page MCPJam. See mcpjam-inspector/docs/server-error-reporting.md.",
+      "author": "MCPJam"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "What MCPJam is, the workspaces in the monorepo, how they depend on each other, and which are published to npm versus deployed as services"
+    },
+    {
+      "title": "Development Setup",
+      "purpose": "Node version, install, dev servers and ports, the dev access link, env profiles (.env.local, .env.development), and running tests, typecheck and e2e",
+      "parent": "Overview"
+    },
+    {
+      "title": "Inspector Client",
+      "purpose": "The React client in mcpjam-inspector/client: routing, state and stores, the main tabs (servers, tools, resources, prompts, chat, evals, OAuth debugger, playground) and how it calls the server",
+      "parent": "Overview"
+    },
+    {
+      "title": "Inspector Server",
+      "purpose": "The Hono server in mcpjam-inspector/server: route groups under routes/ (mcp, web, v1, internal), middleware, services, and how it connects to users' MCP servers",
+      "parent": "Overview"
+    },
+    {
+      "title": "Auth and Guest Sessions",
+      "purpose": "WorkOS AuthKit sign-in, guest tokens and the guest authority, API keys, and session revocation in the inspector server",
+      "parent": "Inspector Server"
+    },
+    {
+      "title": "Logging and Error Reporting",
+      "purpose": "The logger, Sentry and Axiom routing, reportRouteFailure and the error-origin capture policy",
+      "parent": "Inspector Server"
+    },
+    {
+      "title": "Browser Sessions and browserd",
+      "purpose": "The browserd daemon in server/services/browserd, why its dist/ bundle is checked in, the bundle freshness check, and how browser panes stream to the client",
+      "parent": "Inspector Server"
+    },
+    {
+      "title": "MCP Apps and Widgets",
+      "purpose": "How MCP Apps and OpenAI Apps widgets render: chat-ui's renderWidget seam, widget-react, sandbox proxies, and the server's widget routes",
+      "parent": "Overview"
+    },
+    {
+      "title": "Evals",
+      "purpose": "The evals system across evaluators/, sdk/, vitest/ and the inspector's evals routes and UI: suites, cases, judges, pass thresholds and CI usage",
+      "parent": "Overview"
+    },
+    {
+      "title": "SDK",
+      "purpose": "The @mcpjam/sdk package: MCP client manager, server testing and eval APIs, and its runtime bundles",
+      "parent": "Overview"
+    },
+    {
+      "title": "CLI",
+      "purpose": "The @mcpjam/cli package: commands for health checks, OAuth conformance, tool-surface diffing and triage",
+      "parent": "Overview"
+    },
+    {
+      "title": "Design System",
+      "purpose": "design-system/: tokens.css, role colors and their -foreground pairs, the primitive components, the design:sync generation pipeline and the CI checks that guard it",
+      "parent": "Overview"
+    },
+    {
+      "title": "Remote MCP Worker",
+      "purpose": "The mcp/ Cloudflare Worker that exposes MCPJam's platform tools, its dev, staging and per-PR preview deploys",
+      "parent": "Overview"
+    },
+    {
+      "title": "Desktop App",
+      "purpose": "The Electron app in mcpjam-inspector/src, Electron Forge packaging, and the macOS and Windows release workflows",
+      "parent": "Overview"
+    },
+    {
+      "title": "CI and Releases",
+      "purpose": "GitHub Actions workflows (lint, tests and shards, e2e, previews, deploys), changesets and the npm release flow",
+      "parent": "Overview"
+    }
+  ]
+}

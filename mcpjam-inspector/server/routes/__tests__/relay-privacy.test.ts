@@ -795,15 +795,16 @@ describe("relay privacy gate", () => {
     const sent = forwarded().json.batch as Array<{
       properties: { $current_url: string };
     }>;
-    sent.forEach((event, index) => {
+    expect(sent).toHaveLength(CREDENTIAL_PATH_PREFIXES.length);
+    const placeholder = scrubSensitiveUrl("/results/x").slice("/results/".length);
+    sent.forEach((event) => {
       expect(event.properties.$current_url).not.toContain(
         "kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
       );
-      expect(event.properties.$current_url).toContain(
-        scrubSensitiveUrl(`${CREDENTIAL_PATH_PREFIXES[index]}token`).replace(
-          /token$/,
-          "",
-        ),
+      // The secret segment is the shared sanitizer's placeholder. The route
+      // words before it may be name-masked themselves (`/connect/server/`).
+      expect(event.properties.$current_url.endsWith(`/${placeholder}`)).toBe(
+        true,
       );
     });
   });

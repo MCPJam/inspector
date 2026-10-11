@@ -65,9 +65,11 @@ describe("useSessionPrivacy", () => {
     expect(applied()).toEqual(["full"]);
     expect(syncSessionRecording).toHaveBeenCalledWith(
       posthogClient,
-      "/servers",
+      expect.objectContaining({ pathname: "/servers" }),
     );
-    expect(syncSentryReplay).toHaveBeenCalledWith("/servers");
+    expect(syncSentryReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/servers" }),
+    );
     // The recorders read the level, so it must be in place first.
     expect(setSessionPrivacy.mock.invocationCallOrder[0]).toBeLessThan(
       syncSessionRecording.mock.invocationCallOrder[0],
@@ -215,6 +217,8 @@ describe("useSessionPrivacy", () => {
     render("masked");
 
     expect(syncSessionRecording).not.toHaveBeenCalled();
-    expect(syncSentryReplay).toHaveBeenCalledWith("/servers");
+    expect(syncSentryReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/servers" }),
+    );
   });
 });

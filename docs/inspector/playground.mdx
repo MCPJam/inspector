@@ -107,12 +107,16 @@ The picker opens on the tab that matches your currently selected model. When you
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
 
+The **Send** button is disabled with an "Out of MCPJam credits · resets in …" tooltip when the selected model is a locked MCPJam model. Switching to a model from your own providers re-enables Send immediately.
+
 If the out-of-credits dialog appears, the actions available depend on your plan and role:
 
 - **Free plan (owner)** — The dialog shows **Compare plans** (opens your organization's Plans settings) and **Learn more about BYOK** (opens the BYOK and credits explainer under Usage & billing).
 - **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+Dismissing the dialog keeps it closed for subsequent automatic notices until credits come back or a purchase begins. Buttons you press explicitly — such as **View credit options** or the credits button in a chat error — still open it. A "not enough credits" notice (one request too large for your balance) always opens the dialog regardless of whether you previously dismissed it.
 
 ### Frontier models and sign-in
 

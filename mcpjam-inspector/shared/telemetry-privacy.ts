@@ -21,6 +21,7 @@
  */
 
 import { scrubSensitiveUrl } from "./credential-url";
+import { scrubCredentialsInText } from "./credential-urls";
 
 export type TelemetryRecording = "full" | "masked" | "off";
 export type TelemetryIdentity = "full" | "id_only";
@@ -329,10 +330,17 @@ export const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
 
 export const MASKED_ATTRIBUTE_VALUE = "***";
 
+/**
+ * `maskAttributeFn` at `masked`: a kept attribute keeps its value minus any
+ * credential URL (`scrubCredentialsInText`, credential-urls.ts), and `style`
+ * is masked as a style; every other attribute is masked.
+ */
 export function maskReplayAttribute(name: string, value: string): string {
   const key = name.toLowerCase();
   if (!MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return MASKED_ATTRIBUTE_VALUE;
-  return key === "style" ? maskReplayStyle(value) : value;
+  return key === "style"
+    ? maskReplayStyle(value)
+    : scrubCredentialsInText(value);
 }
 
 /** Text masked the way rrweb masks it: every visible character a `*`. */
@@ -636,12 +644,12 @@ function scrubQueryParam(key: string, value: string): string {
  * are dropped (they can hold anything, OAuth responses included). Credential
  * path segments go first, through the credential-URL sanitizer
  * (`scrubSensitiveUrl`), because a share token looks like an id. A value
- * that is not a URL or path is returned unchanged; one that fails to parse
- * becomes the placeholder. Idempotent.
+ * that is not a URL or path loses only its credentials; one that fails to
+ * parse becomes the placeholder. Idempotent.
  */
 export function scrubNamesFromUrl(input: string): string {
   const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(input);
-  if (!isAbsolute && !input.startsWith("/")) return input;
+  if (!isAbsolute && !input.startsWith("/")) return scrubSensitiveUrl(input);
   const value = scrubSensitiveUrl(input);
   try {
     const url = new URL(
