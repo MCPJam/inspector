@@ -32,10 +32,14 @@ import {
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
+import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
+import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
+import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
 import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
 import {
   fundingPreviewRuns,
   fundingSplitOf,
+  launchOutOfCreditsReason,
   withChosenIterations,
 } from "@/components/swarms/swarm-funding-plan";
 import {
@@ -1187,6 +1191,18 @@ export function NewSwarmConfirmStep({
   // wording. Before any goal exists the launch's own check covers this, and a
   // preview that never settles must not be able to stop a first launch.
   const previewSettling = structureLocked && fundingState.status === "loading";
+  // Out of credits, a launch with no sponsored conversation could only be
+  // refused, so Continue says so before the click.
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const sponsorshipAllowance = useSwarmSponsorshipAllowance(
+    outOfCreditsReason !== null,
+  );
+  const launchBlockedReason = launchOutOfCreditsReason({
+    outOfCreditsReason,
+    split: shownSplit,
+    pendingGoals,
+    allowanceRemaining: sponsorshipAllowance?.remaining,
+  });
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1705,33 +1721,39 @@ export function NewSwarmConfirmStep({
           >
             Back
           </Button>
-          <Button
-            type="button"
-            disabled={!canLaunch || previewSettling}
-            data-testid="new-swarm-launch"
-            onClick={() =>
-              onLaunch({
-                rubric: [],
-                reusedTargets: activeReusedTargets,
-                reusedGrading: [],
-                funding: {
-                  shownSponsored:
-                    shownSplit && pendingGoals === 0
-                      ? shownSplit.sponsored
-                      : null,
-                },
-              })
-            }
-          >
-            {launching ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Launching…
-              </>
-            ) : (
-              "Continue"
-            )}
-          </Button>
+          <DisabledReasonTooltip reason={launchBlockedReason} variant="muted">
+            <Button
+              type="button"
+              disabled={
+                !canLaunch ||
+                previewSettling ||
+                launchBlockedReason !== null
+              }
+              data-testid="new-swarm-launch"
+              onClick={() =>
+                onLaunch({
+                  rubric: [],
+                  reusedTargets: activeReusedTargets,
+                  reusedGrading: [],
+                  funding: {
+                    shownSponsored:
+                      shownSplit && pendingGoals === 0
+                        ? shownSplit.sponsored
+                        : null,
+                  },
+                })
+              }
+            >
+              {launching ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  Launching…
+                </>
+              ) : (
+                "Continue"
+              )}
+            </Button>
+          </DisabledReasonTooltip>
         </div>
       </div>
     </div>

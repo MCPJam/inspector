@@ -13,11 +13,13 @@ section does not apply, use the exact text that section's comment gives
 ## Code quality contract
 
 These rules bind every change, human or agent. Agents write most of the code
-here, so the cheap place to stop slop is before the PR exists. CI and the
-hooks in `.claude/settings.json` enforce the rules implemented in
-`scripts/slop/`: type escapes, swallowed errors, suppressions, server
-`console`, history comments, file and PR size, and repo litter. The rest, such
-as reuse and "one way to do a thing", is checked in review.
+here, so the cheap place to stop slop is before the PR exists. Three layers
+enforce the rules implemented in `scripts/slop/` (type escapes, swallowed
+errors, suppressions, server `console`, history comments, file and PR size,
+and repo litter): CI on every PR, the git hooks in `scripts/git-hooks/` that
+`npm install` sets up for every agent and person, and the Claude Code hooks in
+`.claude/settings.json`. The rest, such as reuse and "one way to do a thing",
+is checked in review.
 
 ### Before you finish
 

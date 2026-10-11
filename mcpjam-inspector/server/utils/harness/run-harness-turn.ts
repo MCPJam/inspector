@@ -82,13 +82,12 @@ import {
 } from "./registry.js";
 import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
-  startHarnessModelBroker,
   revokeHarnessModelBroker,
-  reserveHarnessBox,
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
+import { OrgLeaseTurn } from "./org-lease-turn.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   emitError,
@@ -142,7 +141,6 @@ import {
 } from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
-import { getCanonicalModelId } from "@/shared/types";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
@@ -150,10 +148,7 @@ import {
   harnessBootstrapObservation,
   logHarnessBootstrapOnFailure,
 } from "./harness-bake-observer.js";
-import {
-  prepareLocalHarnessTurn,
-  type PreparedLocalHarnessTurn,
-} from "./local/local-turn.js";
+import type { PreparedLocalHarnessTurn } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
 import { HOSTED_APPROVAL_SANDBOX_POLICY } from "./codex-appserver/hosted-sandbox-policy.js";
@@ -648,6 +643,8 @@ export function harnessRuntimeFingerprint(parts: {
    * only local turns carry — so no existing session's hash moves.
    */
   commandSandbox?: string;
+  /** Whose key the runtime runs on (`OrgLeaseTurn.fingerprint`). */
+  credential?: string;
   /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
@@ -689,6 +686,7 @@ export function harnessRuntimeFingerprint(parts: {
         ]
       : []),
     ...(parts.commandSandbox ? [`command-sandbox:${parts.commandSandbox}`] : []),
+    ...(parts.credential ? [`credential:${parts.credential}`] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -833,7 +831,8 @@ export async function runHarnessTurn(
   // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
   // attribution, fingerprint — relies on the canonical form, so a bare id can't
   // make Codex silently fall back to its default model.
-  const modelId = getCanonicalModelId(rawModelId, provider);
+  const org = new OrgLeaseTurn(options);
+  const modelId = org.modelId(rawModelId, provider);
   // The harness adapter declares the per-harness bits (auth, native model
   // mapping, MCP delivery, tool-name attribution, file-change naming, approval,
   // skills). runHarnessTurn stays harness-agnostic and reads capabilities off it.
@@ -1984,6 +1983,7 @@ export async function runHarnessTurn(
         ...(commandSandboxPolicy !== null
           ? { commandSandbox: sandboxPolicyFingerprint(commandSandboxPolicy) }
           : {}),
+        ...org.fingerprint(),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "scenario"
@@ -2095,7 +2095,7 @@ export async function runHarnessTurn(
             // yield no resumable state, so the adapter re-writes skills on a
             // fresh start (it skips writes on resume). Enforce here rather than
             // trusting the endpoint to null `state` on mismatch.
-            state: claim.fingerprintChanged ? null : claim.state,
+            state: org.claimed(claim.fingerprintChanged ? null : claim.state),
             // `stateVersion` only moves on a commit, so > 0 means there was a
             // session to lose, not just a lane a failed first turn created.
             runtimeChanged: claim.fingerprintChanged && claim.stateVersion > 0,
@@ -2156,7 +2156,7 @@ export async function runHarnessTurn(
       const localComputerId = harnessExecutionTarget
         ? `${harnessExecutionTarget.machineId}:${harnessExecutionTarget.runtimeId}`
         : undefined;
-      const localEligibility = localComputerId
+      let localEligibility = localComputerId
         ? getHarnessResumeEligibility({
             state: continuity?.state ?? null,
             computerId: localComputerId,
@@ -2172,7 +2172,7 @@ export async function runHarnessTurn(
           "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
-      const localSessionId = harnessExecutionTarget
+      let localSessionId = harnessExecutionTarget
         ? localEligibility?.resume
           ? continuity!.state!.harnessSessionId
           : harnessExecutionTarget.localSessionId ?? `local-${crypto.randomUUID()}`
@@ -2203,12 +2203,11 @@ export async function runHarnessTurn(
             ),
           };
         }
-        const preparation = await prepareLocalHarnessTurn({
+        const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
           scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
           harnessId: harnessAdapter.id,
           modelId,
-          sessionId: localSessionId!,
           runId: localRunId,
           evalIterationId, journeyRunId, hostId,
           targetId: harnessExecutionTarget.targetId,
@@ -2231,13 +2230,14 @@ export async function runHarnessTurn(
             ? { reasoningEffort: turnReasoningEffort }
             : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
+        }, {
+          sessionId: localSessionId!,
+          eligibility: localEligibility,
+          continuity,
+          isApprovalResume,
         });
-        if (!preparation.ok) {
-          throw new Error(
-            `Can't run this turn on your machine (${preparation.status}): ` +
-              preparation.message,
-          );
-        }
+        localEligibility = preparation.eligibility;
+        localSessionId = preparation.sessionId;
         localPrepared = preparation.prepared;
         // A failed or stopped turn must not erase an already saved conversation.
         retainLocalState = Boolean(localEligibility?.resume && localPrepared.sessionStateExists);
@@ -2360,7 +2360,7 @@ export async function runHarnessTurn(
       // condition a caller would otherwise meet at broker start, just detected
       // before we do any work.
       if (box !== null) {
-        const reservation = await reserveHarnessBox({
+        await org.reserve({
           box: box!,
           harnessId: harnessAdapter.id,
           modelId,
@@ -2368,14 +2368,6 @@ export async function runHarnessTurn(
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
-        if (!reservation.ok) {
-          // Typed: the box claim is our sandbox layer's concurrency control.
-          throw new HarnessInfraSetupError(reservation.error, {
-            source: "sandbox_setup",
-            code: "harness_box_reservation_failed",
-            httpStatus: reservation.status,
-          });
-        }
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
         // Cleared once the broker start succeeds, because recording the lease
@@ -2503,7 +2495,7 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
-        modelEndpoint = "platform";
+        modelEndpoint = org.brokeredEndpoint;
       } else if (externalAccountAuth) {
         modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
@@ -2520,7 +2512,7 @@ export async function runHarnessTurn(
         auth = externalAccountAuth;
       } else {
         brokerRunId = turnRunId;
-        const broker = await startHarnessModelBroker({
+        const broker = await org.start({
           // The project and the execution scope are fields of `box`'s COMPUTER
           // arm (set where `box` is built, above), so the ephemeral path has no
           // way to send either: the backend derives project + billing org from
@@ -2562,10 +2554,11 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
-        modelEndpoint = "platform";
+        modelEndpoint = org.brokeredEndpoint;
       }
       tBroker = Date.now();
 
+      continuity = org.continuityOnLeasedKey(continuity);
       // 4. Assemble the harness over the host's E2B computer (the provider and
       // its working directory were resolved in step 3a, so the streaming session
       // uses the same one).
@@ -2578,7 +2571,7 @@ export async function runHarnessTurn(
       // `createHarness`: the AI SDK adapters removed their deprecated
       // construction-time `model` setting (harness 1.0.108), so a model handed
       // only to the adapter would silently run the runtime's default model.
-      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+      const nativeModel = org.nativeModel(harnessAdapter, modelId);
 
       // `createHarness` returns the HarnessAgent boundary type directly.
       //
@@ -2599,6 +2592,7 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
+              ...org.runtimeField(),
             })
           : harnessAdapter.createHarness({
               modelId,
@@ -2607,6 +2601,7 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
+              ...org.runtimeField(),
               ...(commandSandboxPolicy !== null
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
@@ -4425,7 +4420,7 @@ export async function runHarnessTurn(
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessSessionId: session.sessionId,
-              resumeState: continueState,
+              resumeState: org.commitState(continueState),
               computerId,
               runtimeFingerprint,
               awaitingApproval: true,
@@ -4477,7 +4472,7 @@ export async function runHarnessTurn(
               expectedStateVersion: continuity.stateVersion,
               harnessId: harnessAdapter.id,
               harnessSessionId: session.sessionId,
-              resumeState,
+              resumeState: org.commitState(resumeState),
               computerId,
               runtimeFingerprint,
               // Persist only a real (ok:true) hash; omit on failure so the
@@ -4511,7 +4506,8 @@ export async function runHarnessTurn(
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
       const errorText = harnessFailureMessageOf(err);
-      const typedEvidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      const evidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      const typedEvidence = await org.failedTurnEvidence(evidence, modelInvoked);
       // A runtime's provider failure says whose endpoint it came from.
       const failureEvidence =
         typedEvidence?.source === "harness_runtime" && modelEndpoint

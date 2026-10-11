@@ -1526,6 +1526,7 @@ async function handleTurn(c: Context): Promise<Response> {
           ? { maxToolCalls: body.maxToolCalls }
           : {}),
       },
+      ...(routingSelection ? { selection: routingSelection } : {}),
     });
     if (!engineDecision.ok) {
       return v1Error(
