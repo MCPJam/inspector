@@ -309,7 +309,7 @@ interface SandboxedIframeProps {
    * its own. Supplied by the host (`host.surface.viewMountMode`); build-time
    * only, so it exists to exercise the srcdoc branch rather than to switch
    * behaviour at runtime. `"opaque"` is per client: a srcdoc mount without
-   * `allow-same-origin`, so the view runs in an opaque origin like claude.ai
+   * `allow-same-origin`, so the view runs in an opaque origin
    * (the renderer picks it from the client's `sameOriginAppIframe: false`).
    */
   mountMode?: "write" | "srcdoc" | "opaque";
@@ -599,7 +599,7 @@ export const SandboxedIframe = forwardRef<
           // it applies to the OUTER iframe only. The inner iframe gets the
           // 4 spec permissions (via `permissions`) and nothing else — the
           // proxy itself adds `fullscreen *` on the opaque mount, as
-          // claude.ai does. Centralizing the outer/inner split here means
+          // Claude's opaque mode does. Centralizing the outer/inner split here means
           // the proxy can't accidentally widen the inner grant by reading a
           // stale field.
           cspDirectives,

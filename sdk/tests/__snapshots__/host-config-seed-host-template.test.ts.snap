@@ -891,7 +891,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],
@@ -1247,7 +1247,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],
@@ -1606,7 +1606,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],
@@ -1965,7 +1965,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],

@@ -704,23 +704,23 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
-            // sandboxAttrs — `allow-forms` is the host's addition so `<form>`
-            // POSTs work inside widgets. Claude's sandbox page (captured
-            // 2026-10-09) sets the inner iframe to exactly
-            // `allow-scripts allow-forms`.
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
-            // The same capture: the inner iframe has no `allow-same-origin`
-            // and is mounted with `srcdoc`, so the App runs in an opaque
-            // origin ("null"). Apps that declare `ui.domain` get Claude's
-            // stable-origin carve-out instead.
-            sameOriginAppIframe: false,
+            // Prober runs on 2026-10-11 (claude.ai and Claude Desktop): the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
             // `permissions.allow` above), fullscreen is the non-spec extra
-            // captured here. The opaque inner iframe gets `fullscreen *`
-            // too, because the default `'self'` allowlist never matches an
-            // opaque origin.
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
@@ -966,23 +966,23 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
-            // sandboxAttrs — `allow-forms` is the host's addition so `<form>`
-            // POSTs work inside widgets. Claude's sandbox page (captured
-            // 2026-10-09) sets the inner iframe to exactly
-            // `allow-scripts allow-forms`.
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
-            // The same capture: the inner iframe has no `allow-same-origin`
-            // and is mounted with `srcdoc`, so the App runs in an opaque
-            // origin ("null"). Apps that declare `ui.domain` get Claude's
-            // stable-origin carve-out instead.
-            sameOriginAppIframe: false,
+            // Prober runs on 2026-10-11 (claude.ai and Claude Desktop): the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
             // `permissions.allow` above), fullscreen is the non-spec extra
-            // captured here. The opaque inner iframe gets `fullscreen *`
-            // too, because the default `'self'` allowlist never matches an
-            // opaque origin.
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps

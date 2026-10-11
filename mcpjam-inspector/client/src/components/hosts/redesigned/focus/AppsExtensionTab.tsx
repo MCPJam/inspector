@@ -110,7 +110,7 @@ const SEGMENT_BUTTON_CLASSES =
  *                                    sandboxed iframe (not an MCP concept)
  *   sandbox.sameOriginAppIframe       whether the app iframe shares the
  *                                    sandbox page's origin (not an MCP
- *                                    concept; `false` = opaque, claude.ai)
+ *                                    concept; `false` = opaque origin)
  *
  * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
  * the JSON entirely — they're owned by the structured editor and preserved
@@ -170,7 +170,7 @@ type SandboxDoc = {
   };
   /**
    * Observed: whether the app iframe shares the sandbox page's origin.
-   * `false` mounts the app in an opaque origin, like claude.ai. Not an MCP
+   * `false` mounts the app in an opaque origin. Not an MCP
    * capability.
    */
   sameOriginAppIframe?: boolean;
@@ -1974,7 +1974,7 @@ function BrowserStorageCard({
 
 /**
  * Probe finding: whether the app iframe shares the sandbox page's origin.
- * Off models claude.ai, which mounts apps in an opaque origin. Like browser
+ * Off mounts apps in an opaque origin. Like browser
  * storage, a browser consequence of the sandbox rather than an MCP feature.
  */
 function SameOriginAppIframeCard({
@@ -2033,7 +2033,7 @@ function SameOriginAppIframeCard({
       <div className="border-b border-border px-3.5 py-2.5">
         <div className="text-[12px] font-medium">Same-origin app iframe</div>
         <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-          When off, your app runs with no origin, like in Claude: storage
+          When off, your app runs with no origin: storage
           throws and fetches send <code>Origin: null</code>. Apps that set{" "}
           <code>ui.domain</code> keep their origin.
         </p>

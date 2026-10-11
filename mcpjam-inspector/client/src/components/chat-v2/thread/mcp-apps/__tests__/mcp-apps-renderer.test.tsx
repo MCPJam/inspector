@@ -1799,7 +1799,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(mcpAppsModalPropsRef.current).not.toBeNull();
     });
-    // claude.ai: srcdoc without allow-same-origin. A widget moved to the
+    // srcdoc without allow-same-origin. A widget moved to the
     // modal must not regain the origin the inline frame lacks.
     expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
     expect(mcpAppsModalPropsRef.current?.widgetMountMode).toBe("opaque");
@@ -1830,7 +1830,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toContain("live-widget");
     });
-    // claude.ai's stable-origin carve-out.
+    // Claude's stable-origin carve-out.
     expect(sandboxedIframePropsRef.current.mountMode).not.toBe("opaque");
   });
 
@@ -3379,7 +3379,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       } as MessageEvent);
     });
 
-    // No URL by design (the client models claude.ai), not a degraded mount.
+    // No URL by design (the client models an opaque host), not a degraded mount.
     await vi.waitFor(() => {
       expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
         "call-1",

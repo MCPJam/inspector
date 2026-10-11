@@ -1502,7 +1502,7 @@ export function MCPAppsRendererSurface({
   );
   // The resource's `_meta.ui.domain`, from the same response. A client whose
   // app iframe is not same-origin still gives such an app a stable origin
-  // (claude.ai's stable-origin carve-out), so it decides the mount mode.
+  // (Claude's stable-origin carve-out), so it decides the mount mode.
   const [declaredDomain, setDeclaredDomain] = useState<string | undefined>(
     undefined
   );
@@ -2832,7 +2832,7 @@ export function MCPAppsRendererSurface({
     [activeMcpProfileKey]
   );
   // How the proxy mounts the view. A client whose app iframe is not
-  // same-origin (claude.ai) gets the opaque srcdoc mount — unless the app
+  // same-origin gets the opaque srcdoc mount — unless the app
   // declares `ui.domain`, which keeps a stable origin there too. Everything
   // else uses the build-time default.
   const viewMountMode =

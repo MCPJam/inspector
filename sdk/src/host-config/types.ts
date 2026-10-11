@@ -440,7 +440,8 @@ export type HostConfigMcpProfileV1 = {
         indexedDB?: boolean;
       };
       // Whether the MCP App's iframe shares the sandbox page's origin
-      // (probe-measured). `false` models claude.ai: the App mounts via
+      // (probe-measured). `false` models Claude's sandbox page without its `stable-origin` flag
+      // (real Claude passes the flag and is same-origin): the App mounts via
       // `srcdoc` without `allow-same-origin`, so its origin is opaque
       // (`"null"`) — storage and cookies throw, and its fetches send
       // `Origin: null`. Apps that declare `ui.domain` keep a stable origin

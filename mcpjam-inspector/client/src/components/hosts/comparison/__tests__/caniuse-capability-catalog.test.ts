@@ -123,7 +123,7 @@ describe("caniuse capability catalog", () => {
       }) as never;
 
     expect(getCaniuseSupportLevel(field, withValue(true))).toBe("supported");
-    // claude.ai: the app runs in an opaque origin.
+    // The app runs in an opaque origin.
     expect(getCaniuseSupportLevel(field, withValue(false))).toBe("neutral");
     // A host nobody probed must never be published as one or the other.
     expect(

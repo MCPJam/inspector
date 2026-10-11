@@ -54,7 +54,7 @@
        * 4. Mounts the HTML into a FRESH inner iframe by writing it into the
        *    frame's blank document (document.open/write/close) so the view
        *    runs at a real URL — this proxy's URL — instead of about:srcdoc.
-       *    A client whose app iframe is not same-origin (claude.ai) asks for
+       *    A client whose app iframe is not same-origin asks for
        *    `mountMode: "opaque"` instead: srcdoc without `allow-same-origin`,
        *    so the view runs in an opaque origin. See mountInner.
        * 5. Forwards all non-sandbox messages between host and guest
@@ -124,7 +124,7 @@
        * Inner iframe `allow=` value. Only the 4 spec permissions, except on
        * the opaque mount: there `fullscreen`'s default 'self' allowlist can
        * never match the view's opaque origin, so it gets `fullscreen *` too —
-       * exactly what claude.ai sets on its inner frame.
+       * exactly what Claude's opaque mode sets on its inner frame.
        * @param {Object} permissions - Requested spec permissions
        * @param {boolean} opaque - Whether this is the opaque mount
        * @returns {string} Permission Policy allow attribute ("" for none)
@@ -146,7 +146,7 @@
        *
        * `allow-same-origin` is always added — except on the opaque mount,
        * where it is always removed: that is what puts the view in an opaque
-       * origin (claude.ai sets exactly `allow-scripts allow-forms`).
+       * origin (Claude's opaque mode sets exactly `allow-scripts allow-forms`).
        * @param {unknown} sandbox - Caller's legacy `sandbox` string
        * @param {unknown} sandboxAttrs - Profile tokens (authoritative if array)
        * @param {boolean} opaque - Whether this is the opaque mount
@@ -982,9 +982,10 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * document's URL — this proxy's — so the view has a real URL and origin:
        * `location.href`, `document.URL`, canvas taint rules and third-party
        * referrer allowlists (Google Maps, OAuth redirect matching) all see the
-       * sandbox origin instead of `about:srcdoc`. claude.ai used to mount
-       * views this way (it now uses the opaque mount below); our eval browser
-       * harness still does.
+       * sandbox origin instead of `about:srcdoc`. This is how claude.ai and
+       * Claude Desktop mount views (their sandbox page is loaded with
+       * `stable-origin=true`; prober, 2026-10-11); our eval browser harness
+       * does the same.
        *
        * A new frame per mount (old one removed afterwards) means a re-send is
        * a clean restart — old Window, timers and listeners are gone — and the
@@ -992,8 +993,9 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * createInnerFrame). Late messages from the removed frame fail the
        * `event.source === inner.contentWindow` check and are dropped.
        *
-       * `mountMode: "opaque"` is how claude.ai mounts views now (captured
-       * 2026-10-09): `srcdoc` on a frame without `allow-same-origin`, so the
+       * `mountMode: "opaque"` is how Claude's sandbox page mounts views when it is
+       * loaded WITHOUT `stable-origin=true` (captured 2026-10-09): `srcdoc` on a
+       * frame without `allow-same-origin`, so the
        * view runs in an opaque origin — storage and cookies throw and its
        * fetches send `Origin: null`. srcdoc loads asynchronously, so host
        * messages are buffered until the view is ready (see sendToInner).
@@ -1063,7 +1065,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               markInnerReady();
             } else {
               // A navigation this proxy did not start (the view navigated or
-              // reloaded itself). claude.ai stops relaying for it; so do we.
+              // reloaded itself). Claude's opaque mode stops relaying for it; so do we.
               channelDead = true;
               innerReady = false;
             }
@@ -1188,7 +1190,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * scripts during the write, so it is ready at once. A srcdoc view (the
        * opaque mount) loads asynchronously, and a message posted before it
        * commits would land on the frame's initial about:blank window and be
-       * lost — so it is queued until markInnerReady, like claude.ai does.
+       * lost — so it is queued until markInnerReady, like Claude's opaque mode does.
        * The target is "*" because an opaque origin never matches a tuple.
        * @param {unknown} data - The host message
        */
@@ -1311,7 +1313,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             });
 
             // The opaque mount models a client whose app iframe is not
-            // same-origin (claude.ai): no `allow-same-origin`, srcdoc.
+            // same-origin: no `allow-same-origin`, srcdoc.
             const opaque = mountMode === "opaque";
             // Inner iframe `sandbox=` value, applied by createInnerFrame on
             // the fresh frame (never in place).
@@ -1325,7 +1327,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             // (SEP-1865: camera / microphone / geolocation / clipboard-write).
             // Other non-spec features belong on the OUTER iframe (handled in
             // `sandboxed-iframe.tsx`'s `outerAllowAttribute`), not here —
-            // except `fullscreen *` on the opaque mount, which claude.ai
+            // except `fullscreen *` on the opaque mount, which Claude's opaque mode
             // sets on its inner frame (see buildInnerAllowValue).
             const allowValue = buildInnerAllowValue(permissions, opaque);
 

@@ -689,7 +689,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
-            sameOriginAppIframe: false,
+            sameOriginAppIframe: true,
             allowFeatures: {
               fullscreen: "*",
             },
@@ -1025,7 +1025,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
-            sameOriginAppIframe: false,
+            sameOriginAppIframe: true,
             allowFeatures: {
               fullscreen: "*",
             },

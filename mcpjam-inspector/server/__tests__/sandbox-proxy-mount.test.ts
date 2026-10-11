@@ -11,7 +11,7 @@
  * previous frame is removed and the `inner` binding repointed, the explicit
  * `"srcdoc"` mount mode and the opaque-origin fallback both assign `srcdoc`,
  * a nested `sandbox-proxy-ready` (a widget reloading itself) remounts
- * from the cached arguments instead of being relayed, and the claude.ai-style
+ * from the cached arguments instead of being relayed, and the opaque
  * `"opaque"` mount (srcdoc without `allow-same-origin`) buffers host messages
  * until the view is ready.
  *
@@ -431,7 +431,7 @@ describe("sandbox-proxy mountInner", () => {
   });
 });
 
-describe("sandbox-proxy opaque mount (claude.ai)", () => {
+describe("sandbox-proxy opaque mount", () => {
   // jsdom cannot give a frame an opaque origin or render srcdoc, so the
   // view's window is stubbed and its `load` fired by hand; what is under test
   // is the proxy's mount and delivery rules.
@@ -561,7 +561,7 @@ describe("sandbox-proxy opaque mount (claude.ai)", () => {
     expect(sent).toEqual([[{ n: 1 }, "*"]]);
   });
 
-  it("mounts claude.ai's exact frame from a real resource-ready", () => {
+  it("mounts Claude's opaque-mode frame from a real resource-ready", () => {
     const dom = new JSDOM(
       html.replace(
         '"__MCPJAM_HOST_ORIGINS__"',
@@ -634,7 +634,7 @@ describe("sandbox-proxy inner sandbox and allow values", () => {
     );
   });
 
-  it("gives an opaque view claude.ai's exact tokens", () => {
+  it("gives an opaque view Claude's opaque-mode tokens", () => {
     expect(sandboxValue(undefined, ["allow-forms"], true)).toBe(
       "allow-forms allow-scripts",
     );

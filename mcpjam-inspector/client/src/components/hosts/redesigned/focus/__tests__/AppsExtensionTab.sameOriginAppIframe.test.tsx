@@ -76,7 +76,7 @@ describe("AppsExtensionTab — same-origin app iframe", () => {
     ).toBe(true);
   });
 
-  it("shows off for a client measured like claude.ai", () => {
+  it("shows off for a client measured as opaque", () => {
     renderTab({
       mcpProfile: {
         profileVersion: 1,
