@@ -840,11 +840,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -855,29 +853,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1195,11 +1188,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1210,29 +1201,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1553,11 +1539,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1568,29 +1552,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1911,11 +1890,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1926,29 +1903,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },

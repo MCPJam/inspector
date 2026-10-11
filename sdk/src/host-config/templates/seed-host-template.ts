@@ -656,43 +656,38 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // prober runs inside claude.ai and Claude Desktop
+              // (2026-10-11) loaded it undeclared and Claude's CSP blocked
+              // every load, so it is not listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "style-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "img-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "connect-src": ["'self'", "https://esm.sh"],
+                "connect-src": ["'self'"],
                 "font-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "media-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "worker-src": [
                   "'self'",
                   "blob:",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "frame-src": ["'self'"],
@@ -913,43 +908,38 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // prober runs inside claude.ai and Claude Desktop
+              // (2026-10-11) loaded it undeclared and Claude's CSP blocked
+              // every load, so it is not listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "style-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "img-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "connect-src": ["'self'", "https://esm.sh"],
+                "connect-src": ["'self'"],
                 "font-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "media-src": [
                   "'self'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "worker-src": [
                   "'self'",
                   "blob:",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
                 "frame-src": ["'self'"],
