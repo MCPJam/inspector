@@ -28,7 +28,7 @@ test("rejects zero archives and a theme overwritten by a duplicate title", () =>
 test("rejects failed resource archives before allowing upload", () => {
   const directory = mkdtempSync(join(tmpdir(), "visual-archive-errors-"));
   try {
-    for (let index = 0; index < 6; index++)
+    for (let index = 0; index < 10; index++)
       writeFileSync(join(directory, `${index}.stories.json`), "{}");
     mkdirSync(join(directory, "archive"));
     writeFileSync(join(directory, "archive/errors.json"), "{}");
