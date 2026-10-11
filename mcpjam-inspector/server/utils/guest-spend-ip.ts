@@ -4,6 +4,10 @@ import { getGuestSessionHashPepper } from "./guest-session-pepper.js";
 
 import { edgeAttestationConfigured } from "./client-ip.js";
 import { logger } from "./logger.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../services/service-credential.js";
 
 const SCOPE = "guest-spend-ip";
 
@@ -116,11 +120,11 @@ export async function hashGuestSpendIp(rawIp: string): Promise<string | null> {
 export function guestIpForwardHeaders(
   ipHash: string | null | undefined,
 ): Record<string, string> {
-  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  const token = getServiceCredential();
   if (!token || (!ipHash && !edgeAttestationConfigured())) return {};
   if (!ipHash) logger.warn("Pooling unattested guest IP", { event: "llm_spend_unattested_ip_pooled" });
   return {
     "x-mcpjam-guest-ip-hash": ipHash ?? "_unattested",
-    "x-inspector-service-token": token,
+    [INSPECTOR_SERVICE_TOKEN_HEADER]: token,
   };
 }
