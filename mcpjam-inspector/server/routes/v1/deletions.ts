@@ -56,6 +56,40 @@ function client(token: string): ConvexHttpClient {
 }
 
 function writeError(error: unknown): WebRouteError {
+  const refusal = z
+    .object({ data: z.object({ code: z.string() }) })
+    .safeParse(error);
+  const code = refusal.success ? refusal.data.data.code : undefined;
+  if (code === "DELETION_UNAVAILABLE") {
+    return new WebRouteError(
+      422,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      "Deletion requests are not available yet.",
+      { code },
+    );
+  }
+  if (code === "INVALID_IDEMPOTENCY_KEY") {
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "A valid Idempotency-Key header is required.",
+      { code },
+    );
+  }
+  if (
+    code === "DELETION_IN_PROGRESS" ||
+    code === "DELETION_ALREADY_STARTED" ||
+    code === "IDEMPOTENCY_KEY_REUSED"
+  ) {
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      code === "IDEMPOTENCY_KEY_REUSED"
+        ? "This idempotency key belongs to a different deletion request."
+        : "The deletion request cannot be changed in its current state.",
+      { code },
+    );
+  }
   return translateConvexWriteError(error, {
     resource: "Deletion request",
     fallbackMessage: "Deletion request rejected",

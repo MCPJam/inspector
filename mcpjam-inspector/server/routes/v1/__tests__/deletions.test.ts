@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { ConvexError } from "convex/values";
 import { v1OnError } from "../envelope.js";
 
 const { getBearerMock, queryMock, mutationMock } = vi.hoisted(() => ({
@@ -81,6 +82,30 @@ describe("v1 deletion request contract", () => {
     const body = await response.json();
     expect(body).toMatchObject({ state: "waiting_to_purge" });
     expect(body).not.toHaveProperty("deleted");
+  });
+
+  it.each([
+    ["DELETION_UNAVAILABLE", 422, "FEATURE_NOT_SUPPORTED"],
+    ["INVALID_IDEMPOTENCY_KEY", 400, "VALIDATION_ERROR"],
+    ["IDEMPOTENCY_KEY_REUSED", 409, "CONFLICT"],
+    ["DELETION_IN_PROGRESS", 409, "CONFLICT"],
+    ["DELETION_ALREADY_STARTED", 409, "CONFLICT"],
+  ])("maps %s without exposing Convex framing", async (code, status, publicCode) => {
+    mutationMock.mockRejectedValue(new ConvexError({ code }));
+    const response = await makeApp().request("/api/v1/deletions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "stable-key-1",
+      },
+      body: JSON.stringify({ scope: { type: "project", id: "project_1" } }),
+    });
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({
+      code: publicCode,
+      details: { code },
+    });
   });
 
   it("reads status through the receipt grant without project preflight", async () => {
