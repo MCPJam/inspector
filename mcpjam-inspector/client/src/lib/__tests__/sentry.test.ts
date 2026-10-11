@@ -452,3 +452,255 @@ describe("query event processor wiring", () => {
     ).toEqual(["dom-mutation-conflict", "prod"]);
   });
 });
+
+describe("identity at the outbound boundary", () => {
+  type Hook = (event: Record<string, any>, hint?: object) => void;
+
+  async function setup() {
+    vi.resetModules();
+    init.mockClear();
+    const hooks: Record<string, Hook[]> = {};
+    getClient.mockReturnValue({
+      on: (hook: string, fn: Hook) => {
+        (hooks[hook] ??= []).push(fn);
+      },
+    });
+    const { initSentry } = await import("../sentry");
+    const telemetry = await import("../telemetry-context");
+    initSentry();
+    const config = init.mock.calls[0][0];
+    const run = (name: string, event: Record<string, any>, hint: object) => {
+      for (const fn of hooks[name] ?? []) fn(event, hint);
+    };
+    return { config, run, telemetry };
+  }
+
+  const userEvent = () => ({
+    user: {
+      id: "workos-1",
+      email: "zelda.quixote@acme-synthetic.example",
+      username: "zelda.quixote@acme-synthetic.example",
+      name: "Zelda",
+      ip_address: "203.0.113.9",
+    },
+  });
+
+  afterEach(() => {
+    getClient.mockReset();
+  });
+
+  it("keeps names only when allowed at capture and still allowed at send", async () => {
+    const { config, run, telemetry } = await setup();
+    telemetry.setTelemetryActor("workos-1");
+    telemetry.setTelemetryIdentity("workos-1", "full");
+    const hint = {};
+    const event = userEvent();
+    run("preprocessEvent", event, hint);
+    run("postprocessEvent", event, hint);
+    expect(config.beforeSend(event, hint)?.user.email).toBe(
+      "zelda.quixote@acme-synthetic.example",
+    );
+    telemetry.setTelemetryActor(null);
+  });
+
+  it("keeps an event captured while id-only id-only, even once names are allowed", async () => {
+    const { config, run, telemetry } = await setup();
+    telemetry.setTelemetryActor("workos-1");
+    const hint = {};
+    const event = userEvent();
+    run("preprocessEvent", event, hint);
+    telemetry.setTelemetryIdentity("workos-1", "full");
+    run("postprocessEvent", event, hint);
+    expect(event.user).toEqual({ id: "workos-1" });
+    expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
+      id: "workos-1",
+    });
+    telemetry.setTelemetryActor(null);
+  });
+
+  it("strips names from an event whose grant went before it was sent", async () => {
+    const { config, run, telemetry } = await setup();
+    telemetry.setTelemetryActor("workos-1");
+    telemetry.setTelemetryIdentity("workos-1", "full");
+    const hint = {};
+    run("preprocessEvent", userEvent(), hint);
+    telemetry.setTelemetryActor("workos-2");
+    expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
+      id: "workos-1",
+    });
+    expect(config.beforeSendTransaction(userEvent(), hint).user).toEqual({
+      id: "workos-1",
+    });
+    telemetry.setTelemetryActor(null);
+  });
+
+  it("filters replay events, which never reach beforeSend", async () => {
+    const { run, telemetry } = await setup();
+    telemetry.setTelemetryActor("workos-1");
+    const hint = {};
+    const replay = { type: "replay_event", urls: [], ...userEvent() };
+    run("preprocessEvent", replay, hint);
+    run("postprocessEvent", replay, hint);
+    expect(replay.user).toEqual({ id: "workos-1" });
+    telemetry.setTelemetryActor(null);
+  });
+
+  it("treats an event with no capture-time record as id-only", async () => {
+    const { config, telemetry } = await setup();
+    telemetry.setTelemetryActor("workos-1");
+    telemetry.setTelemetryIdentity("workos-1", "full");
+    expect(config.beforeSend(userEvent(), {})?.user).toEqual({
+      id: "workos-1",
+    });
+    telemetry.setTelemetryActor(null);
+  });
+});
+
+describe("content at the outbound boundary", () => {
+  it("wires the breadcrumb filter and scrubs the page URL of a masked event", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    init.mockClear();
+    const hooks: Record<string, Array<(e: unknown, h?: object) => void>> = {};
+    getClient.mockReturnValue({
+      on: (hook: string, fn: (e: unknown, h?: object) => void) => {
+        (hooks[hook] ??= []).push(fn);
+      },
+    });
+    const { initSentry } = await import("../sentry");
+    const privacy = await import("../session-privacy");
+    initSentry();
+    const config = init.mock.calls[0][0];
+
+    privacy.setSessionPrivacy("masked");
+    expect(config.beforeBreadcrumb({ category: "console" })).toBeNull();
+    const hint = {};
+    for (const fn of hooks.preprocessEvent ?? []) fn({}, hint);
+    const event = config.beforeSend(
+      { request: { url: "https://app.mcpjam.com/servers/acme" } },
+      hint,
+    );
+    expect(event.request.url).toBe("https://app.mcpjam.com/servers/[name]");
+
+    // Captured masked, sent after the level went full: still scrubbed.
+    privacy.setSessionPrivacy("full");
+    expect(
+      config.beforeSend(
+        { request: { url: "https://app.mcpjam.com/servers/acme" } },
+        hint,
+      ).request.url,
+    ).toBe("https://app.mcpjam.com/servers/[name]");
+
+    // The raw path in `transaction` (set by browserTracingIntegration on
+    // every navigation) and the Referer header are scrubbed too.
+    const withPath = config.beforeSend(
+      {
+        transaction: "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/acme-billing",
+        request: {
+          url: "https://app.mcpjam.com/servers/acme",
+          headers: {
+            Referer: "https://app.mcpjam.com/servers/globex",
+            "User-Agent": "test",
+          },
+        },
+      },
+      hint,
+    );
+    expect(withPath.transaction).toBe(
+      "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/[name]",
+    );
+    expect(withPath.request.headers).toEqual({
+      Referer: "https://app.mcpjam.com/servers/[name]",
+      "User-Agent": "test",
+    });
+
+    // Captured and sent at full: untouched.
+    const fullHint = {};
+    for (const fn of hooks.preprocessEvent ?? []) fn({}, fullHint);
+    expect(
+      config.beforeSend(
+        { request: { url: "https://app.mcpjam.com/servers/acme" } },
+        fullHint,
+      ).request.url,
+    ).toBe("https://app.mcpjam.com/servers/acme");
+    expect(
+      config.beforeSend({ transaction: "/servers/acme" }, fullHint).transaction,
+    ).toBe("/servers/acme");
+    getClient.mockReset();
+  });
+});
+
+describe("performance transactions short of full", () => {
+  it("keep timing but lose URLs, peer hosts and selector attribute values", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    init.mockClear();
+    getClient.mockReturnValue({ on: () => {} });
+    const { initSentry } = await import("../sentry");
+    const privacy = await import("../session-privacy");
+    initSentry();
+    const config = init.mock.calls[0][0];
+    privacy.setSessionPrivacy("masked");
+
+    const event = config.beforeSendTransaction(
+      {
+        transaction: "/results/kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
+        contexts: {
+          trace: {
+            data: {
+              "url.full": "https://app.mcpjam.com/servers/acme-billing",
+              "lcp.element": 'h1.title[title="Zelda\'s dashboard"]',
+              "cls.source.1": 'img.avatar[alt="Zelda"]',
+            },
+          },
+        },
+        spans: [
+          {
+            description: "GET https://cdn.acme.example/avatars/zelda.png",
+            data: {
+              "server.address": "cdn.acme.example",
+              "url.full": "https://cdn.acme.example/avatars/zelda.png",
+              "http.response_transfer_size": 1057,
+            },
+            start_timestamp: 1,
+            timestamp: 2,
+          },
+          {
+            description: "GET /api/web/servers/acme-billing?tab=tools",
+            data: { "http.query": "?q=zelda", "http.fragment": "#acme" },
+            start_timestamp: 2,
+            timestamp: 3,
+          },
+        ],
+      },
+      {},
+    );
+
+    // A request to a relative URL, and its query and fragment kept apart.
+    expect(event.spans[1]).toEqual({
+      description: "GET /api/web/servers/[name]?tab=[name]",
+      data: { "http.query": "?q=[name]", "http.fragment": "" },
+      start_timestamp: 2,
+      timestamp: 3,
+    });
+    expect(event.transaction).toBe("/results/[redacted]");
+    expect(event.contexts.trace.data).toEqual({
+      "url.full": "https://app.mcpjam.com/servers/[name]",
+      "lcp.element": "h1.title",
+      "cls.source.1": "img.avatar",
+    });
+    expect(event.spans[0]).toEqual({
+      description: "GET https://[host]/[name]/[name]",
+      data: {
+        "server.address": "[host]",
+        "url.full": "https://[host]/[name]/[name]",
+        "http.response_transfer_size": 1057,
+      },
+      start_timestamp: 1,
+      timestamp: 2,
+    });
+    getClient.mockReset();
+  });
+});

@@ -10,6 +10,7 @@
  *           of all PRs; the burn-down shrinks them instead.
  *
  *   node scripts/slop/repo-hygiene.mjs --base HEAD^1
+ *   node scripts/slop/repo-hygiene.mjs --staged      # git pre-commit
  *
  * SLOP_WAIVER=true reports and exits 0, as for the ratchet.
  */
@@ -60,11 +61,11 @@ export function checkChange(entries, linesBefore, linesAfter) {
     if (after <= FILE_BUDGET || after <= before) continue;
     if (before <= FILE_BUDGET) {
       failures.push(
-        `${path}: ${before} -> ${after} lines, over the ${FILE_BUDGET}-line budget. Put the new code in its own module.`
+        `${path}: ${before} -> ${after} lines, over the ${FILE_BUDGET}-line budget. Put the new code in its own module.`,
       );
     } else {
       warnings.push(
-        `${path}: already over ${FILE_BUDGET} lines and grew ${before} -> ${after}.`
+        `${path}: already over ${FILE_BUDGET} lines and grew ${before} -> ${after}.`,
       );
     }
   }
@@ -73,18 +74,26 @@ export function checkChange(entries, linesBefore, linesAfter) {
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // --staged checks what is staged against HEAD (git pre-commit); otherwise
+  // HEAD against --base or the merge-base with origin/main.
+  const staged = process.argv.includes("--staged");
   const index = process.argv.indexOf("--base");
   const base =
     index !== -1
       ? process.argv[index + 1]
-      : git(["merge-base", "HEAD", "origin/main"]).trim();
+      : staged
+        ? "HEAD"
+        : git(["merge-base", "HEAD", "origin/main"]).trim();
+  const range = staged ? ["--cached", base] : [base, "HEAD"];
   const entries = parseNameStatus(
-    git(["diff", "--name-status", "-z", "--no-renames", base, "HEAD"])
+    git(["diff", "--name-status", "-z", "--no-renames", ...range]),
   );
+  // An empty ref makes `git show :path` read the staged copy.
+  const after = staged ? "" : "HEAD";
   const { failures, warnings } = checkChange(
     entries,
     (path) => lineCountAt(base, path),
-    (path) => lineCountAt("HEAD", path)
+    (path) => lineCountAt(after, path),
   );
   const waived = process.env.SLOP_WAIVER === "true";
 
