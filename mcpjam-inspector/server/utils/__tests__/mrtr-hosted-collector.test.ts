@@ -23,12 +23,18 @@ function pending(): MrtrOperationState["pendingInputRequests"] {
   return {
     q1: {
       method: "elicitation/create",
-      params: { mode: "form", message: "Your name?", requestedSchema: { type: "object" } },
+      params: {
+        mode: "form",
+        message: "Your name?",
+        requestedSchema: { type: "object" },
+      },
     },
   } as unknown as MrtrOperationState["pendingInputRequests"];
 }
 
-function makeState(overrides: Partial<MrtrOperationState> = {}): MrtrOperationState {
+function makeState(
+  overrides: Partial<MrtrOperationState> = {},
+): MrtrOperationState {
   return {
     opId: "op-1",
     method: "tools/call",
@@ -46,7 +52,11 @@ describe("buildInputRequestDisplays", () => {
     const displays = buildInputRequestDisplays({
       q1: {
         method: "elicitation/create",
-        params: { mode: "form", message: "Name?", requestedSchema: { type: "object" } },
+        params: {
+          mode: "form",
+          message: "Name?",
+          requestedSchema: { type: "object" },
+        },
       },
       q2: {
         method: "elicitation/create",
@@ -73,19 +83,26 @@ describe("buildInputRequestDisplays", () => {
   it("rejects a url-mode elicitation whose scheme is not navigable", () => {
     const withUrl = (url: string) =>
       ({
-        q1: { method: "elicitation/create", params: { mode: "url", message: "Go", url } },
-      }) as never;
+        q1: {
+          method: "elicitation/create",
+          params: { mode: "url", message: "Go", url },
+        },
+      } as never);
     // A hostile server must not get a script URL persisted or emitted.
-    expect(() => buildInputRequestDisplays(withUrl("javascript:alert(1)"))).toThrow(
-      /rejected/i,
-    );
-    expect(() => buildInputRequestDisplays(withUrl("data:text/html,<script>"))).toThrow(
-      /rejected/i,
-    );
+    expect(() =>
+      buildInputRequestDisplays(withUrl("javascript:alert(1)")),
+    ).toThrow(/rejected/i);
+    expect(() =>
+      buildInputRequestDisplays(withUrl("data:text/html,<script>")),
+    ).toThrow(/rejected/i);
     expect(() => buildInputRequestDisplays(withUrl(""))).toThrow(/rejected/i);
     // http(s) still passes — http for local/dev servers.
-    expect(buildInputRequestDisplays(withUrl("https://x.test/a"))).toHaveLength(1);
-    expect(buildInputRequestDisplays(withUrl("http://localhost:1/a"))).toHaveLength(1);
+    expect(buildInputRequestDisplays(withUrl("https://x.test/a"))).toHaveLength(
+      1,
+    );
+    expect(
+      buildInputRequestDisplays(withUrl("http://localhost:1/a")),
+    ).toHaveLength(1);
   });
 
   it("rejects an oversized field rather than truncating", () => {
@@ -94,12 +111,49 @@ describe("buildInputRequestDisplays", () => {
         {
           q1: {
             method: "elicitation/create",
-            params: { mode: "form", message: "x".repeat(50), requestedSchema: {} },
+            params: {
+              mode: "form",
+              message: "x".repeat(50),
+              requestedSchema: {},
+            },
           },
         } as never,
         16,
       ),
     ).toThrow(/over the 16-byte cap/);
+  });
+
+  it("keeps ordinary and message caps when the owned schema budget is larger", () => {
+    const requestedSchema = { value: "π".repeat(20) };
+    const requests = {
+      q1: {
+        method: "elicitation/create",
+        params: { message: "Name?", requestedSchema },
+      },
+    } as never;
+    const bytes = Buffer.byteLength(JSON.stringify(requestedSchema));
+    expect(() => buildInputRequestDisplays(requests, 16)).toThrow(
+      /16-byte cap/,
+    );
+    expect(
+      buildInputRequestDisplays(requests, 16, bytes)[0].requestedSchema,
+    ).toEqual(requestedSchema);
+    expect(() => buildInputRequestDisplays(requests, 16, bytes - 1)).toThrow();
+    expect(() =>
+      buildInputRequestDisplays(
+        {
+          q1: {
+            method: "elicitation/create",
+            params: {
+              message: "x".repeat(17),
+              requestedSchema,
+            },
+          },
+        } as never,
+        16,
+        bytes,
+      ),
+    ).toThrow(/16-byte cap/);
   });
 });
 
@@ -184,7 +238,10 @@ describe("deriveServerConfigDigest", () => {
         managerFor(
           { url: "https://a.example.com/mcp" },
           {
-            serverCapabilities: { tools: { listChanged: true }, elicitation: {} },
+            serverCapabilities: {
+              tools: { listChanged: true },
+              elicitation: {},
+            },
             serverVersion: { version: "1.0", name: "srv" },
             transport: "streamable-http",
             protocolVersion: "2026-07-28",
@@ -193,7 +250,10 @@ describe("deriveServerConfigDigest", () => {
         "srv-1",
       ),
     ).toBe(
-      deriveServerConfigDigest(managerFor({ url: "https://a.example.com/mcp" }), "srv-1"),
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp" }),
+        "srv-1",
+      ),
     );
   });
 
@@ -251,7 +311,9 @@ describe("resolveMrtrAuthPrincipal", () => {
 describe("settleMrtrTeardown", () => {
   it("returns normally on a clean disconnect", async () => {
     const disconnect = vi.fn(async () => {});
-    await expect(settleMrtrTeardown(disconnect, "[t]")).resolves.toBeUndefined();
+    await expect(
+      settleMrtrTeardown(disconnect, "[t]"),
+    ).resolves.toBeUndefined();
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -342,7 +404,9 @@ describe("hosted MRTR collector (suspend, do not block)", () => {
 
     // Persisted with the encoded (opaque) state.
     expect(create).toHaveBeenCalledTimes(1);
-    const createArgs = (create.mock.calls[0] as unknown as [unknown, { resumeState: string }])[1];
+    const createArgs = (
+      create.mock.calls[0] as unknown as [unknown, { resumeState: string }]
+    )[1];
     expect(typeof createArgs.resumeState).toBe("string");
 
     // Emitted exactly one input_required part, and it NEVER carries the secret.
@@ -442,10 +506,14 @@ function makeFakeStore(seed: {
           stateVersion,
         };
       }) as never,
-      submitResponse: (async (_bearer: string, args: { round: number }) => {
+      submitResponse: (async (
+        _bearer: string,
+        args: { round: number; responses?: any },
+      ) => {
         calls.submit += 1;
         const idempotent = submitted.has(args.round);
         submitted.set(args.round, true);
+        if (args.responses) claimedState.currentRoundResponses = args.responses;
         stateVersion += idempotent ? 0 : 1;
         return { ok: true as const, idempotent, stateVersion };
       }) as never,
@@ -454,7 +522,10 @@ function makeFakeStore(seed: {
         attempt += 1;
         return { ok: true as const, attempt };
       }) as never,
-      resuspend: (async (_bearer: string, args: { round: number }) => {
+      resuspend: (async (
+        _bearer: string,
+        args: { round: number; responses?: any },
+      ) => {
         calls.resuspend.push(args.round);
         if (seed.failResuspend) {
           return { ok: false as const, ...seed.failResuspend };
@@ -495,8 +566,102 @@ describe("resumeMrtrContinuationLeg", () => {
     responses: { q1: { action: "accept" as const, content: { name: "Ada" } } },
   };
 
+  it("prepares wire-only input, verifies the exact same lease/version, then commits immediately before the wire", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+    });
+    const order: string[] = [];
+    const claim = vi.fn(store.deps.claim as any);
+    const outcome = await resumeMrtrContinuationLeg({
+      ...store.deps,
+      claim,
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      mintLeaseId: () => "same-lease",
+      prepareLeg: async () => {
+        order.push("prepare");
+        return {
+          responses: {
+            q1: { action: "accept", content: { file: "file:///disposable" } },
+          },
+          commit: () => {
+            expect(store.calls.markWireStarted).toBe(1);
+            order.push("commit");
+          },
+        };
+      },
+      driveLeg: async (_state, responses) => {
+        order.push("wire");
+        expect(responses.q1).toMatchObject({
+          content: { file: "file:///disposable" },
+        });
+        return { status: "complete", result: {} };
+      },
+    });
+    expect(outcome.outcome).toBe("completed");
+    expect(order).toEqual(["prepare", "commit", "wire"]);
+    expect(claim.mock.calls[1][1]).toMatchObject({
+      leaseId: "same-lease",
+      expectedStateVersion: 2,
+    });
+  });
+  it.each([
+    "lease-refused",
+    "changed-responses",
+    "changed-version",
+    "prepare-refused",
+  ])(
+    "refuses %s after admission without promotion or wire",
+    async (failure) => {
+      const store = makeFakeStore({
+        continuationId: "cont-1",
+        state: makeState(),
+        sideEffecting: true,
+      });
+      const commit = vi.fn(),
+        driveLeg = vi.fn();
+      let claims = 0;
+      const claim = async (...args: any[]) => {
+        const value = await (store.deps.claim as any)(...args);
+        if (++claims === 2) {
+          if (failure === "lease-refused")
+            return { ok: false, status: 409, error: "lease expired" };
+          if (failure === "changed-version") value.stateVersion++;
+          if (failure === "changed-responses")
+            value.state = {
+              ...value.state,
+              currentRoundResponses: { q1: { action: "decline" } },
+            };
+        }
+        return value;
+      };
+      const outcome = await resumeMrtrContinuationLeg({
+        ...store.deps,
+        claim,
+        bearer: "b",
+        submission,
+        bindingFingerprint: "fp",
+        driveLeg,
+        prepareLeg: async () => {
+          if (failure === "prepare-refused") throw new Error("target changed");
+          return { responses: submission.responses, commit };
+        },
+      });
+      expect(["failed", "cancelled"]).toContain(outcome.outcome);
+      expect(commit).not.toHaveBeenCalled();
+      expect(driveLeg).not.toHaveBeenCalled();
+      expect(store.calls.markWireStarted).toBe(0);
+      expect(store.calls.release).toBe(1);
+    },
+  );
   it("claims, submits, drives one leg, and finalizes on a complete result", async () => {
-    const store = makeFakeStore({ continuationId: "cont-1", state: makeState() });
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+    });
     const driveLeg = vi.fn(
       async (): Promise<MrtrLegResult<unknown>> => ({
         status: "complete",
@@ -518,7 +683,10 @@ describe("resumeMrtrContinuationLeg", () => {
   });
 
   it("is idempotent for a duplicate submission of the same round", async () => {
-    const store = makeFakeStore({ continuationId: "cont-1", state: makeState() });
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+    });
     const driveLeg = async (): Promise<MrtrLegResult<unknown>> => ({
       status: "complete",
       result: { ok: true },
@@ -544,13 +712,20 @@ describe("resumeMrtrContinuationLeg", () => {
   });
 
   it("re-suspends on another input_required round with a scrubbed display", async () => {
-    const store = makeFakeStore({ continuationId: "cont-1", state: makeState() });
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+    });
     const nextState = makeState({
       round: 1,
       pendingInputRequests: {
         q2: {
           method: "elicitation/create",
-          params: { mode: "form", message: "Confirm?", requestedSchema: { type: "object" } },
+          params: {
+            mode: "form",
+            message: "Confirm?",
+            requestedSchema: { type: "object" },
+          },
         },
       } as unknown as MrtrOperationState["pendingInputRequests"],
     });
@@ -691,6 +866,52 @@ describe("resumeMrtrContinuationLeg", () => {
     expect(emitted.find((e) => e.kind === "input_required")).toBeUndefined();
   });
 
+  it("replays a large owned schema without driving or submitting another leg", async () => {
+    const requestedSchema = {
+      type: "object",
+      properties: { name: { type: "string", description: "π".repeat(20000) } },
+    };
+    const state = makeState({
+      round: 1,
+      pendingInputRequests: {
+        q1: {
+          method: "elicitation/create",
+          params: {
+            mode: "form",
+            message: "Name?",
+            requestedSchema,
+          },
+        },
+      } as never,
+    });
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state,
+      round: 1,
+      expiresAt: 9000,
+    });
+    const driveLeg = vi.fn();
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission: { ...submission, round: 0 },
+      bindingFingerprint: "fp",
+      schemaDisplayMaxBytes: 256 * 1024,
+      driveLeg: driveLeg as never,
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({
+      outcome: "input_required",
+      round: 1,
+      displays: [{ key: "q1", requestedSchema }],
+    });
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+    expect(driveLeg).not.toHaveBeenCalled();
+    expect(store.calls.submit).toBe(0);
+    expect(store.calls.resuspend).toEqual([]);
+    expect(store.calls.finalize).toEqual([]);
+    expect(store.calls.release).toBe(1);
+  });
+
   it("reports indeterminate when finalize fails after a completed side-effecting leg", async () => {
     const store = makeFakeStore({
       continuationId: "cont-1",
@@ -710,7 +931,10 @@ describe("resumeMrtrContinuationLeg", () => {
     });
     // The tool definitively ran; a durability failure must NOT read as
     // `cancelled`/`failed`, which would invite a double-executing retry.
-    expect(outcome).toMatchObject({ outcome: "indeterminate", result: { ok: true } });
+    expect(outcome).toMatchObject({
+      outcome: "indeterminate",
+      result: { ok: true },
+    });
     expect(store.calls.cancel).toHaveLength(1);
   });
 

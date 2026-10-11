@@ -20,11 +20,16 @@ import {
 } from "../evals/run-metrics";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import {
+  iterationTargetKey,
+  modelEffortTargetKey,
+  runTargetKey,
+} from "@/lib/eval-target-key";
 import type {
   EvalCase,
   EvalIteration,
   EvalSuite,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
@@ -42,7 +47,7 @@ export function suiteIdentityCounts(
     serverAttachment?: EvalSuite["serverAttachment"];
   },
   cases: readonly { _id: string }[],
-  runs: readonly Pick<EvalSuiteRun, "source">[],
+  runs: readonly Pick<EvalSuiteRunListItem, "source">[],
 ): SuiteIdentityCounts {
   const sources = new Set(runs.map((run) => run.source ?? "ui"));
   return {
@@ -81,7 +86,7 @@ export type SuiteRunHistoryRow = {
    * has a decision to read at all. Not a verdict — see `statusMeta` in
    * `project-runs-table.tsx` for the same distinction.
    */
-  status: EvalSuiteRun["status"];
+  status: EvalSuiteRunListItem["status"];
   /**
    * A marker for this row as currently observed. When it changes, a cached
    * decision summary for the run is describing an older reading (asynchronous
@@ -99,7 +104,7 @@ export type SuiteRunHistoryRow = {
   verdictLabel: string;
   passRate: number | null;
   platform: string;
-  source: NonNullable<EvalSuiteRun["source"]>;
+  source: NonNullable<EvalSuiteRunListItem["source"]>;
   client: string | null;
   clientId?: string;
   clientVersionId?: string;
@@ -138,7 +143,7 @@ export type SuiteRunHistoryFilterOptions = {
  * `_creationTime` alone, so every reader goes through this fallback chain
  * rather than subtracting a possibly-absent field.
  */
-export function runTimestamp(run: EvalSuiteRun): number {
+export function runTimestamp(run: EvalSuiteRunListItem): number {
   return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
 }
 
@@ -154,7 +159,7 @@ export function formatSuiteRunDate(timestamp: number): string {
 }
 
 function passRateThreshold(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   suite: Pick<EvalSuite, "defaultPassCriteria">,
 ): number | null {
   return (
@@ -165,7 +170,7 @@ function passRateThreshold(
 }
 
 export function resolveRunHistoryVerdict(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   passRate: number | null,
   threshold: number | null,
 ): { verdict: RunHistoryVerdict; label: string } {
@@ -203,7 +208,7 @@ export function resolveRunHistoryVerdict(
   return { verdict: "pending", label: "Pending" };
 }
 
-export function runPlatformLabel(run: EvalSuiteRun): string {
+export function runPlatformLabel(run: EvalSuiteRunListItem): string {
   // The same resolution and the same table the badge and the filter chips use.
   // This was a fourth hand-copied label list, and it could only ever say `API`
   // for a CLI run, a GitHub Actions job or an MCP agent — the three things
@@ -215,7 +220,7 @@ export function runPlatformLabel(run: EvalSuiteRun): string {
 }
 
 function runClientLabel(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   hostNamesById: Map<string, string | null> | undefined,
   projectEnvironmentsEnabled: boolean,
 ): string | null {
@@ -225,10 +230,14 @@ function runClientLabel(
   return runHostLabel(run, hostNamesById);
 }
 
+/**
+ * The TARGETS a run's iterations ran (`targetKey`; the bare model id when
+ * default), so two efforts of one model are two filter values.
+ */
 function runModels(iterations: readonly EvalIteration[]): string[] {
   const models = new Set<string>();
   for (const iteration of iterations) {
-    const model = iteration.testCaseSnapshot?.model?.trim();
+    const model = iterationTargetKey(iteration)?.trim();
     if (model) models.add(model);
   }
   return [...models];
@@ -274,11 +283,11 @@ type RunHistoryMeasurement = Pick<
 >;
 
 function buildRunHistoryRows(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   suite: Pick<EvalSuite, "defaultPassCriteria">,
   hostNamesById: Map<string, string | null> | undefined,
   projectEnvironmentsEnabled: boolean,
-  measure: (run: EvalSuiteRun) => RunHistoryMeasurement,
+  measure: (run: EvalSuiteRunListItem) => RunHistoryMeasurement,
 ): SuiteRunHistoryRow[] {
   return [...runs]
     .sort(
@@ -321,7 +330,7 @@ function buildRunHistoryRows(
 }
 
 export function buildSuiteRunHistoryRows(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   allIterations: readonly EvalIteration[],
   suite: Pick<EvalSuite, "defaultPassCriteria">,
   hostNamesById: Map<string, string | null> | undefined,
@@ -345,7 +354,7 @@ export function buildSuiteRunHistoryRows(
       return {
         passRate: computeRunEffectiveStats(run, iterations).passRate,
         models: run.effectiveModelId
-          ? [run.effectiveModelId]
+          ? [runTargetKey(run) ?? run.effectiveModelId]
           : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
         tokens: sumTokens(iterations),
@@ -361,7 +370,7 @@ export function buildSuiteRunHistoryRows(
  * A run with no metrics yet shows its summary pass rate and `—` elsewhere.
  */
 export function buildSuiteRunHistoryRowsFromMetrics(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
   suite: Pick<EvalSuite, "defaultPassCriteria">,
   hostNamesById: Map<string, string | null> | undefined,
@@ -377,8 +386,16 @@ export function buildSuiteRunHistoryRowsFromMetrics(
       return {
         passRate: computeRunEffectiveStatsFromMetrics(run, metrics).passRate,
         models: run.effectiveModelId
-          ? [run.effectiveModelId]
-          : (metrics?.models.map((row) => row.model) ?? []),
+          ? [runTargetKey(run) ?? run.effectiveModelId]
+          : // Rollup rows are per model × effective effort; an effort-less
+            // row keys as the bare model id, exactly as before.
+            [
+              ...new Set(
+                metrics?.models.map((row) =>
+                  modelEffortTargetKey(row.model, row.reasoningEffort),
+                ) ?? [],
+              ),
+            ],
         latencyMs: metrics?.latencyP50Ms ?? null,
         tokens: metrics?.tokensTotal ?? null,
         toolCalls: metrics?.toolCallsTotal ?? null,
@@ -388,7 +405,7 @@ export function buildSuiteRunHistoryRowsFromMetrics(
 }
 
 export function buildSuiteRunHistoryAggregates(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   allIterations: readonly EvalIteration[],
 ): SuiteRunHistoryAggregates {
   const runIds = new Set(runs.map((run) => run._id));
@@ -427,7 +444,7 @@ export function buildSuiteRunHistoryAggregates(
 
 /** `buildSuiteRunHistoryAggregates`, read from per-run metrics. */
 export function buildSuiteRunHistoryAggregatesFromMetrics(
-  runs: readonly EvalSuiteRun[],
+  runs: readonly EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
 ): SuiteRunHistoryAggregates {
   const list = runs

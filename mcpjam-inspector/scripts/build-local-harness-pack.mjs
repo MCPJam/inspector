@@ -1,37 +1,47 @@
-// Builds the local-harness runtime pack: the verified, per-platform tree that
-// the supervised native harness launches Claude Code from.
+// Builds a local-harness runtime pack: the verified, per-platform tree that a
+// supervised native harness launches from.
 //
 // ── Why a pack, and why it is not in the npm package ─────────────────────
-// The adapter's bridge needs its own frozen dependency graph, and Claude Code
-// is a 376 MB Mach-O/ELF that the vendor's SDK spawns directly. That is ~515 MB
-// on disk. It cannot ship inside `@mcpjam/inspector` (npm would refuse the
+// A harness's bridge needs its own frozen dependency graph, and the vendor
+// CLIs are hundreds of megabytes of Mach-O/ELF/PE that the bridge spawns
+// directly. They cannot ship inside `@mcpjam/inspector` (npm would refuse the
 // size and every user would pay it), and coupling Electron notarization to a
-// third-party binary of that size is its own problem. So it is built here,
-// signed, published as a release asset, and downloaded on first use.
+// third-party binary of that size is its own problem. So each harness's pack
+// is built here, signed, published as a release asset, and downloaded on first
+// use.
 //
-// ── What goes in ─────────────────────────────────────────────────────────
-//   - the Inspector-patched adapter recipe (`package.json`, `pnpm-lock.yaml`,
-//     `pnpm-workspace.yaml`, `.npmrc`, and `bridge.mjs`) — byte-identical to
-//     the recipe used at runtime. The provider byte-compares the bridge, so a
-//     single changed byte fails the session closed, which is the point;
-//   - `launcher.mjs`, Inspector-owned, which forces the bridge's listener onto
-//     loopback and then imports the patched bridge;
-//   - a hoisted, symlink-free `node_modules`, pruned of the unused
-//     `@anthropic-ai/claude-code` wrapper and every `.bin` shim;
+// ── Shared orchestration, per-harness recipes ────────────────────────────
+// This script is the GENERIC half and is a pack input of every harness. What
+// is specific to one harness — staging its bootstrap recipe, installing its
+// frozen graph, checksum-verifying its vendor binary, pruning, reporting its
+// vendor packages — lives in `local-harness-pack-recipes/<harnessId>.mjs`,
+// which is a pack input of that harness only. `--harness` selects one; it
+// defaults to `claude-code`, the pack this script built before it was split.
+//
+// ── What goes in (every harness) ─────────────────────────────────────────
+//   - the vendor graph the harness recipe installs, as a hoisted, symlink-free
+//     `node_modules` with no `.bin` shims;
 //   - `bin/node`, an official nodejs.org build, because Electron's `RunAsNode`
-//     fuse is off and the npx server's own Node is outside the digest.
+//     fuse is off and the npx server's own Node is outside the digest;
+//   - on Windows, the Job Object launcher.
+//
+// MCPJam's own code — the bridge and its loopback launcher — is the Inspector
+// layer, shipped with the Inspector (`server/utils/harness/local/inspector-layer.ts`)
+// rather than in a pack. A pack is vendor bytes only.
 //
 // ── What comes out ───────────────────────────────────────────────────────
-//   local-harness-pack-<platform>-<packVersion>.tar.gz
-//   local-harness-pack-<platform>-<packVersion>.tar.gz.sha256
-//   local-harness-pack-<platform>-<packVersion>.manifest.json   (+ .sig)
-//   local-harness-pack-<platform>-<packVersion>.sbom.json
+//   <stem>.tar.gz, <stem>.tar.gz.sha256, <stem>.manifest.json (+ .sig),
+//   <stem>.sbom.json — where <stem> is `packAssetStem(harness, target, ver)`:
+//   `local-harness-pack-<target>-<ver>` for Claude Code (its original names)
+//   and `local-harness-pack-<harness>-<target>-<ver>` for every other harness.
+//   The archive's single top-level directory is the harness id.
 //
 // The tarball is built with `--sort=name --mtime --owner=0 --group=0
 // --numeric-owner`, so two builds of the same inputs produce the same bytes.
 //
 // Usage:
 //   node scripts/build-local-harness-pack.mjs \
+//     --harness claude-code \
 //     --node-tarball /tmp/node-v24.20.0-linux-x64.tar.xz \
 //     --platform linux-x64 \
 //     --out .pack-out \
@@ -45,6 +55,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  symlinkSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -54,94 +65,33 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { loadPackHarness, packAssetStem } from "./local-harness-pack-harnesses.mjs";
+
+/**
+ * The SBOM generator, at an exact version: it is fetched by `npx` at build
+ * time, so "latest" would be whatever its publisher shipped that morning. It
+ * runs only after the pack is sealed (see below).
+ */
+export const CYCLONEDX_NPM = "@cyclonedx/cyclonedx-npm@6.0.1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = resolve(scriptDir, "..");
 const toolchain = JSON.parse(readFileSync(join(scriptDir, "local-harness-toolchain.json"), "utf8"));
 
 /**
- * Platforms a pack can be built for, and the vendor platform package whose
- * native binary must be present and checksum-verified for each.
- *
- * Kept as an explicit table rather than derived from `process.platform`,
- * because the vendor package name is the only reliable way to find the binary
- * that will actually run.
+ * Pack targets this script can build.
  *
  * Cross-building is only PARTLY supported, and it is worth being exact about
  * where the line is. The bundled Node is fine — its version is read from the
- * archive name when the binary cannot be run here. The vendor CLI is not: the
- * SDK resolves its own platform package, so a pack for a foreign platform has
- * no `claude` to checksum unless that package is forced into the install. The
- * workflow therefore builds each target on a matching runner, and a
- * cross-build attempt fails with a message that says exactly this rather than
- * with `ENOEXEC` from somewhere further down.
+ * archive name when the binary cannot be run here. A vendor CLI is not: each
+ * harness's dependency graph resolves its own platform package, so a pack for
+ * a foreign platform has no native binary to checksum unless that package is
+ * forced into the install. The workflow therefore builds each target on a
+ * matching runner, and a recipe refuses a cross-build with a message that says
+ * exactly this rather than with `ENOEXEC` from somewhere further down.
  */
-const PLATFORMS = {
-  "darwin-arm64": { os: "darwin", vendorSuffix: "darwin-arm64" },
-  "darwin-x64": { os: "darwin", vendorSuffix: "darwin-x64" },
-  "linux-x64": { os: "linux", vendorSuffix: "linux-x64" },
-  "linux-arm64": { os: "linux", vendorSuffix: "linux-arm64" },
-  "win32-x64": { os: "win32", vendorSuffix: "win32-x64" },
-};
-
-/**
- * Stage exactly the recipe the application writes, installing dependencies
- * before adding its runtime-only .npmrc. The pack install must not inherit
- * dangerously-allow-all-builds from that file in the signing job.
- *
- * Load the leaf through tsx only when building a recipe, so importing the
- * digest helpers remains independent of TypeScript and application services.
- */
-export async function installClaudeCodePackRecipe(packRoot, installDependencies) {
-  const { tsImport } = await import("tsx/esm/api");
-  const { createClaudeCodeHarness } = await tsImport(
-    "../server/utils/harness/claude-code-bootstrap.ts",
-    { parentURL: import.meta.url, tsconfig: false },
-  );
-  const bootstrap = await createClaudeCodeHarness().getBootstrap();
-  const prefix = `${bootstrap.bootstrapDir}/`;
-  const files = bootstrap.files.map((file) => {
-    const name = file.path.slice(prefix.length);
-    if (
-      !file.path.startsWith(prefix) ||
-      !name ||
-      name === "." ||
-      name === ".." ||
-      name.includes("/") ||
-      name.includes("\\")
-    ) {
-      throw new Error(`Unexpected Claude Code bootstrap path: ${file.path}`);
-    }
-    return { name, content: file.content };
-  });
-  const npmrc = files.find((file) => file.name === ".npmrc");
-  if (!npmrc) throw new Error("Claude Code bootstrap is missing .npmrc");
-
-  mkdirSync(packRoot, { recursive: true });
-  // Also safe when called again after an interrupted build.
-  rmSync(join(packRoot, ".npmrc"), { force: true });
-  for (const file of files) {
-    if (file.name !== ".npmrc") {
-      writeFileSync(join(packRoot, file.name), file.content);
-    }
-  }
-  writeFileSync(join(packRoot, "bootstrap.json"), JSON.stringify(bootstrap));
-  await installDependencies();
-  writeFileSync(join(packRoot, ".npmrc"), npmrc.content);
-  return { bridgeDigest: `sha256:${sha256File(join(packRoot, "bridge.mjs"))}` };
-}
-
-/** The pinned adapter's bridge recipe directory, wherever it installed. */
-function defaultAdapterBridgeDir() {
-  const required = createRequire(import.meta.url);
-  return join(
-    dirname(required.resolve("@ai-sdk/harness-claude-code/package.json")),
-    "dist",
-    "bridge",
-  );
-}
+const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"];
 
 function parseArgs(argv) {
   const args = {};
@@ -278,71 +228,6 @@ export function flattenHardLinks(root, flattened = { count: 0 }) {
     flattened.count += 1;
   }
   return flattened.count;
-}
-
-/**
- * Verify the vendor's native CLI against the checksum the SDK publishes for it.
- *
- * This is the one file in the pack that neither we nor npm's integrity check
- * meaningfully vouch for: it is extracted by a postinstall from a platform
- * package. The SDK ships a `manifest.json` listing per-platform checksums, so
- * that is what it is checked against — and a pack whose vendor binary does not
- * match is not built at all, rather than built and rejected later by a user.
- */
-function verifyVendorBinary(packRoot, platformKey) {
-  const { vendorSuffix } = PLATFORMS[platformKey];
-  const sdkDir = join(packRoot, "node_modules", "@anthropic-ai", "claude-agent-sdk");
-  const manifestPath = join(sdkDir, "manifest.json");
-  if (!existsSync(manifestPath)) {
-    fail(
-      `the adapter's installed SDK has no manifest.json at ${manifestPath}, ` +
-        `so the vendor binary cannot be checksum-verified`,
-    );
-  }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const platformPackage = join(
-    packRoot,
-    "node_modules",
-    "@anthropic-ai",
-    `claude-agent-sdk-${vendorSuffix}`,
-  );
-  const binaryName = platformKey.startsWith("win32") ? "claude.exe" : "claude";
-  const binaryPath = join(platformPackage, binaryName);
-  if (!existsSync(binaryPath)) {
-    fail(
-      `no vendor CLI at ${binaryPath}. The SDK resolves its own platform ` +
-        `package, so a pack for ${platformKey} must be built where that ` +
-        `package installs (or with the platform package forced in).`,
-    );
-  }
-
-  // The manifest's shape has moved between SDK versions; accept the two known
-  // layouts and refuse rather than guess if it is neither.
-  const entry =
-    manifest?.platforms?.[vendorSuffix] ??
-    manifest?.[vendorSuffix] ??
-    manifest?.binaries?.[vendorSuffix];
-  const expected =
-    typeof entry === "string" ? entry : (entry?.checksum ?? entry?.sha256);
-  if (typeof expected !== "string" || expected.length === 0) {
-    fail(
-      `the SDK manifest lists no checksum for ${vendorSuffix}; refusing to ` +
-        `ship a vendor binary nothing vouches for`,
-    );
-  }
-  const actual = sha256File(binaryPath);
-  const normalized = expected.replace(/^sha256[:-]/, "");
-  if (actual !== normalized) {
-    fail(
-      `vendor CLI checksum mismatch for ${vendorSuffix}: SDK manifest says ` +
-        `${normalized}, file hashes to ${actual}`,
-    );
-  }
-  return {
-    path: relative(packRoot, binaryPath).split(sep).join("/"),
-    sha256: actual,
-    bytes: statSync(binaryPath).size,
-  };
 }
 
 /** Extract the pack's `bin/node` from an official nodejs.org tarball. */
@@ -527,6 +412,17 @@ function resolveTar() {
 }
 
 /**
+ * Arguments that list an archive with this tar.
+ *
+ * Reading the archive back needs `--force-local` for the same reason writing
+ * it does: GNU tar reads the colon in `D:\a\_temp\…` as an rmt `host:path`
+ * spec. bsdtar has no such flag, so it is GNU-only here too.
+ */
+export function archiveListArgs(tar, archivePath) {
+  return [...(tar.gnu ? ["--force-local"] : []), "-tzf", archivePath];
+}
+
+/**
  * Refuse an archive carrying AppleDouble members.
  *
  * The suppression above is a flag, and a flag is a claim. This reads the
@@ -538,10 +434,10 @@ function resolveTar() {
  * Listing an archive works on every tar this build runs under, so this is not
  * conditional on which one produced it.
  */
-function assertNoAppleDoubleMembers(tarBin, archivePath) {
+function assertNoAppleDoubleMembers(tar, archivePath) {
   let listing;
   try {
-    listing = execFileSync(tarBin, ["-tzf", archivePath], {
+    listing = execFileSync(tar.bin, archiveListArgs(tar, archivePath), {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     });
@@ -566,78 +462,67 @@ function assertNoAppleDoubleMembers(tarBin, archivePath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const platformKey = String(args.platform ?? "");
-  if (!(platformKey in PLATFORMS)) {
+  if (!PLATFORMS.includes(platformKey)) {
     fail(
-      `--platform must be one of ${Object.keys(PLATFORMS).join(", ")}, got ` +
+      `--platform must be one of ${PLATFORMS.join(", ")}, got ` +
         `${platformKey || "(none)"}`,
     );
   }
-  // Resolved through the package manager, not from the source layout: this is
-  // an npm workspace, so the adapter hoists to the REPO root rather than
-  // installing under `mcpjam-inspector/node_modules`. A path relative to this
-  // script is right on exactly one of those layouts and silently wrong on the
-  // other — which is what `check:bundled-runtime-paths` exists to stop.
-  const adapterBridge = resolve(defaultAdapterBridgeDir());
+  const harnessId = String(args.harness ?? "claude-code");
+  let recipe;
+  try {
+    recipe = await loadPackHarness(harnessId);
+  } catch (error) {
+    fail(error.message);
+  }
   const outRoot = resolve(String(args.out ?? join(inspectorRoot, ".pack-out")));
   const nodeTarball = args["node-tarball"]
     ? resolve(String(args["node-tarball"]))
     : null;
   if (nodeTarball === null) fail("--node-tarball is required");
-  if (!existsSync(adapterBridge)) {
-    fail(`no adapter bridge directory at ${adapterBridge}`);
-  }
 
-
-  const required = createRequire(import.meta.url);
-  const adapterVersion = JSON.parse(
-    readFileSync(
-      required.resolve("@ai-sdk/harness-claude-code/package.json"),
-      "utf8",
-    ),
-  ).version;
-  const packVersion = String(args["pack-version"] ?? adapterVersion);
-
-  const packRoot = join(outRoot, "claude-code");
+  // The archive's top-level directory is the harness id: the installer
+  // extracts it and digests `<version>/<harnessId>`.
+  const packRoot = join(outRoot, harnessId);
   rmSync(packRoot, { recursive: true, force: true });
   mkdirSync(packRoot, { recursive: true });
 
-  // 1. The same patched recipe used by runtime dispatch and conformance.
-  //    Install the frozen graph before staging the runtime-only .npmrc.
-  const { bridgeDigest } = await installClaudeCodePackRecipe(packRoot, () => {
-    // Hoisted: the verified tree refuses pnpm's default symlink layout.
-    assertPnpmVersion();
-    process.stdout.write("[pack] installing the adapter's frozen dependency graph…\n");
-    runPnpm(
-      [
-        "install",
-        "--frozen-lockfile",
-        "--node-linker=hoisted",
-        "--store-dir",
-        join(outRoot, ".pnpm-store"),
-      ],
-      { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
-    );
-  });
+  // 1. The same recipe used by runtime dispatch and conformance, with the
+  //    harness's frozen dependency graph installed into it. Hoisted: the
+  //    verified tree refuses pnpm's default symlink layout.
+  let bridgeDigest;
+  try {
+    ({ bridgeDigest } = await recipe.stageRecipe(packRoot, () => {
+      assertPnpmVersion();
+      process.stdout.write(`[pack] installing the ${harnessId} recipe's frozen dependency graph…\n`);
+      runPnpm(
+        [
+          "install",
+          "--frozen-lockfile",
+          "--node-linker=hoisted",
+          "--store-dir",
+          join(outRoot, ".pnpm-store"),
+        ],
+        { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
+      );
+    }));
+  } catch (error) {
+    fail(error.stack ?? error.message);
+  }
+  // Read after staging: a recipe whose identity comes from a build product
+  // (Codex's bridge bundle) has produced it by now.
+  const adapterVersion = recipe.adapterVersion();
+  const packVersion = String(args["pack-version"] ?? adapterVersion);
 
-  // 2. The Inspector-owned loopback launcher, from the repo (digest-covered,
-  //    reviewed in a diff like any other source file).
-  copyFileSync(
-    join(inspectorRoot, "server/utils/harness/local/pack/launcher.mjs"),
-    join(packRoot, "launcher.mjs"),
-  );
-
-  // 3. Prune. The `@anthropic-ai/claude-code` wrapper exists only for the
-  //    adapter's `--version` probe, which the translator answers as a no-op;
-  //    the SDK resolves its OWN platform package. `.bin` shims are symlinks
-  //    and nothing in the pack invokes them.
-  const vendor = verifyVendorBinary(packRoot, platformKey);
-  for (const entry of readdirSync(join(packRoot, "node_modules/@anthropic-ai"))) {
-    if (entry === "claude-code" || entry.startsWith("claude-code-")) {
-      rmSync(join(packRoot, "node_modules/@anthropic-ai", entry), {
-        recursive: true,
-        force: true,
-      });
-    }
+  // 2. Verify the vendor binary, then prune. `.bin` shims are symlinks and
+  //    nothing in the pack invokes them; what else a harness drops is its
+  //    recipe's call.
+  let vendor;
+  try {
+    vendor = recipe.verifyVendorBinary(packRoot, platformKey);
+    recipe.prunePack(packRoot, platformKey);
+  } catch (error) {
+    fail(error.message);
   }
   rmDirsNamed(join(packRoot, "node_modules"), ".bin");
   for (const stray of [".modules.yaml", ".pnpm-workspace-state-v1.json"]) {
@@ -688,30 +573,25 @@ async function main() {
 
   const { digest, files, bytes } = computeTreeDigest(packRoot);
 
-  const vendorPackages = {};
-  const anthropicDir = join(packRoot, "node_modules/@anthropic-ai");
-  if (existsSync(anthropicDir)) {
-    for (const entry of readdirSync(anthropicDir)) {
-      const pkg = join(anthropicDir, entry, "package.json");
-      if (!existsSync(pkg)) continue;
-      vendorPackages[`@anthropic-ai/${entry}`] = JSON.parse(
-        readFileSync(pkg, "utf8"),
-      ).version;
-    }
-  }
+  const vendorPackages = recipe.vendorPackages(packRoot);
 
-  const { computePackInputs } = await import("./check-local-harness-inputs.mjs");
-  const { fingerprint: inputsFingerprint } = await computePackInputs();
+  // This harness's fingerprint, not a global one: a pack records the inputs
+  // that produced IT, so another harness's recipe change cannot make an
+  // already-published pack look stale.
+  const { computeHarnessPackInputs } = await import("./check-local-harness-inputs.mjs");
+  const { fingerprint: inputsFingerprint } = await computeHarnessPackInputs(harnessId);
   const manifest = {
     inputsFingerprint,
     schema: "mcpjam.local-harness-pack/1",
-    harnessId: "claude-code",
+    harnessId,
     packVersion,
     adapterVersion,
     platform: platformKey,
     nodeVersion: node.version,
     treeDigest: digest,
-    bridgeDigest,
+    // Only for a pack that still carries its harness's bridge. A layer-split
+    // pack carries no bridge, and the release gate no longer compares one.
+    ...(typeof bridgeDigest === "string" ? { bridgeDigest } : {}),
     files,
     bytes,
     vendorPackages,
@@ -725,7 +605,7 @@ async function main() {
     },
   };
 
-  const stem = `local-harness-pack-${platformKey}-${packVersion}`;
+  const stem = packAssetStem(harnessId, platformKey, packVersion);
   mkdirSync(outRoot, { recursive: true });
   const manifestPath = join(outRoot, `${stem}.manifest.json`);
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -804,11 +684,11 @@ async function main() {
         archivePath,
         "-C",
         outRoot,
-        "claude-code",
+        harnessId,
       ],
       { stdio: "inherit", env: { ...process.env, COPYFILE_DISABLE: "1" } },
     );
-    assertNoAppleDoubleMembers(tar.bin, archivePath);
+    assertNoAppleDoubleMembers(tar, archivePath);
     const archiveSha = sha256File(archivePath);
     writeFileSync(
       join(outRoot, `${stem}.tar.gz.sha256`),
@@ -837,13 +717,51 @@ async function main() {
     );
   }
 
-  // An SBOM and a license listing, from the graph that is actually in the pack.
+  // An SBOM of the graph in the pack, or a license listing of the tree.
+  //
+  // Only AFTER the archive is sealed and signed, and never inside the pack:
+  // the generator is a third-party package fetched by `npx`, so it runs from a
+  // scratch directory holding the recipe's install manifests and a link to the
+  // pack's `node_modules`, at a PINNED version, with no secret in its
+  // environment — and the tree is digested again afterwards, so a generator
+  // that wrote into the pack fails the build instead of shipping. (It used to
+  // run inside the pack before the digest, where anything it changed would
+  // have been covered by the digest and the signature.)
+  let sbom = null;
+  if (args["skip-archive"] !== true) {
+    const scratch = mkdtempSync(join(outRoot, ".sbom-"));
+    try {
+      const { bootstrapDir, files: recipeFiles } = await recipe.loadRecipe();
+      for (const file of recipeFiles) {
+        const name = file.path.slice(bootstrapDir.length + 1);
+        if (name === "package.json" || name.endsWith(".yaml") || name.endsWith(".json")) {
+          mkdirSync(dirname(join(scratch, name)), { recursive: true });
+          writeFileSync(join(scratch, name), file.content);
+        }
+      }
+      symlinkSync(join(packRoot, "node_modules"), join(scratch, "node_modules"), "junction");
+      sbom = execFileSync(
+        "npx",
+        ["--yes", CYCLONEDX_NPM, "--output-format", "JSON", "--output-file", "-"],
+        {
+          cwd: scratch,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+          env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !/SIGNING_KEY|TOKEN|SECRET/i.test(name))),
+        },
+      );
+    } catch {
+      sbom = null;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    if (computeTreeDigest(packRoot).digest !== digest) {
+      fail("the pack tree changed while its SBOM was generated; refusing to ship it");
+    }
+  }
   try {
-    const sbom = execFileSync(
-      "npx",
-      ["--yes", "@cyclonedx/cyclonedx-npm", "--output-format", "JSON", "--output-file", "-"],
-      { cwd: packRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
+    if (sbom === null) throw new Error("no SBOM");
     writeFileSync(join(outRoot, `${stem}.sbom.json`), sbom);
   } catch {
     // A missing SBOM must not fail the build; the license listing below is the
