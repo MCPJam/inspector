@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -579,7 +585,8 @@ describe("pr-size verdict", async () => {
   });
 });
 
-describe("hooks in another checkout", () => {
+describe("hooks in another checkout", async () => {
+  const { snapshotFile } = await import("./hook.mjs");
   const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
   const repo = mkdtempSync(join(tmpdir(), "slop-hook-repo-"));
   after(() => rmSync(repo, { recursive: true, force: true }));
@@ -620,6 +627,36 @@ describe("hooks in another checkout", () => {
       },
     });
     assert.equal(code, 2);
+  });
+
+  it("counts files created during the turn, not files that were already there", () => {
+    const session = `test-${process.pid}-${Date.now()}`;
+    git("checkout", "--", "sdk/src/a.ts");
+    writeFileSync(join(repo, "sdk/src/before.ts"), "p.catch(() => {});\n");
+    assert.equal(
+      hook({
+        hook_event_name: "UserPromptSubmit",
+        cwd: repo,
+        session_id: session,
+      }),
+      0,
+    );
+    assert.equal(
+      hook({ hook_event_name: "Stop", cwd: repo, session_id: session }),
+      0,
+    );
+    // What a Bash command might create: no Edit or Write hook saw it.
+    writeFileSync(
+      join(repo, "sdk/src/during.ts"),
+      "export const d = x as any;\n",
+    );
+    assert.equal(
+      hook({ hook_event_name: "Stop", cwd: repo, session_id: session }),
+      2,
+    );
+    rmSync(join(repo, "sdk/src/before.ts"));
+    rmSync(join(repo, "sdk/src/during.ts"));
+    rmSync(snapshotFile(session, realpathSync(repo)), { force: true });
   });
 
   it("stops on tracked changes but not on someone's untracked files", () => {

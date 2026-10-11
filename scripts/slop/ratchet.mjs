@@ -12,8 +12,10 @@
  *   node scripts/slop/ratchet.mjs                 # vs merge-base with origin/main
  *   node scripts/slop/ratchet.mjs --base HEAD^1   # CI: the PR merge commit's base
  *
- * --tracked-only skips untracked files: the Stop hook uses it so a person's
- * scratch files in the checkout are not reported as the agent's change.
+ * --ignore-untracked FILE skips the untracked paths listed in FILE, one per
+ * line, and --tracked-only skips untracked files altogether. The Stop hook
+ * uses them so untracked files that were already there when the turn began,
+ * such as a person's scratch work, are not reported as the agent's change.
  *
  * SLOP_WAIVER=true reports the same result and exits 0. CI sets it from the
  * `slop-waiver` label, which a CODEOWNER applies with a reason in the PR.
@@ -30,13 +32,23 @@ function git(args) {
   });
 }
 
+function argValue(name) {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? undefined : process.argv[index + 1];
+}
+
+function readPathList(file) {
+  if (!file) return undefined;
+  return new Set(readFileSync(file, "utf8").split("\n").filter(Boolean));
+}
+
 function resolveBase(argv) {
   const index = argv.indexOf("--base");
   if (index !== -1 && argv[index + 1]) return argv[index + 1];
   return git(["merge-base", "HEAD", "origin/main"]).trim();
 }
 
-function changedPaths(base, { trackedOnly = false } = {}) {
+function changedPaths(base, { trackedOnly = false, ignoreUntracked } = {}) {
   const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
     .split("\0")
     .filter(Boolean);
@@ -44,7 +56,7 @@ function changedPaths(base, { trackedOnly = false } = {}) {
     ? []
     : git(["ls-files", "--others", "--exclude-standard", "-z"])
         .split("\0")
-        .filter(Boolean);
+        .filter((path) => path && !ignoreUntracked?.has(path));
   return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
 }
 
@@ -106,11 +118,17 @@ function report({ deltas, increases }, waived) {
 }
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   const base = resolveBase(process.argv.slice(2));
   const waived = process.env.SLOP_WAIVER === "true";
   process.exitCode = report(
-    compare(base, { trackedOnly: process.argv.includes("--tracked-only") }),
+    compare(base, {
+      trackedOnly: process.argv.includes("--tracked-only"),
+      ignoreUntracked: readPathList(argValue("--ignore-untracked")),
+    }),
     waived,
   );
 }

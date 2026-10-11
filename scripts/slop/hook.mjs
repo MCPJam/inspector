@@ -6,7 +6,9 @@
  *
  *   PreToolUse (Write)        refuse new root files, NOTES-*.md and .spike-* folders
  *   PostToolUse (Edit|Write)  report rules an edit added, and a file growing past FILE_BUDGET lines
- *   Stop                      run the ratchet over the whole change once before the turn ends
+ *   UserPromptSubmit          note which untracked files exist as the turn begins
+ *   Stop                      run the ratchet over the whole change once before the turn ends,
+ *                             counting untracked files only if they appeared during the turn
  *
  * Any failure of the hook itself exits 0: a broken check must not wedge a session.
  *
@@ -15,7 +17,9 @@
  * there it would hold the action's API key and write token.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
@@ -167,16 +171,56 @@ export function editFragments(toolName, toolInput, headText, fileText) {
   return { before: headText, after: fileText };
 }
 
+/** Where this session's turn-start list of untracked files lives. */
+export function snapshotFile(sessionId, root) {
+  const key = createHash("sha256")
+    .update(`${sessionId ?? ""}\0${root}`)
+    .digest("hex")
+    .slice(0, 16);
+  return join(tmpdir(), `slop-hook-untracked-${key}.txt`);
+}
+
+function untrackedFiles(root) {
+  return execFileSync(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  )
+    .split("\0")
+    .filter(Boolean);
+}
+
+/**
+ * Untracked files present when the turn begins are someone else's (a
+ * person's scratch work, say). Ones that appear during the turn are the
+ * agent's, including files a Bash command created, which no Edit or Write
+ * hook sees.
+ */
+function runPromptSubmit(input) {
+  const root = repoRootFor(input.cwd ?? process.cwd());
+  if (!root) return 0;
+  const lines = untrackedFiles(root).join("\n");
+  writeFileSync(
+    snapshotFile(input.session_id, root),
+    lines ? `${lines}\n` : "",
+  );
+  return 0;
+}
+
 function runStop(input) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
   if (input.stop_hook_active) return 0;
   const root = repoRootFor(input.cwd ?? process.cwd());
   if (!root) return 0;
+  // Without a turn-start snapshot, count tracked files only rather than
+  // blame the agent for untracked files it may not have written.
+  const snapshot = snapshotFile(input.session_id, root);
+  const scope = existsSync(snapshot)
+    ? ["--ignore-untracked", snapshot]
+    : ["--tracked-only"];
   try {
-    // Tracked files only: untracked files in the checkout may be a person's
-    // own scratch work, and files the agent writes were checked as it wrote.
-    execFileSync("node", [join(HERE, "ratchet.mjs"), "--tracked-only"], {
+    execFileSync("node", [join(HERE, "ratchet.mjs"), ...scope], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -192,6 +236,9 @@ function runStop(input) {
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
   if (input.hook_event_name === "Stop") return runStop(input);
+  if (input.hook_event_name === "UserPromptSubmit") {
+    return runPromptSubmit(input);
+  }
 
   const filePath = input.tool_input?.file_path;
   if (!filePath) return 0;
@@ -225,7 +272,10 @@ function main() {
 }
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   try {
     process.exitCode = main();
   } catch {
