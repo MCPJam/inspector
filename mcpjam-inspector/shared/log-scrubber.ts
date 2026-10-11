@@ -39,6 +39,11 @@ import {
   urlBasicAuthLike,
 } from "./secret-shape-redaction";
 
+/**
+ * Matched against the key lowercased with `-`, `_` and whitespace removed, so
+ * `api_key`, `api-key`, `X-API-Key` and `apiKey` are all `apikey`. Entries are
+ * written in that compact form.
+ */
 const FORBIDDEN_KEY_SUBSTRINGS = [
   "authorization",
   "cookie",
@@ -46,17 +51,17 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "token",
   "secret",
   "apikey",
+  "privatekey",
   "pkceverifier",
   "pkcechallenge",
   "stripecustomer",
   "stripesubscription",
   "stripeprice",
-  "x-mcp-session-auth",
-  "x-api-key",
+  "xmcpsessionauth",
   // Header-broker model lease (E2B network-transform delivery). A signed model
   // lease — never log it, even though the inspector never handles it directly
   // (defense in depth).
-  "x-mcpjam-harness-lease",
+  "xmcpjamharnesslease",
 ];
 
 const ALLOWLISTED_KEYS = new Set(["emaildomain"]);
@@ -162,10 +167,10 @@ const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const URL_LIKE = () => /\b(?:https?|wss?):\/\/[^\s"'`<>(){}]+/gi;
 
 function isForbiddenKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  if (ALLOWLISTED_KEYS.has(lower)) return false;
-  if (lower === "email" || lower.endsWith("email")) return true;
-  return FORBIDDEN_KEY_SUBSTRINGS.some((s) => lower.includes(s));
+  const compact = key.toLowerCase().replace(/[-_\s]/g, "");
+  if (ALLOWLISTED_KEYS.has(compact)) return false;
+  if (compact.endsWith("email")) return true;
+  return FORBIDDEN_KEY_SUBSTRINGS.some((s) => compact.includes(s));
 }
 
 /** `toolArgs` → `["tool", "args"]`, `request_body` → `["request", "body"]`. */

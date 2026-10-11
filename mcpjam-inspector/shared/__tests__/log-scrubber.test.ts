@@ -60,6 +60,32 @@ describe("scrubLogPayload", () => {
       });
     });
 
+    it("matches credential key names whatever their separators", () => {
+      for (const key of [
+        "api_key",
+        "api-key",
+        "API Key",
+        "X-API-Key",
+        "x_api_key",
+        "private_key",
+        "privateKey",
+        "PRIVATE-KEY",
+        "X-MCP-Session-Auth",
+        "x_mcpjam_harness_lease",
+        "user_email",
+      ]) {
+        expect(scrubLogPayload({ [key]: "value" })).toEqual({
+          [key]: "[redacted]",
+        });
+      }
+    });
+
+    it("keeps an allowlisted key in any spelling", () => {
+      expect(
+        scrubLogPayload({ email_domain: "b.com", "email-domain": "b.com" }),
+      ).toEqual({ email_domain: "b.com", "email-domain": "b.com" });
+    });
+
     it("redacts stripeCustomer key", () => {
       expect(scrubLogPayload({ stripeCustomer: "cus_123" })).toEqual({
         stripeCustomer: "[redacted]",
