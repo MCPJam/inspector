@@ -9,7 +9,9 @@ import {
   isAiConfigurationRefusalCode,
   isAiExecutionRefusalCode,
   isOrgKeyPolicyRefusalCode,
+  isRecognizedAiRefusalCode,
 } from "../ai-execution-refusal";
+import { describeAiRefusal } from "../ai-refusal-copy";
 
 describe("AI_EXECUTION_REFUSAL_CODES", () => {
   it("is the closed set the backend mirrors, in its order", () => {
@@ -175,5 +177,86 @@ describe("aiRefusalRemediationFor", () => {
         aiRefusalRemediation(code),
       );
     }
+  });
+});
+
+describe("describeAiRefusal", () => {
+  it("tells an admin where to fix it", () => {
+    const copy = describeAiRefusal("org_model_unconfigured", "admin");
+    expect(copy.remediation).toBe("configure_org_model_role");
+    expect(copy.body).toMatch(/Organization → AI providers/);
+    expect(copy.body).not.toMatch(/ask an organization admin/i);
+  });
+
+  it("sends a member to an admin", () => {
+    const copy = describeAiRefusal("provider_auth_failed", "member");
+    expect(copy.remediation).toBe("fix_org_credentials");
+    expect(copy.body).toMatch(/ask an organization admin/i);
+    expect(copy.body).not.toMatch(/Organization → AI providers/);
+  });
+
+  it("uses the product's hosted-refusal sentence", () => {
+    expect(describeAiRefusal("org_keys_required", "admin").body).toContain(
+      "Choose a model from an organization provider.",
+    );
+  });
+
+  it("gives visitors one neutral sentence with no admin detail", () => {
+    for (const code of [...AI_EXECUTION_REFUSAL_CODES, "credential_missing"]) {
+      const copy = describeAiRefusal(code, "visitor");
+      expect(copy.body).toBe("This organization's analysis is unavailable.");
+      expect(copy.body).not.toMatch(/admin|provider|key/i);
+      expect(copy.remediation).toBe(aiRefusalRemediationFor(code));
+    }
+  });
+
+  it("has dedicated copy for every recognized code and a fallback otherwise", () => {
+    for (const code of [
+      ...AI_EXECUTION_REFUSAL_CODES,
+      "credential_missing",
+      "capability_missing",
+      "capability_unknown",
+      "invalid_model",
+    ]) {
+      expect(isRecognizedAiRefusalCode(code)).toBe(true);
+      for (const audience of ["admin", "member"] as const) {
+        const copy = describeAiRefusal(code, audience);
+        expect(copy.title).not.toBe("AI unavailable");
+        expect(copy.body.length).toBeGreaterThan(0);
+        // Configuration errors never read as an indefinite wait.
+        expect(copy.body).not.toMatch(/paused/i);
+      }
+    }
+    const fallback = describeAiRefusal("not_a_code");
+    expect(fallback.title).toBe("AI unavailable");
+    expect(fallback.remediation).toBe("contact_support");
+    expect(isRecognizedAiRefusalCode("not_a_code")).toBe(false);
+  });
+
+  it("words the model codes by who chose the model", () => {
+    for (const code of [
+      "capability_missing",
+      "capability_unknown",
+      "invalid_model",
+    ]) {
+      const picked = describeAiRefusal(code, "admin");
+      expect(picked.remediation).toBe("choose_org_model");
+      expect(picked.body).toMatch(/organization provider/);
+      expect(picked.body).not.toMatch(/role/);
+
+      const roleAdmin = describeAiRefusal(code, "admin", "role");
+      expect(roleAdmin.remediation).toBe("configure_org_model_role");
+      expect(roleAdmin.body).toMatch(/its role in Organization → AI providers/);
+
+      const roleMember = describeAiRefusal(code, "member", "role");
+      expect(roleMember.body).toMatch(/ask an organization admin/i);
+      expect(roleMember.body).not.toMatch(/Organization → AI providers/);
+    }
+  });
+
+  it("defaults to the member audience", () => {
+    expect(describeAiRefusal("credential_missing")).toEqual(
+      describeAiRefusal("credential_missing", "member"),
+    );
   });
 });
