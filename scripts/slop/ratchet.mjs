@@ -12,6 +12,12 @@
  *   node scripts/slop/ratchet.mjs                 # vs merge-base with origin/main
  *   node scripts/slop/ratchet.mjs --base HEAD^1   # CI: the PR merge commit's base
  *
+ * In the default mode, --ignore-untracked FILE skips the untracked paths
+ * listed in FILE, one per line, and --tracked-only skips untracked files
+ * altogether. The Stop hook uses them so untracked files that were already
+ * there when the turn began, such as a person's scratch work, are not
+ * reported as the agent's change.
+ *
  * SLOP_WAIVER=true reports the same result and exits 0. CI sets it from the
  * `slop-waiver` label, which a CODEOWNER applies with a reason in the PR.
  */
@@ -33,6 +39,11 @@ export const INDEX = "index";
 function argValue(argv, name) {
   const index = argv.indexOf(name);
   return index !== -1 && argv[index + 1] ? argv[index + 1] : undefined;
+}
+
+function readPathList(file) {
+  if (!file) return undefined;
+  return new Set(readFileSync(file, "utf8").split("\n").filter(Boolean));
 }
 
 /**
@@ -59,14 +70,20 @@ export function resolveScope(argv) {
   return { base, head };
 }
 
-function changedPaths(base, head) {
+function changedPaths(
+  base,
+  head,
+  { trackedOnly = false, ignoreUntracked } = {},
+) {
   if (head === WORKTREE) {
     const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
       .split("\0")
       .filter(Boolean);
-    const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"])
-      .split("\0")
-      .filter(Boolean);
+    const untracked = trackedOnly
+      ? []
+      : git(["ls-files", "--others", "--exclude-standard", "-z"])
+          .split("\0")
+          .filter((path) => path && !ignoreUntracked?.has(path));
     return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
   }
   const range = head === INDEX ? ["--cached", base] : [base, head];
@@ -92,10 +109,10 @@ function readChanged(head, path) {
   return readAt(head === INDEX ? "" : head, path);
 }
 
-export function compare(base, head = WORKTREE) {
+export function compare(base, head = WORKTREE, options = {}) {
   const deltas = Object.fromEntries(RULES.map((rule) => [rule.id, 0]));
   const increases = [];
-  for (const path of changedPaths(base, head)) {
+  for (const path of changedPaths(base, head, options)) {
     const before = countFile(path, readAt(base, path));
     const after = countFile(path, readChanged(head, path));
     for (const rule of RULES) {
@@ -139,11 +156,21 @@ function report({ deltas, increases }, waived) {
 }
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   try {
-    const { base, head } = resolveScope(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    const { base, head } = resolveScope(argv);
     const waived = process.env.SLOP_WAIVER === "true";
-    process.exitCode = report(compare(base, head), waived);
+    process.exitCode = report(
+      compare(base, head, {
+        trackedOnly: argv.includes("--tracked-only"),
+        ignoreUntracked: readPathList(argValue(argv, "--ignore-untracked")),
+      }),
+      waived,
+    );
   } catch (error) {
     // Exit 1 means a rule went up. A check that could not run (no base to
     // compare with, git failed) exits 2, so the Stop hook in hook.mjs lets
