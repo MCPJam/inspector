@@ -12,10 +12,11 @@
  *   node scripts/slop/ratchet.mjs                 # vs merge-base with origin/main
  *   node scripts/slop/ratchet.mjs --base HEAD^1   # CI: the PR merge commit's base
  *
- * --ignore-untracked FILE skips the untracked paths listed in FILE, one per
- * line, and --tracked-only skips untracked files altogether. The Stop hook
- * uses them so untracked files that were already there when the turn began,
- * such as a person's scratch work, are not reported as the agent's change.
+ * In the default mode, --ignore-untracked FILE skips the untracked paths
+ * listed in FILE, one per line, and --tracked-only skips untracked files
+ * altogether. The Stop hook uses them so untracked files that were already
+ * there when the turn began, such as a person's scratch work, are not
+ * reported as the agent's change.
  *
  * SLOP_WAIVER=true reports the same result and exits 0. CI sets it from the
  * `slop-waiver` label, which a CODEOWNER applies with a reason in the PR.
@@ -32,9 +33,12 @@ function git(args) {
   });
 }
 
-function argValue(name) {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? undefined : process.argv[index + 1];
+export const WORKTREE = "worktree";
+export const INDEX = "index";
+
+function argValue(argv, name) {
+  const index = argv.indexOf(name);
+  return index !== -1 && argv[index + 1] ? argv[index + 1] : undefined;
 }
 
 function readPathList(file) {
@@ -42,41 +46,75 @@ function readPathList(file) {
   return new Set(readFileSync(file, "utf8").split("\n").filter(Boolean));
 }
 
-function resolveBase(argv) {
-  const index = argv.indexOf("--base");
-  if (index !== -1 && argv[index + 1]) return argv[index + 1];
-  return git(["merge-base", "HEAD", "origin/main"]).trim();
+/**
+ * What the change is compared against, and what it is:
+ *   default:      base = merge-base with origin/main, change = the working
+ *                 tree plus untracked files (CI and the Stop hook).
+ *   --staged:     base = HEAD, change = what is staged (git pre-commit).
+ *   --head REF:   base = merge-base of REF with origin/main, change = REF
+ *                 (git pre-push).
+ * --base REF overrides the base in every mode.
+ */
+export function resolveScope(argv) {
+  const staged = argv.includes("--staged");
+  const head = staged ? INDEX : (argValue(argv, "--head") ?? WORKTREE);
+  const base =
+    argValue(argv, "--base") ??
+    (staged
+      ? "HEAD"
+      : git([
+          "merge-base",
+          head === WORKTREE ? "HEAD" : head,
+          "origin/main",
+        ]).trim());
+  return { base, head };
 }
 
-function changedPaths(base, { trackedOnly = false, ignoreUntracked } = {}) {
-  const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
+function changedPaths(
+  base,
+  head,
+  { trackedOnly = false, ignoreUntracked } = {},
+) {
+  if (head === WORKTREE) {
+    const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
+      .split("\0")
+      .filter(Boolean);
+    const untracked = trackedOnly
+      ? []
+      : git(["ls-files", "--others", "--exclude-standard", "-z"])
+          .split("\0")
+          .filter((path) => path && !ignoreUntracked?.has(path));
+    return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
+  }
+  const range = head === INDEX ? ["--cached", base] : [base, head];
+  return git(["diff", "--name-only", "--no-renames", "-z", ...range])
     .split("\0")
-    .filter(Boolean);
-  const untracked = trackedOnly
-    ? []
-    : git(["ls-files", "--others", "--exclude-standard", "-z"])
-        .split("\0")
-        .filter((path) => path && !ignoreUntracked?.has(path));
-  return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
+    .filter((path) => path && isMeasuredFile(path));
 }
 
-function readAtBase(base, path) {
+/** `path` at `ref`; an empty ref reads the index. Missing reads as empty. */
+function readAt(ref, path) {
   try {
-    return git(["show", `${base}:${path}`]);
+    return git(["show", `${ref}:${path}`]);
   } catch {
-    // Added since the base: it had nothing to count.
+    // Not there: added since the base, or deleted in the change.
     return "";
   }
 }
 
-export function compare(base, options) {
+function readChanged(head, path) {
+  if (head === WORKTREE) {
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+  return readAt(head === INDEX ? "" : head, path);
+}
+
+export function compare(base, head = WORKTREE, options = {}) {
   const deltas = Object.fromEntries(RULES.map((rule) => [rule.id, 0]));
   const increases = [];
-  for (const path of changedPaths(base, options)) {
-    const before = countFile(path, readAtBase(base, path));
-    const after = existsSync(path)
-      ? countFile(path, readFileSync(path, "utf8"))
-      : countFile(path, "");
+  for (const path of changedPaths(base, head, options)) {
+    const before = countFile(path, readAt(base, path));
+    const after = countFile(path, readChanged(head, path));
     for (const rule of RULES) {
       const delta = after[rule.id] - before[rule.id];
       deltas[rule.id] += delta;
@@ -122,12 +160,13 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const base = resolveBase(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { base, head } = resolveScope(argv);
   const waived = process.env.SLOP_WAIVER === "true";
   process.exitCode = report(
-    compare(base, {
-      trackedOnly: process.argv.includes("--tracked-only"),
-      ignoreUntracked: readPathList(argValue("--ignore-untracked")),
+    compare(base, head, {
+      trackedOnly: argv.includes("--tracked-only"),
+      ignoreUntracked: readPathList(argValue(argv, "--ignore-untracked")),
     }),
     waived,
   );

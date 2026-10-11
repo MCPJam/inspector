@@ -17,6 +17,7 @@
     "vitest"
   ],
   "scripts": {
+    "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\"",
     "build": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/vitest && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
