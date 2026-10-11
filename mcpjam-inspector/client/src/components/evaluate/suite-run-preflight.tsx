@@ -20,6 +20,10 @@ import {
   isRuntimeChosenModelSentinel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import { normalizeSuiteServerRefs } from "../evals/use-eval-handlers";
 import type { EvalCase, EvalSuite } from "../evals/types";
@@ -40,6 +44,8 @@ export type RunPreflight = {
 };
 
 export type RunPreflightState = RunPreflight & {
+  /** Every model the launch runs is out of MCPJam credits: why it cannot start. */
+  outOfCreditsReason?: string | null;
   serverName: (ref: string) => string;
   connect?: (ref: string) => Promise<string | null>;
   manageModels?: () => void;
@@ -301,7 +307,9 @@ export function useSuiteRunPreflight({
     isAuthenticated,
   });
   const { hosts } = useHostList({ isAuthenticated, projectId });
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, outOfCreditsReason } = useAvailableModels({
+    projectId,
+  });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
@@ -312,16 +320,17 @@ export function useSuiteRunPreflight({
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
     planned?.templateOnlyIds,
   );
+  const targets = preflightTargets({
+    suite,
+    cases,
+    environments,
+    hosts,
+    environmentServerRefs: environment.serverRefs,
+    targets: planned?.targets,
+    serverRefs: planned?.serverRefs,
+  });
   const preflight = runPreflight({
-    ...preflightTargets({
-      suite,
-      cases,
-      environments,
-      hosts,
-      environmentServerRefs: environment.serverRefs,
-      targets: planned?.targets,
-      serverRefs: planned?.serverRefs,
-    }),
+    ...targets,
     refused: environment.refusals,
     refusalByEnvironment: environment.refusalByEnvironment,
     servers: appState?.servers ?? {},
@@ -332,6 +341,10 @@ export function useSuiteRunPreflight({
   });
   return {
     ...preflight,
+    // The models are locked in `availableModels` only while the org is out.
+    outOfCreditsReason: allModelsOutOfCredits(targets.models, availableModels)
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null,
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
     ...(actions
