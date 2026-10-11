@@ -35,6 +35,13 @@ const {
 }));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
+// The local Codex flag, read through posthog directly (Claude Code's comes from
+// `useLocalHarnessEnabled` above).
+const codexFlag = vi.hoisted(() => ({ value: false as boolean | undefined }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) =>
+    key === "local-codex-enabled" ? codexFlag.value : undefined,
+}));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessEnabled: flagMock,
 }));
@@ -497,6 +504,77 @@ describe("phases", () => {
     const { result } = render();
     await waitFor(() => expect(result.current.phase).toBe("needs-consent"));
     expect(result.current.resolveSendTarget()).toBeNull();
+  });
+
+  it("is ready on the permitted previous pack while an update installs in the background", async () => {
+    // The server SELECTS the previous pack while the desired one downloads;
+    // a grant on the pack that actually runs is current, not stale — a
+    // comparison against the desired pack alone would ask for consent again
+    // in the middle of every routine update.
+    const previous = `sha256:${"c".repeat(64)}`;
+    localStorage.setItem(
+      localHarnessConsentStorageKey(PROJECT),
+      JSON.stringify(
+        storedConsent({ runtime: { runtimeId: "rt_0", adapterVersion: "1.0.0", digest: previous, packVersion: "3.3.0" } }),
+      ),
+    );
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: {
+          state: "ready",
+          packVersion: "3.3.0",
+          runtimeRoot: "/r",
+          digest: previous,
+          role: "permitted",
+          update: { state: "downloading", packVersion: "3.4.0", percent: 40 },
+        },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    // And the send backstop agrees: a turn sent now runs on the permitted pack
+    // instead of being refused for the whole length of the download.
+    expect(result.current.resolveSendTarget()).not.toBeNull();
+  });
+
+  it("does not send on a grant for the desired pack while the server selects the permitted one", async () => {
+    // The other direction of the same rule: once the server falls back (an
+    // unhealthy desired pack, a rollback), a grant on the desired pack is not
+    // what would run, so both the phase and the backstop lead to the dialog.
+    const previous = `sha256:${"c".repeat(64)}`;
+    localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: {
+          state: "ready",
+          packVersion: "3.3.0",
+          runtimeRoot: "/r",
+          digest: previous,
+          role: "permitted",
+        },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("needs-consent"));
+    expect(result.current.resolveSendTarget()).toBeNull();
+  });
+
+  it("fails closed with MCPJam's message when the runtime was withdrawn", async () => {
+    localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: { state: "revoked", packVersion: "3.4.0", message: "MCPJam withdrew the claude-code runtime 3.4.0" },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("failed"));
+    expect(result.current.reason).toMatch(/withdrew/);
   });
 });
 
@@ -966,6 +1044,7 @@ describe("installing", () => {
       await result.current.startInstall();
     });
     expect(startInstallMock).toHaveBeenCalledWith({
+      harnessId: "claude-code",
       expectedPack: { packVersion: "3.4.0", treeDigest: DIGEST },
     });
   });
@@ -1068,4 +1147,154 @@ it("keeps an existing cloud client hosted in a project without local setup", asy
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.requestedTarget).toBeNull();
   expect(result.current.effectiveTarget).toBe("hosted");
+});
+
+describe("a Codex controller is its own harness", () => {
+  beforeEach(() => {
+    codexFlag.value = true;
+    fetchAvailabilityMock.mockResolvedValue({ ok: true, availability: AVAILABILITY });
+  });
+  afterEach(() => {
+    codexFlag.value = false;
+  });
+
+  it("asks about Codex, with Codex's own flag, and keeps its own stored choice", async () => {
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchAvailabilityMock).toHaveBeenCalledWith(PROJECT, "codex");
+    expect(result.current.harnessId).toBe("codex");
+    expect(result.current.harnessName).toBe("Codex");
+    // The preferred-venue default is recorded for Codex, not for Claude Code.
+    await waitFor(() => expect(loadStoredHarnessTarget(PROJECT, "codex")).toBe("local-native"));
+    expect(loadStoredHarnessTarget(PROJECT)).toBeNull();
+    // A Claude Code consent is not a Codex one.
+    window.localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    expect(result.current.consent).toBeNull();
+  });
+
+  it("is not offered when only Claude Code's flag is on", async () => {
+    codexFlag.value = false;
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.phase).toBe("unavailable"));
+    expect(fetchAvailabilityMock).not.toHaveBeenCalledWith(PROJECT, "codex");
+  });
+
+  it("starts the Codex install, not Claude Code's", async () => {
+    const { result } = render({ harnessId: "codex", scopeKey: "host-1:codex" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    startInstallMock.mockResolvedValue({ ok: true, kind: "ready", status: { state: "ready", packVersion: "3.4.0" } });
+    await act(async () => {
+      await result.current.chooseWorkspace({ useSuggested: true });
+      result.current.captureApproval({
+        expectations: EXPECTATIONS,
+        scopeKey: "host-1:codex",
+      });
+      await result.current.startInstall();
+    });
+    expect(startInstallMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: "codex" }));
+    // The folder is registered under Codex's own rollout, not Claude Code's.
+    expect(registerWorkspaceMock).toHaveBeenCalledWith({ useSuggested: true }, "codex");
+  });
+
+  it("drops a folder registration that finishes after the harness changed", async () => {
+    let release!: (value: unknown) => void;
+    registerWorkspaceMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    let pending!: Promise<{ ok: boolean }>;
+    act(() => {
+      pending = rendered.result.current.chooseWorkspace({ useSuggested: true });
+    });
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    let outcome!: { ok: boolean };
+    await act(async () => {
+      release({ ok: true, workspaceGrantId: "ws_cc", displayRoot: "~/cc" });
+      outcome = await pending;
+    });
+    expect(outcome.ok).toBe(false);
+    expect(rendered.result.current.workspace).toBeNull();
+  });
+
+  it("watches Codex's own install attempt after switching from Claude Code's", async () => {
+    fetchAvailabilityMock.mockImplementation(async (_project: string, harness?: string) => ({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: harness === "codex"
+          ? { state: "downloading", packVersion: "3.4.0", percent: 5, attemptId: "att_codex" }
+          : { state: "absent", packVersion: "3.4.0" },
+      },
+    }));
+    startInstallMock.mockResolvedValue({
+      ok: true,
+      kind: "accepted",
+      attemptId: "att_cc",
+      status: { state: "downloading", packVersion: "3.4.0", percent: 0, attemptId: "att_cc" },
+      statusUrl: "/s",
+      retryAfterSeconds: 1,
+    });
+    fetchRuntimeStatusMock.mockImplementation(async (args?: { harnessId?: string }) => ({
+      ok: true,
+      status: args?.harnessId === "codex"
+        ? { state: "downloading", packVersion: "3.4.0", percent: 40, attemptId: "att_codex" }
+        : { state: "downloading", packVersion: "3.4.0", percent: 1, attemptId: "att_cc" },
+    }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:claude-code" });
+      await rendered.result.current.startInstall();
+    });
+    // Claude Code's attempt is now the one being watched; switch to Codex,
+    // whose own install is already running under a different attempt id.
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.runtimeStatus?.percent).toBe(40), { timeout: 4_000 });
+  });
+
+  it("drops an install acknowledgement that arrives after the harness changed", async () => {
+    let release!: (value: unknown) => void;
+    startInstallMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    let pending!: Promise<{ ok: boolean }>;
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:claude-code" });
+      pending = rendered.result.current.startInstall();
+    });
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    let outcome!: { ok: boolean };
+    await act(async () => {
+      release({
+        ok: true,
+        kind: "accepted",
+        attemptId: "att_cc",
+        status: { state: "downloading", packVersion: "3.4.0", percent: 0, attemptId: "att_cc" },
+        statusUrl: "/s",
+        retryAfterSeconds: 1,
+      });
+      outcome = await pending;
+    });
+    expect(outcome.ok).toBe(false);
+    expect(rendered.result.current.runtimeStatus?.attemptId).not.toBe("att_cc");
+  });
+
+  it("does not carry a folder chosen for Claude Code into Codex", async () => {
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+    });
+    expect(rendered.result.current.workspace).not.toBeNull();
+
+    rendered.rerender({ harnessId: "codex", scopeKey: "host-1:codex" } as never);
+    await waitFor(() => expect(rendered.result.current.harnessId).toBe("codex"));
+    expect(rendered.result.current.workspace).toBeNull();
+    expect(
+      rendered.result.current.captureApproval({ expectations: EXPECTATIONS, scopeKey: "host-1:codex" }),
+    ).toBeNull();
+  });
 });

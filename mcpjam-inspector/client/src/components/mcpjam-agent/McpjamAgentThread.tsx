@@ -534,6 +534,17 @@ export function McpjamAgentThread({
                   "Something went wrong."}
               </p>
             )}
+            {!session.error && session.autoResumeNotice && (
+              <p
+                className={cn(
+                  "text-xs text-muted-foreground",
+                  isFull && "mx-auto w-full max-w-4xl px-4",
+                  isSidebar && "w-full px-3",
+                )}
+              >
+                {session.autoResumeNotice}
+              </p>
+            )}
           </div>
         </ScenarioHostThemeProvider>
       </ScenarioHostStyleProvider>

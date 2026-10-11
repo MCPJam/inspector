@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { useInsightSignIn } from "./use-insight-sign-in";
@@ -15,11 +15,11 @@ import { insightHighlightNarrativeClass } from "./insight-highlight-chrome";
 export interface InsightGroupScope {
   suiteId: string;
   runGroupId: string;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
 }
 
 export interface SuiteInsightsCollapsibleProps {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   /** Header label, e.g. "Run insights" vs "Commit insights" */
   title?: string;
   /**
@@ -70,7 +70,7 @@ function RunInsightsBanner({
   title,
   selectedRunId,
 }: {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   title: string;
   selectedRunId?: string | null;
 }) {
@@ -164,7 +164,9 @@ function RunInsightsBanner({
     );
   } else if (narrative) {
     body = (
-      <p className="min-w-0 flex-1 text-sm text-muted-foreground">{narrative}</p>
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+        {narrative}
+      </p>
     );
   } else {
     body = (
@@ -297,7 +299,8 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
   } else if (!allRunsTerminal) {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-        Cross-client diagnosis runs once every client in this group has finished.
+        Cross-client diagnosis runs once every client in this group has
+        finished.
       </p>
     );
   } else if (pending || requested) {
@@ -308,9 +311,7 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
       </span>
     );
   } else if (error) {
-    body = (
-      <p className="min-w-0 flex-1 text-sm text-destructive">{error}</p>
-    );
+    body = <p className="min-w-0 flex-1 text-sm text-destructive">{error}</p>;
   } else {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">

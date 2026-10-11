@@ -37,6 +37,7 @@ export type MaterializeSwarmTargetsArgs = {
   liveEnvironments: ProjectEnvironmentView[];
   createEnvironment: CreateProjectEnvironmentFn;
   skillsEnabled: boolean;
+  /** The image-pin slot's flag: `sandbox-images-enabled`. */
   computersEnabled: boolean;
 };
 
