@@ -11,6 +11,7 @@ import {
   scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
+import { stampPostHogEvent } from "../telemetry-context";
 
 describe("scrubSensitiveUrl", () => {
   // Autocapture attaches $current_url to every event, so an unredacted share
@@ -635,9 +636,10 @@ describe("dropInjectedScriptException", () => {
     expect(dropInjectedScriptException(null)).toBeNull();
   });
 
-  it("is wired into the app options, ahead of the credential scrub", () => {
+  it("is wired into the app options: stamp, then the credential scrub last", () => {
     expect(options.before_send).toEqual([
       dropInjectedScriptException,
+      stampPostHogEvent,
       scrubCaptureEvent,
     ]);
   });

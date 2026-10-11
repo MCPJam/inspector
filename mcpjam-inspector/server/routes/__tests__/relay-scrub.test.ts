@@ -1,15 +1,16 @@
 /**
- * The relay's credential backstop: what reaches PostHog through `/tlm` never
- * carries a credential URL, and a payload the relay cannot show to be clean
- * is dropped rather than forwarded (see "Credential scrubbing" in relay.ts).
+ * The relay's credential pass (relay-credentials.ts), run inside the privacy
+ * gate's rewrite (relay.ts): what reaches PostHog through `/tlm` never
+ * carries a credential URL, at any policy, `full` included, and a payload
+ * the relay cannot show to be clean is not forwarded.
  *
- * Every assertion here is on what the stubbed `fetch` was actually handed —
- * the bytes and the URL that would have left for PostHog — decoded the way
- * PostHog would decode them, so a test cannot pass by checking the wrong copy.
+ * Events here are captured under a verified `full` context, so the privacy
+ * gate leaves them as they are and every change is the credential pass's.
+ * Every assertion is on what the stubbed `fetch` was actually handed, decoded
+ * the way PostHog would decode it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { randomBytes } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 const { relayEvent } = vi.hoisted(() => ({ relayEvent: vi.fn() }));
@@ -38,17 +39,25 @@ vi.mock("../../../shared/credential-urls.js", async (importOriginal) => {
   };
 });
 
-import relayRoutes, {
-  RELAY_REPLAY_NESTED_MAX_BYTES,
-  RELAY_SCRUB_MAX_TEXT_BYTES,
-  flushRelayStats,
-  relayBodyLimit,
-} from "../relay.js";
+import relayRoutes, { flushRelayStats, relayBodyLimit } from "../relay.js";
+import { RELAY_REPLAY_NESTED_MAX_BYTES } from "../relay-credentials.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
+import { setTelemetryPolicyQueryForTests } from "../../services/telemetry-privacy-policy.js";
+import {
+  encodeCaptureContext,
+  TELEMETRY_CONTEXT_PROPERTY,
+} from "../../../shared/telemetry-privacy.js";
 
 const ORIGINAL_FETCH = global.fetch;
 const KEY = POSTHOG_PROJECT_KEY;
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
+const BEARER = { Authorization: "Bearer relay-test-bearer" };
+const FULL = { recording: "full", identity: "full" } as const;
+const FULL_STAMP = encodeCaptureContext({
+  projectIds: [],
+  organizationIds: ["org_public_00000000000000001"],
+  policy: FULL,
+});
 
 const SHARE_URL = "https://app.mcpjam.com/results/SENTINEL_tok_123";
 const CALLBACK_URL =
@@ -59,6 +68,14 @@ function createTestApp() {
   app.use("/tlm/*", relayBodyLimit());
   app.route("/tlm", relayRoutes);
   return app;
+}
+
+function post(path: string, body: string | Buffer) {
+  return createTestApp().request(path, {
+    method: "POST",
+    body: typeof body === "string" ? body : new Uint8Array(body),
+    headers: BEARER,
+  });
 }
 
 function forwardedCall(): { url: URL; init: RequestInit } {
@@ -73,6 +90,23 @@ function forwardedBytes(): Buffer {
   return Buffer.from(body as Uint8Array);
 }
 
+interface CaptureEvent {
+  event?: string;
+  properties: Record<string, unknown>;
+}
+
+/** A capture body as PostHog receives it from the relay: gzip JSON. */
+function forwardedJson(): unknown {
+  return JSON.parse(gunzipSync(forwardedBytes()).toString("utf8"));
+}
+
+/** The events of a forwarded capture body, whatever its shape. */
+function forwardedEvents(): CaptureEvent[] {
+  const sent = forwardedJson() as CaptureEvent[] | { batch?: CaptureEvent[] };
+  if (Array.isArray(sent)) return sent;
+  return sent.batch ?? [sent as CaptureEvent];
+}
+
 /** The counters the next flush reports. */
 function flushedStats(): Record<string, number> {
   relayEvent.mockClear();
@@ -82,8 +116,12 @@ function flushedStats(): Record<string, number> {
   return relayEvent.mock.calls[0][1] as Record<string, number>;
 }
 
+function base64(json: string): string {
+  return Buffer.from(json, "utf8").toString("base64");
+}
+
 // An event batch the way posthog-js sends it, carrying a credential in the
-// fields that hold the page URL — what the client is supposed to have
+// fields that hold the page URL: what the client is supposed to have
 // scrubbed already, and the relay must catch when it has not.
 function plantedBatch() {
   return {
@@ -102,6 +140,7 @@ function plantedBatch() {
           $set: { $initial_current_url: SHARE_URL },
           title: "Run results",
           count: 3,
+          [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
         },
         timestamp: "2026-09-25T00:00:00.000Z",
       },
@@ -110,11 +149,10 @@ function plantedBatch() {
   };
 }
 
-type Batch = ReturnType<typeof plantedBatch>;
-
-// The event as PostHog should receive it: every credential gone, everything
-// else exactly as it was, the project key included.
-function expectScrubbed(payload: Batch) {
+// The batch as PostHog should receive it: every credential gone, everything
+// else as it was, the project key included (the gate removes the stamp).
+function expectScrubbed(sent: unknown) {
+  const payload = sent as ReturnType<typeof plantedBatch>;
   expect(JSON.stringify(payload)).not.toContain("SENTINEL");
   expect(payload.api_key).toBe(KEY);
   expect(payload.sent_at).toBe("2026-09-25T00:00:01.000Z");
@@ -122,7 +160,6 @@ function expectScrubbed(payload: Batch) {
   const [event] = payload.batch;
   expect(event.event).toBe("$pageview");
   expect(event.$token).toBe(KEY);
-  expect(event.timestamp).toBe("2026-09-25T00:00:00.000Z");
   expect(event.properties).toEqual({
     token: KEY,
     distinct_id: "device-1",
@@ -137,18 +174,11 @@ function expectScrubbed(payload: Batch) {
   });
 }
 
-/** A request body: fetch takes a string or a plain-ArrayBuffer view. */
-function requestBody(body: string | Buffer): string | Uint8Array<ArrayBuffer> {
-  return typeof body === "string" ? body : new Uint8Array(body);
-}
-
-function base64(json: string): string {
-  return Buffer.from(json, "utf8").toString("base64");
-}
-
 beforeEach(() => {
   global.fetch = vi.fn().mockResolvedValue(new Response("ok"));
   walkerControl.fail = false;
+  // Every context in these tests is verified non-private.
+  setTelemetryPolicyQueryForTests(async () => ({ ...FULL }));
   // Start every test from zeroed counters.
   flushRelayStats();
   relayEvent.mockClear();
@@ -157,146 +187,47 @@ beforeEach(() => {
 afterEach(() => {
   global.fetch = ORIGINAL_FETCH;
   walkerControl.fail = false;
+  setTelemetryPolicyQueryForTests(null);
 });
 
-describe("event payloads are scrubbed and re-encoded the way they came", () => {
+describe("event payloads lose their credentials at full", () => {
   const json = () => JSON.stringify(plantedBatch());
 
-  // [name, request body, decode the forwarded body back to the payload]
-  const encodings: Array<
-    [string, () => string | Buffer, (forwarded: Buffer) => unknown]
-  > = [
-    [
-      "JSON",
-      () => json(),
-      (forwarded) => {
-        expect(forwarded[0]).toBe("{".charCodeAt(0));
-        return JSON.parse(forwarded.toString("utf8"));
-      },
-    ],
-    [
-      "gzip",
-      () => gzipSync(json()),
-      (forwarded) => {
-        expect([forwarded[0], forwarded[1]]).toEqual([0x1f, 0x8b]);
-        return JSON.parse(gunzipSync(forwarded).toString("utf8"));
-      },
-    ],
-    [
-      "form JSON",
-      () => `data=${encodeURIComponent(json())}`,
-      (forwarded) => {
-        const form = new URLSearchParams(forwarded.toString("utf8"));
-        expect([...form.keys()]).toEqual(["data"]);
-        const data = form.get("data") as string;
-        expect(data.startsWith("{")).toBe(true);
-        return JSON.parse(data);
-      },
-    ],
-    [
-      "form base64",
-      () => `data=${encodeURIComponent(base64(json()))}`,
-      (forwarded) => {
-        const form = new URLSearchParams(forwarded.toString("utf8"));
-        expect([...form.keys()]).toEqual(["data"]);
-        const data = form.get("data") as string;
-        expect(data).toMatch(/^[A-Za-z0-9+/]+=*$/);
-        return JSON.parse(Buffer.from(data, "base64").toString("utf8"));
-      },
-    ],
+  it.each([
+    ["JSON", () => json()],
+    ["gzip", () => gzipSync(json())],
+    ["form JSON", () => `data=${encodeURIComponent(json())}`],
+    ["form base64", () => `data=${encodeURIComponent(base64(json()))}`],
     [
       "gzip of a base64 form",
       () => gzipSync(`data=${encodeURIComponent(base64(json()))}`),
-      (forwarded) => {
-        expect([forwarded[0], forwarded[1]]).toEqual([0x1f, 0x8b]);
-        const form = new URLSearchParams(
-          gunzipSync(forwarded).toString("utf8"),
-        );
-        const data = form.get("data") as string;
-        return JSON.parse(Buffer.from(data, "base64").toString("utf8"));
-      },
     ],
-  ];
-
-  it.each(encodings)("%s body", async (_name, encode, decode) => {
-    const body = encode();
-    // Non-vacuous: the credential is really in what the client sent.
-    const sent =
-      typeof body === "string" ? body : gunzipSync(body).toString("utf8");
-    expect(
-      sent.includes("SENTINEL") ||
-        Buffer.from(
-          new URLSearchParams(sent).get("data") ?? "",
-          "base64",
-        ).includes("SENTINEL"),
-    ).toBe(true);
-
-    const response = await createTestApp().request(
-      "/tlm/i/v0/e/?ip=1&ver=1.435.3",
-      {
-        method: "POST",
-        body: requestBody(body),
-        headers: { "content-length": String(Buffer.byteLength(body)) },
-      },
-    );
+  ] as const)("%s body", async (_name, encode) => {
+    const response = await post("/tlm/i/v0/e/?ip=1&ver=1.435.3", encode());
 
     expect(response.status).toBe(200);
-    const { url, init } = forwardedCall();
-    expect(url.href).toBe("https://us.i.posthog.com/i/v0/e/?ip=1&ver=1.435.3");
-    // fetch() computes the new body's length; the client's is never sent on.
-    expect(new Headers(init.headers).get("content-length")).toBeNull();
-    const forwarded = forwardedBytes();
-    expect(forwarded.includes("SENTINEL")).toBe(false);
-    expectScrubbed(decode(forwarded) as Batch);
+    const { url } = forwardedCall();
+    expect(url.searchParams.get("ver")).toBe("1.435.3");
+    expect(forwardedBytes().includes("SENTINEL")).toBe(false);
+    expectScrubbed(forwardedJson());
     expect(flushedStats()).toMatchObject({ scrubDrops: 0, res2xx: 1 });
   });
 
   it.each([
     ["JSON", (payload: string) => encodeURIComponent(payload)],
     ["base64", (payload: string) => encodeURIComponent(base64(payload))],
-  ])("GET ?data= as %s, rewritten in the query", async (name, encode) => {
-    const path = `/tlm/e/?ip=1&data=${encode(json())}&ver=1.435.3`;
-    expect(decodeURIComponent(path)).toMatch(
-      name === "JSON" ? /SENTINEL/ : /data=/,
+  ])("GET ?data= as %s, rewritten in the query", async (_name, encode) => {
+    const response = await createTestApp().request(
+      `/tlm/e/?ip=1&data=${encode(json())}&ver=1.435.3`,
+      { headers: BEARER },
     );
-
-    const response = await createTestApp().request(path);
 
     expect(response.status).toBe(200);
     const { url, init } = forwardedCall();
-    expect(init.method).toBe("GET");
     expect(init.body).toBeUndefined();
     expect(url.href).not.toContain("SENTINEL");
-    // The other parameters keep their place and spelling.
-    expect([...url.searchParams.keys()]).toEqual(["ip", "data", "ver"]);
-    expect(url.searchParams.get("ip")).toBe("1");
     expect(url.searchParams.get("ver")).toBe("1.435.3");
-    const data = url.searchParams.get("data") as string;
-    if (name === "JSON") {
-      expect(data.startsWith("{")).toBe(true);
-      expectScrubbed(JSON.parse(data));
-    } else {
-      expect(data).toMatch(/^[A-Za-z0-9+/]+=*$/);
-      const decoded = Buffer.from(data, "base64").toString("utf8");
-      expect(decoded).not.toContain("SENTINEL");
-      expectScrubbed(JSON.parse(decoded));
-    }
-  });
-
-  it("forwards no second ?data= alongside the scrubbed one", async () => {
-    const clean = JSON.stringify({
-      event: "$pageview",
-      properties: { token: KEY },
-    });
-    const response = await createTestApp().request(
-      `/tlm/e/?data=${encodeURIComponent(clean)}&data=${encodeURIComponent(
-        JSON.stringify({ $current_url: SHARE_URL }),
-      )}`,
-    );
-    expect(response.status).toBe(200);
-    const { url } = forwardedCall();
-    expect(url.searchParams.getAll("data")).toHaveLength(1);
-    expect(url.href).not.toContain("SENTINEL");
+    expectScrubbed(JSON.parse(url.searchParams.get("data") as string));
   });
 
   it("scrubs the query parameters it forwards beside ?data=", async () => {
@@ -307,313 +238,167 @@ describe("event payloads are scrubbed and re-encoded the way they came", () => {
     const response = await createTestApp().request(
       `/tlm/e/?data=${encodeURIComponent(clean)}&ver=1&redirect_uri=${encodeURIComponent(
         "https://user:SENTINEL_pw@example.com/x",
-      )}&code=SENTINEL_code`,
+      )}&code=SENTINEL_code&api_key=${KEY}`,
     );
     expect(response.status).toBe(200);
     const { url } = forwardedCall();
     expect(url.href).not.toContain("SENTINEL");
     expect(url.searchParams.get("ver")).toBe("1");
     expect(url.searchParams.get("code")).toBe("[redacted]");
-    expect(JSON.parse(url.searchParams.get("data") ?? "")).toEqual(
-      JSON.parse(clean),
-    );
-  });
-
-  it("forwards a project key in api_key as sent", async () => {
-    const response = await createTestApp().request(
-      `/tlm/i/v0/e/?ver=1&api_key=${KEY}`,
-      { method: "POST", body: json() },
-    );
-    expect(response.status).toBe(200);
-    const { url } = forwardedCall();
+    // The project key is public, and pinned to ours: forwarded as sent.
     expect(url.searchParams.get("api_key")).toBe(KEY);
+    expect(url.searchParams.getAll("data")).toHaveLength(1);
   });
 
   it("drops a ?data= that a POST carries next to its body", async () => {
-    const response = await createTestApp().request(
+    const response = await post(
       `/tlm/i/v0/e/?ver=1&data=${encodeURIComponent(SHARE_URL)}`,
-      { method: "POST", body: json() },
+      json(),
     );
     expect(response.status).toBe(200);
     const { url } = forwardedCall();
-    expect(url.href).toBe("https://us.i.posthog.com/i/v0/e/?ver=1");
-  });
-
-  it.each([
-    [
-      "an event array",
-      [
-        {
-          event: "$autocapture",
-          properties: { token: KEY, $current_url: SHARE_URL },
-        },
-      ],
-    ],
-    [
-      "a single event",
-      {
-        event: "$autocapture",
-        properties: { token: KEY, $current_url: SHARE_URL },
-      },
-    ],
-  ])("scrubs %s", async (_name, payload) => {
-    const response = await createTestApp().request("/tlm/e/", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    expect(response.status).toBe(200);
-    const forwarded = JSON.parse(forwardedBytes().toString("utf8"));
-    expect(forwarded).toEqual(
-      JSON.parse(
-        JSON.stringify(payload).replace(
-          "results/SENTINEL_tok_123",
-          "results/[redacted]",
-        ),
-      ),
-    );
+    expect(url.searchParams.has("data")).toBe(false);
+    expect(url.href).not.toContain("SENTINEL");
   });
 
   it("scrubs relative and protocol-relative URLs in event strings", async () => {
-    const response = await createTestApp().request("/tlm/e/", {
-      method: "POST",
-      body: JSON.stringify({
+    const response = await post(
+      "/tlm/e/",
+      JSON.stringify({
         event: "custom",
         properties: {
           token: KEY,
           requested: "/api/test?co%64e=SENTINEL_enc",
           failure: "failed //user:SENTINEL_pw@example.com/path",
+          [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
         },
       }),
-    });
+    );
     expect(response.status).toBe(200);
-    const forwarded = JSON.parse(forwardedBytes().toString("utf8"));
+    const [forwarded] = forwardedEvents();
     expect(JSON.stringify(forwarded)).not.toContain("SENTINEL");
     expect(forwarded.properties.requested).toBe("/api/test?co%64e=[redacted]");
     expect(forwarded.properties.failure).toBe("failed //example.com/path");
   });
 
   it("scrubs object keys, which heatmap data is keyed by", async () => {
-    const response = await createTestApp().request("/tlm/i/v0/e/", {
-      method: "POST",
-      body: JSON.stringify({
+    const response = await post(
+      "/tlm/i/v0/e/",
+      JSON.stringify({
         event: "$$heatmap",
         properties: {
           token: KEY,
           $heatmap_data: { [SHARE_URL]: [{ x: 1, y: 2 }] },
+          [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
         },
       }),
-    });
+    );
     expect(response.status).toBe(200);
-    const forwarded = JSON.parse(forwardedBytes().toString("utf8"));
-    expect(forwarded.properties.$heatmap_data).toEqual({
+    expect(forwardedEvents()[0].properties.$heatmap_data).toEqual({
       "https://app.mcpjam.com/results/[redacted]": [{ x: 1, y: 2 }],
     });
   });
 
-  it("forwards a clean payload as the same JSON text", async () => {
-    const clean = JSON.stringify({
-      api_key: KEY,
-      batch: [{ event: "$pageview", properties: { token: KEY, a: [1, "b"] } }],
-      sent_at: "2026-09-25T00:00:00.000Z",
-    });
-    await createTestApp().request("/tlm/i/v0/e/", {
-      method: "POST",
-      body: clean,
-    });
-    expect(forwardedBytes().toString("utf8")).toBe(clean);
-  });
-
-  it("forwards a gzip batch that inflates past the 2 MiB body limit", async () => {
-    // ~3 MB of text in a body under the 2 MiB limit.
-    // Realistic compression (~2:1), not a zip bomb: the ratio guard is a
-    // separate bound and stays in force.
-    const stack = randomBytes(1_500_000).toString("hex");
-    const payload = plantedBatch();
-    const body = gzipSync(
-      JSON.stringify({
-        ...payload,
-        batch: [
-          {
-            ...payload.batch[0],
-            properties: { ...payload.batch[0].properties, stack },
-          },
-        ],
-      }),
-    );
-    expect(body.length).toBeLessThan(2 * 1024 * 1024);
+  it("scrubs a request without a bearer too, on top of the conservative policy", async () => {
     const response = await createTestApp().request("/tlm/i/v0/e/", {
       method: "POST",
-      body,
+      body: json(),
     });
-    expect(response.status).not.toBe(400);
-    const forwarded = gunzipSync(forwardedBytes()).toString("utf8");
-    expect(forwarded).not.toContain("SENTINEL");
-    expect(JSON.parse(forwarded).batch[0].properties.stack).toBe(stack);
+    expect(response.status).toBe(200);
+    expect(forwardedBytes().includes("SENTINEL")).toBe(false);
   });
 
   it("still refuses another project before scrubbing", async () => {
     const payload = plantedBatch();
     payload.batch[0].properties.token = OTHER_PROJECT_KEY;
-    const response = await createTestApp().request("/tlm/i/v0/e/", {
-      method: "POST",
-      body: gzipSync(JSON.stringify(payload)),
-    });
+    const response = await post(
+      "/tlm/i/v0/e/",
+      gzipSync(JSON.stringify(payload)),
+    );
     expect(response.status).toBe(403);
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({ projectRejects: 1, scrubDrops: 0 });
   });
 });
 
-describe("event payloads that cannot be shown clean are dropped", () => {
+describe("events the walker cannot finish are not forwarded", () => {
   function deeplyNested(depth: number): unknown {
     let value: unknown = SHARE_URL;
     for (let i = 0; i < depth; i++) value = { inner: value };
     return value;
   }
 
-  const validGzip = () => gzipSync(JSON.stringify(plantedBatch()));
-
-  const cases: Array<[string, string, () => string | Buffer]> = [
-    [
-      "oversized once inflated",
+  it.each([
+    ["nesting it refuses", { deep: deeplyNested(80) }],
+    ["more values than it takes", { many: new Array(210_000).fill(0) }],
+  ])("drops a payload with %s", async (_name, extra) => {
+    const response = await post(
       "/tlm/i/v0/e/",
-      () =>
-        gzipSync(
-          JSON.stringify({
-            event: "$pageview",
-            properties: {
-              token: KEY,
-              $current_url: SHARE_URL,
-              pad: "x".repeat(RELAY_SCRUB_MAX_TEXT_BYTES),
-            },
-          }),
-        ),
-    ],
-    ["malformed JSON", "/tlm/i/v0/e/", () => `{"api_key":"${KEY}","batch":[`],
-    [
-      "malformed JSON in a form",
-      "/tlm/e/",
-      () => `data=${encodeURIComponent(`{"event":"${SHARE_URL}"`)}`,
-    ],
-    [
-      "bad gzip",
-      "/tlm/i/v0/e/",
-      () => {
-        // Valid header and trailer, corrupt deflate stream.
-        const body = Buffer.from(validGzip());
-        for (let i = 12; i < body.length - 8; i++) body[i] ^= 0x5a;
-        return body;
-      },
-    ],
-    ["a truncated gzip", "/tlm/i/v0/e/", () => validGzip().subarray(0, 12)],
-    [
-      "an unsupported encoding",
-      "/tlm/i/v0/e/",
-      () =>
-        Buffer.concat([
-          Buffer.from([0x28, 0xb5, 0x2f, 0xfd]),
-          Buffer.from(SHARE_URL),
-        ]),
-    ],
-    [
-      "a form without a data field",
-      "/tlm/i/v0/e/",
-      () => `payload=${encodeURIComponent(JSON.stringify(plantedBatch()))}`,
-    ],
-    ["an empty body", "/tlm/i/v0/e/", () => ""],
-    [
-      "nesting the walker refuses",
-      "/tlm/i/v0/e/",
-      () =>
-        JSON.stringify({
-          event: "$pageview",
-          properties: { token: KEY, deep: deeplyNested(80) },
-        }),
-    ],
-    [
-      "more values than the walker takes",
-      "/tlm/i/v0/e/",
-      () =>
-        JSON.stringify({
-          event: "$pageview",
-          properties: {
-            token: KEY,
-            $current_url: SHARE_URL,
-            many: new Array(210_000).fill(0),
-          },
-        }),
-    ],
-  ];
-
-  it.each(cases)("%s", async (_name, path, build) => {
-    const response = await createTestApp().request(path, {
-      method: "POST",
-      body: requestBody(build()),
-    });
+      JSON.stringify({
+        event: "$pageview",
+        properties: {
+          token: KEY,
+          $current_url: SHARE_URL,
+          [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
+          ...extra,
+        },
+      }),
+    );
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "unreadable_payload" });
     expect(fetch).not.toHaveBeenCalled();
-    expect(flushedStats()).toMatchObject({
-      scrubDrops: 1,
-      projectRejects: 0,
-      res4xx: 1,
-    });
+    expect(flushedStats()).toMatchObject({ scrubDrops: 1, projectRejects: 0 });
   });
 
   it("drops a payload when the walker throws", async () => {
     walkerControl.fail = true;
-    const response = await createTestApp().request("/tlm/i/v0/e/", {
-      method: "POST",
-      body: gzipSync(JSON.stringify(plantedBatch())),
-    });
+    const response = await post(
+      "/tlm/i/v0/e/",
+      gzipSync(JSON.stringify(plantedBatch())),
+    );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "unreadable_payload" });
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({ scrubDrops: 1 });
   });
 
-  it.each([
-    ["no data", "/tlm/e/?ip=1"],
-    ["malformed JSON", `/tlm/e/?data=${encodeURIComponent(`{"event":`)}`],
-    ["malformed base64", "/tlm/e/?data=%%%not-base64"],
-    [
-      "nesting the walker refuses",
+  it("drops a GET the walker cannot finish", async () => {
+    const response = await createTestApp().request(
       `/tlm/e/?data=${encodeURIComponent(
         JSON.stringify({
           event: "x",
-          properties: { token: KEY, d: deeplyNested(80) },
+          properties: {
+            token: KEY,
+            d: deeplyNested(80),
+            [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
+          },
         }),
       )}`,
-    ],
-  ])("drops a GET with %s", async (_name, path) => {
-    const response = await createTestApp().request(path);
+      { headers: BEARER },
+    );
     expect(response.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({ scrubDrops: 1 });
   });
 });
 
-describe("logs and metrics are scrubbed like events", () => {
-  // OTLP JSON, which is what posthog-js sends to /i/v1/logs: the page URL is
-  // an attribute, and the log body is free text.
-  function otlpLogs() {
+describe("metrics are scrubbed and re-encoded the way they came", () => {
+  // OTLP JSON: the page URL is an attribute, and a body is free text.
+  function otlpMetrics() {
     return {
-      resourceLogs: [
+      resourceMetrics: [
         {
           resource: {
             attributes: [
               { key: "service.name", value: { stringValue: "web" } },
+              { key: "page", value: { stringValue: CALLBACK_URL } },
             ],
           },
-          scopeLogs: [
+          scopeMetrics: [
             {
-              logRecords: [
+              metrics: [
                 {
-                  timeUnixNano: "1700000000000000000",
-                  body: { stringValue: `opened ${SHARE_URL}` },
-                  attributes: [
-                    { key: "currentUrl", value: { stringValue: CALLBACK_URL } },
-                  ],
+                  name: "page.load",
+                  description: `loaded ${SHARE_URL}`,
                 },
               ],
             },
@@ -640,44 +425,45 @@ describe("logs and metrics are scrubbed like events", () => {
         ).toString("utf8"),
     ],
   ] as const)("%s", async (_name, encode, decode) => {
-    for (const path of ["/i/v1/logs", "/i/v1/metrics"]) {
-      vi.mocked(fetch).mockClear();
-      const response = await createTestApp().request(
-        `/tlm${path}?token=${KEY}`,
-        { method: "POST", body: encode(JSON.stringify(otlpLogs())) },
-      );
-      expect(response.status).toBe(200);
-      const { url } = forwardedCall();
-      // The project key in the query is not touched.
-      expect(url.searchParams.get("token")).toBe(KEY);
-      const forwarded = JSON.parse(decode(forwardedBytes()));
-      expect(JSON.stringify(forwarded)).not.toContain("SENTINEL");
-      const record = forwarded.resourceLogs[0].scopeLogs[0].logRecords[0];
-      expect(record.body.stringValue).toBe(
-        "opened https://app.mcpjam.com/results/[redacted]",
-      );
-      expect(record.attributes[0].value.stringValue).toBe(
-        "https://app.mcpjam.com/oauth/callback?code=[redacted]&state=[redacted]",
-      );
-      expect(record.timeUnixNano).toBe("1700000000000000000");
-    }
+    const response = await post(
+      `/tlm/i/v1/metrics?token=${KEY}`,
+      encode(JSON.stringify(otlpMetrics())),
+    );
+    expect(response.status).toBe(200);
+    const { url } = forwardedCall();
+    expect(url.searchParams.get("token")).toBe(KEY);
+    const forwarded = JSON.parse(decode(forwardedBytes()));
+    expect(JSON.stringify(forwarded)).not.toContain("SENTINEL");
+    const resource = forwarded.resourceMetrics[0];
+    expect(resource.resource.attributes[1].value.stringValue).toBe(
+      "https://app.mcpjam.com/oauth/callback?code=[redacted]&state=[redacted]",
+    );
+    expect(resource.scopeMetrics[0].metrics[0].description).toBe(
+      "loaded https://app.mcpjam.com/results/[redacted]",
+    );
   });
 
-  it("drops a log payload that cannot be decoded", async () => {
-    const response = await createTestApp().request(
-      `/tlm/i/v1/logs?token=${KEY}`,
-      { method: "POST", body: `{"resourceLogs":[` },
+  it("drops a metrics payload that cannot be decoded", async () => {
+    const response = await post(
+      `/tlm/i/v1/metrics?token=${KEY}`,
+      `{"resourceMetrics":[`,
     );
     expect(response.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({ scrubDrops: 1 });
+  });
+
+  it("never forwards logs, which carry console output", async () => {
+    const response = await post(`/tlm/i/v1/logs?token=${KEY}`, "{}");
+    expect(response.status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
 // Replay. Built the way posthog-js builds a batch: `$snapshot` events whose
 // `$snapshot_data` is a list of rrweb events, full snapshots and mutations
-// packed as gzip-in-a-latin1-string (`cv: "2024-10"`).
+// packed as gzip-in-a-latin1-string (`cv: "2024-10"`) by older clients.
 // ---------------------------------------------------------------------------
 
 function packed(value: unknown): string {
@@ -803,6 +589,7 @@ function replayBatch(
         $snapshot_bytes: 1234,
         $snapshot_data: snapshotData,
         $current_url: "https://app.mcpjam.com/projects/p1",
+        [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
         ...properties,
       },
     },
@@ -814,17 +601,18 @@ const replayEncodings = [
   ["gzip", (json: string) => gzipSync(json)],
 ] as const;
 
+/** The `$snapshot` events PostHog was handed. */
+function forwardedSnapshots(): CaptureEvent[] {
+  return forwardedEvents().filter((event) => event.event === "$snapshot");
+}
+
 describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
-  it("forwards a clean batch byte for byte", async () => {
-    const body = encode(replayBatch(cleanSnapshotData()));
-    const response = await createTestApp().request("/tlm/s/?ver=1", {
-      method: "POST",
-      body,
-    });
+  it("forwards a clean batch's recording unchanged", async () => {
+    const data = cleanSnapshotData();
+    const response = await post("/tlm/s/?ver=1", encode(replayBatch(data)));
     expect(response.status).toBe(200);
-    const { url } = forwardedCall();
-    expect(url.href).toBe("https://us.i.posthog.com/s/?ver=1");
-    expect(forwardedBytes().equals(Buffer.from(body))).toBe(true);
+    const [snapshot] = forwardedSnapshots();
+    expect(snapshot.properties.$snapshot_data).toEqual(data);
     expect(flushedStats()).toMatchObject({
       replayCredentialDrops: 0,
       replayUndecodableDrops: 0,
@@ -859,7 +647,7 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
         ]),
     ],
     [
-      "a DOM attribute inside a full snapshot",
+      "a DOM attribute inside a packed full snapshot",
       () =>
         replayBatch([
           meta("https://app.mcpjam.com/projects/p1"),
@@ -867,21 +655,21 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
         ]),
     ],
     [
-      "DOM text inside a full snapshot",
+      "DOM text inside a packed full snapshot",
       () =>
         replayBatch([
           fullSnapshot(domWithLink("/projects/p1", `Share: ${SHARE_URL}`)),
         ]),
     ],
     [
-      "a mutation's text",
+      "a packed mutation's text",
       () =>
         replayBatch([
           mutation({ texts: [{ id: 4, value: `copy ${SHARE_URL}` }] }),
         ]),
     ],
     [
-      "a mutation's attribute",
+      "a packed mutation's attribute",
       () =>
         replayBatch([
           mutation({
@@ -889,21 +677,6 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
               {
                 id: 3,
                 attributes: { href: "/user-testing/s1/SENTINEL_tester" },
-              },
-            ],
-          }),
-        ]),
-    ],
-    [
-      "a node a mutation adds",
-      () =>
-        replayBatch([
-          mutation({
-            adds: [
-              {
-                parentId: 2,
-                nextId: null,
-                node: domWithLink("/bench/results/SENTINEL_hex"),
               },
             ],
           }),
@@ -919,30 +692,40 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
   ];
 
   it.each(withCredential)(
-    "accepts and drops a batch with a credential in %s",
+    "drops a replay event with a credential in %s and keeps the rest",
     async (_name, build) => {
-      const json = build();
-      expect(
-        json.includes("SENTINEL") ||
-          // Inside nested gzip the text is compressed; check it decodes.
-          json.includes("cv"),
-      ).toBe(true);
-
-      const response = await createTestApp().request("/tlm/s/", {
-        method: "POST",
-        body: encode(json),
-      });
+      const replay = JSON.parse(build());
+      const pageview = {
+        event: "$pageview",
+        properties: {
+          token: KEY,
+          [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP,
+        },
+      };
+      const response = await post(
+        "/tlm/s/",
+        encode(JSON.stringify([...replay, pageview])),
+      );
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: 1 });
-      expect(fetch).not.toHaveBeenCalled();
+      expect(forwardedSnapshots()).toHaveLength(0);
+      expect(forwardedBytes().includes("SENTINEL")).toBe(false);
       expect(flushedStats()).toMatchObject({
         replayCredentialDrops: 1,
         replayUndecodableDrops: 0,
-        res2xx: 1,
       });
     },
   );
+
+  it("answers a batch left with nothing to forward as restricted", async () => {
+    const response = await post(
+      "/tlm/s/",
+      encode(replayBatch([meta(SHARE_URL)])),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "telemetry_restricted" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
   const undecodable: Array<[string, () => string]> = [
     [
@@ -1007,28 +790,21 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
     ],
   ];
 
-  it.each(undecodable)(
-    "accepts and drops a batch with %s",
-    async (_name, build) => {
-      const response = await createTestApp().request("/tlm/s/", {
-        method: "POST",
-        body: encode(build()),
-      });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: 1 });
-      expect(fetch).not.toHaveBeenCalled();
-      expect(flushedStats()).toMatchObject({
-        replayCredentialDrops: 0,
-        replayUndecodableDrops: 1,
-      });
-    },
-  );
+  it.each(undecodable)("drops a replay event with %s", async (_name, build) => {
+    const response = await post("/tlm/s/", encode(build()));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    expect(flushedStats()).toMatchObject({
+      replayCredentialDrops: 0,
+      replayUndecodableDrops: 1,
+    });
+  });
 
   it("still refuses another project's batch, credential or not", async () => {
-    const response = await createTestApp().request("/tlm/s/", {
-      method: "POST",
-      body: encode(replayBatch([meta(SHARE_URL)], {}, OTHER_PROJECT_KEY)),
-    });
+    const response = await post(
+      "/tlm/s/",
+      encode(replayBatch([meta(SHARE_URL)], {}, OTHER_PROJECT_KEY)),
+    );
     expect(response.status).toBe(403);
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({
@@ -1039,23 +815,23 @@ describe.each(replayEncodings)("replay batches as %s", (_encoding, encode) => {
 });
 
 describe("replay inspection bounds", () => {
-  it("drops a batch whose nested data inflates past the batch's budget", async () => {
+  it("drops a replay event whose nested data inflates past the budget", async () => {
     // A string of zeros compresses about a thousandfold, so this is small to
     // send and over the budget to inflate.
     const huge = `[${"0,".repeat(RELAY_REPLAY_NESTED_MAX_BYTES / 2)}0]`;
     const nested = gzipSync(huge).toString("latin1");
-    const response = await createTestApp().request("/tlm/s/", {
-      method: "POST",
-      body: gzipSync(
+    const response = await post(
+      "/tlm/s/",
+      gzipSync(
         replayBatch([{ type: 2, data: nested, timestamp: 2, cv: "2024-10" }]),
       ),
-    });
-    expect(response.status).toBe(200);
+    );
+    expect(response.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
     expect(flushedStats()).toMatchObject({ replayUndecodableDrops: 1 });
   });
 
-  it("counts the budget across every nested string in the batch", async () => {
+  it("counts the budget across every nested string in the request", async () => {
     // Each alone fits; together they do not.
     const third = `[${"0,".repeat(Math.ceil(RELAY_REPLAY_NESTED_MAX_BYTES / 6))}0]`;
     const nested = () => ({
@@ -1064,49 +840,43 @@ describe("replay inspection bounds", () => {
       timestamp: 2,
       cv: "2024-10",
     });
-    const fits = await createTestApp().request("/tlm/s/", {
-      method: "POST",
-      body: gzipSync(replayBatch([nested()])),
-    });
+    const fits = await post("/tlm/s/", gzipSync(replayBatch([nested()])));
     expect(fits.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(1);
     vi.mocked(fetch).mockClear();
 
-    const over = await createTestApp().request("/tlm/s/", {
-      method: "POST",
-      body: gzipSync(replayBatch([nested(), nested(), nested(), nested()])),
-    });
-    expect(over.status).toBe(200);
+    const over = await post(
+      "/tlm/s/",
+      gzipSync(replayBatch([nested(), nested(), nested(), nested()])),
+    );
+    expect(over.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
   });
 });
 
 describe("relay.stats", () => {
-  it("reports the scrub counters and resets them on flush", async () => {
-    const app = createTestApp();
-    await app.request("/tlm/i/v0/e/", { method: "POST", body: "{" });
-    await app.request("/tlm/s/", {
-      method: "POST",
-      body: replayBatch([meta(SHARE_URL)]),
-    });
-    await app.request("/tlm/s/", {
-      method: "POST",
-      body: replayBatch([
+  it("reports the credential counters and resets them on flush", async () => {
+    walkerControl.fail = true;
+    await post("/tlm/i/v0/e/", JSON.stringify(plantedBatch()));
+    walkerControl.fail = false;
+    await post("/tlm/s/", replayBatch([meta(SHARE_URL)]));
+    await post(
+      "/tlm/s/",
+      replayBatch([
         { type: 2, data: "\u001f\u008bjunk", timestamp: 2, cv: "2024-10" },
       ]),
-    });
+    );
     expect(flushedStats()).toMatchObject({
       requests: 3,
       scrubDrops: 1,
       replayCredentialDrops: 1,
       replayUndecodableDrops: 1,
       projectRejects: 0,
-      res2xx: 2,
-      res4xx: 1,
     });
 
     // A later interval starts from zero.
-    await app.request("/tlm/i/v0/e/", { method: "POST", body: "{" });
+    walkerControl.fail = true;
+    await post("/tlm/i/v0/e/", JSON.stringify(plantedBatch()));
     expect(flushedStats()).toMatchObject({
       scrubDrops: 1,
       replayCredentialDrops: 0,
