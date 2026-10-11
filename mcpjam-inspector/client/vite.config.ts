@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { shouldRecordWithMeticulous } from "./vite-meticulous-recorder";
 import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
@@ -152,15 +153,15 @@ export default defineConfig(({ mode }) => {
   // `dist/client` are accepted; the Electron renderer has its own config.
   const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
 
-  // Meticulous session recorder. Injected only into hosted web builds whose
-  // Railway service sets METICULOUS_RECORDING_TOKEN (a public, read-only
-  // token), so npx, Docker self-host, Electron and local builds never record.
-  // `enabled: "always"` because the plugin defaults to dev-server only.
+  // Meticulous session recorder: staging and preview hosted web builds only.
+  // See `vite-meticulous-recorder.ts` for which builds record and why.
   const meticulousRecordingToken = env.METICULOUS_RECORDING_TOKEN;
-  const recordWithMeticulous =
-    Boolean(meticulousRecordingToken) &&
-    env.VITE_MCPJAM_HOSTED_MODE === "true" &&
-    buildSurface === "web";
+  const recordWithMeticulous = shouldRecordWithMeticulous({
+    recordingToken: meticulousRecordingToken,
+    environment: env.VITE_ENVIRONMENT,
+    hostedMode: env.VITE_MCPJAM_HOSTED_MODE,
+    buildSurface,
+  });
 
   return {
     root: clientDir,
@@ -175,18 +176,19 @@ export default defineConfig(({ mode }) => {
       env.CLIENT_CACHE_DIR || "node_modules/.vite",
     ),
     plugins: [
-      // First, so the recorder is the first <script> in <head>.
+      // The plugin prepends its script as the first child of <head> from a
+      // post-order `transformIndexHtml` hook, so its place in this list does
+      // not matter.
       ...(recordWithMeticulous
         ? [
             meticulous({
               recordingToken: meticulousRecordingToken,
+              // The plugin's default records only under the dev server.
               enabled: "always",
-              // Every `vite build` is mode "production", so tag staging and
-              // preview builds by their deploy environment instead.
-              attributes: {
-                "data-is-production-environment":
-                  env.VITE_ENVIRONMENT === "production" ? "true" : "false",
-              },
+              // `vite build` always runs in mode "production", which the plugin
+              // would report as a production session, but only staging and
+              // preview builds get here.
+              attributes: { "data-is-production-environment": "false" },
             }),
           ]
         : []),

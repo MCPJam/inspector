@@ -120,16 +120,22 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      # The SDK, chat-ui and widget-react are aliased to source in
-      # client/vite.config.ts, so no SDK build is needed first. Never set
-      # SENTRY_AUTH_TOKEN or POSTHOG_PERSONAL_API_KEY here: with them the build
-      # uploads source maps and deletes them, and Meticulous needs them.
-      # VITE_WORKOS_API_HOSTNAME stays unset: staging and previews use the
-      # same-origin /user_management proxy.
+      # Same order as the Dockerfile: build:client needs sdk/dist. Without it,
+      # @mcpjam/sdk/skill-reference resolves to SDK source, whose markdown
+      # imports only the SDK's own build can load.
+      - name: Build the SDK
+        run: npm run build -w @mcpjam/sdk
+
+      # Never set SENTRY_AUTH_TOKEN or POSTHOG_PERSONAL_API_KEY here: with them
+      # the build uploads source maps and deletes them, and Meticulous needs
+      # them. VITE_WORKOS_API_HOSTNAME stays unset: staging and previews use
+      # the same-origin /user_management proxy.
       - name: Build Inspector client
         env:
           # METICULOUS_BUILD marks this as a build for Meticulous testing.
           METICULOUS_BUILD: "true"
+          # The hosted Docker build's surface, so __BUILD_SURFACE__ matches it.
+          MCPJAM_BUILD_SURFACE: web
           VITE_MCPJAM_HOSTED_MODE: "true"
           VITE_ENVIRONMENT: staging
           VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
