@@ -43,13 +43,17 @@ function uncertain(error: unknown): boolean {
   return isPlatformApiError(error) && (error.status === 0 || error.status >= 500);
 }
 
-async function submit(scope: DeletionScope, key: string, actorId: string, getToken?: GetDeletionToken) {
+async function submit(scope: DeletionScope, key: string, actorId: string, getToken?: GetDeletionToken, replayOnly = false) {
   try {
-    const receipt = await client(getToken).requestDeletion({ scope }, { idempotencyKey: key });
+    const api = client(getToken);
+    const receipt = await api[replayOnly ? "replayDeletion" : "requestDeletion"]({ scope }, { idempotencyKey: key });
     window.localStorage.removeItem(idempotencyStorageKey(scope, actorId));
     return receipt;
   } catch (error) {
     if (uncertain(error)) throw new DeletionOutcomeUnknown(scope);
+    // A replay miss can precede the original acceptance; keep its key and
+    // never turn that miss into a replacement deletion request.
+    if (!replayOnly) window.localStorage.removeItem(idempotencyStorageKey(scope, actorId));
     throw error;
   }
 }
@@ -78,9 +82,10 @@ export async function deleteScope(scope: DeletionScope, legacyDelete: () => Prom
 export async function startDeletion(scope: DeletionScope): Promise<PlatformDeletionReceipt> {
   const actor = await client().getMe();
   const storageKey = idempotencyStorageKey(scope, actor.id);
-  const key = window.localStorage.getItem(storageKey) ?? globalThis.crypto.randomUUID();
+  const existing = window.localStorage.getItem(storageKey);
+  const key = existing ?? globalThis.crypto.randomUUID();
   window.localStorage.setItem(storageKey, key);
-  return submit(scope, key, actor.id);
+  return submit(scope, key, actor.id, undefined, existing !== null);
 }
 
 /** Recovery only replays a saved request owned by the current signed-in actor. */
@@ -93,7 +98,7 @@ export async function recoverDeletion(search: string, getToken: GetDeletionToken
   const actor = await client(getToken).getMe();
   const key = window.localStorage.getItem(idempotencyStorageKey(scope, actor.id));
   if (!key) throw new Error("No pending request for this account");
-  return submit(scope, key, actor.id, getToken);
+  return submit(scope, key, actor.id, getToken, true);
 }
 
 /** The independent status route is available when the normal app shell is not. */

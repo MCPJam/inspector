@@ -1,8 +1,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
-const { request, get, authorize, cancel, authFetch, me, capabilities } = vi.hoisted(() => ({
+const { request, replay, get, authorize, cancel, authFetch, me, capabilities } = vi.hoisted(() => ({
   me: vi.fn(),
   capabilities: vi.fn(),
   request: vi.fn(),
+  replay: vi.fn(),
   get: vi.fn(),
   authorize: vi.fn(),
   cancel: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("@mcpjam/sdk/platform", () => ({
       getMe: me,
       getDeletionCapabilities: capabilities,
       requestDeletion: request,
+      replayDeletion: replay,
       getDeletion: get,
       authorizeDeletion: authorize,
       cancelDeletion: cancel,
@@ -27,6 +29,8 @@ vi.mock("@/lib/session-token", () => ({ authFetch }));
 import { readDeletion, startDeletion, deleteScope, recoverDeletion, DeletionOutcomeUnknown } from "../deletion-api";
 beforeEach(() => {
   vi.clearAllMocks();
+  request.mockReset();
+  replay.mockReset().mockResolvedValue({ requestId: "r1" });
   localStorage.clear();
   me.mockResolvedValue({ id: "actor1" });
   capabilities.mockResolvedValue({ available: true });
@@ -39,7 +43,7 @@ it("keeps a request key after uncertain outcomes and reuses it on retry", async 
   await expect(startDeletion(scope)).rejects.toBeInstanceOf(DeletionOutcomeUnknown);
   await recoverDeletion("?type=project&id=p1", async () => "token");
   expect(request.mock.calls[0][1].idempotencyKey).toBe(
-    request.mock.calls[1][1].idempotencyKey,
+    replay.mock.calls[0][1].idempotencyKey,
   );
 });
 it("only asks for a narrow receipt grant after an opaque not-found", async () => {
@@ -91,4 +95,17 @@ it("does not silently change the protocol confirmed in the dialog", async () => 
   await expect(deleteScope({ type: "organization", id: "o1" }, legacy, true)).rejects.toThrow("availability changed");
   expect(legacy).not.toHaveBeenCalled();
   expect(request).not.toHaveBeenCalled();
+});
+
+it("clears a fresh key after definite refusal but retains replay misses", async () => {
+  const scope = { type: "project" as const, id: "p1" };
+  request.mockRejectedValueOnce({ status: 422 });
+  await expect(startDeletion(scope)).rejects.toEqual({ status: 422 });
+  expect(localStorage.length).toBe(0);
+  request.mockRejectedValueOnce({ status: 0 });
+  await expect(startDeletion(scope)).rejects.toBeInstanceOf(DeletionOutcomeUnknown);
+  replay.mockRejectedValueOnce({ status: 404 });
+  await expect(recoverDeletion("?type=project&id=p1", async () => "token")).rejects.toEqual({ status: 404 });
+  expect(localStorage.length).toBe(1);
+  expect(request).toHaveBeenCalledTimes(2);
 });
