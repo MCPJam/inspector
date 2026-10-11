@@ -42,7 +42,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Test pull request approval policy
+      - name: Test merge queue PR resolution
         run: node --test .github/scripts/__tests__/pr-policy.test.cjs
 
       - name: Verify Docker workspace dependency manifests
