@@ -23,7 +23,9 @@
  *   SENTRY_DATASET            Discover dataset, default `discover`
  *
  * Exit codes: 0 clean, 1 leak found, 2 the monitor could not look (missing
- * configuration, an API error). A blind monitor must not read as a clean one.
+ * configuration, an API error, an incomplete or empty answer). A blind
+ * monitor must not read as a clean one: a sink that could not look is
+ * reported as `<sink>: blind (<why>)`.
  *
  * Output never contains a matched URL or property value: a hit IS a
  * credential, and the report goes to a chat channel. It contains route ids,
@@ -33,7 +35,8 @@
  * Node 22.18+ runs this file directly (built-in type stripping). Node 22.6 to
  * 22.17 needs `--experimental-strip-types`.
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import {
   buildHogqlQuery,
   buildHogqlSelfTest,
@@ -75,13 +78,26 @@ function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
-interface SinkResult {
+export interface SinkResult {
   sink: "PostHog" | "Sentry";
   status: "clean" | "leak" | "blind";
   /** route id → events */
   counts: Map<string, number>;
   /** Free-form lines for the report. Never a URL. */
   notes: string[];
+  /** Why the sink could not be checked, when it could not. Never a URL. */
+  blindReason?: string;
+}
+
+/**
+ * The status a sink ends with. A leak found is a leak whatever else
+ * happened; otherwise a sink that could not look at everything is blind,
+ * never clean.
+ */
+function settle(result: SinkResult): SinkResult {
+  result.status =
+    result.counts.size > 0 ? "leak" : result.blindReason ? "blind" : "clean";
+  return result;
 }
 
 const env = (name: string): string | undefined => {
@@ -97,7 +113,7 @@ function safeError(error: unknown): string {
 
 // ── PostHog ────────────────────────────────────────────────────────────
 
-async function runPosthog(hours: number): Promise<SinkResult> {
+export async function runPosthog(hours: number): Promise<SinkResult> {
   const result: SinkResult = {
     sink: "PostHog",
     status: "blind",
@@ -111,10 +127,11 @@ async function runPosthog(hours: number): Promise<SinkResult> {
     "",
   );
   if (!key || !projectId) {
+    result.blindReason = "not configured";
     result.notes.push(
       "POSTHOG_PERSONAL_API_KEY or POSTHOG_PROJECT_ID is not set; PostHog was not checked.",
     );
-    return result;
+    return settle(result);
   }
   try {
     const response = await fetch(
@@ -134,15 +151,34 @@ async function runPosthog(hours: number): Promise<SinkResult> {
     );
     const text = await response.text();
     if (!response.ok) {
+      result.blindReason = `HTTP ${response.status}`;
       result.notes.push(
         `PostHog query failed: HTTP ${response.status} ${text.slice(0, 300)}`,
       );
-      return result;
+      return settle(result);
     }
     const body = JSON.parse(text) as {
-      results?: unknown[][];
+      results?: unknown;
       columns?: string[];
+      query_status?: { complete?: boolean };
     };
+    // A query PostHog has not finished (a 202 with `complete: false`) or an
+    // answer with no result rows says nothing about the window. Only a
+    // finished query with a `results` array can say "no leaks".
+    if (body.query_status?.complete === false) {
+      result.blindReason = "query incomplete";
+      result.notes.push(
+        `PostHog answered HTTP ${response.status} before the query finished.`,
+      );
+      return settle(result);
+    }
+    if (!Array.isArray(body.results)) {
+      result.blindReason = "no results in the response";
+      result.notes.push(
+        `PostHog answered HTTP ${response.status} without a results array.`,
+      );
+      return settle(result);
+    }
     const columns = body.columns ?? [
       "route_id",
       "property",
@@ -151,7 +187,7 @@ async function runPosthog(hours: number): Promise<SinkResult> {
       "events",
     ];
     const at = (name: string) => columns.indexOf(name);
-    for (const row of body.results ?? []) {
+    for (const row of body.results as unknown[][]) {
       const route = String(row[at("route_id")]);
       const events = Number(row[at("events")]);
       result.counts.set(route, (result.counts.get(route) ?? 0) + events);
@@ -161,11 +197,11 @@ async function runPosthog(hours: number): Promise<SinkResult> {
         `${route} in ${String(row[at("property")])} (${platform} ${version}): ${events}`,
       );
     }
-    result.status = result.counts.size > 0 ? "leak" : "clean";
   } catch (error) {
+    result.blindReason = "request failed";
     result.notes.push(`PostHog query failed: ${safeError(error)}`);
   }
-  return result;
+  return settle(result);
 }
 
 // ── Sentry ─────────────────────────────────────────────────────────────
@@ -183,7 +219,7 @@ function nextCursor(link: string | null): string | null {
   return null;
 }
 
-async function runSentry(hours: number): Promise<SinkResult> {
+export async function runSentry(hours: number): Promise<SinkResult> {
   const result: SinkResult = {
     sink: "Sentry",
     status: "blind",
@@ -198,17 +234,17 @@ async function runSentry(hours: number): Promise<SinkResult> {
   );
   const dataset = env("SENTRY_DATASET") ?? "discover";
   if (!token || !org) {
+    result.blindReason = "not configured";
     result.notes.push(
       "SENTRY_AUTH_TOKEN or SENTRY_ORG is not set; Sentry was not checked.",
     );
-    return result;
+    return settle(result);
   }
   const patterns = buildLeakPatterns();
   const seen = new Set<string>();
-  let truncated = false;
   const leakedIds = new Map<string, string[]>();
   try {
-    for (const search of buildSentryQueries()) {
+    searches: for (const search of buildSentryQueries()) {
       let cursor: string | null = null;
       for (let page = 0; page < SENTRY_MAX_PAGES; page++) {
         const params = new URLSearchParams({
@@ -230,15 +266,22 @@ async function runSentry(hours: number): Promise<SinkResult> {
         );
         if (!response.ok) {
           const text = await response.text();
+          result.blindReason = `HTTP ${response.status}`;
           result.notes.push(
             `Sentry search "${search.name}" failed: HTTP ${response.status} ${text.slice(0, 300)}`,
           );
-          return result;
+          break searches;
         }
-        const body = (await response.json()) as {
-          data?: Record<string, unknown>[];
-        };
-        for (const row of body.data ?? []) {
+        const body = (await response.json()) as { data?: unknown };
+        // No `data` array is no answer, not an empty one.
+        if (!Array.isArray(body.data)) {
+          result.blindReason = "no data in the response";
+          result.notes.push(
+            `Sentry search "${search.name}" answered HTTP ${response.status} without a data array.`,
+          );
+          break searches;
+        }
+        for (const row of body.data as Record<string, unknown>[]) {
           const id = String(row.id ?? "");
           if (!id || seen.has(id)) continue;
           seen.add(id);
@@ -259,25 +302,22 @@ async function runSentry(hours: number): Promise<SinkResult> {
         if (page === SENTRY_MAX_PAGES - 1) {
           // Events past the cap were never looked at. A leak among them would
           // otherwise read as "clean"; a monitor that could not look is blind.
-          truncated = true;
+          result.blindReason = "page cap reached";
           result.notes.push(
             `Sentry search "${search.name}" hit the ${SENTRY_MAX_PAGES}-page cap; events past it were not examined.`,
           );
         }
       }
     }
-    for (const [route, ids] of leakedIds) {
-      result.notes.push(`${route}: events ${ids.join(", ")}`);
-    }
-    result.notes.push(`${seen.size} candidate events examined.`);
-    // A leak found is a leak whatever else happened; otherwise a capped
-    // search cannot vouch for what it did not read.
-    result.status =
-      result.counts.size > 0 ? "leak" : truncated ? "blind" : "clean";
   } catch (error) {
+    result.blindReason = "request failed";
     result.notes.push(`Sentry search failed: ${safeError(error)}`);
   }
-  return result;
+  for (const [route, ids] of leakedIds) {
+    result.notes.push(`${route}: events ${ids.join(", ")}`);
+  }
+  result.notes.push(`${seen.size} candidate events examined.`);
+  return settle(result);
 }
 
 // ── Self-test ──────────────────────────────────────────────────────────
@@ -347,7 +387,7 @@ async function selfTest(): Promise<number> {
 
 // ── Report ─────────────────────────────────────────────────────────────
 
-function report(results: readonly SinkResult[], hours: number): string {
+export function report(results: readonly SinkResult[], hours: number): string {
   const lines: string[] = [`Credential leak monitor, last ${hours}h`, ""];
   for (const result of results) {
     const total = [...result.counts.values()].reduce((a, b) => a + b, 0);
@@ -356,7 +396,7 @@ function report(results: readonly SinkResult[], hours: number): string {
         ? "clean"
         : result.status === "leak"
           ? `${total} event(s) with an unredacted credential`
-          : "NOT CHECKED";
+          : `blind (${result.blindReason ?? "not checked"})`;
     lines.push(`${result.sink}: ${headline}`);
     for (const [route, count] of [...result.counts].sort(
       (a, b) => b[1] - a[1],
@@ -413,15 +453,33 @@ async function main(): Promise<number> {
   process.stdout.write(`${text}\n`);
   const summary = env("GITHUB_STEP_SUMMARY");
   if (summary) appendFileSync(summary, `\`\`\`\n${text}\n\`\`\`\n`);
+  return exitCode(results);
+}
+
+/** 1 when any sink holds a leak, else 2 when any is blind, else 0. */
+export function exitCode(results: readonly SinkResult[]): number {
   if (results.some((result) => result.status === "leak")) return 1;
   if (results.some((result) => result.status === "blind")) return 2;
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (error) => {
-    process.stderr.write(`credential leak monitor: ${safeError(error)}\n`);
-    process.exit(2);
-  },
-);
+/** Run only as a script: the tests import the functions above. */
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
+  main().then(
+    (code) => process.exit(code),
+    (error) => {
+      process.stderr.write(`credential leak monitor: ${safeError(error)}\n`);
+      process.exit(2);
+    },
+  );
+}

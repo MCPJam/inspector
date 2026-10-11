@@ -6,7 +6,7 @@
  * a route to the registry cannot leave the monitor blind to it, and a
  * correctly scrubbed URL can never page anyone.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CREDENTIAL_ROUTES,
   SECRET_PARAM_KEYS,
@@ -34,6 +34,12 @@ import {
   genericSamples,
   routeSamples,
 } from "../../../ops/credential-leak-monitor/samples.mts";
+import {
+  exitCode,
+  report,
+  runPosthog,
+  runSentry,
+} from "../../../ops/credential-leak-monitor/run.mts";
 
 const patterns = buildLeakPatterns();
 
@@ -181,5 +187,101 @@ describe("credential leak monitor queries", () => {
     // Templated transaction names (`/results/:runToken`) are what a correct
     // client sends; they are excluded server-side.
     expect(queries.at(-1)?.query).toContain('!transaction:"*:*"');
+  });
+});
+
+describe("credential leak monitor answers", () => {
+  /**
+   * A monitor that reads a missing or unfinished answer as "nothing found"
+   * reports clean while it saw nothing. Only a complete answer with result
+   * rows may say clean; anything else is blind, and exits 2.
+   */
+  const leakedUrl = `https://app.mcpjam.com/results/${SAMPLE_SECRET}`;
+
+  function answer(status: number, body: unknown) {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(body), { status }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("POSTHOG_PERSONAL_API_KEY", "phx_test");
+    vi.stubEnv("POSTHOG_PROJECT_ID", "1");
+    vi.stubEnv("SENTRY_AUTH_TOKEN", "sntrys_test");
+    vi.stubEnv("SENTRY_ORG", "acme");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("PostHog: a query that has not finished is blind", async () => {
+    answer(202, { query_status: { complete: false }, results: [] });
+    const result = await runPosthog(24);
+    expect(result.status).toBe("blind");
+    expect(report([result], 24)).toContain("PostHog: blind (query incomplete)");
+    expect(exitCode([result])).toBe(2);
+  });
+
+  it("PostHog: an answer without results is blind", async () => {
+    answer(200, {});
+    const result = await runPosthog(24);
+    expect(result.status).toBe("blind");
+    expect(report([result], 24)).toContain(
+      "PostHog: blind (no results in the response)",
+    );
+    expect(exitCode([result])).toBe(2);
+  });
+
+  it("PostHog: a complete answer is clean or a leak", async () => {
+    const columns = ["route_id", "property", "platform", "version", "events"];
+    answer(200, { query_status: { complete: true }, columns, results: [] });
+    const clean = await runPosthog(24);
+    expect(clean.status).toBe("clean");
+    expect(report([clean], 24)).toContain("PostHog: clean");
+    expect(exitCode([clean])).toBe(0);
+
+    answer(200, {
+      columns,
+      results: [["score-results", "$current_url", "web", "3.15.0", 2]],
+    });
+    const leak = await runPosthog(24);
+    expect(leak.status).toBe("leak");
+    expect(exitCode([leak])).toBe(1);
+  });
+
+  it("Sentry: an answer without data is blind", async () => {
+    answer(200, {});
+    const result = await runSentry(24);
+    expect(result.status).toBe("blind");
+    expect(report([result], 24)).toContain(
+      "Sentry: blind (no data in the response)",
+    );
+    expect(exitCode([result])).toBe(2);
+  });
+
+  it("Sentry: a complete answer is clean or a leak", async () => {
+    answer(200, { data: [] });
+    const clean = await runSentry(24);
+    expect(clean.status).toBe("clean");
+    expect(report([clean], 24)).toContain("Sentry: clean");
+
+    answer(200, { data: [{ id: "e1", project: "web", url: leakedUrl }] });
+    const leak = await runSentry(24);
+    expect(leak.status).toBe("leak");
+    expect(leak.counts.get("score-results")).toBe(1);
+    // The report names the route and the event, never the URL.
+    expect(report([leak], 24)).not.toContain(SAMPLE_SECRET);
+  });
+
+  it("exits 1 for a leak even when another sink is blind", async () => {
+    answer(200, {});
+    const blind = await runPosthog(24);
+    answer(200, { data: [{ id: "e1", project: "web", url: leakedUrl }] });
+    const leak = await runSentry(24);
+    expect(exitCode([blind, leak])).toBe(1);
   });
 });

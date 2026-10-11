@@ -43,8 +43,9 @@ POSTHOG_PERSONAL_API_KEY=… POSTHOG_PROJECT_ID=… \
 ```
 
 Exit codes: `0` clean, `1` a leak was found, `2` the monitor could not check
-a sink (missing configuration or an API error). A monitor that cannot look
-reports `NOT CHECKED`, never clean.
+a sink (missing configuration, an API error, or an answer that is unfinished
+or has no result rows). A monitor that cannot look reports
+`<sink>: blind (<why>)`, never clean.
 
 The report never contains a matched URL or property value, because a hit is a
 credential and the report goes to a chat channel. It has route ids, counts,
@@ -151,7 +152,7 @@ this repository):
 | `POSTHOG_HOST`       | `https://us.posthog.com` |
 | `SENTRY_ORG`         | `mcpjam-gh`              |
 
-Until the two secrets are set, every run alerts as `NOT CHECKED`. That is
+Until the two secrets are set, every run alerts as `blind (not configured)`. That is
 intended: a monitor that is not configured must not look healthy.
 
 ## When it alerts
