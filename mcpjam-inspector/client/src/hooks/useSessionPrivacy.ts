@@ -36,9 +36,10 @@ export const MASKED_TO_FULL_SETTLE_MS = 3_000;
  *   the new level is for, before rrweb's mutation observer reports that
  *   content. The PostHog recorder stops first, then restarts on the masked
  *   profile, so there is no unmasked window.
- * - Toward LESS privacy (`masked` → `full`) the destination must have
- *   resolved to `full` AND finished loading (`contextReady`), and then it
- *   still waits `MASKED_TO_FULL_SETTLE_MS`, recording masked meanwhile.
+ * - Toward LESS privacy (`masked` or `off` → `full`) the destination must
+ *   have resolved to `full` AND finished loading (`contextReady`), and then
+ *   it still waits `MASKED_TO_FULL_SETTLE_MS` under the previous level: the
+ *   last organization's content can still be on screen.
  */
 export function useSessionPrivacy(
   resolved: SessionPrivacy,
@@ -77,7 +78,10 @@ export function useSessionPrivacy(
       if (posthog) syncSessionRecording(posthog, pathname);
       syncSentryReplay(pathname);
     };
-    if (lastRecordingLevelRef.current === "masked" && effective === "full") {
+    const leavingRestricted =
+      lastRecordingLevelRef.current === "masked" ||
+      lastRecordingLevelRef.current === "off";
+    if (leavingRestricted && effective === "full") {
       const timer = setTimeout(() => apply("full"), MASKED_TO_FULL_SETTLE_MS);
       return () => clearTimeout(timer);
     }

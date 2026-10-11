@@ -175,10 +175,10 @@ older than the masked recorder's start. The telemetry browser test fills the
 buffer with unmasked text before tightening and checks that none of it
 leaves under a masked label.
 
-**`masked` → `full`** needs the destination to have resolved to `full` AND
-finished loading (`contextReady`: Convex auth, the organization list and the
-project's server config). Then it still waits 3 seconds
-(`MASKED_TO_FULL_SETTLE_MS`), recording masked meanwhile. The previous
+**`masked` or `off` → `full`** needs the destination to have resolved to
+`full` AND finished loading (`contextReady`: Convex auth, the organization
+list and the project's server config). Then it still waits 3 seconds
+(`MASKED_TO_FULL_SETTLE_MS`) under the previous level. The previous
 organization's content can stay on screen for a moment while the next one
 loads.
 

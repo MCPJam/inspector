@@ -155,7 +155,12 @@ describe("useSessionPrivacy with the real recorders", () => {
     hook.rerender({ level: levelFor("org_replay_off") });
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
 
+    // Leaving `off` waits out the settle period before recording in full.
     hook.rerender({ level: levelFor("org_plain") });
+    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     expect(posthog.log.at(-1)).toBe("start");
     posthog.log.length = 0;
 

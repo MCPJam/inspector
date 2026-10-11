@@ -118,6 +118,19 @@ describe("useSessionPrivacy", () => {
     expect(applied()).toEqual(["masked", "full"]);
   });
 
+  it("off → full waits out the settle period too, recording nothing meanwhile", () => {
+    // Leaving an organization with replay off: its content can still be on
+    // screen while the next one loads.
+    const { rerender } = render("off");
+    rerender({ level: "pending" });
+    rerender({ level: "full" });
+    expect(applied()).toEqual(["off", "pending"]);
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
+    });
+    expect(applied()).toEqual(["off", "pending", "full"]);
+  });
+
   it("going back to masked inside the settle period cancels the switch", () => {
     const { rerender } = render("masked");
     rerender({ level: "full" });
