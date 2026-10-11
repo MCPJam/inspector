@@ -87,6 +87,7 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
+import { orgPolicyConfigForClientKeys } from "../../services/evals/org-policy-client-keys.js";
 import {
   flattenServerToolSnapshotTools,
   type ServerToolSnapshot,
@@ -2405,6 +2406,11 @@ export async function fetchRunPinnedSkillsWithRetry(
  * one place that already knows the run's own step model.
  */
 
+// The organization's AI-key policy for a request that brings its own keys.
+// Shared with replays, so it lives in `services/evals`; re-exported here,
+// where suite and single-case runs read it.
+export { orgPolicyConfigForClientKeys };
+
 /**
  * Whether a keyed launch that failed the server preflight was already started
  * by an earlier attempt with the same key.
@@ -3128,6 +3134,27 @@ export async function prepareEvalRun(
       : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgConfigTarget) {
+    // The request's own keys: still bound by the organization's policy. An
+    // unreadable policy refuses the run, which is already created here, so
+    // its pending iterations are failed before the refusal goes out.
+    try {
+      resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+        orgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          scenarioId,
+          accessVersion,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {
       try {
@@ -3780,6 +3807,18 @@ export async function prepareSingleCaseExecution(
   const orgModelConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : undefined;
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgModelConfigTarget) {
+    // The request's own keys: still bound by the organization's policy.
+    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+      orgModelConfigTarget,
+      {
+        bearerToken: convexAuthToken,
+        scenarioId,
+        accessVersion,
+        serverIds: resolvedServerIds,
+      },
+    );
+  }
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&

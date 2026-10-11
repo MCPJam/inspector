@@ -25,6 +25,7 @@ import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
+import { orgPolicyConfigForClientKeys } from "./org-policy-client-keys.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -193,6 +194,22 @@ export async function prepareSuiteReplayFromRun(
     const replayOrgConfigTarget = replayProjectId
       ? { projectId: replayProjectId }
       : undefined;
+    if (resolvedModelApiKeys && !resolvedOrgModelConfig && replayOrgConfigTarget) {
+      // The request's own keys: still bound by the organization's policy, as
+      // a suite run's are. An unreadable policy refuses the replay, which is
+      // already created here, so it is failed before the refusal goes out.
+      try {
+        resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+          replayOrgConfigTarget,
+          { bearerToken: convexAuthToken, serverIds: replayServerIds },
+        );
+      } catch (error) {
+        await failRunBeforeExecution(convexClient, recorder, runId, {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }
     if (
       !resolvedModelApiKeys &&
       !resolvedOrgModelConfig &&
