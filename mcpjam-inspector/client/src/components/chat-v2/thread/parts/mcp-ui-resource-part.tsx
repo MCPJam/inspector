@@ -22,7 +22,11 @@ export function MCPUIResourcePart({
   const handleAction = async (action: UIActionResult) => {
     switch (action.type) {
       case "tool":
-        console.info("MCP UI tool action received:", action.payload);
+        // Name only, and dev builds only: the params are the user's data, and
+        // production console output is captured alongside session replay.
+        if (import.meta.env.DEV) {
+          console.info("MCP UI tool action received:", action.payload.toolName);
+        }
         onSendFollowUp(
           `Call tool ${action.payload.toolName} with parameters ${JSON.stringify(action.payload.params)}`,
         );

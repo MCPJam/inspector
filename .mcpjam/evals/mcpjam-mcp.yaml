@@ -2,21 +2,27 @@ schemaVersion: "2"
 mode: agentWorkflow
 reportingMode: standard
 suite:
-  id: s_6Wn2Zp8AjlrjXw5btzHBC
-  name: mcpjam-mcp dogfood
+  id: s_dBqTkWm4XsPvRh2Ny7Lc9
+  name: mcpjam-mcp dogfood (staging)
   description: >-
-    MCPJam's own MCP server, evaluated with MCPJam. Read-only cases only, so a
-    run is safe against any deployment. This file owns the suite: edit it here
-    and merge, because the hosted copy refuses case edits.
+    MCPJam's own MCP server on STAGING, evaluated with MCPJam. Read-only cases
+    only, so a run is safe against any deployment. This file owns the suite:
+    edit it here and merge, because the hosted copy refuses case edits. The
+    production copy must keep the same cases; a test enforces that.
 target:
-  # The PRODUCTION worker, because that is the server this project has a
-  # consented OAuth connection for. A `mcpjam-mcp-staging` server would be the
-  # better target — a pre-deploy gate beats a post-deploy alarm — but the
-  # staging worker trusts a different AuthKit tenant than the staging API, so
-  # nothing can hold a working credential for it yet. Switch this one line once
-  # that is fixed; every case below is read-only and runs the same either way.
+  # STAGING, because this file's primary job is the promotion gate: the thing
+  # worth evaluating is the candidate, not what is already live. The production
+  # copy is `mcpjam-mcp-production.yaml`, whose cases this file's own drift test
+  # keeps byte-identical.
+  #
+  # One file cannot serve both. A file-owned suite always carries an
+  # environment, and `eval run --server` against one is refused outright with
+  # ENVIRONMENT_SERVERS_NOT_OVERRIDABLE — so a target cannot be swapped per run.
+  # That is the right refusal: a suite's run history is only comparable within
+  # one target, so pointing one suite at two servers would quietly corrupt every
+  # baseline comparison.
   servers:
-    - name: mcpjam-mcp
+    - name: mcpjam-mcp-staging
 defaults:
   # Deterministic assertions only, for now. The judge is a later, deliberate
   # step: a suite file with no `judge` block INHERITS whatever the hosted suite
