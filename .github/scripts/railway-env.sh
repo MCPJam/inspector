@@ -30,7 +30,7 @@ ENDPOINT="https://backboard.railway.app/graphql/v2"
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 gql() {
-  curl -fsS -X POST "$ENDPOINT" \
+  curl -fsS --max-time 60 -X POST "$ENDPOINT" \
     -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
     -H "Content-Type: application/json" \
     --data "$1"
@@ -49,6 +49,10 @@ resolve_env_id() {
     '{query: $q, variables: {id: $id}}')
   local response
   response=$(gql "$payload")
+  if ! echo "$response" | jq -e '.errors == null and (.data.project.environments.edges | type == "array")' >/dev/null; then
+    echo "::error::Could not list Railway environments; refusing to treat an API failure as an absent environment" >&2
+    return 1
+  fi
   echo "$response" \
     | jq -r --arg name "$input" '.data.project.environments.edges[]?.node | select(.name == $name) | .id'
 }
@@ -124,6 +128,10 @@ case "$cmd" in
     if echo "$RESPONSE" | jq -e '.errors' >/dev/null 2>&1; then
       echo "::error::environmentDelete failed:" >&2
       echo "$RESPONSE" | jq '.errors' >&2
+      exit 1
+    fi
+    if ! echo "$RESPONSE" | jq -e '.data.environmentDelete == true' >/dev/null; then
+      echo "::error::Railway did not confirm environment deletion" >&2
       exit 1
     fi
     echo "deleted environment '$NAME' ($ENV_ID)"

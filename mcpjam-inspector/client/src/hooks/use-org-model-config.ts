@@ -41,9 +41,18 @@ export interface OrgModelUsageAggregate {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Absent from a backend that predates usage-by-effort. */
+  reasoningTokens?: number;
   knownCostUsd: number;
   knownCostRequests: number;
   unknownCostRequests: number;
+}
+
+/** One model × effective reasoning effort row of the usage summary. */
+export interface OrgModelEffortUsageAggregate extends OrgModelUsageAggregate {
+  modelId: string;
+  /** The effort that ran; `"default"` when the call sent no effort. */
+  reasoningEffort: string;
 }
 
 export interface OrgModelUsageSummary {
@@ -54,6 +63,8 @@ export interface OrgModelUsageSummary {
   byDate: OrgModelUsageAggregate[];
   byProvider: OrgModelUsageAggregate[];
   byModel: OrgModelUsageAggregate[];
+  /** Absent from a backend that predates usage-by-effort; fall back to `byModel`. */
+  byModelEffort?: OrgModelEffortUsageAggregate[];
   byProject: OrgModelUsageAggregate[];
   byUser: OrgModelUsageAggregate[];
   recentRecords: Array<{
@@ -67,6 +78,8 @@ export interface OrgModelUsageSummary {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    reasoningEffort?: string;
+    reasoningTokens?: number;
     costStatus?: "not_reported" | "provider_reported" | "estimated";
     costUsd?: number;
     requestId?: string;

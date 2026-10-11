@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHarnessSessionDataPart,
+  harnessBackgroundTaskInfoFromRaw,
+  harnessPlanFromRaw,
+  harnessSubagentStepFromRaw,
+  harnessToolOutputFromRaw,
+  isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
+  isHarnessPlanDataPart,
+  isHarnessSubagentStepDataPart,
+  isHarnessToolOutputDataPart,
 } from "../harness-session";
 
 describe("isHarnessSessionDataPart", () => {
@@ -42,6 +51,7 @@ describe("isHarnessResetDataPart", () => {
       "sandbox-replaced",
       "legacy-cold-resume",
       "resume-failed",
+      "runtime-changed",
     ]) {
       expect(
         isHarnessResetDataPart({ type: "data-harness-reset", data: { reason } }),
@@ -51,6 +61,353 @@ describe("isHarnessResetDataPart", () => {
       isHarnessResetDataPart({
         type: "data-harness-reset",
         data: { reason: "sandbox-id-e2b-123" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("background-task parts (the Claude Code background drain)", () => {
+  const taskRaw = {
+    mcpjam: "background-task",
+    taskId: "agent-1",
+    toolUseId: "toolu_1",
+    status: "running",
+    description: "plan 1",
+    subagentType: "general-purpose",
+    taskType: "local_agent",
+  };
+
+  it("reads the bridge's task and notice raws", () => {
+    expect(harnessBackgroundTaskInfoFromRaw(taskRaw)).toEqual({
+      kind: "task",
+      taskId: "agent-1",
+      toolUseId: "toolu_1",
+      status: "running",
+      description: "plan 1",
+      subagentType: "general-purpose",
+      taskType: "local_agent",
+    });
+    expect(
+      harnessBackgroundTaskInfoFromRaw({
+        mcpjam: "drain-notice",
+        reason: "draining",
+      }),
+    ).toEqual({ kind: "notice", reason: "draining" });
+  });
+
+  it("drops empty optional fields and rejects incomplete or foreign raws", () => {
+    expect(
+      harnessBackgroundTaskInfoFromRaw({
+        mcpjam: "background-task",
+        taskId: "agent-1",
+        status: "completed",
+        description: "",
+      }),
+    ).toEqual({ kind: "task", taskId: "agent-1", status: "completed" });
+    for (const raw of [
+      undefined,
+      "background-task",
+      { mcpjam: "background-task", taskId: "agent-1" },
+      { mcpjam: "background-task", status: "running" },
+      { mcpjam: "drain-notice", reason: "" },
+      { method: "turn/completed" },
+    ]) {
+      expect(harnessBackgroundTaskInfoFromRaw(raw)).toBeUndefined();
+    }
+  });
+
+  it("every part the server writes passes the client's guard", () => {
+    // The server wraps `harnessBackgroundTaskInfoFromRaw`'s output (and its
+    // own keepalive) as the part's `data`; the guard must accept all of it.
+    const infos = [
+      harnessBackgroundTaskInfoFromRaw(taskRaw),
+      harnessBackgroundTaskInfoFromRaw({
+        mcpjam: "background-task",
+        taskId: "agent-1",
+        status: "completed",
+      }),
+      harnessBackgroundTaskInfoFromRaw({
+        mcpjam: "drain-notice",
+        reason: "follow-up",
+      }),
+      { kind: "keepalive" as const },
+    ];
+    for (const data of infos) {
+      expect(
+        isHarnessBackgroundTaskDataPart({
+          type: "data-harness-background-task",
+          data,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("the guard rejects other parts and malformed data", () => {
+    for (const part of [
+      { type: "data-harness-session", data: { kind: "keepalive" } },
+      { type: "data-harness-background-task" },
+      { type: "data-harness-background-task", data: { kind: "task" } },
+      { type: "data-harness-background-task", data: { kind: "notice" } },
+      { type: "data-harness-background-task", data: { kind: "other" } },
+    ]) {
+      expect(isHarnessBackgroundTaskDataPart(part)).toBe(false);
+    }
+  });
+});
+
+describe("subagent-step parts (a Claude Code subagent's work)", () => {
+  const ids = {
+    rootToolUseId: "toolu_agent",
+    parentToolUseId: "toolu_nested",
+    toolUseId: "toolu_read",
+  };
+
+  it("reads the bridge's tool-call and tool-result raws", () => {
+    expect(
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-call",
+        ...ids,
+        toolName: "Read",
+        input: { file_path: "/work/a.ts", limit: 20 },
+      }),
+    ).toEqual({
+      kind: "tool-call",
+      ...ids,
+      toolName: "Read",
+      input: { file_path: "/work/a.ts", limit: 20 },
+    });
+    expect(
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-result",
+        ...ids,
+        isError: true,
+        error: "File does not exist.",
+      }),
+    ).toEqual({
+      kind: "tool-result",
+      ...ids,
+      isError: true,
+      error: "File does not exist.",
+    });
+  });
+
+  it("re-bounds what crossed the process boundary", () => {
+    const step = harnessSubagentStepFromRaw({
+      mcpjam: "subagent-step",
+      kind: "tool-call",
+      ...ids,
+      toolName: "Write",
+      input: {
+        file_path: "/work/a.ts",
+        content: "x".repeat(10_000),
+        nested: { deep: true },
+        ...Object.fromEntries(
+          Array.from({ length: 20 }, (_, i) => [`k${i}`, i]),
+        ),
+      },
+    });
+    expect(step?.kind).toBe("tool-call");
+    const input = (step as { input: Record<string, unknown> }).input;
+    expect(Object.keys(input)).toHaveLength(8);
+    expect(input).not.toHaveProperty("nested");
+    expect(String(input.content).length).toBeLessThanOrEqual(301);
+  });
+
+  it("rejects incomplete or foreign raws", () => {
+    for (const raw of [
+      undefined,
+      { mcpjam: "subagent-step", kind: "tool-call", ...ids },
+      { mcpjam: "subagent-step", kind: "text", ...ids, text: "hi" },
+      { mcpjam: "subagent-step", kind: "tool-result", toolUseId: "t" },
+      { mcpjam: "background-task", taskId: "a", status: "running" },
+      { method: "item/started" },
+    ]) {
+      expect(harnessSubagentStepFromRaw(raw)).toBeUndefined();
+    }
+  });
+
+  it("every part the server writes passes the client's guard, and nothing else does", () => {
+    for (const data of [
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-call",
+        ...ids,
+        toolName: "Glob",
+      }),
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-result",
+        ...ids,
+      }),
+    ]) {
+      expect(
+        isHarnessSubagentStepDataPart({
+          type: "data-harness-subagent-step",
+          data,
+        }),
+      ).toBe(true);
+    }
+    for (const part of [
+      { type: "data-harness-background-task", data: { kind: "keepalive" } },
+      { type: "data-harness-subagent-step" },
+      {
+        type: "data-harness-subagent-step",
+        data: { kind: "tool-call", ...ids },
+      },
+      { type: "data-harness-subagent-step", data: { kind: "other", ...ids } },
+    ]) {
+      expect(isHarnessSubagentStepDataPart(part)).toBe(false);
+    }
+  });
+});
+
+describe("Codex plan and live output parts", () => {
+  const planRaw = (plan: unknown, extra: Record<string, unknown> = {}) => ({
+    method: "turn/plan/updated",
+    params: { threadId: "t", turnId: "turn-1", plan, ...extra },
+  });
+
+  it("reads Codex's whole plan, keeping only steps it understands", () => {
+    expect(
+      harnessPlanFromRaw(
+        planRaw(
+          [
+            { step: "Read", status: "completed" },
+            { step: "Fix", status: "inProgress" },
+            { step: "Test", status: "pending" },
+            { step: "Odd", status: "skipped" },
+            { status: "pending" },
+          ],
+          { explanation: "why" },
+        ),
+      ),
+    ).toEqual({
+      turnId: "turn-1",
+      plan: {
+        explanation: "why",
+        steps: [
+          { step: "Read", status: "completed" },
+          { step: "Fix", status: "inProgress" },
+          { step: "Test", status: "pending" },
+        ],
+      },
+    });
+    const long = harnessPlanFromRaw(
+      planRaw(
+        Array.from({ length: 80 }, (_, i) => ({
+          step: `${i}`.repeat(400),
+          status: "pending",
+        })),
+      ),
+    );
+    expect(long?.plan.steps).toHaveLength(50);
+    expect(long?.plan.steps[1]!.step.length).toBe(300);
+  });
+
+  it("rejects what is not a plan", () => {
+    for (const raw of [
+      undefined,
+      { method: "turn/plan/updated", params: {} },
+      { method: "item/plan/delta", params: { delta: "x" } },
+      { mcpjam: "background-task" },
+    ]) {
+      expect(harnessPlanFromRaw(raw)).toBeUndefined();
+    }
+  });
+
+  it("reads a command's output delta, cut to a bounded chunk", () => {
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { itemId: "call_1", delta: "one\n", threadId: "t" },
+      }),
+    ).toEqual({ toolCallId: "call_1", delta: "one\n" });
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { itemId: "call_1", delta: "x".repeat(10_000) },
+      })?.delta,
+    ).toHaveLength(4096);
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { delta: "x" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("the client's guards accept what the server writes, and nothing else", () => {
+    const parsed = harnessPlanFromRaw(
+      planRaw([{ step: "Read", status: "completed" }]),
+    )!;
+    expect(
+      isHarnessPlanDataPart({
+        type: "data-harness-plan",
+        id: "harness-plan-turn-1",
+        data: parsed.plan,
+      }),
+    ).toBe(true);
+    expect(
+      isHarnessPlanDataPart({
+        type: "data-harness-plan",
+        data: { steps: [{ step: "x", status: "done" }] },
+      }),
+    ).toBe(false);
+    expect(
+      isHarnessToolOutputDataPart({
+        type: "data-harness-tool-output",
+        data: { toolCallId: "call_1", delta: "x" },
+      }),
+    ).toBe(true);
+    expect(
+      isHarnessToolOutputDataPart({
+        type: "data-harness-tool-output",
+        data: { toolCallId: "call_1" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("which machine a harness turn ran on", () => {
+  it("is `personal` unless the turn ran on the conversation's box", () => {
+    expect(
+      buildHarnessSessionDataPart({
+        workdir: "/home/user/w",
+        disposable: false,
+      }).data.machine,
+    ).toBe("personal");
+    expect(
+      buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable: true })
+        .data.machine,
+    ).toBe("disposable");
+  });
+
+  it("builds a part the client's own guard accepts", () => {
+    for (const disposable of [false, true]) {
+      expect(
+        isHarnessSessionDataPart(
+          buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable }),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a part with no machine (a server that predates the field)", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a machine it does not know", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w", machine: "somewhere-else" },
       }),
     ).toBe(false);
   });
