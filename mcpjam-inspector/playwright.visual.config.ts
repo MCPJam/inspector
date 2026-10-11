@@ -3,7 +3,12 @@ import type { ChromaticConfig } from "@chromatic-com/playwright";
 
 export default defineConfig<ChromaticConfig>({
   testDir: "./e2e/visual",
-  testMatch: ["app.spec.ts", "product.spec.ts", "swarm.spec.ts"],
+  testMatch: [
+    "app.spec.ts",
+    "product.spec.ts",
+    "swarm.spec.ts",
+    "tool-errors.spec.ts",
+  ],
   outputDir: ".playwright/visual-results",
   fullyParallel: false,
   workers: 1,

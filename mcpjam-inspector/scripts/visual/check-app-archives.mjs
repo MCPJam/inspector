@@ -9,7 +9,7 @@ export function checkAppArchives(directory) {
   );
   assert.equal(
     files.length,
-    20,
+    22,
     "Expected one application archive per screen and theme",
   );
   assert.equal(
@@ -30,6 +30,7 @@ export function checkAppArchives(directory) {
         "product",
         ["swarm-overview", "swarm-personas", "swarm-sessions"],
       ],
+      ["tool-errors", "product", ["tool-error"]],
     ])
       for (const screen of screens) {
         const id = `${file}-${prefix}-${theme}-${screen}`;
@@ -63,6 +64,6 @@ if (
     process.argv[2] ?? ".playwright/visual-results/chromatic-archives",
   );
   process.stdout.write(
-    "Verified 20 application snapshots across 10 screens in light and dark.\n",
+    "Verified 22 application snapshots across 11 screens in light and dark.\n",
   );
 }
