@@ -144,6 +144,29 @@ describe("requestManagedObservations", () => {
     },
   );
 
+  it("reads the organization's AI-key policy refusal as ai_unavailable, not a provider failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            ok: false,
+            code: "org_model_unconfigured",
+            error: "No organization model is set for this role.",
+            isRetryable: false,
+            remediation: "configure_org_model_role",
+          },
+          422,
+        ),
+      ),
+    );
+    const answer = await requestManagedObservations(LEASE, "evidence");
+    expect(answer.status).toBe("provider-failed");
+    expect(answer.reason).toBe("ai_unavailable");
+    expect(answer.detail).toContain("org_model_unconfigured");
+    expect(answer.envelope).toBeUndefined();
+  });
+
   it("names the observation pass and carries the evidence", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ ok: true, status: "completed", envelope: {} }),
