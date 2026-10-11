@@ -9,10 +9,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
 import { computeMeasuredIterationResult } from "./pass-criteria";
 import { isSubsetRerunRun } from "./helpers";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalIteration, EvalSuiteRunListItem } from "./types";
 
 interface SuiteHeroStatsProps {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   runTrendData: Array<{
     runId: string;
@@ -32,7 +32,7 @@ interface SuiteHeroStatsProps {
   testCaseCount: number;
   isSDK: boolean;
   onRunClick?: (runId: string) => void;
-  onReplayLatestRun?: (run: EvalSuiteRun) => void;
+  onReplayLatestRun?: (run: EvalSuiteRunListItem) => void;
   isReplayingLatestRun?: boolean;
 }
 

@@ -51,7 +51,9 @@ if (
 }
 process.env.MCPJAM_LOCAL_HARNESS_EXPECTED_PACK = `${packVersion}:${expectedDigest}`;
 
-const result = await installRuntimePack({ harnessId });
+// `provision`: the pack build proves the installer accepts what it just built,
+// whatever update policy the runner happens to carry.
+const result = await installRuntimePack({ harnessId, trigger: "provision" });
 console.log(JSON.stringify(result, null, 2));
 
 if (result.state !== "ready") {

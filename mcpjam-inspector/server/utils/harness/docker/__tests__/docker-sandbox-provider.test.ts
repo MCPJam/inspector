@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { spawn as nodeSpawn } from "node:child_process";
 import { createDockerHarnessSandboxProvider } from "../docker-sandbox-provider.js";
-import { HARNESS_TEMPLATE_PNPM_VERSION } from "../../harness-bake.js";
+import { harnessPnpmGuardCommand } from "../../harness-bake.js";
 
 // The docker CLI is faked at the `spawn` seam: these tests are about how the
 // provider maps the sandbox contract onto `docker exec` (users, env handling,
@@ -78,7 +78,7 @@ function baseReply(args: string[]): Reply | undefined {
   }
   if (
     args.includes(
-      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+      harnessPnpmGuardCommand(),
     )
   ) {
     return { stdout: "/usr/local/bin/pnpm\n" };
@@ -122,7 +122,7 @@ describe("attaching", () => {
       "harness-ci",
       "bash",
       "-c",
-      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+      harnessPnpmGuardCommand(),
     ]);
   });
 

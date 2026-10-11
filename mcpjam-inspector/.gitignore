@@ -47,6 +47,9 @@ pnpm-lock.yaml
 # …except the codex app-server bootstrap's, which the framework installs with
 # `--frozen-lockfile` and the runtime pack fingerprints.
 !server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml
+# …and the Claude Code vendor pack graph's, which the pack build installs
+# frozen and which is that pack's recipe input.
+!scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml
 
 # debug
 npm-debug.log*
@@ -57,6 +60,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env
 .env.development
+.env.*.local
 client/.env
 client/.env.*
 

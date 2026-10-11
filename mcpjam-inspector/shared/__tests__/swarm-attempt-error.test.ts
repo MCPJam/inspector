@@ -4,6 +4,8 @@ import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isBusyReservation,
+  isBusyReservationRefusal,
   isHeldCreditsRefusal,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
@@ -522,6 +524,80 @@ describe("isHeldCreditsRefusal", () => {
       isHeldCreditsRefusal(undefined, undefined, STORED_HOLDS_SENTENCE),
     ).toBe(true);
     expect(isHeldCreditsRefusal(null, null, STORED_HOLDS_SENTENCE)).toBe(true);
+  });
+});
+
+describe("isBusyReservation", () => {
+  it("names only MCPJam's own busy reservation", () => {
+    expect(isBusyReservation("spending_reservation_busy")).toBe(true);
+    for (const code of [
+      undefined,
+      null,
+      "",
+      "user_rate_limit",
+      "rate_limited",
+      "platform_capacity",
+    ]) {
+      expect(isBusyReservation(code)).toBe(false);
+    }
+  });
+});
+
+describe("isBusyReservationRefusal", () => {
+  const BACKEND =
+    "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+
+  it("reads the code, and the busy sentence when the code was lost", () => {
+    expect(isBusyReservationRefusal("spending_reservation_busy")).toBe(true);
+    // A live event or stored row that kept only the sentence: the backend's,
+    // its older wordings, and the one the humanizer writes.
+    for (const message of [
+      BACKEND,
+      "MCPJam could not reserve spend capacity.",
+      "MCPJam is temporarily busy. Please retry.",
+      humanizeSwarmAttemptError(BACKEND, "spending_reservation_busy").message,
+    ]) {
+      expect(isBusyReservationRefusal(undefined, message)).toBe(true);
+      // Under the runner's own generic code, which says nothing.
+      expect(isBusyReservationRefusal("rate_limited", message)).toBe(true);
+    }
+  });
+
+  it("reads the generic wording the live event carries for a busy reservation", () => {
+    // What the runner's humanizer leaves of the backend's older body once the
+    // code is dropped: no "reserve" in it, only that MCPJam is busy.
+    const live = humanizeSwarmAttemptErrorMessage(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+    );
+    expect(live).toBe("MCPJam is temporarily busy. Please retry.");
+    expect(isBusyReservationRefusal(undefined, live)).toBe(true);
+    expect(isBusyReservationRefusal("wallet_locked", live)).toBe(false);
+    expect(
+      isBusyReservationRefusal(
+        undefined,
+        `${live} Daily MCPJam model limit reached.`,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not read a busy reservation out of another refusal", () => {
+    // A code that names a different refusal rules the sentence out, and a
+    // text that also states an exhaustion is an exhaustion.
+    expect(isBusyReservationRefusal("wallet_locked", BACKEND)).toBe(false);
+    expect(
+      isBusyReservationRefusal(
+        undefined,
+        `${BACKEND} Daily MCPJam model limit reached.`,
+      ),
+    ).toBe(false);
+    for (const message of [
+      "Anthropic rate-limited this key.",
+      "The provider has no capacity right now.",
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits.",
+    ]) {
+      expect(isBusyReservationRefusal(undefined, message)).toBe(false);
+    }
+    expect(isBusyReservationRefusal(undefined, undefined)).toBe(false);
   });
 });
 

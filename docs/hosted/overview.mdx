@@ -52,6 +52,7 @@ The hosted app uses a daily credit system to power AI features like chat.
 - **Guest session limit**: The hosted app creates a guest session the first time you visit from a given network. If too many guest sessions have been created from your network in a single day, a banner appears: "Too many guest sessions from your network today. Sign in to continue." Signing in removes this restriction.
 - **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
 - **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
+- **Low credits warning** — when your credit balance drops to 10% or below, the sidebar credit meter turns red and shows a **Low credits** label.
 - **When credits run out**, only the free hosted models are locked. Models you access with your own API key (BYOK) remain available regardless of your credit balance.
 
 When your credit balance reaches zero, free models are grayed out in the model picker so you can see the limit before sending a message. Models from your own API keys remain available. If you have paid top-up credits, free models stay enabled even after your daily free allowance is exhausted.
@@ -166,6 +167,10 @@ with who made it and what it was before.
 
 The same budget is readable and writable from the API at
 `/v1/organizations/{organizationId}/spend-budget`.
+
+### Managing billing details
+
+Organization owners on a paid plan see a **Manage billing** button on the billing page. Clicking it opens the Stripe portal where you can update payment methods, download invoices, add tax IDs, and review billing details. Only organization owners can access this portal.
 
 ### Seat payment failures
 

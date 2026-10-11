@@ -34,8 +34,10 @@ import {
   type RuntimeOperationKey,
 } from "../runtime-lifecycle.js";
 import { computeTreeDigest } from "../runtime-identity.js";
+import { setRuntimeProbeForTests } from "../runtime-probe.js";
 import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
+import { removeTestTree } from "./remove-test-tree.js";
 
 let base: string;
 let installRoot: string;
@@ -254,6 +256,11 @@ let savedRuntimeRoot: string | undefined;
 let savedPackSource: string | undefined;
 
 beforeAll(async () => {
+  // The fixture pack's `bin/node` is a shell stub, so the real startup probe
+  // (the layer started on the pack's Node) cannot pass; the probe has its own
+  // tests, and the candidate flow's handling of a failing one is tested in
+  // `runtime-updates.test.ts`.
+  setRuntimeProbeForTests(async () => ({ ok: true, node: "v24.0.0", vendorVersion: "0.0.0" }));
   savedRuntimeRoot = process.env.MCPJAM_RUNTIME_ROOT;
   savedPackSource = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-install-")));
@@ -273,7 +280,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   resetRuntimeInstallStateForTests();
-  await rm(installRoot, { recursive: true, force: true });
+  await removeTestTree(installRoot);
 });
 
 afterAll(async () => {
@@ -282,8 +289,9 @@ afterAll(async () => {
   // it ran on.
   restoreEnv("MCPJAM_RUNTIME_ROOT", savedRuntimeRoot);
   restoreEnv("MCPJAM_LOCAL_HARNESS_PACK_SOURCE", savedPackSource);
+  setRuntimeProbeForTests(null);
   vi.restoreAllMocks();
-  await rm(base, { recursive: true, force: true });
+  await removeTestTree(base);
 });
 
 describe("where a pack lives", () => {

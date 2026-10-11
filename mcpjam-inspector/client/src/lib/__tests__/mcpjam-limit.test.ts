@@ -1,5 +1,5 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
@@ -22,6 +22,9 @@ beforeEach(() => {
     hasPendingLimit: false,
     outOfCreditsHit: false,
     outOfCreditsOrganizationId: null,
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -55,6 +58,16 @@ const INSUFFICIENT_BODY = JSON.stringify({
 });
 
 describe("isMCPJamModelLimitError", () => {
+  it("does not sell MCPJam credits for an Anthropic BYOK balance", () => {
+    const error = {
+      code: "provider_error",
+      message: "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.",
+      isRetryable: false,
+    };
+    expect(isMCPJamModelLimitError(error)).toBe(false);
+    expect(isMCPJamModelLimitError({ message: JSON.stringify(error) })).toBe(false);
+  });
+
   it("detects the canonical rate-limit code", () => {
     expect(isMCPJamModelLimitError({ code: "mcpjam_rate_limit" })).toBe(true);
   });
@@ -546,6 +559,26 @@ describe("credits held by in-flight requests", () => {
     expect(notifyMCPJamLimitError({ message: nested })).toBe(false);
   });
 
+  // The runner stores the sessions a busy reservation stopped under the busy
+  // code. A busy reservation is a wait on MCPJam's side, never an empty wallet,
+  // so it must not sell credits (it used to be stored as `user_rate_limit`,
+  // which this classifier reads as exhaustion).
+  it("does not open for a busy reservation", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+
+    expect(
+      notifyMCPJamLimitError({
+        runId: "run-busy",
+        code: "spending_reservation_busy",
+        message: busy,
+        surface: "swarm",
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
   it("words a refusal the way the dialog reads it, so the panel never contradicts an open dialog", () => {
     const HELD =
       "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
@@ -590,6 +623,96 @@ describe("credits held by in-flight requests", () => {
       }),
     ).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+describe("a dismissed out-of-credits dialog", () => {
+  const EXHAUSTED =
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+  const exhausted = (organizationId?: string) =>
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      message: EXHAUSTED,
+      ...(organizationId ? { organizationId } : {}),
+    });
+  const store = useMCPJamLimitDialogStore;
+  const dismissFirst = (organizationId?: string) => {
+    store.getState().setAuthStatus("signedIn");
+    exhausted(organizationId);
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().dismiss();
+  };
+
+  it("stays closed for the next blocked send, but still locks the models", () => {
+    dismissFirst();
+    store.getState().clearOutOfCreditsHit();
+
+    exhausted();
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  it("does not hold a notice while auth loads, to open it at sign-in", () => {
+    dismissFirst();
+    store.getState().setAuthStatus("loading");
+
+    exhausted();
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("still opens for a shortfall, which is about one request", () => {
+    dismissFirst();
+
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    expect(store.getState().isOpen).toBe(true);
+    expect(store.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+  });
+
+  it("still opens when the user asks for it", () => {
+    dismissFirst();
+
+    store.getState().notifyLimitHit({ userInitiated: true });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once a purchase begins", () => {
+    dismissFirst("org-a");
+    store.getState().forgetNotifiedWaves("org-a");
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once credits come back", () => {
+    dismissFirst("org-a");
+    store.getState().observeBalance("org-a", true);
+    store.getState().observeBalance("org-a", false);
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for another organization", () => {
+    dismissFirst("org-a");
+
+    exhausted("org-b");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("is not set by closing a shortfall, or by a close the user did not make", () => {
+    store.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    store.getState().dismiss();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
+
+    store.getState().close();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
   });
 });
 
@@ -1821,6 +1944,25 @@ describe("Ask MCPJam refusals", () => {
     },
   );
 
+  it("reads the loop guard's own sentence out of its refusal envelope", () => {
+    // The 409 body the AI SDK folds into the error message. The raw JSON
+    // reads as a crash; the sentence says what happened and what to do.
+    const body = JSON.stringify({
+      code: "AGENT_STEP_LIMIT",
+      message:
+        "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+      details: { reason: "repeated_tool_input_error", steps: 2, maxSteps: 16 },
+    });
+    expect(describeAgentRefusalMessage(body)).toBe(
+      "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+    );
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "AGENT_STEP_LIMIT" })),
+    ).toBe(
+      "This reply reached its step limit, so it was stopped. Send a message to continue.",
+    );
+  });
+
   it("finds a refusal nested as plain text under another code", () => {
     // `collectCodes` only records a `code` PROPERTY, so this payload yields
     // {RATE_LIMITED} — non-empty, but without the code that decides the copy.
@@ -2001,4 +2143,29 @@ it("recognizes the new credit-exhaustion wording without losing recovery actions
   expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain(
     "Out of MCPJam credits.",
   );
+});
+
+describe("sponsored swarm platform stops never open the customer limit dialog", () => {
+  it.each([
+    { code: "platform_capacity", message: "capacity (platform_capacity, HTTP 429)" },
+    {
+      code: "swarm_sponsorship_rejected",
+      message: "could not confirm this conversation as sponsored",
+    },
+    {
+      message:
+        "MCPJam's sponsored capacity was unavailable, so this conversation stopped before it finished. Evidence gathered so far is kept. You can run it again later.",
+    },
+  ])("does not notify for %o", (input) => {
+    const notify = vi.fn();
+    const unsubscribe = useMCPJamLimitDialogStore.subscribe(notify);
+    try {
+      expect(
+        notifyMCPJamLimitError({ ...input, details: input, surface: "swarm" }),
+      ).toBe(false);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
 });

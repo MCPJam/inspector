@@ -46,7 +46,7 @@ RUN set -eu; \
     test "$(node --version)" = "v24.20.0"
 
 # pnpm by exact version, into /usr/local/bin so every shell finds it.
-RUN npm install -g pnpm@10.18.1 && test "$(pnpm --version)" = "10.18.1"
+RUN npm install -g pnpm@12.8.1 && test "$(pnpm --version)" = "12.8.1"
 
 # The runtime user. E2B provisions `user` itself; a plain Docker build has to.
 RUN id -u user >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --uid 1000 user

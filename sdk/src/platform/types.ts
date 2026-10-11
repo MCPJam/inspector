@@ -1702,8 +1702,10 @@ export type PlatformEvalRunGroupEntry =
        * The RUN's status (always `"running"` at launch). Named apart from the
        * entry's own `status` on purpose — two fields called `status` in one
        * object is how a reader ends up branching on the wrong one.
-       */
+      */
       runStatus: string;
+      /** True when this target replays a run already started with this key. */
+      deduped?: boolean;
       servers?: Array<{ id: string; name?: string }>;
       environment?: PlatformEvalRunEnvironment | null;
       caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
@@ -4144,6 +4146,10 @@ export interface PlatformGoalRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4232,6 +4238,13 @@ export interface PlatformGoalRunSession {
   lastActivityAt: number | null;
 }
 
+/** How a launched run's conversations are funded. */
+export interface PlatformSwarmFunding {
+  sponsored: number;
+  credits: number;
+  total: number;
+}
+
 export interface PlatformGoalRunLaunched {
   /** The run id. Poll `getGoalRun` with it, or stop it with `cancel`. */
   id: string;
@@ -4249,15 +4262,23 @@ export interface PlatformGoalRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /**
+   * How the run's conversations were funded: `sponsored` are paid from MCPJam's
+   * per-user allowance, `credits` from the organization's. Absent when the
+   * server does not report it.
+   */
+  funding?: PlatformSwarmFunding;
 }
 
 export interface PlatformGoalRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformGoalRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
@@ -4332,6 +4353,10 @@ export interface PlatformJourneyRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4495,17 +4520,21 @@ export interface PlatformJourneyRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /** See {@link PlatformGoalRunLaunched.funding}. */
+  funding?: PlatformSwarmFunding;
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
 /** @deprecated Use {@link PlatformGoalRunCanceled}. */
 export interface PlatformJourneyRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformJourneyRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
@@ -5838,12 +5867,13 @@ export interface PlatformServerConnectionCreateBody {
 // ── Directory readiness ─────────────────────────────────────────────────
 
 /**
- * The two words the public vocabulary uses.
+ * The words the public vocabulary uses.
  *
- * Never `anthropic`/`chatgpt`: a caller writes what the product says, and the
- * product says "Claude directory readiness" and "OpenAI plugin directory".
+ * Never `anthropic`/`chatgpt`/`meta`: a caller writes what the product says,
+ * and the product says "Claude directory readiness", "OpenAI plugin
+ * directory" and "Muse".
  */
-export type PlatformReadinessKind = "claude" | "openai";
+export type PlatformReadinessKind = "claude" | "openai" | "muse";
 
 /**
  * The submission shapes a HOSTED run may grade.
@@ -5859,9 +5889,9 @@ export type PlatformReadinessSubmissionMode =
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
 /**
- * Every lane either publisher grades, as one union.
+ * Every lane any publisher grades, as one union.
  *
- * Claude uses five of these and OpenAI seven; the union is their sum rather
+ * Claude uses five of these, OpenAI seven and Muse four; the union is their sum rather
  * than two types, because a client renders a run whose publisher it learns at
  * runtime. Spelled out rather than left as `string` so a `switch` over lane
  * copy is exhaustiveness-checked — a lane added here becomes a compile error
@@ -5874,7 +5904,8 @@ export type PlatformReadinessLane =
   | "submission-artifacts"
   | "experience-insights"
   | "plugin-package"
-  | "release-contract";
+  | "release-contract"
+  | "tool-policy";
 
 /**
  * What one lane managed to look at, reported separately from what it found.
@@ -6007,6 +6038,18 @@ export interface PlatformOpenAIReadinessStartBody
    */
   submissionMode: PlatformReadinessSubmissionMode;
 }
+
+/**
+ * Body for a Muse start: the replay guard only.
+ *
+ * No `includeLlmObservations` — Muse has no observation catalogue and the
+ * platform refuses the opt-in — and no submission mode, which belongs to the
+ * OpenAI plugin directory.
+ */
+export type PlatformMuseReadinessStartBody = Pick<
+  PlatformReadinessStartBody,
+  "idempotencyKey"
+>;
 
 /** Suites the hosted agent/API surface can start. OAuth is refused. */
 export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";

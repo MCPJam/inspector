@@ -37,6 +37,7 @@ import type {
   SupportedLocalHarnessId,
 } from "./targets.js";
 import { PACK_TREE_DIGESTS } from "./pack-digests.generated.js";
+import { conformanceVersionFor } from "./runtime-compat.js";
 import {
   CODEX_BRIDGE_BUNDLE_DIGEST,
   CODEX_LOCAL_ADAPTER_IDENTITY,
@@ -64,13 +65,23 @@ export type LocalHarnessRuntimePolicy =
        * missing directory gives and the correct one.
        */
       bundleDigest: Readonly<Partial<Record<LocalPackTarget, string>>>;
-      /** Launcher path relative to the bundle root.
+      /**
+       * Where the bridge launcher and the bridge come from (invariant 1: two
+       * trusted sources, never a third).
+       *
+       *  - `inspector-layer`: from the Inspector distribution itself — written
+       *    to a content-addressed, read-only layer and re-hashed against the
+       *    digest compiled into this build before every exec
+       *    (`inspector-layer.ts`). The pack then carries vendor bytes only.
+       *  - `pack`: from inside the verified pack (`launcherRelativePath`), the
+       *    layout every pack had before the split.
+       */
+      launcherSource: "inspector-layer" | "pack";
+      /** Launcher path relative to the bundle root, for `launcherSource: "pack"`.
        *
        *  The pack ships `launcher.mjs`, an Inspector-owned wrapper that forces
        *  every listener the bridge opens onto loopback and then imports the
-       *  adapter's verbatim `bridge.mjs`. The bridge file itself stays
-       *  byte-identical to the adapter's copy — the provider compares it — so
-       *  the loopback constraint cannot be applied by patching it. */
+       *  adapter's verbatim `bridge.mjs`. */
       launcherRelativePath: string;
       /** The pack's own Node binary, relative to the bundle root.
        *
@@ -182,7 +193,8 @@ export interface LocalHarnessCompatibility {
   isolatedBackends: Readonly<
     Partial<Record<LocalPlatform, readonly LocalIsolationBackend[]>>
   >;
-  /** Bumped whenever the lifecycle evidence is re-gathered. */
+  /** The recorded lifecycle evidence stamp, read from the generated
+   *  compatibility record. Empty = no evidence, which refuses every tuple. */
   lifecycleConformanceVersion: string;
   /**
    * The adapter's DECLARED bootstrap directory, relative to the session's
@@ -233,11 +245,17 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       // been built for linux-x64"). Both fail closed; only the second names a
       // pack a user could go looking for.
       bundleDigest: PACK_TREE_DIGESTS["claude-code"],
+      // The patched bridge (with the MCP SDK, `zod` and `ws` compiled in) and
+      // the launcher are the Inspector layer's. The pack is `bin/node`, the
+      // agent SDK with its platform CLI and declared peers, and the Windows
+      // job launcher; the launcher resolves the bridge's one external import,
+      // the agent SDK, into it.
+      launcherSource: "inspector-layer",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
-        "@anthropic-ai/claude-code": "pinned-by-adapter-bridge-lockfile",
+        "@anthropic-ai/claude-agent-sdk": "pinned-by-claude-code-vendor-lockfile",
       },
     },
     argvPolicy: { requiredFlags: [], deniedFlags: [] },
@@ -267,34 +285,39 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     nativePlatforms: ["darwin", "linux", "win32"],
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},
-    // Published-pack evidence: https://github.com/MCPJam/inspector/actions/runs/37383078880
-    lifecycleConformanceVersion: "published-1.0.1-4e1989d1300c",
+    // From the generated record (`runtime-compat.generated.json`), written with
+    // the pin that the evidence was gathered against — never typed by hand.
+    lifecycleConformanceVersion: conformanceVersionFor("claude-code"),
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
-    adapterBootstrapFiles: [
-      "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
-      "bridge.mjs",
-      ".npmrc",
-    ],
+    // A local session's recipe is the Inspector layer's (`pack-bootstrap.ts`):
+    // the bridge, compared against the layer's copy. The adapter's install
+    // files (`package.json`, the lockfile, `.npmrc`, `pnpm-workspace.yaml`)
+    // install a vendor graph in a sandbox; locally the pack already is it, and
+    // a recipe naming them fails closed.
+    adapterBootstrapFiles: ["bridge.mjs"],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
   codex: {
     harnessId: "codex",
     // MCPJam's app-server adapter, not an npm package: the bridge bundle hash
-    // plus the exact CLI (see `codex-appserver/local-identity.ts`). The pack
-    // byte-compare is what actually enforces it.
+    // plus the exact CLI (see `codex-appserver/local-identity.ts`). The
+    // Inspector layer — compiled in, re-hashed before every exec, part of the
+    // launch identity — is what actually enforces it.
     adapterVersion: CODEX_LOCAL_ADAPTER_IDENTITY,
     runtime: {
       source: "managed-bundle",
       bundleName: "codex",
       bundleDigest: PACK_TREE_DIGESTS.codex,
+      // The bridge, its host-tools MCP entrypoint and the launcher are the
+      // Inspector layer's; the pack is `bin/node`, `@openai/codex` and its
+      // platform package (and the Windows job launcher). `ws` is compiled
+      // into the layer's bridge, so it is not a vendor package any more.
+      launcherSource: "inspector-layer",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
         "@openai/codex": PINNED_CODEX_VERSION,
-        ws: "8.21.0",
       },
     },
     argvPolicy: { requiredFlags: [], deniedFlags: [] },
@@ -323,16 +346,16 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     unattendedSandboxTargets: [],
     unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
-    // Dark until the Codex lifecycle conformance legs pass and are recorded.
-    // Published-pack evidence: https://github.com/MCPJam/inspector/actions/runs/37383078880
-    lifecycleConformanceVersion: "published-codex-1.0.1-4e1989d1300c",
+    // From the generated record, like Claude Code's: dark until the Codex
+    // lifecycle conformance legs pass and the pin records them.
+    lifecycleConformanceVersion: conformanceVersionFor("codex"),
     adapterBootstrapDir: ".harness-bootstrap/codex-appserver",
-    adapterBootstrapFiles: [
-      "package.json",
-      "pnpm-lock.yaml",
-      "bridge.mjs",
-      "host-tools-mcp.mjs",
-    ],
+    // A local session's recipe is the Inspector layer's (`pack-bootstrap.ts`),
+    // so these are the only files it writes, and each is compared against the
+    // layer's copy. The hosted recipe's `package.json` and lockfile install
+    // the vendor graph in a sandbox; locally the pack already IS that graph,
+    // and a recipe naming them fails closed.
+    adapterBootstrapFiles: ["bridge.mjs", "host-tools-mcp.mjs"],
     bridgeBundleDigest: CODEX_BRIDGE_BUNDLE_DIGEST,
   },
 };
