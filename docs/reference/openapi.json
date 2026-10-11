@@ -7909,6 +7909,7 @@
     "/deletions/capabilities": {
       "get": {
         "operationId": "getDeletionCapabilities",
+        "tags": ["Deletion"],
         "summary": "Read deletion availability",
         "description": "Authenticated availability check. Choose the legacy path only when available is false, before submitting any deletion. Never fall back after a failed or uncertain deletion request.",
         "responses": { "200": { "description": "Deletion capability: available, protocolVersion 1, scopeTypes project and organization" } }
