@@ -20,6 +20,11 @@ npm run dev:app -w @mcpjam/inspector
 - `npm run dev -w @mcpjam/inspector` also starts the platform MCP worker on `:8787`. Use it only when
   the change touches the Home agent's workspace tools or `mcp/`.
 - Run it in the background and wait for the client and server to log ready.
+- Values exported in your shell win over the profile files, and both dotenv
+  and Vite keep them. If `printenv CONVEX_HTTP_URL VITE_CONVEX_URL CONVEX_URL`
+  prints anything, the app talks to that backend and ignores `.env.local`. To
+  run the committed profile, start with
+  `env -u CONVEX_HTTP_URL -u VITE_CONVEX_URL -u CONVEX_URL npm run dev:app -w @mcpjam/inspector`.
 
 ## Sign in
 
