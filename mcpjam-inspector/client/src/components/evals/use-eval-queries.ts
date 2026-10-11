@@ -1,17 +1,16 @@
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { useEffect, useMemo, useRef } from "react";
-import { useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
   EvalCase,
   EvalIteration,
   EvalSuiteOverviewEntry,
   SuiteDetailsQueryResponse,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "./types";
 import { getIterationRecencyTimestamp } from "./helpers";
 import { useSuiteRunMetrics } from "./use-suite-run-metrics";
-import { useRunsIterations } from "./use-runs-iterations";
 
 /**
  * Rows the Connector Bench owns, dropped before anything renders them.
@@ -90,7 +89,8 @@ export function useEvalQueries({
   // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
   // deep-linked suite as deleted and bounce it, and flashes the "no suites"
   // hero over a project that has suites.
-  const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
+  const isActorBootstrapping =
+    !isDirectGuest && isAuthenticated && !isUserReady;
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {
@@ -105,14 +105,14 @@ export function useEvalQueries({
   const enableOverviewQuery = hasActorAccess;
   const suiteOverviewRaw = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
+    enableOverviewQuery ? (suiteOverviewArgs as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   // `undefined` survives the filter rather than collapsing to `[]`: every
   // loading flag below reads it as "an answer is still coming", and an empty
   // array here would flash the "no suites" hero over a project that has some.
   const suiteOverview = useMemo(
     () => suiteOverviewRaw?.filter((entry) => !isBenchmarkOwned(entry.suite)),
-    [suiteOverviewRaw]
+    [suiteOverviewRaw],
   );
 
   const hasSelectedSuiteInPlay =
@@ -122,13 +122,13 @@ export function useEvalQueries({
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery && !perRunMetrics
       ? ({ suiteId: selectedSuiteId } as any)
-      : "skip"
+      : "skip",
   ) as SuiteDetailsQueryResponse | undefined;
   const suiteCases = useQuery(
     "testSuites:listTestCases" as any,
     enableSuiteDetailsQuery && perRunMetrics
       ? ({ suiteId: selectedSuiteId } as any)
-      : "skip"
+      : "skip",
   ) as EvalCase[] | undefined;
   const suiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(() => {
     if (!perRunMetrics) return wholeSuiteDetails;
@@ -138,25 +138,28 @@ export function useEvalQueries({
       : undefined;
   }, [perRunMetrics, wholeSuiteDetails, suiteCases]);
 
-  // Raised from 20 → 100 so a multi-host run group (up to ~5 hosts in
-  // practice) is never truncated mid-group. The list consumer caps by
-  // *groups* after grouping rather than capping raw rows, so groups
-  // remain fully expandable even near the limit.
-  const suiteRunsRaw = useQuery(
-    "testSuites:listTestSuiteRuns" as any,
-    enableSuiteDetailsQuery
-      ? ({ suiteId: selectedSuiteId, limit: 100 } as any)
-      : "skip"
-  ) as EvalSuiteRun[] | undefined;
+  const runHistory = usePaginatedQuery(
+    "testSuites:listTestSuiteRunSummaries" as any,
+    enableSuiteDetailsQuery ? { suiteId: selectedSuiteId } : "skip",
+    { initialNumItems: 20 },
+  );
+  const suiteRunsRaw =
+    runHistory.status === "LoadingFirstPage"
+      ? undefined
+      : (runHistory.results as EvalSuiteRunListItem[]);
   const suiteRuns = useMemo(
     () => suiteRunsRaw?.filter((run) => !isBenchmarkOwned(run)),
-    [suiteRunsRaw]
+    [suiteRunsRaw],
   );
 
-  const { metricsByRun, loading: isRunMetricsLoading } = useSuiteRunMetrics(
+  const {
+    metricsByRun,
+    loading: isRunMetricsLoading,
+    iterations: metricIterations,
+  } = useSuiteRunMetrics(
     projectId,
     suiteRuns,
-    enableSuiteDetailsQuery && perRunMetrics
+    enableSuiteDetailsQuery && perRunMetrics,
   );
 
   const liveRunIds = useRef(new Set<string>());
@@ -167,14 +170,8 @@ export function useEvalQueries({
   }
   // Per-run mode has no suite-wide rows to scan, so it watches the runs seen
   // in flight this session: a limit error can land as the run finishes.
-  const liveRunIterations = useRunsIterations(
-    (suiteRuns ?? [])
-      .filter((run) => liveRunIds.current.has(run._id))
-      .map((run) => run._id),
-    enableSuiteDetailsQuery && perRunMetrics
-  );
   const limitErrorIterations = perRunMetrics
-    ? liveRunIterations.iterations
+    ? metricIterations
     : suiteDetails?.iterations;
   useEffect(() => {
     for (const iteration of limitErrorIterations ?? []) {
@@ -193,7 +190,8 @@ export function useEvalQueries({
   }, [suiteRuns, limitErrorIterations, organizationId]);
 
   const isOverviewLoading =
-    isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);
+    isActorBootstrapping ||
+    (enableOverviewQuery && suiteOverview === undefined);
   const isSuiteDetailsLoading =
     (isActorBootstrapping && hasSelectedSuiteInPlay) ||
     (enableSuiteDetailsQuery && suiteDetails === undefined);
@@ -220,7 +218,7 @@ export function useEvalQueries({
 
   const runsForSelectedSuite = useMemo(
     () => (suiteRuns ? [...suiteRuns] : []),
-    [suiteRuns]
+    [suiteRuns],
   );
 
   const activeIterations = useMemo(() => {
@@ -229,7 +227,7 @@ export function useEvalQueries({
     const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId)
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 
@@ -256,6 +254,8 @@ export function useEvalQueries({
     suiteOverview,
     suiteDetails,
     suiteRuns,
+    runHistoryStatus: runHistory.status,
+    loadMoreRuns: () => runHistory.loadMore(20),
     selectedSuiteEntry,
     selectedSuite,
     sortedIterations,
