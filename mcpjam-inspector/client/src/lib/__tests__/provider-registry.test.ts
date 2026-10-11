@@ -8,35 +8,23 @@ import {
   providerHasLogo,
 } from "@/lib/provider-registry";
 
-// Vendors that INTENTIONALLY ship no bundled logo (they render a monogram),
-// split by whether the committed snapshot actually contains them.
-//
-// The split is not cosmetic. The guard below walks HOSTED_MODEL_IDS, so it only
-// ever consults a prefix the snapshot has — an entry for a vendor that is NOT
-// in it is never asserted and cannot fail, which is how a wrong entry sits
-// green forever. The reverse assertions further down close that: a snapshot
-// entry must be in the snapshot, and a pre-snapshot entry must not be. When a
-// regen lands, the pre-snapshot list is what tells you to promote.
+// Vendors without bundled logos use the existing monogram fallback.
+// The reverse guard keeps this list limited to vendors in the snapshot.
 const SNAPSHOT_MONOGRAM_PREFIXES = new Set([
+  "inclusionai",
+  "interfaze",
+  "thinkingmachines",
+  "callstack",
+  "fireworks",
+  "inference-net",
+  "meituan",
+  "mixedbread",
+  "perplexity",
+  "quiverai",
   "sakana",
   // Only a `Xiaomi MiMo` WORDMARK is available upstream — unreadable at the
   // 12px the badge renders at, so the monogram is the better badge here.
   "xiaomi",
-]);
-
-// Registered AHEAD of the next snapshot regen: these vendors appear in the
-// catalog but not yet in the committed HOSTED_MODEL_IDS, so nothing here
-// asserts them. Runtime miss telemetry (hosted_provider_logo_missing) is what
-// covers the gap until the regen promotes them above.
-const PRE_SNAPSHOT_MONOGRAM_PREFIXES = new Set([
-  "inclusionai",
-  "interfaze",
-  "thinkingmachines",
-]);
-
-const KNOWN_MONOGRAM_PREFIXES = new Set([
-  ...SNAPSHOT_MONOGRAM_PREFIXES,
-  ...PRE_SNAPSHOT_MONOGRAM_PREFIXES,
 ]);
 
 describe("provider-registry — snapshot-time logo guard", () => {
@@ -46,7 +34,7 @@ describe("provider-registry — snapshot-time logo guard", () => {
     "hosted vendor '%s' has a logo or is a known monogram",
     (prefix) => {
       expect(
-        providerHasLogo(prefix) || KNOWN_MONOGRAM_PREFIXES.has(prefix)
+        providerHasLogo(prefix) || SNAPSHOT_MONOGRAM_PREFIXES.has(prefix)
       ).toBe(true);
     }
   );
@@ -60,18 +48,7 @@ describe("provider-registry — snapshot-time logo guard", () => {
     }
   });
 
-  it("keeps pre-snapshot entries out of the snapshot list", () => {
-    // A hit here is good news, not a failure to paper over: the regen landed
-    // and the vendor belongs in SNAPSHOT_MONOGRAM_PREFIXES now.
-    const inSnapshot = new Set(prefixes);
-    for (const prefix of PRE_SNAPSHOT_MONOGRAM_PREFIXES) {
-      expect(inSnapshot.has(prefix)).toBe(false);
-    }
-  });
-
-  // `it.each` only generates cases for prefixes the snapshot has, so a brand
-  // entry for a vendor it does not have yet is unasserted — a typo'd key or a
-  // broken asset import would ship green. These three are that case today.
+  // Guard bundled brands even when the current snapshot has no model for them.
   it.each(["tencent", "morph", "poolside"])(
     "pre-snapshot brand entry '%s' resolves a logo",
     (prefix) => {

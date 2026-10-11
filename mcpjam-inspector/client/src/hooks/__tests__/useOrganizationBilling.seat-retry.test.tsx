@@ -34,6 +34,8 @@ vi.mock("convex/react", () => ({
     name === "billing:getActiveOrganizationSeatPaymentIntent"
       ? activeSeatPaymentIntent
       : undefined,
+  // The billing bundle is a soft read; these tests never need it to arrive.
+  useQueries: () => ({}),
   useMutation: (name: string) =>
     name === "billing:retrySeatPayment"
       ? convexFns.retrySeatPayment
