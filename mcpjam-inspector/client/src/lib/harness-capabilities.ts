@@ -130,14 +130,9 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
       enforced: false,
       note: "Codex runs its own loop and ignores temperature.",
     },
-    // Codex can't pause for interactive tool approval on ANY surface (allow-all
-    // only) — not its native built-ins, not host-executed tools. The pre-flight
-    // refuses the turn outright, so "not enforced" would describe an outcome
-    // (run anyway, unapproved) that cannot occur.
-    requireToolApproval: {
-      enforced: false,
-      note: "Codex can't pause for tool approval, so a turn on this host is refused rather than run unapproved.",
-    },
+    // Codex runs on MCPJam's app-server adapter, which pauses on every command
+    // and file change and gates host-executed MCP tools before they run.
+    requireToolApproval: ENFORCED,
     // The real Codex owns its own tool discovery.
     progressiveToolDiscovery: {
       enforced: false,

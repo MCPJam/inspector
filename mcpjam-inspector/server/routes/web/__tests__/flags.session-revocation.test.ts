@@ -21,11 +21,13 @@ const SESSIONS = vi.hoisted(
 const mocks = vi.hoisted(() => ({ getAllFlags: vi.fn() }));
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => ({
-    getAllFlags: mocks.getAllFlags,
-    capture: vi.fn(),
-    shutdown: vi.fn().mockResolvedValue(undefined),
-  })),
+  PostHog: vi.fn(function () {
+    return {
+      getAllFlags: mocks.getAllFlags,
+      capture: vi.fn(),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({

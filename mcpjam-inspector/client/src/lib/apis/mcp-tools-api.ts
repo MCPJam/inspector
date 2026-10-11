@@ -153,9 +153,10 @@ export type ListToolsForServersResult = {
   /**
    * The error each failed server's listing threw, keyed the same way: a
    * `WebApiError` in both modes for a failure the server answered (hosted
-   * rebuilds it from the batch's per-server status, code and message), or a
-   * name the context could not resolve. Kept as an error, not a message, so
-   * `getToolsMetadata` can rethrow what a single-server call would have.
+   * rebuilds it from the batch's per-server status, code, message, details
+   * and retry delay), or a name the context could not resolve. Kept as an
+   * error, not a message, so `getToolsMetadata` can rethrow what a
+   * single-server call would have.
    */
   errors: Record<string, unknown>;
 };
@@ -191,40 +192,18 @@ export async function listToolsForServers(
         }
       }
       const results: Record<string, ListToolsResultWithMetadata> = {};
-      const failedHostedId = (error: unknown): string | undefined => {
-        const serverId =
-          error instanceof WebApiError ? error.details?.serverId : undefined;
-        return typeof serverId === "string" &&
-          Object.hasOwn(namesByHostedId, serverId)
-          ? serverId
-          : undefined;
-      };
-      // The route authorizes the whole batch before it lists anything, and
-      // one server's refusal (a stale grant, a missing XAA registration)
-      // answers the request. Such a refusal names its server, so it is kept
-      // for that server and the rest are asked for again, without it: one
-      // more request per refused server, not one per server. A failure that
-      // names no server is the batch's, and is thrown as before.
-      let body: Awaited<ReturnType<typeof listHostedToolsMulti>> | undefined;
-      while (body === undefined) {
-        const resolvable = Object.values(namesByHostedId).flat();
-        if (resolvable.length === 0) {
-          return { results, errors };
-        }
-        try {
-          body = await listHostedToolsMulti({
-            serverNamesOrIds: resolvable,
-            modelId: options.modelId,
-          });
-        } catch (error) {
-          const hostedId = failedHostedId(error);
-          if (hostedId === undefined) throw error;
-          for (const name of namesByHostedId[hostedId]) {
-            errors[name] = error;
-          }
-          delete namesByHostedId[hostedId];
-        }
+      const resolvable = Object.values(namesByHostedId).flat();
+      if (resolvable.length === 0) {
+        return { results, errors };
       }
+
+      // One request, whatever each server answers: the route authorizes and
+      // lists each server on its own and reports a refused or failed one in
+      // `errors`, so a throw here is the request's own failure.
+      const body = await listHostedToolsMulti({
+        serverNamesOrIds: resolvable,
+        modelId: options.modelId,
+      });
       for (const [hostedId, result] of Object.entries(
         (body?.results ?? {}) as Record<string, ListToolsResultWithMetadata>,
       )) {
@@ -236,14 +215,25 @@ export async function listToolsForServers(
       for (const [hostedId, failure] of Object.entries(
         (body?.errors ?? {}) as Record<
           string,
-          { status: number; code: string; message: string }
+          {
+            status: number;
+            code: string;
+            message: string;
+            details?: Record<string, unknown>;
+            retryAfterSeconds?: number;
+          }
         >,
       )) {
         const error = new WebApiError(
           failure.status,
           failure.code,
           failure.message,
+          undefined,
+          failure.details,
         );
+        if (failure.retryAfterSeconds !== undefined) {
+          error.retryAfterMs = Math.max(0, failure.retryAfterSeconds * 1000);
+        }
         for (const name of namesByHostedId[hostedId] ?? [hostedId]) {
           errors[name] = error;
         }

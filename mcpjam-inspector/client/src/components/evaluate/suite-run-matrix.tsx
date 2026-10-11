@@ -1,16 +1,23 @@
 import { useState } from "react";
-import { useConvex, useConvexAuth } from "convex/react";
-import { useHostList } from "@/hooks/useClients";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
+import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import {
   useEnsureAdhocEnvironments,
   useProjectEnvironments,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import { compactModelIdTail } from "@/lib/environment-label";
 import {
   emptyModelSelection,
@@ -19,27 +26,35 @@ import {
 import {
   dedupeModelTargets,
   environmentModelTarget,
+  modelTarget,
+  type ModelTarget,
 } from "@/lib/model-target";
-import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
+import {
+  isLegacySelection,
+  type ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
 import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
+import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
+import type { EvalCase, EvalServerAttachment, EvalSuite } from "../evals/types";
 import { EvalTargetMatrix } from "./eval-target-matrix";
 import {
-  adhocSkillSelection,
   chooseTemplate,
+  composeAdhocStack,
   lacksServerSource,
+  legacySuiteComposition,
   unpreservableReason,
+  type AdhocStack,
 } from "./environment-template";
 import {
   SuiteRunReviewContent,
   type SuiteRunReviewProps,
 } from "./suite-run-review";
+import { useSuiteRunPreflight } from "./suite-run-preflight";
 
 type PlannedCombination = {
   environmentId?: string;
-  stack: Parameters<
-    ReturnType<typeof useEnsureAdhocEnvironments>
-  >[0]["stacks"][number];
+  stack: AdhocStack;
   /**
    * With backend derivation: build this cell server-side from the stored
    * source (every pin kept) instead of composing `stack`.
@@ -58,6 +73,8 @@ type PlannedCombination = {
   blocked?: string;
   /** No server group and no plugin pin: the run would connect no servers. */
   missingGroup?: boolean;
+  /** The attached environment a new cell copies its setup from. */
+  templateEnvironmentId?: string;
 };
 
 type Environments = NonNullable<SuiteRunReviewProps["environments"]>;
@@ -91,6 +108,137 @@ export function seedRunMatrix(
   return selections;
 }
 
+/** The SDK reporter's stand-in model when a CI run reported none. */
+const NO_REPORTED_MODEL = "n/a";
+
+/**
+ * The models a suite WITHOUT environments runs: each case's own models, plus
+ * the suite default for a prompt case that lists none — the backend's
+ * legacy-suite converter follows the same rule. A model-free case runs no
+ * model, and the SDK reporter's `n/a` names none. Only models this project
+ * can run are kept, so a model a CI used that MCPJam does not offer is not
+ * pre-picked. Nothing left ⇒ the client's own model.
+ */
+export function suiteCaseModels(
+  suite: Pick<EvalSuite, "defaultConfig">,
+  cases: readonly Pick<EvalCase, "models" | "steps" | "promptTurns">[],
+  runnable: ReadonlySet<string>,
+): ModelSelection {
+  const targets: ModelTarget[] = [];
+  let promptCaseWithoutModel = false;
+  for (const testCase of cases) {
+    const steps = Array.isArray(testCase.steps)
+      ? testCase.steps
+      : promptTurnsToSteps(
+          Array.isArray(testCase.promptTurns) ? testCase.promptTurns : [],
+        );
+    if (isModelFree(steps)) continue;
+    if (!testCase.models?.length) promptCaseWithoutModel = true;
+    for (const entry of testCase.models ?? []) {
+      const modelId = (entry.selection?.modelId ?? entry.model)?.trim();
+      if (!modelId || modelId.toLowerCase() === NO_REPORTED_MODEL) continue;
+      // An old-format selection is no selection a cell can carry; its id is.
+      targets.push(
+        modelTarget(
+          modelId,
+          entry.selection && !isLegacySelection(entry.selection)
+            ? entry.selection
+            : undefined,
+        ),
+      );
+    }
+  }
+  if (promptCaseWithoutModel && suite.defaultConfig?.modelId)
+    targets.push({ modelId: suite.defaultConfig.modelId });
+  const explicitTargets = dedupeModelTargets(
+    targets.filter((target) => runnable.has(target.modelId)),
+  );
+  return explicitTargets.length
+    ? { includeClientDefaults: false, explicitTargets }
+    : emptyModelSelection();
+}
+
+/**
+ * The clients a suite WITHOUT environments starts from: the ones it attaches
+ * that still exist, else the one its own launch would attach (the backend's
+ * `ensureProjectDefaultHost`): a user-owned client on the project's default
+ * config, else the first user-owned client.
+ */
+export function suiteRunClients(
+  suite: Pick<EvalSuite, "hostAttachments">,
+  hosts: readonly Pick<
+    HostListItem,
+    "hostId" | "hostConfigId" | "ownerScope"
+  >[],
+  projectDefaultHostConfigId: string | null | undefined,
+): string[] {
+  const attached = (suite.hostAttachments ?? [])
+    .map((host) => host.namedHostId)
+    .filter((id) => hosts.some((host) => host.hostId === id));
+  if (attached.length) return [...new Set(attached)];
+  const userHosts = hosts.filter((host) => !host.ownerScope);
+  const fallback =
+    userHosts.find(
+      (host) => host.hostConfigId === projectDefaultHostConfigId,
+    ) ?? userHosts[0];
+  return fallback ? [fallback.hostId] : [];
+}
+
+/** How the backend names a group member whose server is gone. */
+const DELETED_SERVER = "[deleted server]";
+
+/**
+ * The server group a suite WITHOUT environments runs on: its own pinned
+ * group, which its runs use for every attached client. Offered only while it
+ * is a group of this project with a live server; otherwise the person picks.
+ * The SDK reporter's server names (`environment.servers`) are never a source.
+ */
+export function seedSuiteRunGroup(
+  suite: Pick<EvalSuite, "serverAttachmentId">,
+  groups: readonly Pick<EvalServerAttachment, "_id" | "resolvedServerNames">[],
+): string | null {
+  const group = suite.serverAttachmentId
+    ? groups.find((row) => row._id === suite.serverAttachmentId)
+    : undefined;
+  return group?.resolvedServerNames.some((name) => name !== DELETED_SERVER)
+    ? group._id
+    : null;
+}
+
+/** Each client of a suite WITHOUT environments, on the cases' models. */
+export function seedSuiteRunMatrix(
+  suite: Pick<EvalSuite, "defaultConfig" | "hostAttachments">,
+  cases: readonly Pick<EvalCase, "models" | "steps" | "promptTurns">[],
+  hosts: readonly Pick<
+    HostListItem,
+    "hostId" | "hostConfigId" | "ownerScope"
+  >[],
+  projectDefaultHostConfigId: string | null | undefined,
+  runnable: ReadonlySet<string>,
+): Record<string, ModelSelection> {
+  const models = suiteCaseModels(suite, cases, runnable);
+  return Object.fromEntries(
+    suiteRunClients(suite, hosts, projectDefaultHostConfigId).map((id) => [
+      id,
+      { ...models, explicitTargets: [...models.explicitTargets] },
+    ]),
+  );
+}
+
+/** The backend finds, creates or derives at most this many environments per call. */
+const ENVIRONMENT_BATCH = 10;
+
+/** `run` over `items` ten at a time, results in input order. */
+export async function inEnvironmentBatches<T, R>(
+  items: readonly T[],
+  run: (batch: T[]) => Promise<readonly R[]>,
+): Promise<R[]> {
+  const out: R[] = [];
+  for (let start = 0; start < items.length; start += ENVIRONMENT_BATCH)
+    out.push(...(await run(items.slice(start, start + ENVIRONMENT_BATCH))));
+  return out;
+}
+
 /**
  * Reuse exact saved environments; only new combinations need resolving.
  *
@@ -100,6 +248,10 @@ export function seedRunMatrix(
  * `serverAttachmentId`: an environment suite does not read it, so an
  * environment built from it can run with no servers at all. A cell that cannot
  * be derived faithfully is BLOCKED (with the reason) instead of guessed.
+ *
+ * A suite WITHOUT environments has no candidate to copy. Its cells run on
+ * `group`, the server group picked in the dialog (pre-filled there, in plain
+ * sight, from the suite's own group), with the suite's own skills and image.
  */
 export function planRunMatrix(
   suite: SuiteRunReviewProps["suite"],
@@ -116,6 +268,8 @@ export function planRunMatrix(
      * model's selection (and so its effort). Off ⇒ legacy ids only.
      */
     modelSelections?: boolean;
+    /** A suite without environments: the server group its cells run on. */
+    group?: string | null;
   } = {},
 ): PlannedCombination[] {
   const attached = (suite.environmentIds ?? []).map((id) => {
@@ -175,7 +329,21 @@ export function planRunMatrix(
               : "This suite's clients don't share one setup, so a new client has no single setup to copy. Add it in suite settings first.",
           },
         ];
-      if (choice.kind === "none") return [{ stack: bare, missingGroup: true }];
+      // Only a suite without environments has no candidate at all.
+      if (choice.kind === "none")
+        return [
+          options.group
+            ? {
+                stack: composeAdhocStack(
+                  {
+                    ...legacySuiteComposition(suite),
+                    serverAttachmentId: options.group,
+                  },
+                  bare,
+                ),
+              }
+            : { stack: bare, missingGroup: true },
+        ];
       if (options.lossless)
         return [
           {
@@ -190,6 +358,7 @@ export function planRunMatrix(
               },
             },
             missingGroup: lacksServerSource(choice.composition),
+            templateEnvironmentId: choice.source.environmentId,
           },
         ];
       const reason = unpreservableReason(choice.composition);
@@ -200,33 +369,46 @@ export function planRunMatrix(
             blocked: `This setup ${reason}, which a one-run change can't copy. Add the combination in suite settings instead.`,
           },
         ];
-      const skillSelection = adhocSkillSelection(choice.composition);
       return [
         {
-          stack: {
-            ...bare,
-            ...(choice.composition.serverAttachmentId
-              ? { serverAttachmentId: choice.composition.serverAttachmentId }
-              : {}),
-            ...(skillSelection ? { skillSelection } : {}),
-            ...(choice.composition.computerEnvironmentId
-              ? {
-                  computerEnvironmentId:
-                    choice.composition.computerEnvironmentId,
-                }
-              : {}),
-          },
+          stack: composeAdhocStack(choice.composition, bare),
           missingGroup: lacksServerSource(choice.composition),
+          templateEnvironmentId: choice.source.environmentId,
         },
       ];
     });
   });
 }
 
+/**
+ * What a planned run launches, for the preflight: each cell's environment
+ * (or the one a new cell copies) and each cell's client and model.
+ */
+export function plannedPreflight(plan: readonly PlannedCombination[]) {
+  const launched = new Set(
+    plan.flatMap((item) => (item.environmentId ? [item.environmentId] : [])),
+  );
+  const copied = new Set(
+    plan.flatMap((item) =>
+      !item.environmentId && item.templateEnvironmentId
+        ? [item.templateEnvironmentId]
+        : [],
+    ),
+  );
+  return {
+    environmentIds: [...new Set([...launched, ...copied])],
+    templateOnlyIds: [...copied].filter((id) => !launched.has(id)),
+    targets: plan.map(({ stack }) => ({
+      hostId: stack.hostId,
+      ...(stack.modelId ? { modelId: stack.modelId } : {}),
+    })),
+  };
+}
+
 export function ConfiguredSuiteRunReview(
-  props: SuiteRunReviewProps & { projectId: string },
+  reviewProps: SuiteRunReviewProps & { projectId: string },
 ) {
-  const { suite, projectId, environments = [] } = props;
+  const { suite, cases, projectId, environments = [] } = reviewProps;
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
@@ -242,7 +424,46 @@ export function ConfiguredSuiteRunReview(
   const [draft, setDraft] = useState<Record<string, ModelSelection> | null>(
     null,
   );
-  const selections = draft ?? seedRunMatrix(suite, environments);
+  // A suite WITHOUT environments (made before "Where it runs", or reported by
+  // an SDK) runs one-run cells composed here: a server group, clients and
+  // models. The suite itself is never changed.
+  const withoutSetups = !suite.environmentIds?.length;
+  const sdkSuite = withoutSetups && suite.source === "sdk";
+  const { serverAttachments: groups, isLoading: groupsLoading } =
+    useProjectServerAttachments({
+      isAuthenticated,
+      projectId: withoutSetups ? projectId : null,
+    });
+  const defaultClientQueried =
+    withoutSetups &&
+    !suite.hostAttachments?.length &&
+    isAuthenticated &&
+    shouldQueryProjectId(projectId);
+  const projectDefault = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    defaultClientQueried ? ({ projectId } as any) : "skip",
+  ) as { id?: string } | null | undefined;
+  // An SDK suite may also run in a saved project environment, as before.
+  const projectEnvironments = useProjectEnvironments(
+    sdkSuite ? projectId : null,
+  );
+  const [pickedGroup, setPickedGroup] = useState<string | null>(null);
+  const [runSaved, setRunSaved] = useState(false);
+  const [savedId, setSavedId] = useState<string>();
+  const selections =
+    draft ??
+    (withoutSetups
+      ? seedSuiteRunMatrix(
+          suite,
+          cases,
+          hosts,
+          projectDefault?.id,
+          new Set(availableModels.map((model) => String(model.id))),
+        )
+      : seedRunMatrix(suite, environments));
+  const group = withoutSetups
+    ? (pickedGroup ?? seedSuiteRunGroup(suite, groups))
+    : null;
   const unresolved = suite.environmentIds?.some(
     (id) =>
       !environments.some((environment) => environment.environmentId === id),
@@ -252,6 +473,7 @@ export function ConfiguredSuiteRunReview(
     : planRunMatrix(suite, environments, selections, {
         lossless,
         modelSelections: modelSelectionsSupported,
+        group,
       });
   const blockedCell = plan.find((item) => item.blocked)?.blocked ?? null;
   // Start is refused for any cell that would connect no servers: a new cell
@@ -264,241 +486,345 @@ export function ConfiguredSuiteRunReview(
       stack.modelId === undefined &&
       !hosts.find((host) => host.hostId === stack.hostId)?.modelId?.trim(),
   );
+  const launchable = (projectEnvironments ?? []).filter(
+    (environment) => !environment.archivedAt && !lacksServerSource(environment),
+  );
+  const runInSaved = sdkSuite && runSaved && launchable.length > 0;
+  const savedEnvironment = runInSaved
+    ? launchable.find((environment) => environment.environmentId === savedId)
+    : undefined;
+  // A cell the suite does not attach needs a backend that launches one, and a
+  // suite of this project; otherwise the suite keeps its own launch.
+  const ownLaunch =
+    withoutSetups &&
+    (capabilities === null ||
+      (capabilities !== undefined &&
+        capabilities.ephemeralEnvironmentLaunch !== true) ||
+      suite.projectId !== projectId);
+  // Every branch below renders through the content, which shows these. They
+  // cover what this run launches: the matrix's cells (and the setup a new
+  // cell copies), the saved environment it runs in, or, for a suite without
+  // environments, the server group picked here.
+  const props = {
+    ...reviewProps,
+    preflight: useSuiteRunPreflight({
+      ...reviewProps,
+      ...(!withoutSetups
+        ? { planned: plannedPreflight(plan) }
+        : (!capable && !pending) || ownLaunch
+          ? {}
+          : runInSaved
+            ? {
+                planned: {
+                  environmentIds: savedEnvironment
+                    ? [savedEnvironment.environmentId]
+                    : [],
+                  templateOnlyIds: [],
+                  targets: savedEnvironment
+                    ? [
+                        {
+                          hostId: savedEnvironment.hostId,
+                          ...(savedEnvironment.modelId
+                            ? { modelId: savedEnvironment.modelId }
+                            : {}),
+                        },
+                      ]
+                    : [],
+                },
+              }
+            : {
+                planned: {
+                  ...plannedPreflight(plan),
+                  serverRefs: (
+                    groups.find((row) => row._id === group)
+                      ?.resolvedServerNames ?? []
+                  ).filter((name) => name !== DELETED_SERVER),
+                },
+              }),
+    }),
+  };
   // Older deployments retain their launch path until they support model overrides.
   if (!capable && !pending) return <SuiteRunReviewContent {...props} />;
-  // An SDK suite only RECORDS runs its CI executed; it has no client, model
-  // or servers of its own to launch. Running it from the app means picking a
-  // project environment for this one run.
-  if (!suite.environmentIds?.length && suite.source === "sdk")
-    return <SdkSuiteRunReview {...props} projectId={projectId} />;
-  // A suite with no environments launches its own (legacy) configuration: the
-  // runtime knows where that suite keeps its servers, and this dialog does
-  // not. Composing environments from the suite's legacy fields is how a run
-  // ended up with no servers.
-  if (!suite.environmentIds?.length)
-    return <SuiteRunReviewContent {...props} />;
+  if (ownLaunch) return <SuiteRunReviewContent {...props} />;
+  const loadingSetups =
+    withoutSetups &&
+    (capabilities === undefined ||
+      groupsLoading ||
+      (defaultClientQueried && projectDefault === undefined));
   const blocked =
     props.disabledReason ??
-    (isLoading || pending || unresolved
+    (isLoading || pending || unresolved || loadingSetups
       ? "Loading clients and models…"
-      : plan.length > MAX_SUITE_ENVIRONMENTS
-        ? `Choose up to ${MAX_SUITE_ENVIRONMENTS} client/model combinations.`
-        : !plan.length || missingModel
-          ? "Choose at least one client and model."
-          : blockedCell
-            ? blockedCell
-            : missingGroup
-              ? "A selected client has no server group, so its run would connect no servers. Pick a server group in suite settings."
-              : null);
+      : runInSaved
+        ? savedEnvironment
+          ? null
+          : "Pick the environment to run this suite in."
+        : plan.length > MAX_SUITE_ENVIRONMENTS
+          ? `Choose up to ${MAX_SUITE_ENVIRONMENTS} client/model combinations.`
+          : !plan.length || missingModel
+            ? "Choose at least one client and model."
+            : blockedCell
+              ? blockedCell
+              : missingGroup
+                ? withoutSetups
+                  ? "Pick a server group to run this suite."
+                  : "A selected client has no server group, so its run would connect no servers. Pick a server group in suite settings."
+                : null);
+  const startMatrix: SuiteRunReviewProps["onStart"] = async (_, options) => {
+    const missing = plan.filter((item) => !item.environmentId);
+    if (missing.length) {
+      const capabilities = (await convex.query(
+        "projectEnvironments:getCapabilities" as any,
+        { projectId },
+      )) as { ephemeralEnvironmentLaunch?: boolean };
+      if (!capabilities?.ephemeralEnvironmentLaunch) {
+        throw new Error(
+          "This deployment does not support one-run client/model changes yet. Save these pairings in suite settings or use the configured pairings.",
+        );
+      }
+    }
+    // One-run cells never touch the suite: derived ones are built from
+    // their stored source, composed ones from their stack.
+    const derived = missing.filter((item) => item.derive);
+    const composed = missing.filter((item) => !item.derive);
+    const derivedRows = await inEnvironmentBatches(
+      derived,
+      (batch) =>
+        convex.mutation("projectEnvironments:deriveEnvironments" as any, {
+          projectId,
+          derivations: batch.map((item) => item.derive),
+        }) as Promise<Array<{ environment?: { environmentId?: string } }>>,
+    );
+    const resolved = await inEnvironmentBatches(composed, (batch) =>
+      ensure({ projectId, stacks: batch.map((item) => item.stack) }),
+    );
+    let nextDerived = 0;
+    let nextComposed = 0;
+    const environmentIds = plan.map((item) =>
+      item.environmentId
+        ? item.environmentId
+        : item.derive
+          ? derivedRows[nextDerived++]?.environment?.environmentId
+          : resolved[nextComposed++]?.environment.environmentId,
+    );
+    if (environmentIds.some((id) => !id))
+      throw new Error(
+        "Could not resolve the selected clients and models. Try again.",
+      );
+    await props.onStart(
+      {
+        ...suite,
+        environmentIds: environmentIds as string[],
+        hostAttachments: Object.keys(selections).map((namedHostId) => ({
+          namedHostId,
+          enabledOptionalServerIds: [],
+          hostName: props.hostNamesById.get(namedHostId) ?? null,
+          resolvedServerNames: [],
+        })),
+      },
+      {
+        ...options,
+        ...(missing.length ? { ephemeralEnvironment: true } : {}),
+      },
+    );
+  };
+  const startSaved: SuiteRunReviewProps["onStart"] = (run, options) =>
+    props.onStart(
+      {
+        ...run,
+        environmentIds: [savedEnvironment!.environmentId],
+        hostAttachments: [],
+      },
+      { ...options, ephemeralEnvironment: true },
+    );
   return (
     <SuiteRunReviewContent
       {...props}
       disabledReason={blocked}
       matrix={{
-        count: plan.length,
+        count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
+        signature: JSON.stringify([selections, group, runInSaved, savedId]),
         render: (starting) => (
-          <EvalTargetMatrix
-            hostIds={Object.keys(selections)}
-            hosts={hosts}
-            modelSelection={undefined}
-            modelSelectionsByHost={selections}
-            availableModels={availableModels}
-            maxTargets={MAX_SUITE_ENVIRONMENTS}
-            projectId={projectId}
-            disabled={starting || pending || Boolean(unresolved)}
-            modelsEditable
-            inModal
-            onHostsChange={(ids) =>
-              setDraft(
-                Object.fromEntries(
-                  ids.map((id) => [
-                    id,
-                    selections[id] ?? emptyModelSelection(),
-                  ]),
-                ),
-              )
-            }
-            onModelSelectionChange={(hostId, selection) =>
-              setDraft({ ...selections, [hostId]: selection })
-            }
-            onRemoveClient={(hostId) =>
-              setDraft(
-                Object.fromEntries(
-                  Object.entries(selections).filter(([id]) => id !== hostId),
-                ),
-              )
-            }
-          />
+          <div className="space-y-5">
+            {sdkSuite ? (
+              <SdkRunSource
+                offerSaved={launchable.length > 0}
+                saved={runInSaved}
+                onChange={setRunSaved}
+                disabled={starting}
+              />
+            ) : null}
+            {runInSaved ? (
+              <SavedEnvironmentList
+                environments={launchable}
+                value={savedId}
+                onChange={setSavedId}
+                hostNamesById={props.hostNamesById}
+                disabled={starting}
+              />
+            ) : (
+              <>
+                {withoutSetups ? (
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-medium">Servers</p>
+                    <ServerPicker
+                      projectId={projectId}
+                      value={group}
+                      onChange={(id) => setPickedGroup(id)}
+                      onClearSelection={() => setPickedGroup(null)}
+                      offerClear={false}
+                      variant="field"
+                      inModal
+                      disabled={starting || loadingSetups}
+                      emptyTriggerLabel="Pick a server group"
+                      triggerTestId="suite-run-server-group"
+                    />
+                  </div>
+                ) : null}
+                <EvalTargetMatrix
+                  hostIds={Object.keys(selections)}
+                  hosts={hosts}
+                  modelSelection={undefined}
+                  modelSelectionsByHost={selections}
+                  availableModels={availableModels}
+                  maxTargets={MAX_SUITE_ENVIRONMENTS}
+                  projectId={projectId}
+                  disabled={
+                    starting || pending || Boolean(unresolved) || loadingSetups
+                  }
+                  modelsEditable
+                  inModal
+                  onHostsChange={(ids) =>
+                    setDraft(
+                      Object.fromEntries(
+                        ids.map((id) => [
+                          id,
+                          selections[id] ?? emptyModelSelection(),
+                        ]),
+                      ),
+                    )
+                  }
+                  onModelSelectionChange={(hostId, selection) =>
+                    setDraft({ ...selections, [hostId]: selection })
+                  }
+                  onRemoveClient={(hostId) =>
+                    setDraft(
+                      Object.fromEntries(
+                        Object.entries(selections).filter(
+                          ([id]) => id !== hostId,
+                        ),
+                      ),
+                    )
+                  }
+                />
+              </>
+            )}
+          </div>
         ),
       }}
-      onStart={async (_, options) => {
-        const missing = plan.filter((item) => !item.environmentId);
-        if (missing.length) {
-          const capabilities = (await convex.query(
-            "projectEnvironments:getCapabilities" as any,
-            { projectId },
-          )) as { ephemeralEnvironmentLaunch?: boolean };
-          if (!capabilities?.ephemeralEnvironmentLaunch) {
-            throw new Error(
-              "This deployment does not support one-run client/model changes yet. Save these pairings in suite settings or use the configured pairings.",
-            );
-          }
-        }
-        // One-run cells never touch the suite: derived ones are built from
-        // their stored source, composed ones from their stack.
-        const derived = missing.filter((item) => item.derive);
-        const composed = missing.filter((item) => !item.derive);
-        const derivedRows = derived.length
-          ? ((await convex.mutation(
-              "projectEnvironments:deriveEnvironments" as any,
-              {
-                projectId,
-                derivations: derived.map((item) => item.derive),
-              },
-            )) as Array<{ environment?: { environmentId?: string } }>)
-          : [];
-        const resolved = composed.length
-          ? await ensure({
-              projectId,
-              stacks: composed.map((item) => item.stack),
-            })
-          : [];
-        let nextDerived = 0;
-        let nextComposed = 0;
-        const environmentIds = plan.map((item) =>
-          item.environmentId
-            ? item.environmentId
-            : item.derive
-              ? derivedRows[nextDerived++]?.environment?.environmentId
-              : resolved[nextComposed++]?.environment.environmentId,
-        );
-        if (environmentIds.some((id) => !id))
-          throw new Error(
-            "Could not resolve the selected clients and models. Try again.",
-          );
-        await props.onStart(
-          {
-            ...suite,
-            environmentIds: environmentIds as string[],
-            hostAttachments: Object.keys(selections).map((namedHostId) => ({
-              namedHostId,
-              enabledOptionalServerIds: [],
-              hostName: props.hostNamesById.get(namedHostId) ?? null,
-              resolvedServerNames: [],
-            })),
-          },
-          {
-            ...options,
-            ...(missing.length ? { ephemeralEnvironment: true } : {}),
-          },
-        );
-      }}
+      onStart={runInSaved ? startSaved : startMatrix}
     />
   );
 }
 
+const SOURCE_ITEM_CLASS =
+  "h-7 min-w-0 flex-none rounded-sm px-2.5 text-xs font-medium text-muted-foreground data-[state=on]:bg-card data-[state=on]:font-semibold data-[state=on]:text-card-foreground data-[state=on]:shadow-sm first:rounded-sm last:rounded-sm";
+
 /**
- * Run an SDK suite from the app in a project environment the person picks.
- *
- * The suite's reporter data describes what ran in the customer's CI, not a
- * configuration MCPJam can launch, so nothing is inferred from it: the run
- * uses the picked environment (its client, model and servers) through
- * `ephemeralEnvironment`, without attaching it to the suite. On a backend
- * without ephemeral launches the dialog keeps the suite's own launch.
+ * What an SDK suite runs with from the app. Its reporter data describes what
+ * ran in the customer's CI, not a configuration MCPJam can launch, so the
+ * person picks: a new setup composed here, or a saved project environment
+ * (offered only when the project has one with servers).
  */
-export function SdkSuiteRunReview(
-  props: SuiteRunReviewProps & { projectId: string },
-) {
-  const { projectId, hostNamesById } = props;
-  const environments = useProjectEnvironments(projectId);
-  const capabilities = useEnvironmentCapabilities(projectId);
-  const [picked, setPicked] = useState<string>();
-  // Older backends (no ephemeral launches) keep the suite's own launch.
-  if (
-    capabilities !== undefined &&
-    capabilities?.ephemeralEnvironmentLaunch !== true
-  )
-    return <SuiteRunReviewContent {...props} />;
-  const launchable = (environments ?? []).filter(
-    (environment) => !environment.archivedAt && !lacksServerSource(environment),
-  );
-  const pickedEnvironment = launchable.find(
-    (environment) => environment.environmentId === picked,
-  );
-  const blocked =
-    props.disabledReason ??
-    (environments === undefined || capabilities === undefined
-      ? "Loading environments…"
-      : launchable.length === 0
-        ? "This project has no environment with servers yet. Create one on the Environments page to run this suite from here."
-        : !pickedEnvironment
-          ? "Pick the environment to run this suite in."
-          : null);
+function SdkRunSource({
+  offerSaved,
+  saved,
+  onChange,
+  disabled,
+}: {
+  offerSaved: boolean;
+  saved: boolean;
+  onChange: (saved: boolean) => void;
+  disabled: boolean;
+}) {
   return (
-    <SuiteRunReviewContent
-      {...props}
-      disabledReason={blocked}
-      matrix={{
-        count: pickedEnvironment ? 1 : 0,
-        render: (starting) => (
-          <section data-testid="sdk-suite-run-environment">
-            <h3 className="text-sm font-semibold">Environment</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              This suite reports runs from your CI. Pick the client, model and
-              servers to run it with here; the suite itself is not changed.
-            </p>
-            {launchable.length > 0 ? (
-              <RadioGroup
-                aria-label="Environment"
-                value={picked ?? ""}
-                onValueChange={setPicked}
-                disabled={starting}
-                className="mt-3 grid gap-2"
-              >
-                {launchable.map((environment) => {
-                  const id = `sdk-run-${environment.environmentId}`;
-                  const client =
-                    hostNamesById.get(environment.hostId) ??
-                    `Client …${environment.hostId.slice(-6)}`;
-                  return (
-                    <Label
-                      key={environment.environmentId}
-                      htmlFor={id}
-                      className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
-                    >
-                      <RadioGroupItem
-                        id={id}
-                        value={environment.environmentId}
-                      />
-                      <span className="min-w-0 space-y-1">
-                        <span className="block text-sm">
-                          {environment.name?.trim() || client}
-                        </span>
-                        <span className="block text-xs font-normal text-muted-foreground">
-                          {client} ·{" "}
-                          {environment.modelId
-                            ? compactModelIdTail(environment.modelId)
-                            : "Client default"}
-                        </span>
-                      </span>
-                    </Label>
-                  );
-                })}
-              </RadioGroup>
-            ) : null}
-          </section>
-        ),
-      }}
-      onStart={(suite, options) =>
-        props.onStart(
-          {
-            ...suite,
-            environmentIds: [pickedEnvironment!.environmentId],
-            hostAttachments: [],
-          },
-          { ...options, ephemeralEnvironment: true },
-        )
-      }
-    />
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        This suite reports runs from your CI. Pick what to run it with here; the
+        suite itself is not changed.
+      </p>
+      {offerSaved ? (
+        <ToggleGroup
+          type="single"
+          value={saved ? "saved" : "new"}
+          onValueChange={(value) => value && onChange(value === "saved")}
+          aria-label="Run with"
+          disabled={disabled}
+          className="gap-0.5 bg-muted p-0.5"
+        >
+          <ToggleGroupItem value="new" className={SOURCE_ITEM_CLASS}>
+            New setup
+          </ToggleGroupItem>
+          <ToggleGroupItem value="saved" className={SOURCE_ITEM_CLASS}>
+            Saved environment
+          </ToggleGroupItem>
+        </ToggleGroup>
+      ) : null}
+    </div>
+  );
+}
+
+/** The project's environments with servers, for one run of an SDK suite. */
+function SavedEnvironmentList({
+  environments,
+  value,
+  onChange,
+  hostNamesById,
+  disabled,
+}: {
+  environments: readonly ProjectEnvironmentView[];
+  value: string | undefined;
+  onChange: (environmentId: string) => void;
+  hostNamesById: ReadonlyMap<string, string | null>;
+  disabled: boolean;
+}) {
+  return (
+    <section data-testid="sdk-suite-run-environment">
+      <h3 className="text-sm font-semibold">Environment</h3>
+      <RadioGroup
+        aria-label="Environment"
+        value={value ?? ""}
+        onValueChange={onChange}
+        disabled={disabled}
+        className="mt-3 grid gap-2"
+      >
+        {environments.map((environment) => {
+          const id = `sdk-run-${environment.environmentId}`;
+          const client =
+            hostNamesById.get(environment.hostId) ??
+            `Client …${environment.hostId.slice(-6)}`;
+          return (
+            <Label
+              key={environment.environmentId}
+              htmlFor={id}
+              className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
+            >
+              <RadioGroupItem id={id} value={environment.environmentId} />
+              <span className="min-w-0 space-y-1">
+                <span className="block text-sm">
+                  {environment.name?.trim() || client}
+                </span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {client} ·{" "}
+                  {environment.modelId
+                    ? compactModelIdTail(environment.modelId)
+                    : "Client default"}
+                </span>
+              </span>
+            </Label>
+          );
+        })}
+      </RadioGroup>
+    </section>
   );
 }

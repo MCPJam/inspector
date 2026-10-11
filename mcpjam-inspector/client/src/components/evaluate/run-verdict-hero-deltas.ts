@@ -6,15 +6,16 @@
  */
 import {
   compareRunsBySequence,
+  isSubsetRerunRun,
   iterationLatencyP50,
   iterationLatencyP95,
   runClientIdentity,
 } from "../evals/helpers";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type { EvalIteration, EvalSuiteRunListItem } from "../evals/types";
 import { runTargetKey, sameRunTarget } from "@/lib/eval-target-key";
 import type { HeroStats } from "./run-verdict-hero-model";
-import { resultCounts } from "./run-results-matrix-model";
+import { measuredResultCounts } from "./run-results-matrix-model";
 
 export type HeroDeltaTone = "progress" | "regression" | "same";
 export type HeroDeltaDirection = "up" | "down" | "same";
@@ -79,7 +80,7 @@ export type HeroPairingPass = {
 
 export type HeroPairingSource = {
   key: string;
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   client: string;
   modelId: string;
   /** What this pairing ran: `comparisonKey` of its selection (`modelId` when default). */
@@ -183,15 +184,17 @@ export function buildHeroStatDeltas(
  * launch instead — see {@link previousLaunchRuns}.
  */
 export function previousCompletedRunOf(
-  current: EvalSuiteRun,
-  suiteRuns: readonly EvalSuiteRun[],
-): EvalSuiteRun | null {
+  current: EvalSuiteRunListItem,
+  suiteRuns: readonly EvalSuiteRunListItem[],
+): EvalSuiteRunListItem | null {
   return (
     [...suiteRuns]
       .filter(
         (run) =>
           run._id !== current._id &&
           run.status === "completed" &&
+          // A subset rerun measured only what failed: never a baseline.
+          !isSubsetRerunRun(run) &&
           runClientIdentity(run).key === runClientIdentity(current).key &&
           // Same TARGET, not just the same model id: Sonnet at High is not
           // the baseline for Sonnet at Low. Falls back to the model id when
@@ -209,7 +212,10 @@ export function previousCompletedRunOf(
  * default selection, so default pairings key exactly as before), else its
  * effective or client model.
  */
-export function pairingKey(run: EvalSuiteRun, targetKey?: string): string {
+export function pairingKey(
+  run: EvalSuiteRunListItem,
+  targetKey?: string,
+): string {
   return `${runClientIdentity(run).key}::${
     targetKey ?? runTargetKey(run) ?? run.client?.modelId ?? ""
   }`;
@@ -275,18 +281,21 @@ export function buildHeroPairings({
   previousIterations,
 }: {
   targets: readonly HeroPairingSource[];
-  previousLaunch: readonly EvalSuiteRun[] | null;
+  previousLaunch: readonly EvalSuiteRunListItem[] | null;
   previousIterations: readonly EvalIteration[] | null;
 }): HeroPairingPass[] {
   return targets.map((target) => {
-    const counts = resultCounts(target.iterations);
+    // Measured counts: an infra row is in neither the pass rate nor its delta.
+    const counts = measuredResultCounts(target.iterations);
     const previousRows = previousRowsFor(
       target,
       previousLaunch,
       previousIterations,
       targets.length,
     );
-    const previousCounts = previousRows ? resultCounts(previousRows) : null;
+    const previousCounts = previousRows
+      ? measuredResultCounts(previousRows)
+      : null;
     const stats = pairingStatsOf(target.iterations);
     const previousStats = previousRows ? pairingStatsOf(previousRows) : null;
     const passRate = pairingPassRate(counts);
@@ -341,7 +350,7 @@ export function buildHeroPairings({
 /** The previous run's iteration rows for this same client/model, or null. */
 function previousRowsFor(
   target: HeroPairingSource,
-  previousLaunch: readonly EvalSuiteRun[] | null,
+  previousLaunch: readonly EvalSuiteRunListItem[] | null,
   previousIterations: readonly EvalIteration[] | null,
   targetCount: number,
 ): EvalIteration[] | null {
@@ -370,10 +379,10 @@ function previousRowsFor(
  * current pairing to have a twin, leaves the arrows off.
  */
 export function previousLaunchRuns(
-  selectedRuns: readonly EvalSuiteRun[],
-  suiteRuns: readonly EvalSuiteRun[],
+  selectedRuns: readonly EvalSuiteRunListItem[],
+  suiteRuns: readonly EvalSuiteRunListItem[],
   previousRunId?: string | null,
-): EvalSuiteRun[] | null {
+): EvalSuiteRunListItem[] | null {
   if (selectedRuns.length === 0) return null;
   const currentIds = new Set(selectedRuns.map((run) => run._id));
   const newest = [...selectedRuns].sort((a, b) =>
@@ -388,6 +397,7 @@ export function previousLaunchRuns(
       .filter(
         (run) =>
           run.status === "completed" &&
+          !isSubsetRerunRun(run) &&
           !currentIds.has(run._id) &&
           (newest.suiteId == null || run.suiteId === newest.suiteId) &&
           (!newest.runGroupId || run.runGroupId !== newest.runGroupId) &&
@@ -400,7 +410,9 @@ export function previousLaunchRuns(
   if (anchor.runGroupId) {
     const group = suiteRuns.filter(
       (run) =>
-        run.runGroupId === anchor.runGroupId && run.status === "completed",
+        run.runGroupId === anchor.runGroupId &&
+        run.status === "completed" &&
+        !isSubsetRerunRun(run),
     );
     if (group.length > 0) return group;
   }
@@ -421,8 +433,8 @@ export function previousHeroIterations({
   previousRunId,
   matchSelectedPairings = false,
 }: {
-  selectedRuns: readonly EvalSuiteRun[];
-  suiteRuns: readonly EvalSuiteRun[];
+  selectedRuns: readonly EvalSuiteRunListItem[];
+  suiteRuns: readonly EvalSuiteRunListItem[];
   allIterations: readonly EvalIteration[] | undefined;
   previousRunId?: string | null;
   matchSelectedPairings?: boolean;

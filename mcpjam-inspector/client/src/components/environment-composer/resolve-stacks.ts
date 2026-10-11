@@ -39,6 +39,11 @@ import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import {
+  ExternalCredentialMissingError,
+  externalCredentialSecretSelection,
+  type ExternalCredentialSecret,
+} from "@/shared/external-credential-selection";
 
 /** One composition, in the shape `ensureAdhocEnvironments` accepts. */
 export type AdhocStackInput = {
@@ -46,6 +51,12 @@ export type AdhocStackInput = {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
+  /**
+   * The secrets the environment grants. Set for a client that signs in with the
+   * customer's own account (Cursor): its brokered `CURSOR_API_KEY` reaches a box
+   * only through this, and there is no model lease to rescue a missing one.
+   */
+  secretSelection?: { mode: "explicit"; secretIds: string[] };
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
   /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
@@ -65,6 +76,10 @@ export type ComposerResolveErrorCode =
   | "TOO_MANY_TARGETS"
   | "UNRESOLVED_ENVIRONMENT"
   | "ADHOC_UNAVAILABLE"
+  /** A Cursor client with no usable `CURSOR_API_KEY` to grant. */
+  | "MISSING_CREDENTIAL"
+  /** A client's settings could not be read, so its credential can't be checked. */
+  | "CLIENT_UNREADABLE"
   | "BACKEND_REJECTED";
 
 export class ComposerResolveError extends Error {
@@ -226,6 +241,7 @@ export async function resolveComposerEnvironments(args: {
   liveEnvironments: ProjectEnvironmentView[];
   ensureAdhocEnvironments: EnsureAdhocEnvironmentsFn;
   skillsEnabled: boolean;
+  /** The image-pin ("computers") slot's flag: `sandbox-images-enabled`. */
   computersEnabled: boolean;
   /** Fan-out cap this surface enforces. */
   max: number;
@@ -255,6 +271,19 @@ export async function resolveComposerEnvironments(args: {
    * the cell then mints with its legacy `modelId` alone.
    */
   modelSelectionsEnabled?: boolean;
+  /**
+   * The project's secrets as the composer sees them (shared rows plus their own
+   * personal ones), for a client that runs an external-account harness. A cell
+   * for such a client is minted with the key's grant, or refused here when there
+   * is none. `undefined` ⇒ not loaded: a Cursor cell is then refused rather than
+   * minted without a key it cannot be told it has.
+   */
+  projectSecrets?: readonly ExternalCredentialSecret[];
+  /**
+   * The cells will be run by people other than the composer (User Testing), so
+   * the key must be project-shared: a personal key reaches only its owner.
+   */
+  requireSharedExternalCredential?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -268,6 +297,8 @@ export async function resolveComposerEnvironments(args: {
     requireServerAttachment = false,
     loadHostHarness,
     modelSelectionsEnabled = false,
+    projectSecrets,
+    requireSharedExternalCredential = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -444,8 +475,49 @@ export async function resolveComposerEnvironments(args: {
     // `computerEnvironmentId` is omitted rather than sent as null — the mutation
     // types it `string?` and Convex rejects an explicit null at the validator.
     // Same for inherit-cell `modelId`.
+    // A client that signs in with the customer's own account needs its key
+    // granted by the environment it runs in. Looked up once per client. With
+    // no loader at all the harness is unknown and the client is treated as
+    // having none, as before this existed; a loader that FAILS is refused,
+    // because a Cursor cell minted on that guess would carry no key and be
+    // refused at its first turn with nothing pointing back here.
+    const credentialGrantByHost = new Map<
+      string,
+      { mode: "explicit"; secretIds: string[] } | undefined
+    >();
+    for (const hostId of new Set(toMint.map((cell) => cell.hostId))) {
+      let harness: HarnessModelTarget | null = null;
+      if (loadHostHarness) {
+        try {
+          harness = await loadHostHarness(hostId);
+        } catch {
+          throw new ComposerResolveError(
+            "CLIENT_UNREADABLE",
+            "Couldn't read one of these clients' settings to check whether it needs a key. Try again.",
+          );
+        }
+      }
+      try {
+        credentialGrantByHost.set(
+          hostId,
+          externalCredentialSecretSelection(
+            { harness: harness?.harnessId },
+            projectSecrets,
+            { requireShared: requireSharedExternalCredential },
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ExternalCredentialMissingError) {
+          throw new ComposerResolveError("MISSING_CREDENTIAL", error.message);
+        }
+        throw error;
+      }
+    }
     const stacks: AdhocStackInput[] = toMint.map((cell) => ({
       hostId: cell.hostId,
+      ...(credentialGrantByHost.get(cell.hostId)
+        ? { secretSelection: credentialGrantByHost.get(cell.hostId)! }
+        : {}),
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),

@@ -1,5 +1,0 @@
----
-"@mcpjam/inspector": patch
----
-
-Saved configs can set a reasoning effort. The host Agent tab, the environment composer's model chips (and so the swarm target composer), the eval target matrix and the eval and journey judge pickers show the shared effort control beside the model; the composer chips, matrix and judge pickers use the compact `suffix` variant ("· High"). It is written on the saved model selection, kept on a model change only when the new model lists it, greyed with the reason on a harness that has not verified an effort, disabled with a tooltip on a bare-id BYOK row where the saved id cannot carry it, and badged "no longer supported" when the catalog stops listing a saved level. A small badge beside the model says who pays ("MCPJam credits" or "Your key · <connection>"), with a "set automatically" hint and a Review button when the backfill chose it. A run's judge override can now carry the judge's whole selection, so the goal-completion card edits the effort for that run only.

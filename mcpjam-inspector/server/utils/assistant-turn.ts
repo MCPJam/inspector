@@ -16,7 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -84,6 +84,8 @@ export interface RunAssistantTurnOptions {
    * refuses the turn before any spend.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** The saved selection; an org one runs a harness on the org's own key. */
+  modelSelection?: ModelSelection;
 
   selectedServerIds?: string[];
   /**
@@ -370,6 +372,12 @@ export interface RunAssistantTurnResult {
    * the harness lease is never committed/released and the next turn 409s.
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
+  /**
+   * A harness turn whose wait for Claude Code background agents was ended by
+   * a Stop or the caller's deadline AFTER its answer was delivered. The turn
+   * finished; a caller that treats its abort as a timeout must not.
+   */
+  backgroundDrainEnded?: true;
 }
 
 function extractAssistantMessages(
@@ -679,6 +687,8 @@ export async function runAssistantTurn(
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
   if (harnessRequested) {
+    // Venue-aware: a local target runs the local arm (app-server for Codex),
+    // and this backstop must judge the adapter that will actually run.
     const harnessAdapter = getHarnessAdapter(opts.harness as string);
     // The turn's effort, else the saved selection's. Refused here too so a
     // path that never runs the pre-flight cannot start a paid box for it.
@@ -694,6 +704,7 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -725,6 +736,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
+    handlerOptions.modelSelection = opts.modelSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness
@@ -768,6 +780,9 @@ export async function runAssistantTurn(
     // "none"; for "ui" it lands after the body drains, alongside the transcript).
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
+      : {}),
+    ...(engineResult.backgroundDrainEnded
+      ? { backgroundDrainEnded: true as const }
       : {}),
   };
 

@@ -1,7 +1,8 @@
 /**
  * The cross-surface Sessions page — every transcript in the project
  * (Playground, User Testing, Evals, Swarms) in one recency feed, with
- * server-side sourceType/status filters and relevance-ranked title search.
+ * server-side sourceType/status filters and relevance-ranked search over
+ * either what was said in each conversation (the default) or session titles.
  *
  * Mirrors the Swarms Sessions layout (list + detail split); the data layer is
  * the unified backend feed (`sessionsFeed:*`, see `@/lib/sessions-feed-api`)
@@ -15,7 +16,13 @@
  * other members' private Playground sessions never reach this client, so the
  * panel renders whatever the page contains without re-deriving policy.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { usePaginatedQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { MessageSquare, Search } from "lucide-react";
@@ -34,6 +41,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -52,6 +63,7 @@ import {
   sessionParentChipLabel,
   type SessionFeedItem,
   type SessionFeedSourceType,
+  type SessionSearchScope,
 } from "@/lib/sessions-feed-api";
 import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
 
@@ -74,6 +86,10 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Conversations by default: a title is usually just the opening message, so
+  // title search cannot find "the session where the tool errored".
+  const [searchScope, setSearchScope] =
+    useState<SessionSearchScope>("transcripts");
 
   // Selection lives in the URL, not in component state. `/sessions?session=…`
   // is the backend's universal permalink fallback (every `/v1/sessions` item
@@ -101,9 +117,11 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
       : undefined;
   const statusArg = statusFilter === "all" ? undefined : statusFilter;
 
-  const queryName = searching
-    ? SESSIONS_FEED_QUERIES.searchProjectSessions
-    : SESSIONS_FEED_QUERIES.listProjectSessions;
+  const queryName = !searching
+    ? SESSIONS_FEED_QUERIES.listProjectSessions
+    : searchScope === "transcripts"
+    ? SESSIONS_FEED_QUERIES.searchProjectSessionTranscripts
+    : SESSIONS_FEED_QUERIES.searchProjectSessions;
   const queryArgs = {
     projectId,
     ...(sourceTypesArg ? { sourceTypes: sourceTypesArg } : {}),
@@ -180,7 +198,9 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
     : undefined;
 
   const emptyListCopy = searching
-    ? "No sessions match this search"
+    ? searchScope === "transcripts"
+      ? "No conversations match this search"
+      : "No session titles match this search"
     : isFiltering
     ? "No sessions match the current filters"
     : "No sessions yet";
@@ -203,12 +223,44 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
           <Input
             data-testid="sessions-search"
             aria-label="Search sessions"
-            placeholder="Search sessions…"
+            placeholder={
+              searchScope === "transcripts"
+                ? "Search conversations…"
+                : "Search titles…"
+            }
             className="h-8 pl-8 text-xs"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
           />
         </div>
+        <ToggleGroup
+          type="single"
+          value={searchScope}
+          onValueChange={(value) => {
+            // Radix reports "" when the pressed item is clicked again; the
+            // box always searches SOMETHING, so ignore the deselect.
+            if (value === "transcripts" || value === "titles") {
+              setSearchScope(value);
+            }
+          }}
+          aria-label="What to search"
+          className="gap-0.5"
+        >
+          <ToggleGroupItem
+            value="transcripts"
+            data-testid="sessions-search-scope-transcripts"
+            className="h-7 px-2 text-xs"
+          >
+            Conversations
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="titles"
+            data-testid="sessions-search-scope-titles"
+            className="h-7 px-2 text-xs"
+          >
+            Titles
+          </ToggleGroupItem>
+        </ToggleGroup>
         <span className="text-xs font-medium text-muted-foreground">
           Source
         </span>
@@ -281,7 +333,9 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
         // Search pages are relevance-ordered, not newest-first — say so
         // rather than letting the reordering read as a bug.
         <p className="shrink-0 px-4 pt-2 text-[11px] text-muted-foreground">
-          Results ranked by title relevance.
+          {searchScope === "transcripts"
+            ? "Results ranked by relevance to what was said in each conversation."
+            : "Results ranked by title relevance."}
         </p>
       ) : null}
 
@@ -294,6 +348,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
                   <SessionFeedRow
                     key={row.id}
                     row={row}
+                    query={debouncedQuery}
                     selected={row.id === selectedThreadId}
                     onSelect={() => handleSelect(row.id)}
                   />
@@ -345,12 +400,47 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   );
 }
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Marks each literal, case-insensitive occurrence of a query term so a reader
+ * can see WHY a transcript matched. Cosmetic only: the backend already chose
+ * the window, and a term the index matched by stemming simply stays unmarked.
+ */
+function highlightTerms(text: string, query: string): ReactNode {
+  // Longest first, so "checkout" wins over "check" inside the alternation.
+  const terms = Array.from(
+    new Set(
+      query
+        .split(/\s+/)
+        .filter((term) => term.length > 0)
+        .map((term) => term.toLowerCase())
+    )
+  ).sort((a, b) => b.length - a.length);
+  if (terms.length === 0) return text;
+
+  // One capture group, so `split` puts every match at an odd index.
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  return text.split(pattern).map((part, index) =>
+    index % 2 === 1 ? (
+      <mark key={index} className="rounded-sm bg-primary/15 text-foreground">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 function SessionFeedRow({
   row,
+  query,
   selected,
   onSelect,
 }: {
   row: SessionFeedItem;
+  query: string;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -412,9 +502,20 @@ function SessionFeedRow({
           </span>
         ) : null}
       </div>
-      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-        {row.firstMessagePreview}
-      </p>
+      {typeof row.matchPreview === "string" ? (
+        // The window is centered on the hit, so three lines keep the term
+        // visible where two would clip it in a narrow list.
+        <p
+          data-testid="session-match-preview"
+          className="mt-1 line-clamp-3 text-xs text-muted-foreground"
+        >
+          {highlightTerms(row.matchPreview, query)}
+        </p>
+      ) : (
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+          {row.firstMessagePreview}
+        </p>
+      )}
       <div className="mt-1.5 flex items-center justify-between gap-2">
         <span className="text-[10px] text-muted-foreground/80">
           {formatDistanceToNow(new Date(row.lastActivityAt), {

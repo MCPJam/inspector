@@ -1,5 +1,6 @@
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
+  browserFeatureUnavailable,
   getConversationBrowser,
   openConversationBrowser,
   provisionConversationBrowser,
@@ -126,6 +127,16 @@ import { fetchPluginRuntimeAttribution } from "../../services/environments/plugi
 import { captureServerEvent } from "../../utils/analytics.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
+import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+  type PlaygroundBoxReason,
+} from "../../utils/harness/playground-box.js";
+import type { HarnessBox } from "../../utils/harness/harness-box.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
@@ -1261,6 +1272,11 @@ async function handleTurn(c: Context): Promise<Response> {
    * keep the lease and let the TTL expire it.
    */
   let modelCallStarted = false;
+  /**
+   * The conversation's throwaway box, held for a harness turn. Released in the
+   * `finally` (idempotent), which leaves the box for the next turn.
+   */
+  let conversationBox: HarnessBox | undefined;
   const abortController = new AbortController();
   const requestSignal = c.req.raw.signal;
   const onRequestAbort = () => abortController.abort();
@@ -1510,6 +1526,7 @@ async function handleTurn(c: Context): Promise<Response> {
           ? { maxToolCalls: body.maxToolCalls }
           : {}),
       },
+      ...(routingSelection ? { selection: routingSelection } : {}),
     });
     if (!engineDecision.ok) {
       return v1Error(
@@ -1854,6 +1871,116 @@ async function handleTurn(c: Context): Promise<Response> {
     let lastEngineError:
       { message: string; code?: string; httpStatus?: number } | undefined;
 
+    // A cloud harness turn runs on this conversation's THROWAWAY box, the same
+    // box the Playground gives it (keyed by the runtime chat session id), and
+    // never on a persistent computer: no `resolveHarnessSandbox`, no
+    // `projectComputers` row. Acquired before the model call so a refused box
+    // spends nothing.
+    if (engine.kind === "harness") {
+      // A harness that signs in with the customer's own account (Cursor) is
+      // on the box for its credential, as in the Playground.
+      const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
+        engine.harness,
+      )
+        ? "credential"
+        : "conversation";
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        engine.harness,
+        boxReason,
+      );
+      if (unavailable) {
+        return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
+          reason: "NOT_A_DATA_PLANE",
+        });
+      }
+      // The environment whose grant the box carries: the session's own when it
+      // pins one; otherwise, for a `credential` harness on a host, the same
+      // HIDDEN ad-hoc environment selecting the member's key that the
+      // Playground mints. Refused here, before any box, when there is no key.
+      let boxEnvironmentId = pins.environmentId;
+      if (boxReason === "credential") {
+        if (!boxEnvironmentId && target.host) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: authHeader,
+            projectId,
+            hostId: target.host.hostId,
+            harnessId: engine.harness,
+          });
+          if (!hidden.ok) {
+            return v1Error(
+              c,
+              hidden.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
+              hidden.message,
+              { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+            );
+          }
+          boxEnvironmentId = hidden.environmentId;
+        }
+        // The credential check `runHarnessTurn` would fail, run BEFORE the box
+        // is booted: a refused turn must not pay for a box, nor fail past
+        // `modelCallStarted` and hold the lease to its TTL. Same function and
+        // inputs as the turn's own check — this surface hands the harness no
+        // materialized secrets, so only a brokered key can satisfy it.
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: engine.harness,
+          secretEnv: undefined,
+          bearer: authHeader,
+          projectId,
+          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+        });
+        if (credentialRefusal) {
+          return v1Error(c, "CONFLICT", credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: authHeader.replace(/^Bearer\s+/i, ""),
+        projectId,
+        chatSessionId: runtimeChatSessionId,
+        ...(boxEnvironmentId ? { projectEnvironmentId: boxEnvironmentId } : {}),
+        harness: engine.harness,
+        signal: abortController.signal,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          engine.harness,
+          boxReason,
+          acquired.refusal,
+        );
+        const rateLimited =
+          described.status === 429 || described.status === 503;
+        // The control plane's own wait, so a caller backs off for as long as
+        // it asked instead of guessing.
+        const retryAfterMs = rateLimited
+          ? acquired.refusal.retryAfterMs
+          : undefined;
+        return v1Error(
+          c,
+          rateLimited
+            ? "RATE_LIMITED"
+            : described.status === 403
+              ? "FORBIDDEN"
+              : described.status === 409
+                ? "CONFLICT"
+                : "INTERNAL_ERROR",
+          described.message,
+          {
+            reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+            ...(described.code ? { code: described.code } : {}),
+          },
+          retryAfterMs !== undefined
+            ? {
+                "Retry-After": String(
+                  Math.max(1, Math.ceil(retryAfterMs / 1000)),
+                ),
+              }
+            : undefined,
+        );
+      }
+      conversationBox = acquired.box;
+    }
+
     // Past this line the turn may have spent. See `modelCallStarted`.
     if (executionOwnerToken)
       await new BrowserSessionService().agentRequest("begin_model", {
@@ -1889,6 +2016,9 @@ async function handleTurn(c: Context): Promise<Response> {
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
         ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        : {}),
+      ...(engine.kind === "harness" && conversationBox
+        ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
       // The ENVIRONMENT's resolved skills, for the harness that will write them
       // into its sandbox. Without this `selectHarnessSkillSource` falls to its
@@ -1927,6 +2057,18 @@ async function handleTurn(c: Context): Promise<Response> {
     } as never);
 
     await runtime.finalizeUsage(result);
+    // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
+    // waiting on background agents ends that wait at the deadline and keeps
+    // the answer it already has (`claude-code-background-drain.ts`). Only the
+    // harness's own report counts; a trace alone also exists for a turn that
+    // paused for approval or a scope step-up.
+    const timedOut =
+      abortController.signal.aborted &&
+      !(
+        engine.kind === "harness" &&
+        result.backgroundDrainEnded &&
+        !lastEngineError
+      );
     if (browserAttached) {
       result.messages = redactBrowserEvidenceTree(
         result.messages,
@@ -1945,7 +2087,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     if (
       browserAttached &&
-      (abortController.signal.aborted || !result.turnTrace || lastEngineError)
+      (timedOut || !result.turnTrace || lastEngineError)
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
@@ -1975,7 +2117,7 @@ async function handleTurn(c: Context): Promise<Response> {
               modelId: String(modelDefinition.id),
             }),
             turnId: leaseTurnId,
-            finishReason: abortController.signal.aborted ? "timeout" : "error",
+            finishReason: timedOut ? "timeout" : "error",
             ...(browser
               ? {
                   browserAtTurn: {
@@ -1993,7 +2135,7 @@ async function handleTurn(c: Context): Promise<Response> {
         failed.outcome === "saved" || failed.outcome === "duplicate";
     }
 
-    if (abortController.signal.aborted) {
+    if (timedOut) {
       captureTurnEvent(c, {
         startedAt,
         outcome: "timeout",
@@ -2298,9 +2440,20 @@ async function handleTurn(c: Context): Promise<Response> {
         },
         error.status,
       );
+    const unavailable = browserFeatureUnavailable(error);
+    if (unavailable)
+      return v1Error(c, "FORBIDDEN", unavailable.message, unavailable.details);
     throw error;
   } finally {
     clearTimeout(wallClock);
+    // Not awaited: the release stops the heartbeat at once, and its `ended`
+    // touch (up to 10s) must not hold the response. Every exit path reaches
+    // this line.
+    void conversationBox?.release().catch((error: unknown) => {
+      logger.warn("[v1/chat-sessions] conversation box release failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (browserOutbox)
       await flushBrowserEvidence(browserOutbox);
 

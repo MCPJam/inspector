@@ -108,6 +108,24 @@ export interface LocalModelGateway {
   sessionCapability: string;
   /** Refuse every further request, without closing in-flight ones abruptly. */
   revoke: () => void;
+  /**
+   * Stop forwarding model traffic WITHOUT closing the listener.
+   *
+   * For a session parked on a human approval (`approval-park.ts`): the
+   * vendor CLI baked this gateway's URL into its config when it started, so
+   * the port has to outlive the pause — but nothing may be generated while
+   * nobody is deciding anything, and the lease behind it is revoked for the
+   * wait. Requests are answered 503 until `rebind` hands it a fresh lease.
+   */
+  hold: () => void;
+  /**
+   * Bind a FRESH lease (minted after re-checking authorization) and resume
+   * forwarding. The session capability and the port are unchanged, because
+   * the child already holds both; only the credential behind them rotates.
+   * Throws for a lease no proof of possession can be bound to, and leaves
+   * the gateway held in that case.
+   */
+  rebind: (lease: string) => void;
   /** Revoke and close the listener. */
   close: () => Promise<void>;
   stats: () => {
@@ -148,7 +166,9 @@ export async function startLocalModelGateway(
         "of possession to",
     );
   }
-  const jti: string = parsedJti;
+  let jti: string = parsedJti;
+  let lease: string = options.lease;
+  let held = false;
   const upstream = new URL(options.upstreamBaseUrl);
   // The lease is a bearer token on every forwarded request. Plaintext is only
   // ever acceptable when the bytes do not leave the machine, which is what the
@@ -236,6 +256,13 @@ export async function startLocalModelGateway(
       refuse(res, 401, "session ended");
       return;
     }
+    if (held) {
+      // Parked on a human approval: the session is alive, its credential is
+      // not. 503 rather than 401 — nothing is wrong with the caller's
+      // capability, and nothing will be forwarded until a decision arrives.
+      refuse(res, 503, "session paused awaiting approval");
+      return;
+    }
     if (!isAllowedPath(method, path)) {
       refuse(res, 404, "endpoint not allowed");
       return;
@@ -295,8 +322,8 @@ export async function startLocalModelGateway(
           // and the two that matter here are ours to set.
           "content-type": "application/json",
           accept: String(req.headers.accept ?? "application/json"),
-          authorization: `Bearer ${options.lease}`,
-          "x-mcpjam-harness-lease": options.lease,
+          authorization: `Bearer ${lease}`,
+          "x-mcpjam-harness-lease": lease,
           "x-mcpjam-pop": pop,
           ...(typeof req.headers["anthropic-version"] === "string"
             ? { "anthropic-version": req.headers["anthropic-version"] }
@@ -398,6 +425,21 @@ export async function startLocalModelGateway(
     sessionCapability,
     revoke: () => {
       revoked = true;
+    },
+    hold: () => {
+      held = true;
+    },
+    rebind: (nextLease: string) => {
+      const nextJti = leaseJti(nextLease);
+      if (nextJti === null) {
+        throw new Error(
+          "the renewed harness model lease is not a token this gateway can " +
+            "bind a proof of possession to",
+        );
+      }
+      lease = nextLease;
+      jti = nextJti;
+      held = false;
     },
     close: async () => {
       revoked = true;

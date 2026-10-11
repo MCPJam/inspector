@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import { comparisonKey, type RequestedModelSelection } from "@mcpjam/sdk/browser";
+import {
+  comparisonKey,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import { compactModelIdTail } from "@/lib/environment-label";
 import {
   modelIdFromTargetKey,
@@ -7,12 +10,12 @@ import {
   targetKeyLabels,
 } from "@/lib/eval-target-key";
 import { formatRunId, runEnvironmentRef, runClientIdentity } from "../helpers";
-import { computeIterationResult } from "../pass-criteria";
+import { computeMeasuredIterationResult } from "../pass-criteria";
 import type {
   EvalCase,
   EvalIteration,
   EvalSuite,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
 } from "../types";
 
 export const CLIENT_DEFAULT_MODEL_KEY = "client-default";
@@ -207,7 +210,7 @@ function iterationLatencyMs(iter: EvalIteration): number | null {
 export function buildCellTrendSeries(
   caseId: string,
   columnKey: string,
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   allIterations: EvalIteration[],
   runHostMap: Map<string, string>,
   activeRunIds: Set<string>,
@@ -235,14 +238,17 @@ export function buildCellTrendSeries(
     let passCount = 0;
     let failCount = 0;
     let pendingCount = 0;
+    let infraCount = 0;
     let totalTokens = 0;
     let totalToolCalls = 0;
     const latencySamples: number[] = [];
 
     for (const iter of iters) {
-      const result = computeIterationResult(iter);
+      const result = computeMeasuredIterationResult(iter);
       if (result === "passed") passCount++;
       else if (result === "failed") failCount++;
+      // An infra row measured nothing: in no count.
+      else if (result === "infra_error") infraCount++;
       else pendingCount++;
 
       totalTokens += iter.tokensUsed || 0;
@@ -253,6 +259,7 @@ export function buildCellTrendSeries(
     }
 
     const totalCount = iters.length;
+    const measuredCount = totalCount - infraCount;
 
     return {
       runId: run._id,
@@ -262,11 +269,11 @@ export function buildCellTrendSeries(
         passCount,
         failCount,
         pendingCount,
-        totalCount,
+        measuredCount,
       ),
       passed: passCount,
       failed: failCount,
-      total: totalCount,
+      total: measuredCount,
       latencyMs: median(latencySamples),
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:
@@ -284,10 +291,11 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const latencySamples: number[] = [];
 
   for (const iter of iterations) {
-    const result = computeIterationResult(iter);
+    const result = computeMeasuredIterationResult(iter);
     if (result === "passed") passCount++;
     else if (result === "failed") failCount++;
-    else pendingCount++;
+    // An infra row measured nothing: in no count, pending included.
+    else if (result !== "infra_error") pendingCount++;
 
     totalTokens += iter.tokensUsed || 0;
 
@@ -436,7 +444,7 @@ export function envModelKey(env: CrossHostEnvironment): string {
 }
 
 export function modelKeyForRun(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   envById: Map<string, CrossHostEnvironment>,
 ): string {
   // Persisted attribution is the run's frozen column. A later edit to the
@@ -444,7 +452,9 @@ export function modelKeyForRun(
   // (or recast an inherit run as an override). The run's `targetKey` is that
   // attribution including the selection (bare model id when default).
   if (
-    (run.modelSource === "override" || run.modelSource === "case") && run.effectiveModelId) {
+    (run.modelSource === "override" || run.modelSource === "case") &&
+    run.effectiveModelId
+  ) {
     return runTargetKey(run) ?? run.effectiveModelId;
   }
   if (run.modelSource === "client_default") {
@@ -478,7 +488,7 @@ function modelLabelsForKeys(modelKeys: Iterable<string>): Map<string, string> {
 export function useCrossHostData(
   suite: EvalSuite,
   cases: EvalCase[],
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   allIterations: EvalIteration[],
   options: UseCrossHostDataOptions = {},
 ): CrossHostData {
@@ -505,7 +515,7 @@ export function useCrossHostData(
     const pending = new Map<string, PendingColumn>();
     // Keep the existing named-host column ids; synthetic identities cannot
     // be passed to host queries or configuration actions.
-    const clientColumnId = (run: EvalSuiteRun) => {
+    const clientColumnId = (run: EvalSuiteRunListItem) => {
       const identity = runClientIdentity(run);
       return identity.namedHostId ?? identity.key;
     };
@@ -704,7 +714,7 @@ export function useCrossHostData(
       const current = byHost.get(hostId);
       const iterRank = runRank.get(iter.suiteRunId) ?? Number.POSITIVE_INFINITY;
       const currentRank = current
-        ? runRank.get(current) ?? Number.POSITIVE_INFINITY
+        ? (runRank.get(current) ?? Number.POSITIVE_INFINITY)
         : Number.POSITIVE_INFINITY;
       if (!current || iterRank < currentRank) {
         byHost.set(hostId, iter.suiteRunId);

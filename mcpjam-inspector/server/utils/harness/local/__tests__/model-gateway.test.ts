@@ -637,3 +637,60 @@ describe("the host and path rules on their own", () => {
     expect(isAllowedPath(method, path)).toBe(expected);
   });
 });
+
+describe("holding a session parked on an approval", () => {
+  it("refuses model traffic while held, then forwards with the rebound lease on the same port", async () => {
+    const seen: string[] = [];
+    const g = await gateway({
+      lease: fakeLease("jti_first"),
+      upstreamBaseUrl: "https://api.example.test/web/harness/model-proxy/openai/v1",
+      fetchImpl: async (input, init) => {
+        seen.push(
+          `${String(input)} ${new Headers(init?.headers as HeadersInit).get("authorization")}`,
+        );
+        return new Response("{}", { status: 200 });
+      },
+    });
+    const call = () =>
+      fetch(`${g.baseUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${g.sessionCapability}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+    const port = g.port;
+
+    g.hold();
+    const held = await call();
+    expect(held.status).toBe(503);
+    expect(seen).toEqual([]);
+
+    // A lease nothing can bind a proof to is refused, and the hold stays.
+    expect(() => g.rebind("not-a-lease")).toThrow();
+    expect((await call()).status).toBe(503);
+
+    g.rebind(fakeLease("jti_second"));
+    const resumed = await call();
+    expect(resumed.status).toBe(200);
+    expect(g.port).toBe(port);
+    // Codex's bare-origin `/responses` lands under the broker's `/openai/v1`,
+    // carrying the NEW lease.
+    expect(seen).toEqual([
+      `https://api.example.test/web/harness/model-proxy/openai/v1/responses Bearer ${fakeLease("jti_second")}`,
+    ]);
+  });
+
+  it("never forwards after revoke, even when rebound", async () => {
+    const g = await gateway();
+    g.revoke();
+    g.rebind(fakeLease("jti_late"));
+    const response = await fetch(`${g.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": g.sessionCapability, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(401);
+  });
+});

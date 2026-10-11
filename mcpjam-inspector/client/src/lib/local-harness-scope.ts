@@ -1,11 +1,22 @@
-/** Local Claude Code is available to the member on direct and environment chat. Shared/scenario execution stays hosted. */
+/**
+ * The harnesses that can run on the member's machine, on direct and
+ * environment chat. Shared/scenario execution stays hosted. Each one is gated
+ * separately everywhere else (its own runtime, rollout and authorization);
+ * this only says the SHAPE of a send could apply to it.
+ */
+export const LOCAL_HARNESS_SCOPED_HARNESS_IDS: ReadonlySet<string> = new Set([
+  "claude-code",
+  "codex",
+]);
+
+/** @deprecated The first local harness; use {@link LOCAL_HARNESS_SCOPED_HARNESS_IDS}. */
 export const LOCAL_HARNESS_SCOPED_HARNESS_ID = "claude-code";
 
 export interface LocalHarnessScopeInput {
   /**
    * The harness the host for THIS send or lane runs, as the client knows it.
    *
-   * Null / undefined ⇒ out of scope. An unknown harness is not `claude-code`,
+   * Null / undefined ⇒ out of scope. An unknown harness is not a local one,
    * and guessing in the permissive direction here would offer local execution
    * on a host that will not run it.
    */
@@ -38,7 +49,7 @@ export interface LocalHarnessScopeInput {
 }
 
 /**
- * Is this send/lane one that local Claude Code execution could apply to?
+ * Is this send/lane one that local harness execution could apply to?
  *
  * Answers the SHAPE question only. Whether the machine can actually do it —
  * flag, sign-in, runtime, consent — is every other gate's business, and each of
@@ -47,7 +58,7 @@ export interface LocalHarnessScopeInput {
  */
 export function isLocalHarnessScope(args: LocalHarnessScopeInput): boolean {
   if (args.hostedMode) return false;
-  if (args.harnessId !== LOCAL_HARNESS_SCOPED_HARNESS_ID) return false;
+  if (!args.harnessId || !LOCAL_HARNESS_SCOPED_HARNESS_IDS.has(args.harnessId)) return false;
   if (args.sharedRun === true) return false;
   if (args.scenarioId) return false;
   return true;

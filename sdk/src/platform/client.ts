@@ -67,6 +67,9 @@ import type {
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
   PlatformEvalRunDisclosure,
+  PlatformEvalRunRerunBody,
+  PlatformEvalRunRerunCreated,
+  PlatformEvalRunRerunPreview,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -157,6 +160,7 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformMuseReadinessStartBody,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
   PlatformReadinessRun,
@@ -2990,6 +2994,46 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * What a `failed_cases` rerun of this run would execute — the platform's
+   * own selection (any case with a trial that is not completed and passed;
+   * cancelled and skipped trials do not count). Read-only.
+   */
+  getEvalRunRerunPreview(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunRerunPreview> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/rerun-preview`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Rerun a finished run's failed cases as a new run stamped with
+   * `rerunOfRunId`. Refused with `409` (`details.reason`
+   * `RERUN_NOTHING_TO_RERUN` / `RERUN_SOURCE_NOT_TERMINAL`) when nothing
+   * qualifies or the run is still in flight.
+   */
+  rerunEvalRun(
+    params: { projectId: string; runId: string } & PlatformEvalRunRerunBody,
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunRerunCreated> {
+    const { projectId, runId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/eval-runs/${encodeURIComponent(runId)}/rerun`,
+      { body, declareLaunch: true },
+      options
+    );
+  }
+
   // ── Gate waivers ──────────────────────────────────────────────────────
   //
   // An audited, time-boxed override of a run's gate. Three calls, and the
@@ -3143,6 +3187,31 @@ export class PlatformApiClient {
         serverId
       )}/readiness-runs/openai`,
       { body: { ...pickReadinessStartBody(params), submissionMode } },
+      options
+    );
+  }
+
+  /**
+   * Start a Muse (Meta) connector readiness run.
+   *
+   * Free, and only ever free: Muse has no AI observations, so the body has no
+   * field that can spend.
+   */
+  startMuseReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformMuseReadinessStartBody,
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, idempotencyKey } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId
+      )}/readiness-runs/muse`,
+      { body: pickReadinessStartBody({ idempotencyKey }) },
       options
     );
   }
@@ -3983,6 +4052,12 @@ export class PlatformApiClient {
       goalId: string;
       swarmRunId?: string;
       environmentIds?: string[];
+      /**
+       * How many of this launch's conversations you expect to be sponsored.
+       * A different actual split is a 409 `swarm_funding_changed` (see
+       * `describeSwarmFundingChange`) and nothing is created.
+       */
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformGoalRunLaunched> {
@@ -3997,6 +4072,9 @@ export class PlatformApiClient {
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
             : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
+            : {}),
         },
       },
       options
@@ -4004,7 +4082,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running goal run.
+   * Request a stop for a running goal run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on
@@ -4259,6 +4337,7 @@ export class PlatformApiClient {
       journeyId: string;
       waveId?: string;
       environmentIds?: string[];
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformJourneyRunLaunched> {
@@ -4273,6 +4352,9 @@ export class PlatformApiClient {
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
             : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
+            : {}),
         },
       },
       options
@@ -4280,7 +4362,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running journey run.
+   * Request a stop for a running journey run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on

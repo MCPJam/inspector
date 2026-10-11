@@ -17,7 +17,11 @@ import {
   runRevisionLabel,
 } from "../evals/helpers";
 import { EnvironmentChip } from "../evals/run-context-chip";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import {
   iterationTargetKey,
   runTargetKey,
@@ -44,7 +48,7 @@ function Fact({
 }
 
 export function modelsFromRun(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   iterations: readonly EvalIteration[] = [],
 ): string[] {
   if (run.effectiveModelId) {

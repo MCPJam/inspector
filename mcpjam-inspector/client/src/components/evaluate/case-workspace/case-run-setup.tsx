@@ -1,8 +1,11 @@
 import { Play } from "lucide-react";
 import { RunIterationControl } from "../run-iteration-control";
 import { EvalTargetMatrix, EvalModelChoices } from "../eval-target-matrix";
-import { explicitModelIds } from "@/components/environment-composer/environment-stack";
-import { parseModelValue } from "../../evals/compare-playground-helpers";
+import {
+  parseModelValue,
+  quickRunModelValue,
+} from "../../evals/compare-playground-helpers";
+import { modelTarget } from "@/lib/model-target";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Sheet,
@@ -13,16 +16,19 @@ import {
 } from "@mcpjam/design-system/sheet";
 import type { ModelDefinition } from "@/shared/types";
 import { ServerPicker } from "@/components/hosts/server-picker";
-import { reasoningEffortLabel } from "@/components/effort/effort-control";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 export type CaseSuiteChipOption = {
   value: string;
   label: string;
 };
 
+/** One quick-run pick: a model value and, at a chosen effort, its selection. */
+export type CaseRunPick = { modelValue: string; selection?: ModelSelection };
+
 /** The run controls a case workspace hands the Setup Run sheet. */
 export type CaseRunControls = {
+  /** Quick-run keys (`quickRunKey`): a model value, plus its effort if any. */
   models: string[];
   modelLabelByValue?: Record<string, string>;
   availableModels?: ModelDefinition[];
@@ -44,16 +50,26 @@ export function CaseRunSetup({
   runDisabled,
   disabledReason,
   onModelsChange,
+  onPicksChange,
+  selections,
+  environmentSelection,
   serverGroup,
-  environmentEffort,
   ...controls
 }: CaseRunControls & {
   /**
-   * Environment suites only: the reasoning effort the suite's environment runs
-   * a model at (by model id). The environment wins over anything set here, so
-   * it is shown read-only under the model list and never edited.
+   * Environment suites only: the picks with their efforts. Turns on the
+   * effort menus, so one model can run at several efforts (Low, Medium, High),
+   * each its own run. Without it the sheet writes plain model values.
    */
-  environmentEffort?: (modelId: string) => ModelReasoningEffort | undefined;
+  onPicksChange?: (picks: CaseRunPick[]) => void;
+  /** The selection behind each key in `models` that has one. */
+  selections?: Readonly<Record<string, ModelSelection>>;
+  /**
+   * Environment suites only: the selection the suite's environment runs a
+   * model at (by model id). A pick with no selection of its own runs at it,
+   * so its effort menu starts there.
+   */
+  environmentSelection?: (modelId: string) => ModelSelection | undefined;
   onModelsChange?: (models: string[]) => void;
   /**
    * Environment suites only: the server group the run's environments use.
@@ -85,10 +101,26 @@ export function CaseRunSetup({
       ? controls.hostValue
       : hosts[0].hostId;
   const availableModels = controls.availableModels ?? [];
-  const modelIds = controls.models.map((value) => parseModelValue(value).model);
-  const selection = {
-    includeClientDefaults: false,
-    explicitTargets: modelIds.map((modelId) => ({ modelId })),
+  const effortEditable = onPicksChange !== undefined;
+  const targets = controls.models.map((key) => {
+    const modelId = parseModelValue(key).model;
+    return modelTarget(
+      modelId,
+      effortEditable
+        ? (selections?.[key] ?? environmentSelection?.(modelId))
+        : undefined,
+    );
+  });
+  const selection = { includeClientDefaults: false, explicitTargets: targets };
+  // The editor keys picks by model value (`provider/model`).
+  const modelValueFor = (modelId: string) => {
+    const model = availableModels.find((row) => String(row.id) === modelId);
+    return model
+      ? `${model.provider}/${modelId}`
+      : (controls.models
+          .map(quickRunModelValue)
+          .find((value) => parseModelValue(value).model === modelId) ??
+          modelId);
   };
   const validCount =
     Number.isInteger(controls.trials) &&
@@ -143,42 +175,31 @@ export function CaseRunSetup({
               <EvalModelChoices
                 harness={harness}
                 inModal
-                effortEditable={false}
+                effortEditable={effortEditable}
                 value={selection}
                 availableModels={availableModels}
                 disabled={Boolean(controls.disabled)}
                 testId="case-run-models"
                 onChange={(next) => {
-                  const values = explicitModelIds(next).map((id) => {
-                    const model = availableModels.find(
-                      (model) => String(model.id) === id,
-                    );
-                    return model
-                      ? `${model.provider}/${id}`
-                      : (controls.models.find(
-                          (value) => parseModelValue(value).model === id,
-                        ) ?? id);
-                  });
+                  const picks = next.explicitTargets.map((target) => ({
+                    modelValue: modelValueFor(target.modelId),
+                    ...(target.selection
+                      ? { selection: target.selection }
+                      : {}),
+                  }));
+                  if (onPicksChange) {
+                    onPicksChange(picks);
+                    return;
+                  }
+                  const values = [
+                    ...new Set(picks.map((pick) => pick.modelValue)),
+                  ];
                   if (onModelsChange) onModelsChange(values);
                   else if (values[0]) controls.onModelChange?.(values[0]);
                 }}
               />
             )}
           />
-          {environmentEffort
-            ? modelIds.flatMap((modelId) => {
-                const effort = environmentEffort(modelId);
-                return effort ? [{ modelId, effort }] : [];
-              }).map(({ modelId, effort }) => (
-                <p
-                  key={modelId}
-                  data-testid="case-run-environment-effort"
-                  className="text-xs text-muted-foreground"
-                >
-                  {modelId}: {reasoningEffortLabel(effort)} effort
-                </p>
-              ))
-            : null}
         </div>
         <div className="space-y-3 border-t border-border p-6">
           {disabledReason && (
