@@ -64,17 +64,20 @@ describe("SwarmFundingSummary", () => {
     ).toHaveTextContent(/can't use sponsored conversations/i);
   });
 
-  it("says new goals are not counted yet", () => {
+  it.each([
+    [1, "Doesn't include your new goal yet."],
+    [2, "Doesn't include your 2 new goals yet."],
+  ])("says new goals are not counted yet (%i)", (pendingGoals, text) => {
     render(
       <SwarmFundingSummary
         state={ready()}
         requestedRuns={1}
-        pendingGoals={2}
+        pendingGoals={pendingGoals}
         notice={null}
       />,
     );
     expect(screen.getByTestId("new-swarm-funding-pending")).toHaveTextContent(
-      "Doesn't include your 2 new goals yet.",
+      text,
     );
   });
 

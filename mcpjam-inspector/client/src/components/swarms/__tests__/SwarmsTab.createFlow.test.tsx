@@ -3650,6 +3650,24 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
+  it("an unverified mixed launch still says a goal could not be created", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openMixedConfirm();
+
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the sponsored conversations/i,
+    );
+    await waitFor(() => expect(alertText()).toMatch(/Goal service unavailable/));
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
   it("on a 409 for the first run: launches nothing more, keeps the goals, refreshes the split and explains", async () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
     await openReusedConfirm();
