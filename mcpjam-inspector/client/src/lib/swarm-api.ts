@@ -1013,6 +1013,25 @@ export class LaunchJourneyRunError extends Error {
 }
 
 /**
+ * The error body's `details`, plus the `problems` the AI key policy's launch
+ * refusal lists beside its message when the route put them at the top level.
+ */
+function detailsWithLaunchProblems(
+  parsed: Record<string, unknown> | null,
+): unknown {
+  const details = parsed?.details;
+  if (!Array.isArray(parsed?.problems)) return details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return "problems" in details
+      ? details
+      : { ...(details as Record<string, unknown>), problems: parsed.problems };
+  }
+  return details === undefined
+    ? { problems: parsed.problems }
+    : { details, problems: parsed.problems };
+}
+
+/**
  * Launch a journey run through the Inspector REST route. Resolves with the new
  * `runId` on a 202; throws {@link LaunchJourneyRunError} on any non-2xx so the
  * caller can branch on `.status`.
@@ -1093,7 +1112,7 @@ export async function launchJourneyRun(
       "string"
         ? (parsed!.details as { code: string }).code
         : (code ?? undefined),
-      parsed?.details,
+      detailsWithLaunchProblems(parsed),
     );
   }
 
