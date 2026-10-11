@@ -160,14 +160,22 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const argv = process.argv.slice(2);
-  const { base, head } = resolveScope(argv);
-  const waived = process.env.SLOP_WAIVER === "true";
-  process.exitCode = report(
-    compare(base, head, {
-      trackedOnly: argv.includes("--tracked-only"),
-      ignoreUntracked: readPathList(argValue(argv, "--ignore-untracked")),
-    }),
-    waived,
-  );
+  try {
+    const argv = process.argv.slice(2);
+    const { base, head } = resolveScope(argv);
+    const waived = process.env.SLOP_WAIVER === "true";
+    process.exitCode = report(
+      compare(base, head, {
+        trackedOnly: argv.includes("--tracked-only"),
+        ignoreUntracked: readPathList(argValue(argv, "--ignore-untracked")),
+      }),
+      waived,
+    );
+  } catch (error) {
+    // Exit 1 means a rule went up. A check that could not run (no base to
+    // compare with, git failed) exits 2, so the Stop hook in hook.mjs lets
+    // the turn end instead of blocking it with an empty report.
+    console.error(error.message);
+    process.exitCode = 2;
+  }
 }
