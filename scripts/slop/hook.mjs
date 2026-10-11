@@ -6,7 +6,9 @@
  *
  *   PreToolUse (Write)        refuse new root files, NOTES-*.md and .spike-* folders
  *   PostToolUse (Edit|Write)  report rules an edit added, and a file growing past FILE_BUDGET lines
- *   Stop                      run the ratchet over the whole change once before the turn ends
+ *   UserPromptSubmit          note which untracked files exist as the turn begins
+ *   Stop                      run the ratchet over the whole change once before the turn ends,
+ *                             counting untracked files only if they appeared during the turn
  *
  * Any failure of the hook itself exits 0: a broken check must not wedge a session.
  *
@@ -15,14 +17,17 @@
  * there it would hold the action's API key and write token.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path, { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
 
-const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = dirname(dirname(HERE));
 
 /** Root files that already exist. Anything else at the root needs an RFC. */
 const ROOT_ALLOWLIST = new Set([
@@ -48,10 +53,61 @@ const ROOT_ALLOWLIST = new Set([
 const NOT_IN_HEAD =
   /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/;
 
-function gitShow(path) {
+function revParse(dir, args) {
+  return execFileSync("git", ["rev-parse", "--path-format=absolute", ...args], {
+    cwd: dir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+    .trim()
+    .split("\n");
+}
+
+/**
+ * The checkout that contains `dir`, when it is this repository: its main
+ * checkout or one of its worktrees. Hooks act on the session's checkout, not
+ * the one this script was loaded from: in a git worktree session
+ * `$CLAUDE_PROJECT_DIR` can point at the main checkout. Null outside a git
+ * checkout, and in another repository (a session here can also edit a
+ * sibling repo), whose files these rules were not written for.
+ */
+export function repoRootFor(dir) {
+  let existing = dir;
+  // A Write can target a folder that does not exist yet.
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    existing = dirname(existing);
+  }
+  try {
+    const [root, common] = revParse(existing, [
+      "--show-toplevel",
+      "--git-common-dir",
+    ]);
+    // Every worktree of a repository shares its common git directory.
+    const [ours] = revParse(ROOT, ["--git-common-dir"]);
+    return realpathSync(common) === realpathSync(ours) ? root : null;
+  } catch {
+    // Not a git checkout: there is nothing to compare against.
+    return null;
+  }
+}
+
+/**
+ * `p` with symlinks resolved, even when it does not exist yet. git reports
+ * the repo root resolved (macOS /var is /private/var), so the edited path
+ * must be resolved too or it looks like it is outside the repository.
+ */
+function resolvedPath(p) {
+  let existing = p;
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    existing = dirname(existing);
+  }
+  return join(realpathSync(existing), path.relative(existing, p));
+}
+
+function gitShow(path, root) {
   try {
     return execFileSync("git", ["show", `HEAD:${path}`], {
-      cwd: ROOT,
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -104,7 +160,7 @@ export function checkEdit(path, { before, after, fileBefore, fileAfter }) {
     const lines = lineCount(fileAfter);
     if (lines > FILE_BUDGET && lines > lineCount(fileBefore)) {
       problems.push(
-        `file is ${lines} lines, over the ${FILE_BUDGET}-line budget, and growing. Split it or put the new code in its own module.`
+        `file is ${lines} lines, over the ${FILE_BUDGET}-line budget, and growing. Split it or put the new code in its own module.`,
       );
     }
   }
@@ -134,31 +190,97 @@ export function editFragments(toolName, toolInput, headText, fileText) {
   return { before: headText, after: fileText };
 }
 
+/** Where this session's turn-start list of untracked files lives. */
+export function snapshotFile(sessionId, root) {
+  const key = createHash("sha256")
+    .update(`${sessionId ?? ""}\0${root}`)
+    .digest("hex")
+    .slice(0, 16);
+  return join(tmpdir(), `slop-hook-untracked-${key}.txt`);
+}
+
+function untrackedFiles(root) {
+  return execFileSync(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  )
+    .split("\0")
+    .filter(Boolean);
+}
+
+/**
+ * Untracked files present when the turn begins are someone else's (a
+ * person's scratch work, say). Ones that appear during the turn are the
+ * agent's, including files a Bash command created, which no Edit or Write
+ * hook sees.
+ */
+function runPromptSubmit(input) {
+  const root = repoRootFor(input.cwd ?? process.cwd());
+  if (!root) return 0;
+  const lines = untrackedFiles(root).join("\n");
+  writeFileSync(
+    snapshotFile(input.session_id, root),
+    lines ? `${lines}\n` : "",
+  );
+  return 0;
+}
+
+/** The line ratchet.mjs prints only when a rule went up. */
+const FINDING = "Files that added to a rising rule:";
+
+function withoutStepSummary(env) {
+  const { GITHUB_STEP_SUMMARY: _summary, ...rest } = env;
+  return rest;
+}
+
 function runStop(input) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
   if (input.stop_hook_active) return 0;
+  const root = repoRootFor(input.cwd ?? process.cwd());
+  if (!root) return 0;
+  // Without a turn-start snapshot, count tracked files only rather than
+  // blame the agent for untracked files it may not have written.
+  const snapshot = snapshotFile(input.session_id, root);
+  const scope = existsSync(snapshot)
+    ? ["--ignore-untracked", snapshot]
+    : ["--tracked-only"];
   try {
-    execFileSync("node", ["scripts/slop/ratchet.mjs"], {
-      cwd: ROOT,
+    execFileSync("node", [join(HERE, "ratchet.mjs"), ...scope], {
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // A CI job summary has no meaning here, and a bad path would crash it.
+      env: withoutStepSummary(process.env),
     });
     return 0;
   } catch (error) {
-    if (error.status !== 1) return 0;
-    process.stderr.write(`${error.stdout}\n`);
-    return 2;
+    // Only a failing verdict is a finding. A crash also exits 1 (Node's code
+    // for an uncaught exception, as when the repo has no origin/main), and a
+    // broken check must not block the turn: show why, and let it end.
+    if (error.status === 1 && error.stdout?.includes(FINDING)) {
+      process.stderr.write(`${error.stdout}\n`);
+      return 2;
+    }
+    const detail = error.stderr || error.message;
+    process.stderr.write(`slop Stop check skipped: ${detail}\n`);
+    return 0;
   }
 }
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
   if (input.hook_event_name === "Stop") return runStop(input);
+  if (input.hook_event_name === "UserPromptSubmit") {
+    return runPromptSubmit(input);
+  }
 
   const filePath = input.tool_input?.file_path;
   if (!filePath) return 0;
-  const path = repoPath(filePath);
+  const root = repoRootFor(dirname(filePath));
+  if (!root) return 0;
+  const path = repoPath(resolvedPath(filePath), root);
 
   if (input.hook_event_name === "PreToolUse") {
     const problem = checkNewPath(path, existsSync(filePath));
@@ -169,13 +291,13 @@ function main() {
 
   if (input.hook_event_name === "PostToolUse") {
     if (path.startsWith("..") || !existsSync(filePath)) return 0;
-    const fileBefore = gitShow(path);
+    const fileBefore = gitShow(path, root);
     const fileAfter = readFileSync(filePath, "utf8");
     const fragments = editFragments(
       input.tool_name,
       input.tool_input,
       fileBefore,
-      fileAfter
+      fileAfter,
     );
     const problem = checkEdit(path, { ...fragments, fileBefore, fileAfter });
     if (!problem) return 0;
@@ -186,7 +308,10 @@ function main() {
 }
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   try {
     process.exitCode = main();
   } catch {

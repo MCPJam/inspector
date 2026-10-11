@@ -77,6 +77,7 @@
     "build:client": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "pretypecheck:client": "npm run check:renderer-tier-b && npm run check:browser-viewer",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
+    "typecheck:server": "node scripts/typecheck-server.mjs",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",
     "build:client:clean": "rm -rf node_modules/.vite && cross-env FORCE_OPTIMIZE=true NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "build:server": "tsup --config server/tsup.config.ts",

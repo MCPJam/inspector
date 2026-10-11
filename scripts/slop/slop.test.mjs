@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  cpSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -38,7 +45,7 @@ describe("isMeasuredFile", () => {
 describe("rules", () => {
   it("counts type escapes", () => {
     const counts = count(
-      "const a = b as any;\nfunction f(x: any): any {}\nconst c = d as unknown as E;\n"
+      "const a = b as any;\nfunction f(x: any): any {}\nconst c = d as unknown as E;\n",
     );
     assert.equal(counts["as-any"], 1);
     assert.equal(counts["any-annotation"], 2);
@@ -47,7 +54,7 @@ describe("rules", () => {
 
   it("does not read words that contain `any` as type escapes", () => {
     const counts = count(
-      'const company = "x";\nconst label = { any: 1, many: 2 };\n'
+      'const company = "x";\nconst label = { any: 1, many: 2 };\n',
     );
     assert.equal(counts["as-any"], 0);
     assert.equal(counts["any-annotation"], 0);
@@ -55,14 +62,14 @@ describe("rules", () => {
 
   it("counts swallowed promise rejections", () => {
     const counts = count(
-      "p.catch(() => {});\np.catch((_e) => undefined);\np.catch(() => null);\np.catch(async () => {});\np.catch((e) => log(e));\n"
+      "p.catch(() => {});\np.catch((_e) => undefined);\np.catch(() => null);\np.catch(async () => {});\np.catch((e) => log(e));\n",
     );
     assert.equal(counts["swallowed-catch-callback"], 4);
   });
 
   it("counts empty catch blocks but not ones with a reason comment", () => {
     const counts = count(
-      "try { a(); } catch {}\ntry { a(); } catch (e) {\n}\ntry { a(); } catch {\n  // best effort: the file may be gone\n}\n"
+      "try { a(); } catch {}\ntry { a(); } catch (e) {\n}\ntry { a(); } catch {\n  // best effort: the file may be gone\n}\n",
     );
     assert.equal(counts["empty-catch-block"], 2);
   });
@@ -71,11 +78,11 @@ describe("rules", () => {
     const text = "console.log('x');\nconsole.error('y');\n";
     assert.equal(
       count(text, "mcpjam-inspector/server/a.ts")["server-console"],
-      2
+      2,
     );
     assert.equal(
       count(text, "mcpjam-inspector/client/a.ts")["server-console"],
-      0
+      0,
     );
   });
 
@@ -87,7 +94,7 @@ describe("rules", () => {
         "// See PR 4556 for history.",
         'const issue = "#5474";',
         "// HTTP 404 is fine here.",
-      ].join("\n")
+      ].join("\n"),
     );
     assert.equal(counts["history-comment"], 3);
   });
@@ -98,14 +105,14 @@ describe("rules", () => {
         "// 2026-07-28 servers omit X.",
         "// A 2025-11-25 server can land on the legacy wire.",
         "// Spec 2025-06-18, changed on 2026-09-24.",
-      ].join("\n")
+      ].join("\n"),
     );
     assert.equal(counts["history-comment"], 1);
   });
 
   it("counts suppressions", () => {
     const counts = count(
-      "// @ts-nocheck\n// @ts-ignore\n// @ts-expect-error\n/* eslint-disable no-console */\n"
+      "// @ts-nocheck\n// @ts-ignore\n// @ts-expect-error\n/* eslint-disable no-console */\n",
     );
     assert.equal(counts["ts-suppression"], 3);
     assert.equal(counts["eslint-disable"], 1);
@@ -181,12 +188,11 @@ describe("ratchet", () => {
 });
 
 describe("deletion bot check", async () => {
-  const { checkLane, codeOnly, MAX_LINES } = await import(
-    "./deletion-bot-check.mjs"
-  );
+  const { checkLane, codeOnly, MAX_LINES } =
+    await import("./deletion-bot-check.mjs");
   const CHECK = join(
     dirname(fileURLToPath(import.meta.url)),
-    "deletion-bot-check.mjs"
+    "deletion-bot-check.mjs",
   );
   const lines = (n) => () => n;
 
@@ -194,7 +200,7 @@ describe("deletion bot check", async () => {
     const { problems } = checkLane(
       "dead-files",
       [{ status: "D", path: "a.ts" }],
-      { before: () => "", after: () => "", linesOf: lines(40) }
+      { before: () => "", after: () => "", linesOf: lines(40) },
     );
     assert.deepEqual(problems, []);
   });
@@ -207,7 +213,7 @@ describe("deletion bot check", async () => {
         { status: "M", path: "b.ts" },
         { status: "??", path: "c.ts" },
       ],
-      { before: () => "", after: () => "", linesOf: lines(MAX_LINES) }
+      { before: () => "", after: () => "", linesOf: lines(MAX_LINES) },
     );
     assert.equal(problems.length, 3);
   });
@@ -228,7 +234,7 @@ describe("deletion bot check", async () => {
     const { problems } = checkLane(
       "history-comments",
       [{ status: "M", path: "sdk/src/a.ts" }],
-      { before: () => before, after: () => after, linesOf: lines(5) }
+      { before: () => before, after: () => after, linesOf: lines(5) },
     );
     assert.deepEqual(problems, []);
   });
@@ -236,23 +242,23 @@ describe("deletion bot check", async () => {
   it("catches code hidden behind a comment marker", () => {
     assert.notEqual(
       codeOnly("/* fixed in #123 */ doThing();"),
-      codeOnly("/* why */ doOther();")
+      codeOnly("/* why */ doOther();"),
     );
     assert.notEqual(
       codeOnly("class A {\n  *gen() {}\n}"),
-      codeOnly("class A {\n  *other() {}\n}")
+      codeOnly("class A {\n  *other() {}\n}"),
     );
     assert.notEqual(
       codeOnly("const a = 1; // #5474"),
-      codeOnly("const a = 2;")
+      codeOnly("const a = 2;"),
     );
     assert.notEqual(
       codeOnly('const s = "a  b"; // #5474'),
-      codeOnly('const s = "a b";')
+      codeOnly('const s = "a b";'),
     );
     assert.notEqual(
       codeOnly("const t = `x\n  y`;"),
-      codeOnly("const t = `x\ny`;")
+      codeOnly("const t = `x\ny`;"),
     );
   });
 
@@ -293,9 +299,8 @@ describe("deletion bot check", async () => {
 });
 
 describe("agent hooks", async () => {
-  const { checkNewPath, checkEdit, editFragments, FILE_BUDGET } = await import(
-    "./hook.mjs"
-  );
+  const { checkNewPath, checkEdit, editFragments, FILE_BUDGET } =
+    await import("./hook.mjs");
   const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
 
   it("refuses scratch notes, spike folders and new root files", () => {
@@ -371,7 +376,7 @@ describe("agent hooks", async () => {
         hook_event_name: "PreToolUse",
         tool_name: "Write",
         tool_input: { file_path: join(root, "NOTES-item-9.md") },
-      })
+      }),
     );
     assert.equal(denied.code, 2);
     assert.match(denied.stderr, /scratch notes/);
@@ -386,11 +391,11 @@ describe("hook paths", async () => {
   it("normalizes native separators to git-style paths", () => {
     assert.equal(
       repoPath("/repo/sdk/src/a.ts", "/repo", posix),
-      "sdk/src/a.ts"
+      "sdk/src/a.ts",
     );
     assert.equal(
       repoPath("C:\\repo\\sdk\\src\\a.ts", "C:\\repo", win32),
-      "sdk/src/a.ts"
+      "sdk/src/a.ts",
     );
   });
 
@@ -405,7 +410,7 @@ describe("hook paths", async () => {
       {
         cwd: root,
         encoding: "utf8",
-      }
+      },
     )
       .split("\n")
       .find((path) => path && isMeasuredFile(path));
@@ -448,7 +453,7 @@ describe("repo hygiene", async () => {
       sizes({
         "sdk/src/big.ts": FILE_BUDGET + 1,
         "sdk/src/grew.ts": FILE_BUDGET + 5,
-      })
+      }),
     );
     assert.equal(failures.length, 4);
   });
@@ -457,7 +462,7 @@ describe("repo hygiene", async () => {
     const { failures, warnings } = checkChange(
       [{ status: "M", path: "sdk/src/huge.ts" }],
       sizes({ "sdk/src/huge.ts": 2000 }),
-      sizes({ "sdk/src/huge.ts": 2050 })
+      sizes({ "sdk/src/huge.ts": 2050 }),
     );
     assert.equal(failures.length, 0);
     assert.equal(warnings.length, 1);
@@ -471,8 +476,251 @@ describe("repo hygiene", async () => {
         { status: "M", path: "sdk/src/huge.ts" },
       ],
       sizes({ "sdk/src/huge.ts": 2000 }),
-      sizes({ "sdk/src/big.test.ts": 5000, "sdk/src/huge.ts": 1900 })
+      sizes({ "sdk/src/big.test.ts": 5000, "sdk/src/huge.ts": 1900 }),
     );
     assert.deepEqual([failures, warnings], [[], []]);
+  });
+});
+
+describe("pr-size verdict", async () => {
+  const { verdict, parseNumstat, countPatchLines, parseLabels, LARGE, LIMIT } =
+    await import("./pr-size.mjs");
+
+  it("counts NUL-delimited paths, including non-ASCII and tab ones", () => {
+    const output = [
+      "10\t2\tsdk/src/caf\u00e9.ts",
+      "5\t0\tsdk/src/a.test.ts",
+      "-\t-\tdocs/logo.png",
+      "3\t3\tmcpjam-inspector/client/src/App.tsx",
+      "4\t0\tsdk/src/weird\tname.ts",
+      "-\t-\tsdk/src/opaque.ts",
+      "",
+    ].join("\0");
+    const { files, uncounted } = parseNumstat(output);
+    assert.deepEqual(
+      files.map((file) => [file.path, file.lines]),
+      [
+        ["sdk/src/caf\u00e9.ts", 12],
+        ["mcpjam-inspector/client/src/App.tsx", 6],
+        ["sdk/src/weird\tname.ts", 4],
+      ],
+    );
+    assert.deepEqual(uncounted, ["sdk/src/opaque.ts"]);
+  });
+
+  it("counts patch lines inside hunks only", () => {
+    const patch = [
+      "diff --git a/x.ts b/x.ts",
+      "--- a/x.ts",
+      "+++ b/x.ts",
+      "@@ -1 +1,2 @@",
+      "-old",
+      "+--flag",
+      "+++counter",
+    ].join("\n");
+    assert.equal(countPatchLines(patch), 3);
+  });
+
+  it("counts source files a -diff attribute marks as binary", () => {
+    const repo = mkdtempSync(join(tmpdir(), "slop-size-"));
+    try {
+      const git = (...args) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+      writeFileSync(join(repo, ".gitattributes"), "*.ts -diff\n");
+      git("add", ".");
+      git("commit", "-qm", "base");
+      mkdirSync(join(repo, "sdk/src"), { recursive: true });
+      writeFileSync(
+        join(repo, "sdk/src/a.ts"),
+        "export const a = 1;\n".repeat(5),
+      );
+      git("add", ".");
+      git("commit", "-qm", "add");
+      const out = execFileSync(
+        "node",
+        [
+          join(dirname(fileURLToPath(import.meta.url)), "pr-size.mjs"),
+          "--base",
+          "HEAD^1",
+        ],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
+        },
+      );
+      assert.match(out, /\*\*5\*\* changed lines/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a label with a comma in its name whole", () => {
+    assert.deepEqual(parseLabels('["review,mechanical"]'), [
+      "review,mechanical",
+    ]);
+    assert.equal(
+      verdict(LIMIT + 1, parseLabels('["review,mechanical"]')),
+      "fail",
+    );
+    assert.deepEqual(parseLabels(undefined), []);
+    assert.throws(() => parseLabels('"mechanical"'), /JSON array/);
+  });
+
+  it("is ok within budget", () => {
+    assert.equal(verdict(LARGE, []), "ok");
+  });
+
+  it("flags a large PR and accepts either label", () => {
+    assert.equal(verdict(LARGE + 1, []), "large");
+    assert.equal(verdict(LARGE + 1, ["large-pr"]), "large-labelled");
+    assert.equal(verdict(LARGE + 1, ["mechanical"]), "large-labelled");
+  });
+
+  it("fails over the hard limit unless mechanical", () => {
+    assert.equal(verdict(LIMIT + 1, ["large-pr"]), "fail");
+    assert.equal(verdict(LIMIT + 1, ["mechanical"]), "large-labelled");
+  });
+});
+
+describe("hooks in a worktree", async () => {
+  const { snapshotFile } = await import("./hook.mjs");
+  const SLOP = dirname(fileURLToPath(import.meta.url));
+  // Resolved: node runs a symlinked script under its real path, and the hook
+  // runs only when it is the main module (macOS /var is /private/var).
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), "slop-hook-")));
+  after(() => rmSync(temp, { recursive: true, force: true }));
+  const git = (cwd, ...args) =>
+    execFileSync("git", args, { cwd, encoding: "utf8" });
+  /** A repository with these scripts committed, so it can run its own hook. */
+  const makeRepo = (name) => {
+    const dir = join(temp, name);
+    mkdirSync(join(dir, "sdk/src"), { recursive: true });
+    git(dir, "init", "-q");
+    git(dir, "config", "user.email", "test@example.com");
+    git(dir, "config", "user.name", "test");
+    cpSync(SLOP, join(dir, "scripts/slop"), { recursive: true });
+    writeFileSync(join(dir, "sdk/src/a.ts"), "export const a = 1;\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-qm", "base");
+    return dir;
+  };
+  const run = (event, hook) =>
+    spawnSync("node", [hook], {
+      input: JSON.stringify(event),
+      encoding: "utf8",
+    });
+
+  // The hook loads from the main checkout, as `$CLAUDE_PROJECT_DIR` does in
+  // a worktree session, and the session works in the worktree.
+  const repo = makeRepo("repo");
+  // The ratchet compares with origin/main, which a fresh repo lacks.
+  git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+  const wt = join(temp, "wt");
+  git(repo, "worktree", "add", "-q", "--detach", wt);
+  const HOOK = join(repo, "scripts/slop/hook.mjs");
+  const hook = (event) => run(event, HOOK).status;
+
+  it("checks an edit in the session's worktree, not the hook's checkout", () => {
+    writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
+    const code = hook({
+      hook_event_name: "PostToolUse",
+      tool_name: "Edit",
+      tool_input: {
+        file_path: join(wt, "sdk/src/a.ts"),
+        old_string: "1",
+        new_string: "b as any",
+      },
+    });
+    assert.equal(code, 2);
+    git(wt, "checkout", "--", "sdk/src/a.ts");
+  });
+
+  it("leaves another repository alone", () => {
+    const other = makeRepo("other");
+    git(other, "update-ref", "refs/remotes/origin/main", "HEAD");
+    const newRootFile = (dir) => ({
+      hook_event_name: "PreToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: join(dir, "PLAN.md"), content: "plan" },
+    });
+    assert.equal(hook(newRootFile(wt)), 2);
+    assert.equal(hook(newRootFile(other)), 0);
+    writeFileSync(join(other, "sdk/src/a.ts"), "export const a = b as any;\n");
+    assert.equal(
+      hook({
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: {
+          file_path: join(other, "sdk/src/a.ts"),
+          old_string: "1",
+          new_string: "b as any",
+        },
+      }),
+      0,
+    );
+    assert.equal(hook({ hook_event_name: "Stop", cwd: other }), 0);
+  });
+
+  it("counts files created during the turn, not files that were already there", () => {
+    const session = `test-${process.pid}-${Date.now()}`;
+    writeFileSync(join(wt, "sdk/src/before.ts"), "p.catch(() => {});\n");
+    assert.equal(
+      hook({
+        hook_event_name: "UserPromptSubmit",
+        cwd: wt,
+        session_id: session,
+      }),
+      0,
+    );
+    assert.equal(
+      hook({ hook_event_name: "Stop", cwd: wt, session_id: session }),
+      0,
+    );
+    // What a Bash command might create: no Edit or Write hook saw it.
+    writeFileSync(
+      join(wt, "sdk/src/during.ts"),
+      "export const d = x as any;\n",
+    );
+    assert.equal(
+      hook({ hook_event_name: "Stop", cwd: wt, session_id: session }),
+      2,
+    );
+    rmSync(join(wt, "sdk/src/before.ts"));
+    rmSync(join(wt, "sdk/src/during.ts"));
+    rmSync(snapshotFile(session, realpathSync(wt)), { force: true });
+  });
+
+  it("lets the turn end when the ratchet itself fails", () => {
+    // No origin/main: the ratchet cannot find a base.
+    const bare = makeRepo("no-origin");
+    const result = run(
+      { hook_event_name: "Stop", cwd: bare },
+      join(bare, "scripts/slop/hook.mjs"),
+    );
+    assert.equal(result.status, 0);
+    assert.match(result.stderr, /slop Stop check skipped/);
+  });
+
+  it("ignores an unwritable GITHUB_STEP_SUMMARY", () => {
+    const result = spawnSync("node", [HOOK], {
+      input: JSON.stringify({ hook_event_name: "Stop", cwd: wt }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_STEP_SUMMARY: "/nonexistent/dir/summary.md",
+      },
+    });
+    assert.equal(result.status, 0);
+  });
+
+  it("stops on tracked changes but not on someone's untracked files", () => {
+    writeFileSync(join(wt, "sdk/src/scratch.ts"), "p.catch(() => {});\n");
+    assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 0);
+    writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
+    assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
   });
 });
