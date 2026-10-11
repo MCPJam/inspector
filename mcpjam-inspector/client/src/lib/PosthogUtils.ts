@@ -299,7 +299,9 @@ function scrubIncrementalData(data: Record<string, unknown>): unknown {
     case RRWEB_SOURCE.mutation: {
       let out = withField(data, "adds", (adds) =>
         mapItems(adds, (add) =>
-          isPlainRecord(add) ? withField(add, "node", scrubSerializedNode) : add,
+          isPlainRecord(add)
+            ? withField(add, "node", scrubSerializedNode)
+            : add,
         ),
       );
       // Text changes reach `maskTextFn`, a `<style>`'s included; once more
