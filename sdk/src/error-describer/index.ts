@@ -20,3 +20,7 @@ export {
 } from "./challenge.js";
 
 export { mcpjamLimitSlugForMessage } from "./describe.js";
+export {
+  orgPolicySlugForCode,
+  type OrgPolicyRefusalCode,
+} from "./org-policy.js";
