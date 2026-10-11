@@ -19,11 +19,13 @@ vi.mock("../../../services/guest-token.js", () => ({
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";

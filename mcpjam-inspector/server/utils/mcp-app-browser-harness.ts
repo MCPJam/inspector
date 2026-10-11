@@ -1,3 +1,10 @@
+import { randomUUID } from "node:crypto";
+import {
+  parsePluginModelContext,
+  type PluginContextSnapshot,
+} from "../../shared/plugin-model-context.js";
+import { createHash } from "node:crypto";
+import type { HarnessPresentation } from "../../shared/unattended-workspace";
 /**
  * mcp-app-browser-harness.ts — headless-Chromium host harness for MCP App evals.
  *
@@ -297,9 +304,7 @@ export function parseSnapshotElements(tree: string): SnapshotElement[] {
     if (!match) continue;
     const role = match[1]!;
     if (!roles.has(role)) continue;
-    const name = match[2]
-      ? match[2].replace(/\\(["\\])/g, "$1")
-      : undefined;
+    const name = match[2] ? match[2].replace(/\\(["\\])/g, "$1") : undefined;
     const key = `${role}\u0000${name ?? ""}`;
     const occurrence = counts.get(key) ?? 0;
     counts.set(key, occurrence + 1);
@@ -396,11 +401,13 @@ export interface RenderWidgetInput {
 }
 
 export interface McpAppBrowserHarnessOptions {
+  /** Current host transcript/appearance. Pure data; never an execution callback. */
+  getWorkspacePresentation?: () => HarnessPresentation;
   /** Dispatch a widget-initiated tools/call (app->host). */
   callTool: (
     serverId: string,
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
   ) => Promise<unknown>;
   /**
    * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
@@ -411,7 +418,7 @@ export interface McpAppBrowserHarnessOptions {
    */
   resolveToolVisibility?: (
     serverId: string,
-    name: string
+    name: string,
   ) => Array<"model" | "app"> | undefined;
   /** Host capabilities advertised in ui/initialize. Sensible default below. */
   hostCapabilities?: Record<string, unknown>;
@@ -521,7 +528,7 @@ export function pushBoundedDiagnostic(arr: string[], value: string): void {
   arr.push(
     value.length > MAX_DIAGNOSTIC_ENTRY_CHARS
       ? `${value.slice(0, MAX_DIAGNOSTIC_ENTRY_CHARS)}…`
-      : value
+      : value,
   );
 }
 
@@ -602,6 +609,10 @@ export class McpAppBrowserHarness {
   private disposePromise: Promise<void> | null = null;
   private videoPromise: Promise<Buffer | null> | null = null;
   private renderTail: Promise<unknown> = Promise.resolve();
+  private readonly renderReceipts = new Map<
+    string,
+    { fingerprint: string; result: Promise<WidgetRenderObservation> }
+  >();
   /**
    * Screenshot of the empty host page, captured once before the first widget
    * mounts. The host background + viewport are invariant, so this is the
@@ -611,6 +622,17 @@ export class McpAppBrowserHarness {
    */
   private blankReference: Buffer | null = null;
 
+  private readonly modelContexts = new Map<string, PluginContextSnapshot>();
+  /** Current run-owned bytes only; closed Apps cannot contribute to future turns. */
+  getModelContexts() {
+    return [...this.modelContexts]
+      .filter(([id]) => this.mounted.has(id))
+      .flatMap(([instanceId, snapshot]) =>
+        snapshot.state
+          ? [{ instanceId, generation: 1, ...structuredClone(snapshot.state) }]
+          : [],
+      );
+  }
   private readonly mounted = new Map<string, MountedWidget>();
   /**
    * CSP sources declared by the CURRENTLY mounted widget (renderWidget sets,
@@ -732,7 +754,7 @@ export class McpAppBrowserHarness {
 
     if (!executablePath || !existsSync(executablePath)) {
       throw new ChromiumNotInstalledError(
-        "Chromium is not installed for Playwright. Run `npx playwright install chromium`."
+        "Chromium is not installed for Playwright. Run `npx playwright install chromium`.",
       );
     }
 
@@ -831,7 +853,7 @@ export class McpAppBrowserHarness {
         pushBoundedDiagnostic(this.consoleErrors, msg.text());
     });
     this.page.on("pageerror", (err) =>
-      pushBoundedDiagnostic(this.consoleErrors, String(err))
+      pushBoundedDiagnostic(this.consoleErrors, String(err)),
     );
 
     // One-tab limit: a widget must not pop a tab the model can't see. Attached
@@ -851,7 +873,7 @@ export class McpAppBrowserHarness {
           widgetId: string;
           name: string;
           args: Record<string, unknown>;
-        }
+        },
       ) => {
         const widget = this.mounted.get(payload.widgetId);
         // Fail closed: a tools/call from a widget that isn't (or is no longer)
@@ -868,13 +890,13 @@ export class McpAppBrowserHarness {
         this.pendingRpcCount += 1;
         const visibility = this.opts.resolveToolVisibility?.(
           serverId,
-          payload.name
+          payload.name,
         );
         try {
           const result = await this.opts.callTool(
             serverId,
             payload.name,
-            payload.args
+            payload.args,
           );
           this.toolCallBuffer.push({
             name: payload.name,
@@ -899,7 +921,40 @@ export class McpAppBrowserHarness {
         } finally {
           this.pendingRpcCount -= 1;
         }
-      }
+      },
+    );
+
+    await this.page.exposeBinding(
+      "__mcpjamHostContext",
+      async (_source, payload: { widgetId: string; params: unknown }) => {
+        if (!this.mounted.has(payload.widgetId) || this.closing)
+          throw new Error("App context owner is closed");
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.updateModelContext)
+          throw new Error("App context is unavailable");
+        const params = parsePluginModelContext(payload.params);
+        const previous = this.modelContexts.get(payload.widgetId);
+        if ((previous?.sequence ?? 0) >= 2048)
+          throw new Error("App context update limit exceeded");
+        const updateId = randomUUID();
+        const snapshot: PluginContextSnapshot = {
+          revision: (previous?.revision ?? 0) + 1,
+          sequence: (previous?.sequence ?? 0) + 1,
+          state: {
+            updateId,
+            content: params.content ?? [],
+            ...(params.structuredContent
+              ? { structuredContent: params.structuredContent }
+              : {}),
+          },
+        };
+        this.modelContexts.set(payload.widgetId, snapshot);
+        return {
+          _meta: { "openai/modelContext": { updateId } },
+          state: snapshot.state,
+        };
+      },
     );
 
     // app->host `ui/message` follow-ups funneled from the in-page bridge.
@@ -913,11 +968,11 @@ export class McpAppBrowserHarness {
         const text =
           typeof payload.text === "string" ? payload.text.trim() : "";
         if (text) this.followUpBuffer.push(text);
-      }
+      },
     );
 
     await this.page.setContent(
-      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>"
+      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>",
     );
     await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
   }
@@ -925,14 +980,64 @@ export class McpAppBrowserHarness {
   /* ---- render ---- */
 
   renderWidget(input: RenderWidgetInput): Promise<WidgetRenderObservation> {
-    // The host page, CSP allowlist and mount buffers belong to ONE widget.
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify(input))
+      .digest("hex");
+    const existing = this.renderReceipts.get(input.toolCallId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint)
+        return Promise.resolve({
+          toolCallId: input.toolCallId,
+          toolName: input.toolName,
+          serverId: input.serverId,
+          status: "mount_failed",
+          elapsedMs: 0,
+          ts: Date.now(),
+          consoleErrors: ["Original App render binding changed"],
+        });
+      const replay = this.renderTail.then(async () => {
+        const { followUps: _followUps, ...observed } = await existing.result;
+        if (!this.page || !this.mounted.has(input.toolCallId)) return observed;
+        const presentation = this.opts.getWorkspacePresentation?.();
+        if (presentation)
+          await this.page.evaluate(
+            (value) =>
+              (
+                globalThis as unknown as {
+                  __mcpjamHarness: { updatePresentation(value: unknown): void };
+                }
+              ).__mcpjamHarness.updatePresentation(value),
+            presentation,
+          );
+        return {
+          ...observed,
+          screenshotBase64: await this.captureScreenshot(),
+          ts: Date.now(),
+        };
+      });
+      this.renderTail = replay.catch(() => {});
+      return replay;
+    }
+    // Receipts survive close and failure: retrying a render must never replay a
+    // load-time tool call or duplicate a ui/message model continuation.
+    if (this.renderReceipts.size >= 256)
+      return Promise.resolve({
+        toolCallId: input.toolCallId,
+        toolName: input.toolName,
+        serverId: input.serverId,
+        status: "mount_failed",
+        elapsedMs: 0,
+        ts: Date.now(),
+        consoleErrors: ["App render receipt limit reached"],
+      });
     const render = this.renderTail.then(() => this.renderWidgetSerial(input));
+    this.renderReceipts.set(input.toolCallId, { fingerprint, result: render });
     this.renderTail = render.catch(() => {});
     return render;
   }
 
   private async renderWidgetSerial(
-    input: RenderWidgetInput
+    input: RenderWidgetInput,
   ): Promise<WidgetRenderObservation> {
     const ts = Date.now();
     const started = ts;
@@ -1031,10 +1136,12 @@ export class McpAppBrowserHarness {
         {
           widgetId: input.toolCallId,
           html: policedHtml,
+          presentation: this.opts.getWorkspacePresentation?.(),
           hostCapabilities:
             this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES,
           hostInfo: this.opts.hostInfo ?? {
-            name: "mcpjam-eval-harness",
+            name: this.opts.getWorkspacePresentation?.()?.hostStyle === "chatgpt"
+              ? "ChatGPT" : "mcpjam-eval-harness",
             version: "1.0.0",
           },
           permissions: input.permissions,
@@ -1043,7 +1150,7 @@ export class McpAppBrowserHarness {
           toolInput: input.toolInput,
           toolOutput: input.toolOutput,
           renderTimeoutMs: this.budgets.renderTimeoutMs,
-        }
+        },
       );
     } catch (err) {
       await this.unmount(input.toolCallId);
@@ -1184,7 +1291,7 @@ export class McpAppBrowserHarness {
       .waitForLoadState("networkidle", {
         timeout: Math.min(
           this.budgets.settleTimeoutMs,
-          this.budgets.paintTimeoutMs
+          this.budgets.paintTimeoutMs,
         ),
       })
       .catch(() => {});
@@ -1308,7 +1415,7 @@ export class McpAppBrowserHarness {
           ...(target.role.exact !== undefined
             ? { exact: target.role.exact }
             : {}),
-        }
+        },
       );
     } else if (target.text) {
       loc = frame.getByText(target.text);
@@ -1317,7 +1424,7 @@ export class McpAppBrowserHarness {
     } else {
       // Schema/validators reject empty locators; defensive guard.
       throw new Error(
-        "locator must specify at least one of role/text/css/testId"
+        "locator must specify at least one of role/text/css/testId",
       );
     }
     return target.nth !== undefined ? loc.nth(target.nth) : loc;
@@ -1412,7 +1519,7 @@ export class McpAppBrowserHarness {
           const amount = (step.amount ?? 3) * 100;
           await this.page.mouse.wheel(
             0,
-            step.direction === "up" ? -amount : amount
+            step.direction === "up" ? -amount : amount,
           );
           break;
         }
@@ -1423,7 +1530,7 @@ export class McpAppBrowserHarness {
           const verdict = await this.evaluateAssertion(
             step.assertion,
             input.priorWidgetToolCalls ?? [],
-            timeout
+            timeout,
           );
           ok = verdict.ok;
           reason = verdict.reason;
@@ -1461,7 +1568,7 @@ export class McpAppBrowserHarness {
   private async evaluateAssertion(
     assertion: StepAssertion,
     priorWidgetToolCalls: WidgetToolCall[],
-    timeout: number
+    timeout: number,
   ): Promise<{ ok: boolean; reason?: string }> {
     switch (assertion.type) {
       case "textVisible": {
@@ -1511,7 +1618,7 @@ export class McpAppBrowserHarness {
       }
       case "widgetToolCalled": {
         const called = priorWidgetToolCalls.some(
-          (c) => c.name === assertion.toolName
+          (c) => c.name === assertion.toolName,
         );
         return called
           ? { ok: true }
@@ -1556,7 +1663,7 @@ export class McpAppBrowserHarness {
       }
       case "wait":
         await page.waitForTimeout(
-          Math.min(action.duration ?? 250, this.budgets.settleTimeoutMs)
+          Math.min(action.duration ?? 250, this.budgets.settleTimeoutMs),
         );
         break;
       case "screenshot":
@@ -1627,7 +1734,7 @@ export class McpAppBrowserHarness {
     const jpeg = await this.page!.screenshot({ type: "jpeg", quality: 20 });
     throw new Error(
       `screenshot exceeds byte budget after re-encoding ` +
-        `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`
+        `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`,
     );
   }
 
@@ -1779,7 +1886,7 @@ export class McpAppBrowserHarness {
             (
               globalThis as unknown as { __mcpjamHarness: HarnessPageApi }
             ).__mcpjamHarness.dismissWidget(id),
-          toolCallId
+          toolCallId,
         )
         .catch(() => {});
     }

@@ -17,7 +17,10 @@
  * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
-import { getCanonicalModelId } from "@/shared/types";
+import {
+  getCanonicalModelId,
+  hostedProviderFromCanonicalId,
+} from "@/shared/types";
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
@@ -25,7 +28,16 @@ import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
 } from "@mcpjam/sdk/browser";
-import type { HarnessModelPurpose } from "@/shared/harness-model-support";
+import {
+  harnessOrgProviderUnsupportedReason,
+  harnessRunsOnOrgProvider,
+  type HarnessModelPurpose,
+} from "@/shared/harness-model-support";
+import type {
+  ModelConnectionRef,
+  ModelSelection,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import {
   getHarnessAdapter,
   type HarnessId,
@@ -114,12 +126,17 @@ export function harnessModelPurposeForSourceType(
  *
  *  - external-account harness: the host must carry the runtime's sentinel
  *    ({@link externalAccountHostModelRefusalReason}); nothing else applies.
- *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`),
- *    and the harness-model evidence table at the adapter's pinned runtime
- *    version must admit it for `purpose`: `unsupported` is refused
- *    (`model-unsupported`); `unknown` is refused for evals and swarms
- *    (`model-unverified`, "not verified for <harness> <version>") and allowed
- *    in Playground chat, where the same sentence comes back as `warning`.
+ *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`)
+ *    OR the turn's saved selection names an org connection whose provider
+ *    this harness runs on (Claude Code → Anthropic, Codex → OpenAI), which
+ *    runs on the organization's own key. An org connection to any other
+ *    provider is `model-provider-unsupported`; a local provider stays
+ *    `model-not-hosted`. Then the harness-model evidence table at the
+ *    adapter's pinned runtime version must admit the CANONICAL id for
+ *    `purpose`: `unsupported` is refused (`model-unsupported`); `unknown` is
+ *    refused for evals and swarms (`model-unverified`, "not verified for
+ *    <harness> <version>") and allowed in Playground chat, where the same
+ *    sentence comes back as `warning`.
  */
 export function harnessModelRefusal(args: {
   adapter: HarnessRuntimeAdapter;
@@ -127,6 +144,8 @@ export function harnessModelRefusal(args: {
   /** See `hostModelId` on {@link checkHarnessRuntimeAvailable}. */
   hostModelId?: string;
   purpose: HarnessModelPurpose;
+  /** See `selection` on {@link checkHarnessRuntimeAvailable}. */
+  selection?: RequestedModelSelection | null;
 }): {
   refusal?: { kind: HarnessUnavailableKind; reason: string };
   warning?: string;
@@ -140,7 +159,25 @@ export function harnessModelRefusal(args: {
     return reason ? { refusal: { kind: "model-unsupported", reason } } : {};
   }
   const name = adapter.displayName;
-  if (!isHostedModelDefinition(args.model)) {
+  const orgSelection = orgHarnessSelection(args.selection);
+  if (orgSelection) {
+    // The provider of the connection, from the resolved picker row. The
+    // backend resolves the connection id itself at lease start and refuses a
+    // mismatch; this only spares the turn a doomed start.
+    if (
+      !harnessRunsOnOrgProvider(
+        adapter.id,
+        orgSelectionProvider(args.model, orgSelection),
+      )
+    ) {
+      return {
+        refusal: {
+          kind: "model-provider-unsupported",
+          reason: harnessOrgProviderUnsupportedReason(adapter.id),
+        },
+      };
+    }
+  } else if (!isHostedModelDefinition(args.model)) {
     return {
       refusal: {
         kind: "model-not-hosted",
@@ -150,8 +187,12 @@ export function harnessModelRefusal(args: {
       },
     };
   }
+  // Evidence is read on the CANONICAL id: an org row's own id is the native
+  // one (`claude-sonnet-4-5`), which the table does not know.
   const verdict = adapter.modelSupport(
-    getCanonicalModelId(args.model.id, args.model.provider),
+    orgSelection
+      ? orgSelection.modelId
+      : getCanonicalModelId(args.model.id, args.model.provider),
   );
   if (verdict.status === "supported") return {};
   if (verdict.status === "unsupported") {
@@ -159,6 +200,71 @@ export function harnessModelRefusal(args: {
   }
   if (args.purpose === "chat") return { warning: verdict.reason };
   return { refusal: { kind: "model-unverified", reason: verdict.reason } };
+}
+
+/**
+ * The saved selection when it names an organization connection, else
+ * undefined. A local or hosted selection never runs on an org key.
+ */
+export type OrgHarnessSelection = ModelSelection & {
+  source: "org";
+  connectionRef: Extract<ModelConnectionRef, { kind: "orgProvider" }>;
+};
+
+export function orgHarnessSelection(
+  selection: RequestedModelSelection | null | undefined,
+): OrgHarnessSelection | undefined {
+  return selection?.source === "org" &&
+    selection.connectionRef?.kind === "orgProvider"
+    ? (selection as OrgHarnessSelection)
+    : undefined;
+}
+
+/**
+ * The provider an org turn's connection serves: the resolved row's, or — for
+ * a caller that carries only the selection — the canonical id's creator
+ * prefix (`anthropic/claude-sonnet-4.5` → `anthropic`). When both are known
+ * and disagree, the saved selection is inconsistent with its row: no provider,
+ * so the turn is refused here rather than at lease start.
+ */
+function orgSelectionProvider(
+  model: { provider?: string },
+  selection: OrgHarnessSelection,
+): string | undefined {
+  const prefix = selection.modelId.includes("/")
+    ? hostedProviderFromCanonicalId(selection.modelId)
+    : undefined;
+  if (model.provider && prefix && model.provider !== prefix) return undefined;
+  return model.provider ?? prefix;
+}
+
+/**
+ * Will this turn run a BROKERED harness's real runtime? One predicate for the
+ * chat routing (free path vs org BYOK path) and the persisted `modelSource`
+ * (`harnessTurnRail`), so they cannot disagree about it. The emulated
+ * cloud-skill tools read it for an org selection only: their hosted check also
+ * covers an external-account harness, which this predicate excludes.
+ *
+ * True when a brokered harness is requested and the model either is
+ * MCPJam-provided (the hosted rail) or comes from an org connection whose
+ * provider the harness runs on. A turn on any other rail never runs the
+ * harness; the preflight refuses it before it starts.
+ */
+export function runsHarness(args: {
+  harness: string | undefined;
+  model: { id: string; provider?: string; hosted?: boolean };
+  selection?: RequestedModelSelection | null;
+}): boolean {
+  if (!args.harness) return false;
+  const adapter = getHarnessAdapter(args.harness);
+  if (adapter.modelAccess === "external-account") return false;
+  const orgSelection = orgHarnessSelection(args.selection);
+  return orgSelection
+    ? harnessRunsOnOrgProvider(
+        adapter.id,
+        orgSelectionProvider(args.model, orgSelection),
+      )
+    : isHostedModelDefinition(args.model);
 }
 
 /**
@@ -232,6 +338,25 @@ export function selectionReasoningEffort(
 }
 
 /**
+ * The effort a turn asked for, from every place it can ride: the typed field,
+ * else the top-level `extraBodyFields.reasoningEffort` (where
+ * `resolveTurnRuntime`'s hosted branch puts a turn's own effort, and which
+ * `/stream` prefers), else the saved selection forwarded with the turn
+ * (`extraBodyFields.modelSelection`). One reader for every harness check so a
+ * turn-level effort cannot be dropped by one and refused by another.
+ */
+export function turnReasoningEffortOf(args: {
+  reasoningEffort?: ModelReasoningEffort;
+  extraBodyFields?: Record<string, unknown>;
+}): ModelReasoningEffort | undefined {
+  return (
+    args.reasoningEffort ??
+    readReasoningEffort(args.extraBodyFields?.reasoningEffort) ??
+    selectionReasoningEffort(args.extraBodyFields?.modelSelection)
+  );
+}
+
+/**
  * Why a harness turn must not run at this reasoning effort, or `undefined` when
  * it may.
  *
@@ -245,10 +370,25 @@ export function selectionReasoningEffort(
 export function harnessReasoningEffortRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The levels the turn's MODEL lists, when the caller has them (the catalog's
+   * `supportedReasoningEfforts`). The adapter applying a level does not mean the
+   * model accepts it (`xhigh` on `gpt-5-nano`), and that otherwise fails late at
+   * the lease mint, after the sandbox is reserved. Absent ⇒ not checked here.
+   */
+  modelEfforts?: readonly string[];
 }): string | undefined {
-  const { adapter, reasoningEffort } = args;
+  const { adapter, reasoningEffort, modelEfforts } = args;
   if (reasoningEffort === undefined) return undefined;
   if (adapter.supportedReasoningEfforts.includes(reasoningEffort)) {
+    if (modelEfforts && !modelEfforts.includes(reasoningEffort)) {
+      return (
+        `this model doesn't accept the "${reasoningEffort}" reasoning effort` +
+        (modelEfforts.length > 0
+          ? ` — it lists ${modelEfforts.map((level) => `"${level}"`).join(", ")}`
+          : " — it lists none")
+      );
+    }
     return undefined;
   }
   const name = adapter.displayName;
@@ -279,6 +419,12 @@ export function harnessReasoningEffortRefusalReason(args: {
  * (`supportsHostExecutedToolApproval`). Reading the wrong one is the bypass this
  * function exists to make unrepresentable — Codex's MCP tools are host-executed,
  * so `supportsMcpToolApproval` says nothing about them.
+ *
+ * An UNATTENDED run (evals, swarms: nobody can answer) is refused whatever the
+ * adapter can do. A runtime that pauses would otherwise be admitted and then
+ * fail at its first gated call (an eval turn has no session to park in) or
+ * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
+ * the same posture a runtime that can't pause already gets.
  */
 export function harnessToolApprovalRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
@@ -286,9 +432,17 @@ export function harnessToolApprovalRefusalReason(args: {
   /** Whether the host has any selected MCP servers. Selects whether the
    *  MCP-surface arm applies; the native-surface arm applies regardless. */
   hasSelectedMcpServers: boolean;
+  /** Nobody can answer an approval on this run (evals, swarms). */
+  unattended?: boolean;
 }): string | undefined {
   if (!args.requireToolApproval) return undefined;
   const name = args.adapter.displayName;
+  if (args.unattended) {
+    return (
+      `the ${name} harness can't pause for tool approval in an unattended ` +
+      "run (evals and swarms) — turn off requireToolApproval on this host"
+    );
+  }
   // The runtime runs its own native tools in-sandbox. If it can't pause on
   // those, approval is unsound for the whole turn — servers or no servers.
   if (!args.adapter.supportsNativeToolApproval) {
@@ -326,6 +480,9 @@ export type HarnessUnavailableKind =
   | "computers-unconfigured"
   | "tool-approval"
   | "model-not-hosted"
+  /** An organization connection whose provider this harness does not run on
+   *  (an OpenAI connection on Claude Code, say). */
+  | "model-provider-unsupported"
   | "model-unsupported"
   /** The evidence table has not verified this model on the harness's runtime
    *  version. Refused for evals and swarms; chat runs it with a warning. */
@@ -334,6 +491,23 @@ export type HarnessUnavailableKind =
    *  verified it can apply. A property of the HOST's selection, not of the
    *  model, so it is final at the first admission pass. */
   | "setting-unsupported";
+
+/**
+ * The HTTP status a chat route answers an unavailable harness with.
+ *
+ * 422 when the turn itself is the problem — its host's settings, its model,
+ * its approval gate: the request is well-formed and retrying it changes
+ * nothing. 503 for the two OPERATOR states — broker delivery switched off, or
+ * this server not configured as a computers data plane: the request is fine,
+ * the server is not ready for it, and it will work once an operator fixes that.
+ */
+export function harnessUnavailableHttpStatus(
+  kind: HarnessUnavailableKind,
+): 422 | 503 {
+  return kind === "broker-disabled" || kind === "computers-unconfigured"
+    ? 503
+    : 422;
+}
 
 export type HarnessAvailability =
   /** `warning`: the turn may run, but the reader should be told something —
@@ -366,7 +540,13 @@ export function checkHarnessRuntimeAvailable(args: {
    * admitted and then silently runs emulated). Deriving both from the resolved
    * definition makes the two answers consistent by construction.
    */
-  model: { id: string; provider?: string; hosted?: boolean };
+  model: {
+    id: string;
+    provider?: string;
+    hosted?: boolean;
+    /** The model's own effort levels (catalog), when known. */
+    supportedReasoningEfforts?: readonly string[];
+  };
   /**
    * The host's CONFIGURED model id, before any body or per-case override.
    *
@@ -427,7 +607,21 @@ export function checkHarnessRuntimeAvailable(args: {
    * adapter has not verified it, rather than silently not applied.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** Nobody can answer an approval on this run (evals, swarms). Not derived
+   *  from `purpose`: a human scenario chat reads models strictly as `eval`
+   *  but can still answer an approval. */
+  unattended?: boolean;
+  /**
+   * The turn's saved model selection, when it has one. A `source: 'org'`
+   * selection naming a connection whose provider this harness runs on is
+   * admitted on the organization's own key instead of `model-not-hosted`;
+   * the backend resolves the connection id authoritatively at lease start.
+   */
+  selection?: RequestedModelSelection | null;
 }): HarnessAvailability {
+  // The SAME arm the turn will run: local Codex is always the app-server
+  // adapter, so asking the hosted default here would refuse an approval-gated
+  // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
 
@@ -490,6 +684,7 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
+    unattended: args.unattended === true,
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };
@@ -499,6 +694,9 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     ...(args.reasoningEffort !== undefined
       ? { reasoningEffort: args.reasoningEffort }
+      : {}),
+    ...(args.model.supportedReasoningEfforts
+      ? { modelEfforts: args.model.supportedReasoningEfforts }
       : {}),
   });
   if (effortRefusal) {
@@ -513,7 +711,9 @@ export function checkHarnessRuntimeAvailable(args: {
   // therefore every Codex eval) is gone with it.
 
   // Model eligibility: harness runtimes authenticate via the MCPJam gateway
-  // credential, not org BYOK. A non-eligible model can't run the real runtime,
+  // credential or, for an org selection on the harness's own vendor, the
+  // organization's key — never a local key. A non-eligible model can't run
+  // the real runtime,
   // so fail closed here rather than degrade to emulated and mislead the user.
   // Derived, not passed: `isHostedCatalogModel` canonicalizes internally but
   // needs the PROVIDER to do it, and `supportsModel` needs the canonical form.
@@ -543,6 +743,7 @@ export function checkHarnessRuntimeAvailable(args: {
     model: args.model,
     ...(args.hostModelId !== undefined ? { hostModelId: args.hostModelId } : {}),
     purpose: args.purpose ?? "eval",
+    ...(args.selection ? { selection: args.selection } : {}),
   });
   if (modelVerdict.refusal) {
     return { ok: false, ...modelVerdict.refusal };

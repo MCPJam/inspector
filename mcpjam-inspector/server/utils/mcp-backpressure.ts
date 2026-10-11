@@ -4,6 +4,10 @@ import { logger } from "./logger.js";
 import { abortableSleep } from "./run-supervisor/backoff.js";
 import { withDeadline } from "./run-supervisor/deadline.js";
 import { retryAfterMsOf } from "./run-supervisor/retry.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../services/service-credential.js";
 
 export interface McpAdmissionCoordinator {
   admit(
@@ -172,7 +176,7 @@ export function hostedMcpBackpressureFetch(options: {
       .includes(options.serverId);
   if (!enabled()) return options.fetch;
   const endpoint = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!endpoint || !serviceToken || !options.userId)
     throw new McpAdmissionError("mcp_admission_unavailable");
   const scope = {
@@ -194,7 +198,7 @@ export function hostedMcpBackpressureFetch(options: {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-inspector-service-token": serviceToken,
+            [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
           },
           body: JSON.stringify({ ...scope, ...extra }),
           signal: deadline.signal,
