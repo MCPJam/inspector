@@ -55,6 +55,27 @@ describe("aiLaunchProblemsOf", () => {
     ).toEqual(problems);
   });
 
+  it("reads a row without a dependency under the generic heading, never as a model", () => {
+    const [row] = aiLaunchProblemsOf({
+      problems: [
+        { label: "x", code: "org_keys_required", reason: "It can't run." },
+      ],
+    });
+    expect(aiLaunchDependencyTitle(row!.dependency)).toBe("Dependency");
+  });
+
+  it("reads the code from serialized data and from a body", () => {
+    expect(
+      aiLaunchRefusalCodeOf({
+        data: JSON.stringify({ code: "org_runtime_unsupported" }),
+      }),
+    ).toBe("org_runtime_unsupported");
+    expect(aiLaunchRefusalCodeOf({ body: { code: "org_keys_required" } })).toBe(
+      "org_keys_required",
+    );
+    expect(aiLaunchRefusalCodeOf({ data: "{not json" })).toBeUndefined();
+  });
+
   it("is empty for anything else", () => {
     expect(aiLaunchProblemsOf(new Error("nope"))).toEqual([]);
     expect(aiLaunchProblemsOf(undefined)).toEqual([]);
