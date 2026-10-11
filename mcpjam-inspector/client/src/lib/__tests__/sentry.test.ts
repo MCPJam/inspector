@@ -524,6 +524,46 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for the first stop when a second stop returns at once", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    setSessionPrivacy("full");
+    const events: string[] = [];
+    let finishFirstStop: () => void = () => {};
+    let stops = 0;
+    const replay = {
+      start: vi.fn(() => events.push("start")),
+      // Like Sentry's: the first stop flushes for a while; a stop while the
+      // replay is already stopping returns a resolved promise.
+      stop: vi.fn(() => {
+        stops += 1;
+        if (stops > 1) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          finishFirstStop = () => {
+            events.push("first stop settled");
+            resolve();
+          };
+        });
+      }),
+      getReplayId: vi.fn(() => (stops === 0 ? "replay-id" : undefined)),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/results/b");
+    expect(replay.stop).toHaveBeenCalledTimes(2);
+    syncSentryReplay("/servers");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
+
+    finishFirstStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["first stop settled", "start"]);
+  });
+
   it("stays stopped when the location is blocked again before the flush ends", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
@@ -531,10 +571,12 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     const { syncSentryReplay } = await import("../sentry");
     const { setSessionPrivacy } = await import("../session-privacy");
     setSessionPrivacy("full");
-    let finishStop: () => void = () => {};
+    // Every stop issued so far finishes flushing together.
+    const flushing: (() => void)[] = [];
+    const finishStop = () => flushing.splice(0).forEach((resolve) => resolve());
     const replay = {
       start: vi.fn(),
-      stop: vi.fn(() => new Promise<void>((resolve) => (finishStop = resolve))),
+      stop: vi.fn(() => new Promise<void>((resolve) => flushing.push(resolve))),
       getReplayId: vi.fn(() => "replay-id"),
     };
     getClient.mockReturnValue({ getIntegrationByName: () => replay });

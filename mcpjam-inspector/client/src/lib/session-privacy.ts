@@ -360,8 +360,8 @@ function isUnderSecretSurface(element: Element | null | undefined): boolean {
  */
 export function maskReplayTextFull(text: string, element?: Element): string {
   if (isUnderSecretSurface(element)) return maskAllCharacters(text);
-  // Cheap pre-check: a credential needs a `/` or an `=` to exist at all.
-  if (!text || (!text.includes("/") && !text.includes("="))) return text;
+  // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
+  // a narrower copy let `encodeURIComponent("/results/<token>")` through.
   return scrubCredentialsInText(text);
 }
 
@@ -376,7 +376,6 @@ export function maskReplayTextMasked(text: string): string {
  * `title`.
  */
 export function maskReplayAttributeFull(_name: string, value: string): string {
-  if (!value || (!value.includes("/") && !value.includes("="))) return value;
   return scrubCredentialsInText(value);
 }
 
@@ -472,6 +471,11 @@ export const SESSION_RECORDING_OPTIONS = {
   recordHeaders: false,
   recordBody: false,
   maskCapturedNetworkRequestFn: maskReplayRequestFull,
+  // DOM events reach `before_send` as plain JSON, not gzip strings, so its
+  // pass can scrub the stylesheet text rrweb masks nowhere
+  // (`scrubCaptureEvent` in lib/PosthogUtils.ts). posthog-js still gzips
+  // the request body by default.
+  compress_events: false,
 } as const;
 
 /** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
@@ -583,6 +587,8 @@ export const MASKED_SESSION_RECORDING_OPTIONS = {
   captureJsonLd: false,
   recordCrossOriginIframes: false,
   maskCapturedNetworkRequestFn: maskReplayRequest,
+  // See SESSION_RECORDING_OPTIONS.
+  compress_events: false,
 } as const;
 
 /**
