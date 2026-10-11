@@ -1,0 +1,13 @@
+# GitHub reads CODEOWNERS only from /.github, the repo root, or /docs. The
+# "Standard BC" ruleset on main requires a code-owner review, so this file is
+# what makes that rule enforce anything.
+#
+# The last matching pattern wins.
+
+* @prathmeshpatel @chelojimenez @ignaciojimenezr
+
+# Dependency manifests have no owner, so dependabot-auto-merge.yml's bot
+# approval still satisfies the ruleset for the update classes it queues. A
+# person changing one of these still needs the ruleset's one approval.
+package.json
+package-lock.json

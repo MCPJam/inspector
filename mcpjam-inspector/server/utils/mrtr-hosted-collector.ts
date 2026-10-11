@@ -64,7 +64,8 @@ import {
   type MrtrInputRequestDisplay,
   type MrtrInputRequiredEvent,
   type MrtrOperationMethod,
-  type MrtrResumeSubmission,
+  type MrtrResumePayload,
+  isMrtrResumeSubmission,
 } from "@/shared/mrtr-continuation";
 
 // ── Suspend signal ─────────────────────────────────────────────────────────
@@ -77,10 +78,7 @@ import {
  */
 export class MrtrSuspendedSignal extends Error {
   readonly code = "MRTR_SUSPENDED";
-  constructor(
-    readonly continuationId: string,
-    readonly round: number,
-  ) {
+  constructor(readonly continuationId: string, readonly round: number) {
     super(`MRTR operation suspended at round ${round} (${continuationId}).`);
     this.name = "MrtrSuspendedSignal";
     Object.setPrototypeOf(this, new.target.prototype);
@@ -101,8 +99,14 @@ export function isMrtrSuspendedSignal(
 /** Raised when a safe-display field exceeds its byte cap. Fails the round closed. */
 export class MrtrDisplayTooLargeError extends Error {
   readonly code = "MRTR_DISPLAY_TOO_LARGE";
-  constructor(readonly field: string, readonly bytes: number, readonly cap: number) {
-    super(`MRTR display field "${field}" is ${bytes} bytes, over the ${cap}-byte cap.`);
+  constructor(
+    readonly field: string,
+    readonly bytes: number,
+    readonly cap: number,
+  ) {
+    super(
+      `MRTR display field "${field}" is ${bytes} bytes, over the ${cap}-byte cap.`,
+    );
     this.name = "MrtrDisplayTooLargeError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -230,7 +234,9 @@ function stableStringify(
     return JSON.stringify(value ?? null);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((v) => stableStringify(v, depth + 1, budget)).join(",")}]`;
+    return `[${value
+      .map((v) => stableStringify(v, depth + 1, budget))
+      .join(",")}]`;
   }
   const entries = Object.keys(value as Record<string, unknown>)
     .sort()
@@ -315,7 +321,10 @@ export function resolveMrtrAuthPrincipal(c: {
     return typeof value === "string" && value ? value : undefined;
   };
   return (
-    pick("mcpjamUserId") ?? pick("workosUserId") ?? pick("guestId") ?? "anonymous"
+    pick("mcpjamUserId") ??
+    pick("workosUserId") ??
+    pick("guestId") ??
+    "anonymous"
   );
 }
 
@@ -343,7 +352,10 @@ function deriveEndpointIdentity(config: unknown): unknown {
   if (typeof cfg.url === "string" && cfg.url) {
     try {
       const url = new URL(cfg.url);
-      return { kind: "http", endpoint: `${url.origin}${url.pathname}${url.search}` };
+      return {
+        kind: "http",
+        endpoint: `${url.origin}${url.pathname}${url.search}`,
+      };
     } catch {
       // Unparseable URL: bind the raw string rather than silently dropping the
       // term — a changed endpoint must still change the digest.
@@ -462,7 +474,11 @@ export function computeMrtrBindingFingerprintFromManager(
 
 function capField(field: string, value: string, cap: number): string {
   if (Buffer.byteLength(value, "utf8") > cap) {
-    throw new MrtrDisplayTooLargeError(field, Buffer.byteLength(value, "utf8"), cap);
+    throw new MrtrDisplayTooLargeError(
+      field,
+      Buffer.byteLength(value, "utf8"),
+      cap,
+    );
   }
   return value;
 }
@@ -477,6 +493,7 @@ function capField(field: string, value: string, cap: number): string {
 export function buildInputRequestDisplays(
   inputRequests: InputRequests,
   fieldCap: number = MRTR_DISPLAY_FIELD_MAX_BYTES,
+  schemaCap: number = fieldCap,
 ): MrtrInputRequestDisplay[] {
   const displays: MrtrInputRequestDisplay[] = [];
   for (const key of Object.keys(inputRequests)) {
@@ -516,8 +533,12 @@ export function buildInputRequestDisplays(
     if (schema !== undefined) {
       // Reject an oversized schema rather than ship an unbounded blob to the UI.
       const bytes = Buffer.byteLength(JSON.stringify(schema), "utf8");
-      if (bytes > fieldCap) {
-        throw new MrtrDisplayTooLargeError(`${key}.requestedSchema`, bytes, fieldCap);
+      if (bytes > schemaCap) {
+        throw new MrtrDisplayTooLargeError(
+          `${key}.requestedSchema`,
+          bytes,
+          schemaCap,
+        );
       }
     }
     displays.push({
@@ -532,10 +553,7 @@ export function buildInputRequestDisplays(
 
 function operationLabel(state: MrtrOperationState): string | undefined {
   const p = state.originalParams;
-  const raw =
-    state.method === "resources/read"
-      ? p.uri
-      : p.name; // tools/call + prompts/get both key on `name`
+  const raw = state.method === "resources/read" ? p.uri : p.name; // tools/call + prompts/get both key on `name`
   if (typeof raw !== "string") return undefined;
   return raw.length > 256 ? `${raw.slice(0, 256)}…` : raw;
 }
@@ -588,6 +606,8 @@ export interface HostedMrtrCollectorDeps {
   /** Emit a transient `data-mrtr-input-required` part on the turn's stream. */
   emit: (event: MrtrContinuationEvent) => void;
   ttlMs?: number;
+  /** Owned private adapters may admit larger schemas, preserving message/URL caps. */
+  schemaDisplayMaxBytes?: number;
   // Seams for testing.
   create?: typeof createContinuation;
   encode?: typeof encodeResumeState;
@@ -616,7 +636,11 @@ export function createHostedMrtrCollector(
   return async ({ state, inputRequests }) => {
     // Build the display first: an oversized/hostile round fails closed here,
     // before anything is persisted or emitted.
-    const displays = buildInputRequestDisplays(inputRequests);
+    const displays = buildInputRequestDisplays(
+      inputRequests,
+      undefined,
+      deps.schemaDisplayMaxBytes,
+    );
     const resumeState = encode(state);
     const continuationId = mintId();
     // Resolve the fingerprint now (post-connect) if it was deferred.
@@ -711,7 +735,7 @@ export type ResumeMrtrOutcome =
 
 export interface ResumeMrtrDeps {
   bearer: string;
-  submission: MrtrResumeSubmission;
+  submission: MrtrResumePayload;
   bindingFingerprint: string;
   /**
    * Drives exactly one retry leg. Injected so the primitive is testable without
@@ -722,8 +746,20 @@ export interface ResumeMrtrDeps {
     state: MrtrOperationState,
     responses: InputResponses,
   ) => Promise<MrtrLegResult<unknown>>;
+  /** Prepare authorized wire-only input before the exactly-once fence. No effects here.
+   * Rechecked under the exact live pre-wire lease/version after asynchronous admission.
+   * commit is synchronous and runs only after that fence, before driving the leg. */
+  prepareLeg?: (
+    state: MrtrOperationState,
+    responses: InputResponses,
+  ) => Promise<{
+    responses: InputResponses;
+    commit: () => void;
+  }>;
   emit?: (event: MrtrContinuationEvent) => void;
   serverName?: string;
+  /** Same owned schema budget for new and replayed rounds; ordinary defaults remain. */
+  schemaDisplayMaxBytes?: number;
   // Store seams (default to the real client) for testing.
   claim?: typeof claimContinuation;
   submitResponse?: typeof submitContinuationResponse;
@@ -786,7 +822,11 @@ function replayCurrentRound(
 ): ResumeMrtrOutcome | null {
   try {
     const parked = decode(cs.resumeState as string);
-    const displays = buildInputRequestDisplays(parked.pendingInputRequests);
+    const displays = buildInputRequestDisplays(
+      parked.pendingInputRequests,
+      undefined,
+      deps.schemaDisplayMaxBytes,
+    );
     if (displays.length === 0) return null;
     // The claim payload carries no deadline; only emit the browser event when
     // the backend did supply one, rather than inventing an `expiresAt` the UI
@@ -836,7 +876,9 @@ export async function resumeMrtrContinuationLeg(
   const decode = deps.decode ?? decodeResumeState;
   const encode = deps.encode ?? encodeResumeState;
   const leaseId = (deps.mintLeaseId ?? (() => randomUUID()))();
-  const { continuationId, round, responses } = deps.submission;
+  const { continuationId, round } = deps.submission;
+  let responses =
+    "responses" in deps.submission ? deps.submission.responses : undefined;
 
   const mapError = (e: ContinuationCallError): ResumeMrtrOutcome => ({
     outcome: e.status === 409 ? "cancelled" : "failed",
@@ -948,7 +990,10 @@ export async function resumeMrtrContinuationLeg(
 
   if (!cs.resumeState) {
     await release(deps.bearer, { continuationId, leaseId });
-    return { outcome: "failed", reason: "continuation carries no resumable state" };
+    return {
+      outcome: "failed",
+      reason: "continuation carries no resumable state",
+    };
   }
 
   let state: MrtrOperationState;
@@ -973,7 +1018,10 @@ export async function resumeMrtrContinuationLeg(
   const submit = await submitResponse(deps.bearer, {
     continuationId,
     round,
-    responses,
+    leaseId,
+    ...("responsesBlobId" in deps.submission
+      ? { responsesBlobId: deps.submission.responsesBlobId }
+      : { responses: deps.submission.responses }),
   });
   if (!submit.ok) {
     await release(deps.bearer, { continuationId, leaseId });
@@ -981,9 +1029,106 @@ export async function resumeMrtrContinuationLeg(
   }
   if (submit.stateVersion !== undefined) stateVersion = submit.stateVersion;
 
+  if ("responsesBlobId" in deps.submission) {
+    // The first claim verifies the operation binding before accepting input.
+    // After binding, re-read through the SAME lease and exact state version;
+    // the store hydrates private bytes and rechecks authority after its waits.
+    // A receipt is never forwarded as an MCP response or resolved as a URL.
+    try {
+      const hydrated = await claim(deps.bearer, {
+        continuationId,
+        bindingFingerprint: deps.bindingFingerprint,
+        leaseId,
+        expectedStateVersion: stateVersion,
+        requireLivePreWireLease: true,
+      });
+      if (!hydrated.ok) {
+        await release(deps.bearer, { continuationId, leaseId });
+        return mapError(hydrated);
+      }
+      const current = hydrated.state;
+      const candidate = {
+        continuationId,
+        round,
+        responses: current?.currentRoundResponses,
+      };
+      if (
+        !current ||
+        current.continuationId !== continuationId ||
+        current.round !== round ||
+        current.operationId !== cs.operationId ||
+        current.serverId !== cs.serverId ||
+        current.projectId !== cs.projectId ||
+        current.negotiatedEra !== cs.negotiatedEra ||
+        current.operationMethod !== cs.operationMethod ||
+        current.sideEffecting !== cs.sideEffecting ||
+        current.resumeState !== cs.resumeState ||
+        !isMrtrResumeSubmission(candidate)
+      ) {
+        await release(deps.bearer, { continuationId, leaseId });
+        return {
+          outcome: "failed",
+          reason: "Private form answer is unavailable.",
+        };
+      }
+      responses = candidate.responses;
+      stateVersion = hydrated.stateVersion;
+    } catch {
+      await release(deps.bearer, { continuationId, leaseId });
+      return {
+        outcome: "failed",
+        reason: "Private form answer is unavailable.",
+      };
+    }
+  }
+
+  let prepared:
+    | Awaited<ReturnType<NonNullable<ResumeMrtrDeps["prepareLeg"]>>>
+    | undefined;
+  if (deps.prepareLeg) {
+    try {
+      prepared = await deps.prepareLeg(state, responses as InputResponses);
+      // Owned private-state claim refuses missing/expired/replaced/post-wire leases,
+      // rechecks after storage reads, and requires the exact submitted state version.
+      const verified = await claim(deps.bearer, {
+        continuationId,
+        bindingFingerprint: deps.bindingFingerprint,
+        leaseId,
+        expectedStateVersion: stateVersion,
+        requireLivePreWireLease: true,
+      });
+      if (!verified.ok) {
+        await release(deps.bearer, { continuationId, leaseId });
+        return mapError(verified);
+      }
+      const now = verified.state;
+      if (
+        !now ||
+        now.continuationId !== cs.continuationId ||
+        now.round !== cs.round ||
+        now.operationId !== cs.operationId ||
+        now.serverId !== cs.serverId ||
+        now.projectId !== cs.projectId ||
+        now.resumeState !== cs.resumeState ||
+        verified.stateVersion !== stateVersion ||
+        JSON.stringify(now.currentRoundResponses) !== JSON.stringify(responses)
+      )
+        throw new Error("Continuation input changed during admission");
+    } catch {
+      await release(deps.bearer, { continuationId, leaseId });
+      return {
+        outcome: "failed",
+        reason: "Continuation input admission refused",
+      };
+    }
+  }
+
   // Exactly-once fence: persist BEFORE a side-effecting wire leaves.
   if (cs.sideEffecting) {
-    const marked = await markWireStarted(deps.bearer, { continuationId, leaseId });
+    const marked = await markWireStarted(deps.bearer, {
+      continuationId,
+      leaseId,
+    });
     if (!marked.ok) {
       await release(deps.bearer, { continuationId, leaseId });
       return mapError(marked);
@@ -992,7 +1137,11 @@ export async function resumeMrtrContinuationLeg(
 
   let leg: MrtrLegResult<unknown>;
   try {
-    leg = await deps.driveLeg(state, responses as InputResponses);
+    prepared?.commit();
+    leg = await deps.driveLeg(
+      state,
+      prepared?.responses ?? (responses as InputResponses),
+    );
   } catch (err) {
     const reason = err instanceof Error ? err.message : "resume leg failed";
     if (cs.sideEffecting) {
@@ -1045,7 +1194,11 @@ export async function resumeMrtrContinuationLeg(
 
   let displays: MrtrInputRequestDisplay[];
   try {
-    displays = buildInputRequestDisplays(nextState.pendingInputRequests);
+    displays = buildInputRequestDisplays(
+      nextState.pendingInputRequests,
+      undefined,
+      deps.schemaDisplayMaxBytes,
+    );
   } catch (err) {
     return postWireLocalFailure(
       err instanceof Error ? err.message : "display build error",
