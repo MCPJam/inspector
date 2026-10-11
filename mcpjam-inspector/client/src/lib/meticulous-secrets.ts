@@ -110,6 +110,43 @@ const BEARER = /\b(Bearer\s+)([A-Za-z0-9\-._~+/*]+=*)/g;
 const OPEN_JSON_FIELD = /("([A-Za-z0-9_.-]+)"\s*:\s*")((?:[^"\\]|\\.)*\\?)$/;
 const OPEN_ESCAPED_JSON_FIELD =
   /(\\"([A-Za-z0-9_.-]+)\\"\s*:\s*\\")((?:[^"\\]|\\[^"])*\\?)$/;
+const OPEN_BEARER = /\bBearer\s+[A-Za-z0-9\-._~+/*]+=*$/;
+
+/** How a text ends inside a secret, which says what terminates it in the text that follows. */
+export type OpenSecret = "json" | "escaped" | "bearer";
+
+/** The rest of an open secret: everything up to its terminator, which stays. */
+const OPEN_SECRET_REST: Record<OpenSecret, RegExp> = {
+  json: /^((?:[^"\\]|\\.)*)"/,
+  escaped: /^((?:[^"\\]|\\[^"])*)\\"/,
+  bearer: /^([A-Za-z0-9\-._~+/*]+=*)/,
+};
+
+/** Whether `text` ends inside a secret value, after `maskText` has run on it. */
+export function openSecretAtEnd(text: string): OpenSecret | null {
+  const json = OPEN_JSON_FIELD.exec(text);
+  if (json && isSecretKey(json[2])) return "json";
+  const escaped = OPEN_ESCAPED_JSON_FIELD.exec(text);
+  if (escaped && isSecretKey(escaped[2])) return "escaped";
+  return OPEN_BEARER.test(text) ? "bearer" : null;
+}
+
+/**
+ * Masks the start of `text` as the continuation of a secret left open by
+ * the text before it, up to the terminator. `open` reports whether the
+ * terminator was found; the caller decides what that proves. A bearer token
+ * has no terminator of its own, so it closes with this text either way.
+ */
+export function maskOpenSecret(
+  text: string,
+  open: OpenSecret,
+): { text: string; open: OpenSecret | null } {
+  const rest = OPEN_SECRET_REST[open].exec(text);
+  if (rest) {
+    return { text: mask(rest[1]) + text.slice(rest[1].length), open: null };
+  }
+  return { text: mask(text), open: open === "bearer" ? null : open };
+}
 
 const maskField = (
   match: string,

@@ -1,12 +1,24 @@
-import { maskText } from "./meticulous-secrets";
+import {
+  maskOpenSecret,
+  maskText,
+  openSecretAtEnd,
+  type OpenSecret,
+} from "./meticulous-secrets";
 
 /**
  * Redaction for responses the Meticulous recorder captures as a stream:
  * chat replies and server-sent events. Each hook call carries one batch of
- * base64 chunks for one stream, with no stream id, so a field cut by a batch
- * boundary would otherwise reach neither call whole. The redactor keeps the
- * masked tail of the previous batch per URL and method and reads the next
- * batch in that context, so the cut field is seen and masked in both halves.
+ * base64 chunks for one stream and no stream id, so a secret cut by a batch
+ * boundary would otherwise reach neither call whole.
+ *
+ * Per URL and method the redactor keeps whether a batch ended inside a
+ * secret, and a short masked tail so a key cut mid-name is still seen. URL
+ * and method do not identify a stream: concurrent streams to one endpoint
+ * share an entry, and a batch from one cannot be told from the next batch
+ * of another. So once an entry is open, every batch on that endpoint is
+ * masked up to the secret's terminator, and the entry stays open until a
+ * batch completes there. That over-masks concurrent streams and the rest of
+ * the stream that held the secret, and it never leaks the secret's end.
  */
 
 type StreamingChunk = { offsetMs: number; data: string };
@@ -17,8 +29,8 @@ export type StreamBatch = {
   completed: boolean;
 };
 
-/** Characters of the previous batch kept as context: longer than any one field. */
-const CARRY_CHARS = 512;
+/** Masked tail kept so a key cut mid-name is seen whole; values rely on `open`. */
+const CARRY_CHARS = 128;
 /** Streams that never report `completed` must not grow the table forever. */
 const MAX_OPEN_STREAMS = 32;
 
@@ -57,7 +69,8 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-type Carry = { text: string; bytes: Uint8Array };
+type Carry = { text: string; bytes: Uint8Array; open: OpenSecret | null };
+const EMPTY_CARRY: Carry = { text: "", bytes: new Uint8Array(0), open: null };
 
 /**
  * Masks one batch in the context of what the same stream carried before.
@@ -65,20 +78,29 @@ type Carry = { text: string; bytes: Uint8Array };
  */
 export function redactStreamBatch<T extends StreamBatch>(
   entry: T,
-  carry: Carry = { text: "", bytes: new Uint8Array(0) },
+  carry: Carry = EMPTY_CARRY,
 ): { entry: T; carry: Carry } {
   const parts = entry.chunks.map((chunk) => decodeBase64(chunk.data));
   const bytes = concat([carry.bytes, ...parts]);
   if (bytes.length === 0) return { entry, carry };
   const keep = incompleteUtf8Tail(bytes);
   const text = new TextDecoder().decode(bytes.subarray(0, bytes.length - keep));
-  const combined = carry.text + text;
+  const resumed = carry.open
+    ? maskOpenSecret(text, carry.open)
+    : { text, open: null };
+  const combined = carry.text + resumed.text;
   const masked = maskText(combined);
-  const nextCarry = {
+  const endsOpen = openSecretAtEnd(masked);
+  const nextCarry: Carry = {
     text: masked.slice(-CARRY_CHARS),
     bytes: bytes.subarray(bytes.length - keep),
+    // Finding a terminator proves nothing about which stream this batch
+    // belongs to, so only completion closes an open secret.
+    open: entry.completed ? endsOpen : (endsOpen ?? carry.open),
   };
-  if (masked === combined) return { entry, carry: nextCarry };
+  if (masked === combined && resumed.text === text) {
+    return { entry, carry: nextCarry };
+  }
   const encoded = new TextEncoder().encode(masked.slice(carry.text.length));
   // The carried bytes were already emitted with the previous batch.
   const rebuilt = concat([
@@ -107,7 +129,9 @@ export function createStreamRedactor() {
     const key = `${entry.method} ${entry.url}`;
     const { entry: redacted, carry } = redactStreamBatch(entry, open.get(key));
     open.delete(key);
-    if (!entry.completed) {
+    // A completed batch that still ends inside a secret is malformed; its
+    // entry stays so whatever follows on the endpoint is masked too.
+    if (!entry.completed || carry.open) {
       open.set(key, carry);
       if (open.size > MAX_OPEN_STREAMS) {
         const oldest = open.keys().next().value;

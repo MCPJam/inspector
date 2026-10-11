@@ -55,11 +55,11 @@ describe("createStreamRedactor", () => {
     expect(joined(redact(batch(["cd\n"])))).toBe("**\n");
   });
 
-  it("keeps streams apart by url and forgets a completed one", () => {
+  it("keeps streams apart by url and closes an open secret only on completion", () => {
     const redact = createStreamRedactor();
     redact(batch(['{"token":"t-'], false, "/a"));
     expect(joined(redact(batch(['plain"}'], false, "/b")))).toBe('plain"}');
-    redact(batch(['1"}'], true, "/a"));
+    expect(joined(redact(batch(['1"}'], true, "/a")))).toBe('*"}');
     expect(joined(redact(batch(['2"}'], false, "/a")))).toBe('2"}');
   });
 
@@ -100,6 +100,27 @@ describe("createStreamRedactor", () => {
       ...out2.chunks.map((c) => fromB64(c.data)),
     ]);
     expect(bytes.toString()).toBe('"a":"é","token":"*"}');
+  });
+
+  it("masks a value longer than the carried tail across three batches", () => {
+    const redact = createStreamRedactor();
+    const long = "s".repeat(600);
+    expect(joined(redact(batch(['{"apiKey":"' + long])))).toBe(
+      '{"apiKey":"' + "*".repeat(600),
+    );
+    expect(joined(redact(batch([long])))).toBe("*".repeat(600));
+    expect(joined(redact(batch(['abcdef","ok":true}'])))).toBe(
+      '******","ok":true}',
+    );
+  });
+
+  it("over-masks a concurrent batch on the same endpoint rather than let the secret's end through", () => {
+    const redact = createStreamRedactor();
+    redact(batch(['{"token":"ab']));
+    expect(joined(redact(batch(['{"ok":1}'])))).toBe('*"ok":1}');
+    expect(joined(redact(batch(['cd","n":1}'])))).toBe('**","n":1}');
+    expect(joined(redact(batch(['{"done":1}'], true)))).toBe('*"done":1}');
+    expect(joined(redact(batch(['{"fresh":1}'])))).toBe('{"fresh":1}');
   });
 
   it("returns the same entry when nothing is secret", () => {

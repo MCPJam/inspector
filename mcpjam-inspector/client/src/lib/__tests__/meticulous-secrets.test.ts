@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { maskSecrets, maskText } from "../meticulous-secrets";
+import {
+  maskOpenSecret,
+  maskSecrets,
+  maskText,
+  openSecretAtEnd,
+} from "../meticulous-secrets";
 
 describe("maskSecrets", () => {
   it("masks nested secrets by key and returns the input when nothing changed", () => {
@@ -25,5 +30,30 @@ describe("maskText", () => {
   it("masks a secret value the text ends inside of", () => {
     expect(maskText('{"n":1,"apiKey":"sk-abc')).toBe('{"n":1,"apiKey":"******');
     expect(maskText('{"n":1,"name":"abc')).toBe('{"n":1,"name":"abc');
+  });
+});
+
+describe("openSecretAtEnd and maskOpenSecret", () => {
+  it("reports how a text ends inside a secret and masks its continuation", () => {
+    expect(openSecretAtEnd('{"apiKey":"***')).toBe("json");
+    expect(openSecretAtEnd('{"text":"{\\"token\\":\\"**')).toBe("escaped");
+    expect(openSecretAtEnd("x Bearer **")).toBe("bearer");
+    expect(openSecretAtEnd('{"name":"ab')).toBeNull();
+    expect(maskOpenSecret('cd","n":1}', "json")).toEqual({
+      text: '**","n":1}',
+      open: null,
+    });
+    expect(maskOpenSecret("cdef", "json")).toEqual({
+      text: "****",
+      open: "json",
+    });
+    expect(maskOpenSecret('cd\\"}"}', "escaped")).toEqual({
+      text: '**\\"}"}',
+      open: null,
+    });
+    expect(maskOpenSecret("cd end", "bearer")).toEqual({
+      text: "** end",
+      open: null,
+    });
   });
 });
