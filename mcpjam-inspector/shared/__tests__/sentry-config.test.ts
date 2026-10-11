@@ -1066,9 +1066,9 @@ describe("scrubSentryBreadcrumb", () => {
       "https://app.mcpjam.test:8443/tenants/42",
     ]) {
       const expected = new URL(url, APP_ORIGIN).origin;
-      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN).data).toEqual(
-        { url: expected },
-      );
+      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN).data).toEqual({
+        url: expected,
+      });
     }
 
     // No app origin known: every absolute URL is someone else's.
