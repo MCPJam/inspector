@@ -10,7 +10,8 @@ vi.mock("@/hooks/use-host-harness-targets", () => ({
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (select: any) => select({ themeMode: "light" }),
+  usePreferencesStore: (select: (state: { themeMode: "light" }) => unknown) =>
+    select({ themeMode: "light" }),
 }));
 
 // While the organization requires its own keys the list holds only its models.
@@ -52,6 +53,44 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     expect(options).toHaveLength(1);
     expect(options[0]).toHaveTextContent("Claude Sonnet 4.5");
     expect(screen.queryByText("Free models")).not.toBeInTheDocument();
+  });
+
+  it("keeps each disallowed target's effort beside its warning", () => {
+    // Two saved targets of one model differ only by effort; without it both
+    // triggers would read the same.
+    const hosted = {
+      modelId: "anthropic/claude-haiku-4.5",
+      source: "hosted" as const,
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    render(
+      <EvalModelChoices
+        value={{
+          includeClientDefaults: false,
+          explicitTargets: [
+            {
+              modelId: "anthropic/claude-haiku-4.5",
+              selection: { ...hosted, settings: { reasoningEffort: "low" } },
+            },
+            {
+              modelId: "anthropic/claude-haiku-4.5",
+              selection: { ...hosted, settings: { reasoningEffort: "high" } },
+            },
+          ],
+        }}
+        onChange={vi.fn()}
+        disabled={false}
+        testId="choices"
+        availableModels={ORG_MODELS}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.getAllByTestId("model-trigger-org-keys-warning"),
+    ).toHaveLength(2);
+    const choices = within(screen.getByTestId("choices"));
+    expect(choices.getByText("Low")).toBeInTheDocument();
+    expect(choices.getByText("High")).toBeInTheDocument();
   });
 
   it("keeps the raw id, without a warning, when the policy is off", () => {

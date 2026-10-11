@@ -684,7 +684,15 @@ export function EvalModelChoices({
                   className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
                 >
                   {isOrgKeysDisallowedRow(model) ? (
-                    <OrgKeysDisallowedTriggerLabel model={model} />
+                    <>
+                      <OrgKeysDisallowedTriggerLabel model={model} />
+                      {/* Tells apart two targets of one model. */}
+                      {effort ? (
+                        <span className="shrink-0 text-muted-foreground">
+                          {reasoningEffortLabel(effort)}
+                        </span>
+                      ) : null}
+                    </>
                   ) : (
                     <>
                       <ProviderLogo
