@@ -61,7 +61,7 @@ test("warns strictly beyond 12 hours and includes commit and run links", () => {
   assert.equal(candidate.stale, true);
   const message = staleCandidateMessage(candidate, repository, "https://github.com/run");
   assert.ok(message.includes(`/commit/${newest}`));
-  assert.ok(message.includes("https://github.com/run"));
+  assert.ok(message.endsWith("\n<https://github.com/run|Scheduled run>"));
   assert.ok(message.includes(candidate.committedAt));
 });
 
