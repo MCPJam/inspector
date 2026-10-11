@@ -29,8 +29,7 @@ const ROOT_ALLOWLIST = new Set([
   ".gitattributes",
   ".gitignore",
   // Each tool reads these only from the repo root: Claude Code's project MCP
-  // servers, the skills CLI lock next to `.agents/skills/`, and Meticulous's
-  // per-project ignore file.
+  // servers and Meticulous's per-project ignore file.
   ".mcp.json",
   ".meticulousignore.inspector",
   "AGENTS.md",
@@ -43,7 +42,6 @@ const ROOT_ALLOWLIST = new Set([
   "package-lock.json",
   "package.json",
   "railway.json",
-  "skills-lock.json",
 ]);
 
 /** Git's own error text for a path that is not in HEAD. */
