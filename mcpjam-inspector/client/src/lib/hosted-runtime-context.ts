@@ -28,8 +28,53 @@ export type HostedAccessRecoveryResult =
       error?: HostedAccessErrorDetail;
     };
 
+/**
+ * What re-reading the project's plugins and recomposing produced, after a turn
+ * was refused because a plugin changed under the chat.
+ *
+ * `environmentId: null` means no plugin is runnable any more: the turn runs
+ * as a plain client turn.
+ */
+export type HiddenEnvironmentRecovery =
+  | { ok: true; environmentId: string; pluginServerIds: string[] }
+  | { ok: true; environmentId: null }
+  | { ok: false };
+
+/**
+ * A Playground chat whose environments UI is hidden, in a project with at least
+ * one runnable plugin.
+ *
+ * The surface keeps the ordinary client-turn context (`hostId`, the send-time
+ * server preflight) and adds this. When the chat hook can carry the turn on
+ * the web chat route, it sends `{ kind: "environment" }` for this id INSTEAD of
+ * `hostId`, with the chat's own resolved servers plus `pluginServerIds` as the
+ * server override. When it cannot (a turn that has to stay on this machine's
+ * own chat route), the turn is the client turn it always was.
+ *
+ * Client-side only: never serialized, and never part of the session scope —
+ * the chat stays keyed by its client, so a plugin change between messages does
+ * not fork the conversation.
+ */
+export type HostedHiddenEnvironment = {
+  /** The composed ad-hoc environment; null while it is being composed. */
+  environmentId: string | null;
+  /** The servers its plugins add; kept on in every turn's override. */
+  pluginServerIds: string[];
+  /**
+   * Re-read the plugins and recompose, once, after a refusal that says a
+   * pinned plugin changed (`ENV_PLUGIN_UNAVAILABLE`,
+   * `ENV_PLUGIN_COMPONENT_UNSUPPORTED`). Never rejects.
+   */
+  recover?: () => Promise<HiddenEnvironmentRecovery>;
+};
+
 export type HostedRuntimeContext = {
   projectId?: string | null;
+  /**
+   * See {@link HostedHiddenEnvironment}. Only honored alongside `hostId` and
+   * without an explicit `executionTarget` or `scenarioId`.
+   */
+  hiddenEnvironment?: HostedHiddenEnvironment;
   selectedServerIds?: string[];
   oauthTokens?: Record<string, string>;
   /**

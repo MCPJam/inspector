@@ -5,22 +5,24 @@
  * the API lives, whether this browser has it at all, and how an MCPJam tool
  * definition becomes a WebMCP descriptor.
  *
- * MEASURED, not assumed. Everything asserted below was probed against the
- * pinned Chromium 151.0.7922.34 (the same build the CDP contract suite in
- * `server/services/webmcp-inspector/__tests__/webmcp-cdp.spike.test.ts` pins):
+ * MEASURED, not assumed. Everything asserted below was probed against
+ * Chromium 151.0.7922.34, the build the CDP contract suite in
+ * `server/services/webmcp-inspector/__tests__/webmcp-cdp.spike.test.ts` pinned
+ * at the time. Where its current pin, 153.0.8010.12, differs, it says so:
  *
  *   - `document.modelContext` is the current home; `navigator.modelContext`
- *     is the deprecated alias and is the SAME object at this pin. We read the
- *     documented one and fall back rather than requiring both.
+ *     is the deprecated alias and is the SAME object at 151 (153 no longer
+ *     defines it). We read the documented one and fall back rather than
+ *     requiring both.
  *   - `registerTool(descriptor, { signal })` returns a Promise that resolves
  *     to `undefined`. There is no `unregisterTool` and no `provideContext`:
  *     aborting the signal passed at registration IS the unregister.
  *   - Registering a name that is already registered REJECTS
  *     (`InvalidStateError: Duplicate tool name`), so a replacement must tear
  *     the old registration down first and wait for it.
- *   - The `execute` callback receives NO second argument at this pin. The
- *     spec'd `(args, { signal })` shape arrives in a later Chromium, so we
- *     read it defensively and use it when it shows up.
+ *   - The `execute` callback receives NO second argument at 151. The spec'd
+ *     `(args, { signal })` shape arrives in 153, so we read it defensively
+ *     and use it when it shows up.
  *
  * WebMCP ships behind an origin trial / feature flag, so on a stock profile
  * none of this exists — `resolveNativeModelContext` returns null and MCPJam's
