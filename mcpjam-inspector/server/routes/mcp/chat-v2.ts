@@ -2779,6 +2779,7 @@ chatV2.post("/", async (c) => {
         if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
+          admission: runtime.admission,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,

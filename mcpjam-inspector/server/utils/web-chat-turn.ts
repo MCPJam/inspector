@@ -1583,6 +1583,7 @@ export async function streamWebChatTurn(
       }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
+        admission: orgRuntime.admission,
         ...(historyPresentation ? { historyPresentation } : {}),
         failureReporter,
         projectId: persist.projectId,

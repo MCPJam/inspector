@@ -136,6 +136,7 @@ import {
   type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../utils/org-model-config";
+import { admitEachLocalOrgAttempt } from "../utils/local-org-attempt-admission.js";
 import {
   getCanonicalModelId,
   getModelById,
@@ -5618,9 +5619,14 @@ const runLocalIteration = async ({
                 );
               }
               // Execute the config this admission returned, including rotations
-              // and endpoint changes since the iteration's initial setup.
+              // and endpoint changes since the iteration's initial setup. The
+              // turn's later steps and retries each ask again first.
               assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
-              return buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id));
+              return admitEachLocalOrgAttempt(
+                buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id)),
+                admitted.admission,
+                String(modelDefinition.id),
+              );
             },
             onModelCallSettled: (event: LocalModelCallSettled) =>
               postEvalOrgLocalUsage({

@@ -618,15 +618,36 @@ export type OrgProviderRuntimeCloud = {
 export type OrgProviderRuntimeLocal = {
   runtimeLocation: "local";
   provider: OrgProviderResolvedConfig;
+  /**
+   * The question this answer came from, set on every answer the resolver
+   * returns (never stored in the cache). Hand it to
+   * `admitEachLocalOrgAttempt`, which asks it again before every attempt.
+   */
+  admission?: LocalOrgAttemptRequest;
 };
 
 export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
 
-// A cached `local` answer holds a key this process already received. For up
-// to the TTL after an admin turns on "Use your keys for all AI features", a
-// connection on a local runtime can keep running on that key; the next
-// resolve is refused `org_keys_required`. Nothing new leaves the backend in
-// that window, so it is accepted rather than paying a round trip per step.
+/**
+ * What `/stream/org/resolve` was asked. A local-runtime model keeps it so each
+ * provider attempt can ask again (`admitLocalOrgAttempt`).
+ */
+export type LocalOrgAttemptRequest = {
+  target: ResolveOrgProviderRuntimeTarget;
+  providerKey: string;
+  model: string;
+  auth?: ResolveOrgModelConfigAuth;
+  options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload };
+};
+
+// The cache saves a round trip when a turn or an eval case starts: where the
+// provider runs, and the config to build its model from. It is never
+// permission to call the provider. On the local runtime each attempt (every
+// step, every retry) asks the backend again through `admitLocalOrgAttempt`,
+// so a cached `local` answer cannot run anything after an admin turns on "Use
+// your keys for all AI features" or turns the connection off. The backend
+// never answers `local` while the policy is on, so in practice only orgs
+// without the policy get `local` answers from here.
 const RUNTIME_CACHE_TTL_MS = 60_000;
 const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
 const runtimeResolveCache = new Map<
@@ -695,8 +716,10 @@ function buildRuntimeCacheKey(
  * Local: LLM executes in the inspector — return the full provider config
  *   (including apiKey) so the caller can build the model directly.
  *
- * Results are cached for 60 s so key rotations propagate within a minute
- * while repeated agentic-loop steps don't each pay the round-trip cost.
+ * A `local` answer may come from a 60 s cache, which saves the round trip
+ * when a turn starts. It is not permission to call the provider: build the
+ * model with `admitEachLocalOrgAttempt` and the answer's `admission`, which
+ * asks again before every attempt.
  */
 export async function resolveOrgProviderRuntime(
   projectId: string,
@@ -730,10 +753,7 @@ export async function resolveOrgProviderRuntimeForTarget(
   auth?: ResolveOrgModelConfigAuth,
   options?: { modelSelection?: ModelSelection; modelWorkload?: ModelWorkload },
 ): Promise<OrgProviderRuntime> {
-  const modelSelection =
-    options?.modelSelection?.source === "org"
-      ? options.modelSelection
-      : undefined;
+  const modelSelection = orgSelectionOnly(options?.modelSelection);
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
@@ -746,19 +766,58 @@ export async function resolveOrgProviderRuntimeForTarget(
     modelSelection,
     options?.modelWorkload,
   );
+  const request = { target, providerKey, model, auth, options };
+  const withAdmission = (result: OrgProviderRuntime): OrgProviderRuntime =>
+    result.runtimeLocation === "local"
+      ? { ...result, admission: request }
+      : result;
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
   if (!githubExecutionPolicy() && cached && cached.expiresAt > now) {
-    return cached.result;
+    return withAdmission(cached.result);
   }
 
+  const result = await requestOrgProviderRuntime(convexHttpUrl, request);
+  cacheRuntimeAnswer(cacheKey, result);
+  return withAdmission(result);
+}
+
+/** Only an `org` selection is ever sent to `/stream/org/resolve`. */
+function orgSelectionOnly(
+  selection: ModelSelection | undefined,
+): ModelSelection | undefined {
+  return selection?.source === "org" ? selection : undefined;
+}
+
+function cacheRuntimeAnswer(cacheKey: string, result: OrgProviderRuntime): void {
+  const writeNow = Date.now();
+  pruneRuntimeResolveCache(writeNow);
+  if (!githubExecutionPolicy()) {
+    runtimeResolveCache.set(cacheKey, {
+      result,
+      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
+    });
+  }
+}
+
+/** One uncached `/stream/org/resolve` request. */
+async function requestOrgProviderRuntime(
+  convexHttpUrl: string,
+  { target, providerKey, model, auth, options }: LocalOrgAttemptRequest,
+  abortSignal?: AbortSignal,
+): Promise<OrgProviderRuntime> {
+  const modelSelection = orgSelectionOnly(options?.modelSelection);
+  const modelWorkload = options?.modelWorkload;
   const authHeader = normalizeAuthHeader(auth);
   const serverIds = normalizeServerIds(auth?.serverIds);
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/resolve`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
+  const abortWithCaller = () => controller.abort();
+  if (abortSignal?.aborted) controller.abort();
+  abortSignal?.addEventListener("abort", abortWithCaller, { once: true });
 
   let result: OrgProviderRuntime;
   try {
@@ -780,9 +839,7 @@ export async function resolveOrgProviderRuntimeForTarget(
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
         ...(modelSelection ? { modelSelection } : {}),
-        ...(options?.modelWorkload
-          ? { modelWorkload: options.modelWorkload }
-          : {}),
+        ...(modelWorkload ? { modelWorkload } : {}),
       }),
       signal: controller.signal,
     });
@@ -867,17 +924,102 @@ export async function resolveOrgProviderRuntimeForTarget(
     }
   } finally {
     clearTimeout(timeout);
-  }
-
-  const writeNow = Date.now();
-  pruneRuntimeResolveCache(writeNow);
-  if (!githubExecutionPolicy()) {
-    runtimeResolveCache.set(cacheKey, {
-      result,
-      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
-    });
+    abortSignal?.removeEventListener("abort", abortWithCaller);
   }
   return result;
+}
+
+const ATTEMPT_UNANSWERED_REASON =
+  "MCPJam could not confirm that this organization connection may still be " +
+  "used, so nothing was sent to the provider. Try again in a moment.";
+
+const ATTEMPT_MOVED_TO_CLOUD_REASON =
+  "This organization connection no longer runs on this machine (its runtime " +
+  "is now cloud), so nothing was sent to the provider. Run it again.";
+
+/**
+ * Ask the backend, never the cache, whether one provider attempt on an
+ * organization's local runtime may run now, and return the provider config
+ * to run it with (a rotated key or a moved endpoint included).
+ *
+ * The local runtime calls the provider from this process, where the backend
+ * cannot refuse a call. So every attempt asks first: each step of a tool
+ * loop and each retry, not only the first call of a turn. That is what stops
+ * a running turn once an admin turns on "Use your keys for all AI features"
+ * or turns the connection off, however long the turn has been running and
+ * whatever the cache holds.
+ *
+ * Fails closed, and the cached answer to the same question is dropped so the
+ * next turn asks the backend too:
+ * - a refusal keeps the backend's code (`org_keys_required` once the org
+ *   requires its own keys, `credential_missing` for a connection turned off
+ *   or removed, ...);
+ * - an answer that moved the connection to the cloud runtime carries no key,
+ *   so the attempt does not run;
+ * - no answer (network failure, timeout, a failure without a code) is
+ *   `ai_key_policy_unavailable`, which is temporary.
+ *
+ * Cancelling the attempt cancels the request, and its abort error is
+ * rethrown as is.
+ */
+export async function admitLocalOrgAttempt(
+  request: LocalOrgAttemptRequest,
+  attempt?: { abortSignal?: AbortSignal },
+): Promise<OrgProviderResolvedConfig> {
+  const modelSelection = orgSelectionOnly(request.options?.modelSelection);
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
+
+  await verifyGithubCredentialAccess();
+  const cacheKey = buildRuntimeCacheKey(
+    request.target,
+    request.providerKey,
+    request.model,
+    request.auth,
+    modelSelection,
+    request.options?.modelWorkload,
+  );
+  let result: OrgProviderRuntime;
+  try {
+    result = await requestOrgProviderRuntime(
+      convexHttpUrl,
+      request,
+      attempt?.abortSignal,
+    );
+  } catch (error) {
+    runtimeResolveCache.delete(cacheKey);
+    if (attempt?.abortSignal?.aborted) throw error;
+    throw attemptAdmissionFailure(error);
+  }
+  if (result.runtimeLocation !== "local") {
+    runtimeResolveCache.delete(cacheKey);
+    throw new Error(ATTEMPT_MOVED_TO_CLOUD_REASON);
+  }
+  cacheRuntimeAnswer(cacheKey, result);
+  return result.provider;
+}
+
+/**
+ * A refusal keeps its own error (and code). Anything else means the attempt
+ * could not be authorized, which is refused as `ai_key_policy_unavailable`.
+ */
+function attemptAdmissionFailure(error: unknown): Error {
+  if (error instanceof ModelResolutionRefusalError) return error;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    error instanceof Error &&
+    typeof code === "string" &&
+    isOrgKeyPolicyRefusalCode(code)
+  ) {
+    return error;
+  }
+  const cause = error instanceof Error ? error.message : String(error);
+  return Object.assign(
+    new Error(
+      `ai_key_policy_unavailable: ${ATTEMPT_UNANSWERED_REASON} (${cause})`,
+    ),
+    { code: "ai_key_policy_unavailable", cause: error },
+  );
 }
 
 /**
