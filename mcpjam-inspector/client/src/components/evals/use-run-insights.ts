@@ -1,5 +1,5 @@
 import { useInsight } from "./use-insight";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 
 export const RUN_INSIGHTS_PENDING_STALE_MS = 120_000;
 
@@ -8,7 +8,7 @@ export const RUN_INSIGHTS_PENDING_STALE_MS = 120_000;
  * Thin wrapper around the generic `useInsight` hook.
  */
 export function useRunInsights(
-  run: EvalSuiteRun | null,
+  run: EvalSuiteRunListItem | null,
   options?: { autoRequest?: boolean },
 ) {
   const hook = useInsight(

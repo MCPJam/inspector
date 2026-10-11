@@ -88,9 +88,23 @@ vi.mock("@/components/computer/ComputerStatusChip", () => ({
   ComputerStatusChip: () => <div data-testid="computer-status-chip" />,
 }));
 
-vi.mock("@/components/computer/ComputerTerminalPane", () => ({
-  ComputerTerminalPane: () => <div data-testid="cloud-terminal-pane" />,
-}));
+vi.mock("@/components/computer/ComputerTerminalPane", async () => {
+  const { useState } = await import("react");
+  return {
+    // Like the real pane, cwd only applies at CONNECT time: `data-connected-cwd`
+    // is the dir the terminal opened in, which only a remount can change.
+    ComputerTerminalPane: ({ cwd }: { cwd?: string }) => {
+      const [connectedCwd] = useState(cwd ?? "");
+      return (
+        <div
+          data-testid="cloud-terminal-pane"
+          data-cwd={cwd ?? ""}
+          data-connected-cwd={connectedCwd}
+        />
+      );
+    },
+  };
+});
 
 // The bare terminal the LOCAL body mounts (xterm won't run under jsdom).
 vi.mock("@/components/computer/ComputerTerminal", () => ({
@@ -106,8 +120,20 @@ vi.mock("@/lib/local-computer-consent", () => ({
   mintLocalTerminalNonce: vi.fn(),
 }));
 
+/** What the chat stream last streamed for this host. */
+const harnessStream = vi.hoisted(() => ({
+  workdir: undefined as string | undefined,
+  disposable: false,
+  /** Which conversation the rail asked about. */
+  askedFor: [] as Array<string | null>,
+}));
+
 vi.mock("@/stores/harness-workdir-store", () => ({
-  useHarnessWorkdir: () => undefined,
+  useHarnessWorkdir: () => harnessStream.workdir,
+  useHarnessRanOnDisposable: (chatSessionId: string | null) => {
+    harnessStream.askedFor.push(chatSessionId);
+    return harnessStream.disposable;
+  },
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -177,6 +203,8 @@ function renderRail() {
 }
 
 beforeEach(() => {
+  harnessStream.workdir = undefined;
+  harnessStream.disposable = false;
   engineState.engine = "cloud";
   engineState.selectedEngine = "cloud";
   engineState.localTerminalAvailable = false;
@@ -255,6 +283,45 @@ describe("PlaygroundRightRail — cloud engine body", () => {
     expect(
       screen.getByRole("button", { name: /open terminal/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("PlaygroundRightRail — harness hosts and the Shell", () => {
+  const harnessHost = {
+    harness: "claude-code",
+    computer: { workdir: "/home/user" },
+  } as any;
+  const renderHarnessRail = () =>
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={harnessHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+
+  it("offers no Shell for a harness host: it runs on a throwaway box, not the personal computer", () => {
+    // Even with the machine flag on and a computer in the saved config.
+    harnessStream.workdir = "/home/user/claude-code-abc";
+    renderHarnessRail();
+    expect(screen.getByTestId("logger-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("cloud-terminal-pane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rail-engine-chip")).not.toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+  });
+
+  it("says nothing on a host that runs no harness", () => {
+    harnessStream.disposable = true;
+    renderRail();
+    expect(
+      screen.queryByTestId("shell-rail-disposable-notice"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("cloud-terminal-pane")).toHaveAttribute(
+      "data-cwd",
+      "/home/user",
+    );
   });
 });
 

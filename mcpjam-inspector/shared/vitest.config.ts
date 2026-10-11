@@ -66,6 +66,17 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@mcpjam/sdk/host-compat",
+        replacement: path.resolve(rootDir, "../sdk/src/host-compat/index.ts"),
+      },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: path.resolve(
+          rootDir,
+          "../sdk/src/widget-runtime/index.ts",
+        ),
+      },
+      {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
       },
@@ -80,6 +91,12 @@ export default defineConfig({
         replacement: sdkHostConfigInternalEntry,
       },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
+      // A history test reads the client's transcript conversion, which imports
+      // chat-ui; its published entry points at dist, so resolve from source.
+      {
+        find: /^@mcpjam\/chat-ui$/,
+        replacement: path.resolve(rootDir, "../chat-ui/src/index.ts"),
+      },
       { find: "@/shared", replacement: path.resolve(__dirname, "./") },
     ],
   },

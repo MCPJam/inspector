@@ -24,6 +24,8 @@ import {
   type MCPCheckId,
   type MCPCheckResult,
 } from "../../src/mcp-conformance/index.js";
+import { scoreFromProtocolResult } from "../../src/conformance-score.js";
+import { runConformance } from "../../src/conformance-run.js";
 import { createMrtrFixtureHandler } from "../support/mrtr-fixture.js";
 import {
   createLoggingFixtureHandler,
@@ -105,8 +107,9 @@ describe("modern-no-session-id", () => {
     // The pass is only meaningful because a real exchange succeeded — that is
     // what makes the absent header a decision rather than an accident.
     expect(
-      Number((check.details as { succeededResponses?: number })
-        ?.succeededResponses)
+      Number(
+        (check.details as { succeededResponses?: number })?.succeededResponses
+      )
     ).toBeGreaterThan(0);
   });
 
@@ -171,49 +174,289 @@ describe("modern-undeclared-capability-error", () => {
   });
 });
 
-describe("modern-logs-require-log-level", () => {
+const LOGGING_CHECKS = [
+  "modern-logs-require-log-level",
+  "modern-log-level-filtering",
+] as const;
+
+describe("modern logging conformance", () => {
+  for (const protocolVersion of [MODERN, undefined]) {
+    it(`uses per-request logging with ${
+      protocolVersion ?? "auto-detected"
+    } version`, async () => {
+      const serverUrl = await serve(
+        createLoggingFixtureHandler({ mode: "conforming" })
+      );
+      const calls: Array<{ method: string; level?: string }> = [];
+      const fetchFn: typeof fetch = async (input, init) => {
+        const body = JSON.parse(String(init?.body));
+        calls.push({
+          method: body.method,
+          level: body.params?._meta?.["io.modelcontextprotocol/logLevel"],
+        });
+        return fetch(input, init);
+      };
+      const result = await new MCPConformanceTest({
+        serverUrl,
+        protocolVersion,
+        fetchFn,
+        checkIds: ["logging-set-level", ...LOGGING_CHECKS],
+        logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+        checkTimeout: 10_000,
+      }).run();
+
+      expect(result.protocolVersion).toBe(MODERN);
+      expect(byId(result.checks, "logging-set-level")).toMatchObject({
+        status: "skipped",
+        skipReason: "not-applicable",
+      });
+      for (const id of LOGGING_CHECKS) {
+        expect(byId(result.checks, id).status).toBe("passed");
+      }
+      expect(byId(result.checks, LOGGING_CHECKS[0]).details).toMatchObject({
+        logNotificationCount: 0,
+        logNotificationCountWithLevel: 4,
+      });
+      expect(byId(result.checks, LOGGING_CHECKS[1]).details).toMatchObject({
+        requestedLogLevel: "warning",
+        levels: ["warning", "error"],
+      });
+      expect(calls.filter((call) => call.method === "tools/call")).toEqual([
+        { method: "tools/call", level: undefined },
+        { method: "tools/call", level: "debug" },
+        { method: "tools/call", level: "warning" },
+      ]);
+      expect(calls.some((call) => call.method === "logging/setLevel")).toBe(
+        false
+      );
+      expect(result.profile?.pendingCheckIds).toEqual([
+        "modern-log-level-filtering",
+      ]);
+      expect(result.passed).toBe(true);
+    });
+  }
+
+  it("keeps logging/setLevel on legacy servers and skips both modern checks", async () => {
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({ mode: "conforming" })
+    );
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: "2025-11-25",
+      checkIds: ["logging-set-level", ...LOGGING_CHECKS],
+      logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+      checkTimeout: 10_000,
+    }).run();
+    expect(byId(result.checks, "logging-set-level").status).toBe("passed");
+    for (const id of LOGGING_CHECKS) {
+      expect(byId(result.checks, id)).toMatchObject({
+        status: "skipped",
+        skipReason: "not-applicable",
+      });
+    }
+    expect(result.passed).toBe(true);
+  });
+
   it("fails a server that logs on a request carrying no log level", async () => {
     const serverUrl = await serve(createLoggingFixtureHandler());
     const result = await new MCPConformanceTest({
       serverUrl,
       protocolVersion: MODERN,
-      checkIds: ["modern-logs-require-log-level"],
-      // The fixture emits every severity when the request carries no level —
-      // exactly the behavior the modern revision forbids.
+      checkIds: [LOGGING_CHECKS[0]],
       logProbe: { toolName: EMIT_LOG_TOOL_NAME },
       checkTimeout: 10_000,
     }).run();
-
-    const check = byId(result.checks, "modern-logs-require-log-level");
+    const check = byId(result.checks, LOGGING_CHECKS[0]);
     expect(check.status).toBe("failed");
     expect(check.details).toMatchObject({ probedTool: EMIT_LOG_TOOL_NAME });
     expect(check.error?.message).toMatch(/no modern log level/);
     expect(result.passed).toBe(false);
   });
 
-  // Note this fixture EMITS logs unprompted — `logProbe` is the only thing
-  // that would have caught it. The unprobed run must therefore not report a
-  // pass: the same silence it would read as conformance is produced here by a
-  // server that violates the MUST, and only the probe tells them apart.
-  it("cannot run without a logProbe: silence proves nothing", async () => {
-    const serverUrl = await serve(createLoggingFixtureHandler());
+  it("fails filtering when a server emits debug, info, or notice for warning", async () => {
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({
+        mode: "ignores-level",
+        levels: ["debug", "info", "notice", "warning", "error"],
+      })
+    );
     const result = await new MCPConformanceTest({
       serverUrl,
       protocolVersion: MODERN,
-      checkIds: ["modern-logs-require-log-level"],
+      checkIds: [LOGGING_CHECKS[1]],
+      logProbe: { toolName: EMIT_LOG_TOOL_NAME },
       checkTimeout: 10_000,
     }).run();
+    expect(byId(result.checks, LOGGING_CHECKS[1])).toMatchObject({
+      status: "failed",
+      details: { invalidOrLowerLevels: ["debug", "info", "notice"] },
+    });
+    // The new check reports its failure but is not promoted into the frozen score.
+    expect(result.profile?.pendingCheckIds).toEqual([LOGGING_CHECKS[1]]);
+    expect(scoreFromProtocolResult(result).pending).toBe(1);
+  });
 
-    const check = byId(result.checks, "modern-logs-require-log-level");
-    expect(check.status).toBe("skipped");
-    // `could-not-run`, never `not-applicable`: the requirement applies to every
-    // modern server, so the check must stay in the denominator and drag the
-    // run to `incomplete` rather than quietly leaving the sample.
-    expect(check.skipReason).toBe("could-not-run");
-    expect(check.details).toMatchObject({ logNotificationCount: 0 });
-    expect(String(check.error?.message)).toMatch(/No logProbe configured/);
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
+  it("fails a silent warning response even when the debug request produces logs", async () => {
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({
+        mode: "conforming",
+        levels: ["debug", "info"],
+      })
+    );
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkIds: [...LOGGING_CHECKS],
+      logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+      checkTimeout: 10_000,
+    }).run();
+    expect(byId(result.checks, LOGGING_CHECKS[0]).status).toBe("passed");
+    expect(byId(result.checks, LOGGING_CHECKS[1])).toMatchObject({
+      status: "failed",
+      error: { message: "the supplied tool produced no logs." },
+    });
+  });
+
+  it("accepts warning and every higher severity", async () => {
+    const levels = [
+      "warning",
+      "error",
+      "critical",
+      "alert",
+      "emergency",
+    ] as const;
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({ mode: "conforming", levels })
+    );
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkIds: [LOGGING_CHECKS[1]],
+      logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+      checkTimeout: 10_000,
+    }).run();
+    expect(byId(result.checks, LOGGING_CHECKS[1])).toMatchObject({
+      status: "passed",
+      details: { levels: [...levels] },
+    });
+  });
+
+  for (const id of LOGGING_CHECKS) {
+    it(`${id}: fails a supplied tool that produces no requested logs`, async () => {
+      const serverUrl = await serve(
+        createLoggingFixtureHandler({ mode: "silent" })
+      );
+      const result = await new MCPConformanceTest({
+        serverUrl,
+        protocolVersion: MODERN,
+        checkIds: [id],
+        logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+        checkTimeout: 10_000,
+      }).run();
+      const check = byId(result.checks, id);
+      expect(check.status).toBe("failed");
+      expect(check.skipReason).toBeUndefined();
+      expect(check.error?.message).toBe("the supplied tool produced no logs.");
+      expect(check.details).toMatchObject({ logNotificationCountWithLevel: 0 });
+      if (id === LOGGING_CHECKS[0]) expect(result.outcome).toBe("failed");
+    });
+
+    it(`${id}: cannot run without a logProbe`, async () => {
+      const serverUrl = await serve(createLoggingFixtureHandler());
+      const calls: string[] = [];
+      const fetchFn: typeof fetch = async (input, init) => {
+        calls.push(JSON.parse(String(init?.body)).method);
+        return fetch(input, init);
+      };
+      const result = await new MCPConformanceTest({
+        serverUrl,
+        protocolVersion: MODERN,
+        checkIds: [id],
+        fetchFn,
+        checkTimeout: 10_000,
+      }).run();
+      const check = byId(result.checks, id);
+      expect(check).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+      });
+      expect(check.error?.message).toMatch(/No logProbe configured/);
+      expect(calls).not.toContain("tools/call");
+      if (id === LOGGING_CHECKS[0]) expect(result.outcome).toBe("incomplete");
+    });
+  }
+
+  for (const { id, failAt } of [
+    { id: LOGGING_CHECKS[0], failAt: "unrequested" },
+    { id: LOGGING_CHECKS[0], failAt: "debug" },
+    { id: LOGGING_CHECKS[1], failAt: "warning" },
+  ] as const) {
+    it(`${id}: reports a tool error at ${failAt} as could-not-run`, async () => {
+      const serverUrl = await serve(
+        createLoggingFixtureHandler({ mode: "tool-error", failAt })
+      );
+      const result = await new MCPConformanceTest({
+        serverUrl,
+        protocolVersion: MODERN,
+        checkIds: [id],
+        logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+        checkTimeout: 10_000,
+      }).run();
+      expect(byId(result.checks, id)).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+        details: { toolError: true },
+      });
+    });
+  }
+
+  it("passes the configured logProbe through runConformance", async () => {
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({ mode: "conforming" })
+    );
+    const report = await runConformance({
+      server: { url: serverUrl },
+      suites: ["protocol"],
+      protocolVersion: MODERN,
+      protocol: {
+        checkIds: ["logging-set-level", ...LOGGING_CHECKS],
+        logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+        checkTimeout: 10_000,
+      },
+    });
+    const cases = report.reports.protocol!.groups.flatMap(
+      (group) => group.cases
+    );
+    for (const id of LOGGING_CHECKS) {
+      expect(cases.find((test) => test.id === id)?.status).toBe("passed");
+    }
+    expect(cases.find((test) => test.id === LOGGING_CHECKS[1])?.pending).toBe(
+      true
+    );
+    expect(report.outcome).toBe("passed");
+  });
+  it("reports the supplied silent tool failure through runConformance", async () => {
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({ mode: "silent" })
+    );
+    const report = await runConformance({
+      server: { url: serverUrl },
+      suites: ["protocol"],
+      protocolVersion: MODERN,
+      protocol: {
+        checkIds: [LOGGING_CHECKS[0]],
+        logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+        checkTimeout: 10_000,
+      },
+    });
+    const cases = report.reports.protocol!.groups.flatMap(
+      (group) => group.cases
+    );
+    expect(cases.find((test) => test.id === LOGGING_CHECKS[0])).toMatchObject({
+      status: "failed",
+      error: "the supplied tool produced no logs.",
+    });
+    expect(report.outcome).toBe("failed");
   });
 });
 

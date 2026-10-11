@@ -112,7 +112,7 @@ describe("OrganizationModelsSection", () => {
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
 
     expect(screen.getByText("Usage")).toBeTruthy();
-    expect(screen.getByText("42")).toBeTruthy();
+    expect(screen.getAllByText("42").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("$0.1234")).toBeTruthy();
     expect(screen.getAllByText("OpenAI").length).toBeGreaterThanOrEqual(1);
     expect(mocks.useQuery).toHaveBeenCalledWith(
@@ -122,6 +122,84 @@ describe("OrganizationModelsSection", () => {
         rangeDays: 30,
       }),
     );
+  });
+
+  it("falls back to the per-model rows when the backend has no effort split", () => {
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+    const table = screen.getByRole("table");
+    const row = within(table).getByRole("row", { name: /gpt-4o-mini/ });
+    expect(within(row).getByText("gpt-4o-mini")).toBeInTheDocument();
+    // No reasoning split from an older backend: no tile, a dash in the table.
+    expect(screen.queryByText("Reasoning", { selector: "div" })).toBeNull();
+    expect(within(row).getByText("—")).toBeInTheDocument();
+  });
+
+  it("breaks usage down by model and effort with reasoning tokens", () => {
+    const base = mocks.useQuery.getMockImplementation()!;
+    const aggregate = (overrides: Record<string, unknown>) => ({
+      requestCount: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      reasoningTokens: 0,
+      knownCostUsd: 0,
+      knownCostRequests: 0,
+      unknownCostRequests: 1,
+      ...overrides,
+    });
+    mocks.useQuery.mockImplementation((name: string, args: unknown) => {
+      const result = base(name, args);
+      if (name !== "organizationModelProviders:getUsageSummary" || !result) {
+        return result;
+      }
+      return {
+        ...result,
+        total: { ...result.total, reasoningTokens: 1337 },
+        byModelEffort: [
+          aggregate({
+            key: "claude-sonnet-4-5\u0000high",
+            modelId: "claude-sonnet-4-5",
+            reasoningEffort: "high",
+            requestCount: 3,
+            totalTokens: 9000,
+            reasoningTokens: 1300,
+            knownCostUsd: 0.5,
+            knownCostRequests: 3,
+            unknownCostRequests: 0,
+          }),
+          aggregate({
+            key: "claude-sonnet-4-5\u0000default",
+            modelId: "claude-sonnet-4-5",
+            reasoningEffort: "default",
+            reasoningTokens: 37,
+          }),
+        ],
+      };
+    });
+
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+    const reasoningTile = screen.getByText("Reasoning", {
+      selector: "div",
+    }).parentElement!;
+    expect(within(reasoningTile).getByText("1,337")).toBeInTheDocument();
+
+    const table = screen.getByRole("table");
+    const high = within(table).getByRole("row", {
+      name: /claude-sonnet-4-5 · High/,
+    });
+    expect(within(high).getByText("9,000")).toBeInTheDocument();
+    expect(within(high).getByText("1,300")).toBeInTheDocument();
+    expect(within(high).getByText("$0.50")).toBeInTheDocument();
+    const fallback = within(table).getByRole("row", {
+      name: /claude-sonnet-4-5 · Default/,
+    });
+    expect(within(fallback).getByText("37")).toBeInTheDocument();
+    // No cost reported for that row: a dash, never "$0".
+    expect(within(fallback).getByText("—")).toBeInTheDocument();
+    // The effort split replaces the bare per-model rows.
+    expect(within(table).queryByText("gpt-4o-mini")).toBeNull();
   });
 
   it("keeps usage hidden from non-admin members", () => {
