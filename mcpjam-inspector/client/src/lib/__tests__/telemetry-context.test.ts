@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentTelemetryCaptureContext,
   resetTelemetryIdentity,
@@ -162,5 +162,22 @@ describe("stampPostHogEvent", () => {
   it("claims no restriction on an off surface, leaving it to the backend", () => {
     setSessionPrivacy("off");
     expect(currentTelemetryCaptureContext().policy.recording).toBe("full");
+  });
+
+  it("labels replay off as off on a recording surface", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    try {
+      const privacy = await import("../session-privacy");
+      const context = await import("../telemetry-context");
+      privacy.setSessionPrivacy("off");
+      expect(context.currentTelemetryCaptureContext().policy.recording).toBe(
+        "off",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });

@@ -54,7 +54,7 @@ describe("resolveSessionPrivacy", () => {
     sharedLink: false,
     recording: "full",
   };
-  const answers = ["full", "masked", undefined] as const;
+  const answers = ["full", "masked", "off", undefined] as const;
 
   it("is off wherever replay is off", async () => {
     const { resolveSessionPrivacy } = await load();
@@ -65,9 +65,23 @@ describe("resolveSessionPrivacy", () => {
     }
   });
 
-  it("is masked on packaged desktop for everyone", async () => {
+  it("is off wherever the backend answers off, on every recording surface", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const recording of answers) {
+    for (const surface of ["hosted", "desktop"] as const) {
+      for (const sharedLink of [false, true]) {
+        expect(
+          resolveSessionPrivacy({ surface, sharedLink, recording: "off" }),
+        ).toBe("off");
+      }
+    }
+  });
+
+  it("is masked on packaged desktop for everyone else, once answered", async () => {
+    const { resolveSessionPrivacy } = await load();
+    expect(
+      resolveSessionPrivacy({ ...base, surface: "desktop", recording: undefined }),
+    ).toBe("pending");
+    for (const recording of ["full", "masked"] as const) {
       expect(
         resolveSessionPrivacy({ ...base, surface: "desktop", recording }),
       ).toBe("masked");
@@ -86,9 +100,9 @@ describe("resolveSessionPrivacy", () => {
     expect(resolveSessionPrivacy(base)).toBe("full");
   });
 
-  it("masks a share link whoever is viewing it", async () => {
+  it("masks a share link whoever is viewing it, once answered", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const recording of answers) {
+    for (const recording of ["full", "masked"] as const) {
       expect(
         resolveSessionPrivacy({ ...base, recording, sharedLink: true }),
       ).toBe("masked");
@@ -383,6 +397,27 @@ describe("syncSessionRecording", () => {
     });
   });
 
+  it("an off answer stops the recorder and keeps analytics masked", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    client.log.length = 0;
+
+    mod.setSessionPrivacy("off");
+    mod.syncSessionRecording(client, "/servers");
+    mod.syncSessionRecording(client, "/tools");
+
+    expect(client.log).toEqual(["stop", "config:masked"]);
+    expect(mod.shouldMaskAnalytics()).toBe(true);
+  });
+
+  it("an off surface keeps unmasked analytics", async () => {
+    const mod = await load();
+    expect(mod.currentSessionPrivacy()).toBe("off");
+    expect(mod.shouldMaskAnalytics()).toBe(false);
+  });
+
   it("never throws when posthog is unavailable or ad-blocked", async () => {
     const mod = await load({ hosted: true });
     mod.setSessionPrivacy("full");
@@ -628,6 +663,60 @@ describe("filterSentryBreadcrumb", () => {
       }
       const click = { category: "ui.click", message: "button.harness" };
       expect(mod.filterSentryBreadcrumb(click)).toBe(click);
+    }
+  });
+});
+
+describe("remembered replay off", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("holds off the person it was answered for, and anyone not known yet", async () => {
+    const mod = await load({ hosted: true });
+    expect(mod.replayOffRemembered("user_a")).toBe(false);
+
+    mod.rememberReplayOff("user_a", true);
+    expect(mod.replayOffRemembered("user_a")).toBe(true);
+    expect(mod.replayOffRemembered(undefined)).toBe(true);
+    expect(mod.replayOffRemembered("user_b")).toBe(false);
+    expect(mod.replayOffRemembered(null)).toBe(false);
+  });
+
+  it("survives a reload, and a later answer for the same person clears it", async () => {
+    const first = await load({ hosted: true });
+    first.rememberReplayOff("user_a", true);
+
+    const reloaded = await load({ hosted: true });
+    expect(reloaded.replayOffRemembered("user_a")).toBe(true);
+    // An answer for someone else leaves it alone.
+    reloaded.rememberReplayOff("user_b", false);
+    expect(reloaded.replayOffRemembered("user_a")).toBe(true);
+    reloaded.rememberReplayOff("user_a", false);
+    expect(reloaded.replayOffRemembered("user_a")).toBe(false);
+    expect((await load({ hosted: true })).replayOffRemembered(undefined)).toBe(
+      false,
+    );
+  });
+
+  it("works from memory when storage throws", async () => {
+    const mod = await load({ hosted: true });
+    const storage = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    try {
+      mod.rememberReplayOff("user_a", true);
+      expect(mod.replayOffRemembered("user_a")).toBe(true);
+    } finally {
+      storage.mockRestore();
+      write.mockRestore();
     }
   });
 });

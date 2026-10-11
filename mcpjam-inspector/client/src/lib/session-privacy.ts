@@ -2,8 +2,12 @@
  * Session privacy levels: what session replay and product analytics may
  * record in this browser session.
  *
- *   - `off`    — no replay at all. npx/Docker installs, `electron-forge start`,
- *                and builds with `VITE_DISABLE_POSTHOG_LOCAL`.
+ *   - `off`    — no replay at all. npx/Docker installs, `electron-forge start`
+ *                and builds with `VITE_DISABLE_POSTHOG_LOCAL` (an `off`
+ *                SURFACE), and anyone the backend answers `off` for: an
+ *                organization with session replay off is in view, or the
+ *                person belongs to one. On a recording surface, `off`
+ *                analytics are masked like `masked` ones.
  *   - `masked` — replay of layout and interaction only: every text node and
  *                input masked, media blocked, no console logs, no network
  *                headers or bodies, and name-like URL segments replaced.
@@ -19,9 +23,11 @@
  * disagree. `docs/session-replay-masking.md` has the table.
  *
  * Fail closed. Nothing records until the level is known; an answer that does
- * not arrive becomes `masked` (`useSessionPrivacy`), never `full`. The PostHog
- * relay enforces the same policy again on the server, so a client that gets
- * this wrong still cannot upload an unmasked replay through it.
+ * not arrive becomes `masked` (`useSessionPrivacy`), never `full` — unless
+ * this browser's current person was last answered `off`
+ * (`replayOffRemembered`), in which case it stays `off`. The PostHog relay
+ * enforces the same policy again on the server: it drops replay the backend
+ * says is `off`, and restricted replay the client did not declare masked.
  */
 import { HOSTED_MODE } from "./config";
 import {
@@ -129,22 +135,79 @@ export interface SessionPrivacyInputs {
  * The level for this session. Pure: the caller supplies the facts.
  *
  * - npx/Docker and dev builds: `off`.
- * - Packaged desktop: `masked` for everyone. It records people debugging their
- *   own MCP servers on their own machines, which is the npx reasoning with
- *   replay kept for crash debugging.
- * - Hosted share links: `masked` — whose data it is cannot be known here.
- * - Hosted otherwise: the backend's answer, `pending` until it arrives. Only a
- *   verified non-private context gets `full`; visitors with no session, and
- *   pages with nothing in view, are `masked`.
+ * - Everywhere else, `pending` until the backend answers, and `off` when it
+ *   answers `off`: no replay for an organization with session replay off, on
+ *   any surface.
+ * - Packaged desktop: otherwise `masked` for everyone. It records people
+ *   debugging their own MCP servers on their own machines, which is the npx
+ *   reasoning with replay kept for crash debugging.
+ * - Hosted share links: otherwise `masked` — whose data it is cannot be
+ *   known here.
+ * - Hosted otherwise: the backend's answer. Only a verified non-private
+ *   context gets `full`; visitors with no session, and pages with nothing in
+ *   view, are `masked`.
  */
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
 ): SessionPrivacy {
   if (inputs.surface === "off") return "off";
-  if (inputs.surface === "desktop") return "masked";
-  if (inputs.sharedLink) return "masked";
   if (inputs.recording === undefined) return "pending";
+  if (inputs.recording === "off") return "off";
+  if (inputs.surface === "desktop" || inputs.sharedLink) return "masked";
   return inputs.recording === "full" ? "full" : "masked";
+}
+
+// ── Remembered `off` ───────────────────────────────────────────────────
+
+const REPLAY_OFF_STORAGE_KEY = "mcpjam.telemetry.replayOffActor";
+let replayOffActor: string | null | undefined;
+
+function readReplayOffActor(): string | null {
+  if (replayOffActor !== undefined) return replayOffActor;
+  try {
+    replayOffActor = window.localStorage.getItem(REPLAY_OFF_STORAGE_KEY);
+  } catch {
+    replayOffActor = null;
+  }
+  return replayOffActor;
+}
+
+/**
+ * Record the backend's answer for `actorId`: whether replay is `off` for
+ * them. Kept in memory and, where storage works, across reloads, so a person
+ * whose organization has replay off is never recorded while the answer is
+ * slow, failing or not asked yet. Only real answers belong here.
+ */
+export function rememberReplayOff(actorId: string | null, off: boolean): void {
+  if (actorId === null) return;
+  const current = readReplayOffActor();
+  const next = off ? actorId : current === actorId ? null : current;
+  if (next === current) return;
+  replayOffActor = next;
+  try {
+    if (next === null) window.localStorage.removeItem(REPLAY_OFF_STORAGE_KEY);
+    else window.localStorage.setItem(REPLAY_OFF_STORAGE_KEY, next);
+  } catch {
+    // Memory still holds it for this page.
+  }
+}
+
+/**
+ * Whether `actorId` was last answered `off` in this browser. `undefined` is
+ * an actor not known yet (sign-in still loading): it counts when anyone was,
+ * because it is most likely the same person.
+ */
+export function replayOffRemembered(
+  actorId: string | null | undefined,
+): boolean {
+  const remembered = readReplayOffActor();
+  if (remembered === null) return false;
+  return actorId === undefined || actorId === remembered;
+}
+
+/** Tests only. */
+export function resetRememberedReplayOffForTests(): void {
+  replayOffActor = undefined;
 }
 
 // ── The level in effect ────────────────────────────────────────────────
@@ -163,11 +226,13 @@ export function setSessionPrivacy(level: SessionPrivacy): void {
 
 /**
  * Whether analytics must keep names out right now: on a recording surface,
- * anything short of a resolved `full`. `off` surfaces keep today's analytics.
+ * anything short of a resolved `full` — replay `off` included. `off`
+ * surfaces keep today's analytics.
  */
 export function shouldMaskAnalytics(): boolean {
   const privacy = currentSessionPrivacy();
-  return privacy === "masked" || privacy === "pending";
+  if (privacy === "full") return false;
+  return privacy !== "off" || recordingSurface() !== "off";
 }
 
 // ── PostHog profiles ───────────────────────────────────────────────────
@@ -192,11 +257,7 @@ export const SESSION_RECORDING_OPTIONS = {
   maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
 } as const;
 
-/**
- * Media rrweb would otherwise copy into the replay. Blocked at `masked`. The
- * relay blocks the same tags (`MASKED_REPLAY_BLOCKED_TAGS`) in restricted
- * replays it receives.
- */
+/** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
 export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
   .map((tag) => (tag === "image" ? "svg image" : tag))
   .join(", ");
@@ -289,7 +350,8 @@ let posthogRecording = false;
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
- * declined. `pending` and credential paths hold the recorder stopped.
+ * declined. `pending`, `off` and credential paths hold the recorder stopped;
+ * an `off` surface never configures it at all.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
@@ -299,10 +361,10 @@ export function syncSessionRecording(
   pathname: string,
 ): void {
   try {
+    if (recordingSurface() === "off") return;
     const privacy = currentSessionPrivacy();
-    if (privacy === "off") return;
     // Analytics masking follows the level even while replay is held off:
-    // `pending` analytics are masked.
+    // `pending` and `off` analytics are masked.
     const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
@@ -313,7 +375,9 @@ export function syncSessionRecording(
       posthogProfile = profile;
     }
     const shouldRecord =
-      privacy !== "pending" && !isCredentialBearingPath(pathname);
+      privacy !== "pending" &&
+      privacy !== "off" &&
+      !isCredentialBearingPath(pathname);
     if (shouldRecord && !posthogRecording) {
       client.startSessionRecording?.();
       posthogRecording = true;

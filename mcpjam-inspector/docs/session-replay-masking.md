@@ -5,30 +5,34 @@ what session replay (PostHog and Sentry Replay) and product analytics may
 record. The policy lives in one module, `client/src/lib/session-privacy.ts`,
 and both recorders read the same state from it.
 
-Enterprise replay is **always masked**. It is viewable only by the MCPJam
-engineers and support staff who are named on the vendor projects (see
-[Access](#access-and-acceptance)). No debugging permission unmasks a replay.
+Enterprise replay is **masked by default**, and an organization with
+**session replay off** is never recorded at all. A masked replay is viewable
+only by the MCPJam engineers and support staff who are named on the vendor
+projects (see [Access](#access-and-acceptance)). No debugging permission
+unmasks a replay.
 
 Three layers enforce the same policy:
 
 1. **The backend decides.** `telemetryPrivacy:getContext` (mcpjam-backend)
    resolves the contexts in view, through the viewer's own project and
-   organization access, to two values: `recording` (`full` | `masked`) and
-   `identity` (`full` | `id_only`). Anything it cannot verify is masked, and
-   a private context in view or membership of a private organization makes
-   both restrictive.
+   organization access, to two values: `recording` (`full` | `masked` |
+   `off`) and `identity` (`full` | `id_only`). Anything it cannot verify is
+   masked, and a private context in view or membership of a private
+   organization makes both restrictive. `off` beats `masked` beats `full`.
 2. **The client applies it** to both recorders, to identify calls, and to
-   every event it captures (this document).
-3. **The relay enforces it again** for everything PostHog receives through
-   MCPJam (`server/routes/relay.ts`, [below](#the-relay-backstop)). A client
-   that gets it wrong, an old client, or a forged one cannot upload an
-   unmasked replay through it.
+   every event it captures (this document). Masking happens here, in the
+   browser, as the replay is recorded.
+3. **The relay checks it again** for everything PostHog receives through
+   MCPJam (`server/routes/relay.ts`, [below](#the-relay-backstop)). It never
+   rebuilds a replay: it drops replay the policy turns off, and restricted
+   replay that its client did not declare masked, so an old client or one
+   that did not know the policy cannot upload an unmasked replay through it.
 
 ## The levels
 
 | Level    | Replay records                                                     | Product analytics                                    |
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| `off`    | Nothing. No recorder is constructed.                               | Unchanged                                            |
+| `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
 | `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
 
@@ -36,16 +40,17 @@ Three layers enforce the same policy:
 
 | Session                                                                       | Level     |
 | ----------------------------------------------------------------------------- | --------- |
+| Any surface, the backend answered `off` (see [Session replay off](#session-replay-off)) | `off` |
 | npx / Docker self-hosted                                                      | `off`     |
 | `electron-forge start` (dev)                                                  | `off`     |
 | Any build with `VITE_DISABLE_POSTHOG_LOCAL`                                   | `off`     |
-| Packaged desktop (Electron), everyone                                         | `masked`  |
-| Hosted, share link of a published study (the tester chat)                     | `masked`  |
+| Packaged desktop (Electron), everyone else, once answered                     | `masked`  |
+| Hosted, share link of a published study (the tester chat), once answered      | `masked`  |
 | Hosted, the backend answered `masked` for the contexts in view                | `masked`  |
 | Hosted, no context in view, or no session to verify one with                  | `masked`  |
-| Hosted, no answer within 10 seconds                                           | `masked`  |
+| Hosted, no answer within 10 seconds (unless last answered `off`)              | `masked`  |
 | Hosted, every context in view verified non-private, viewer in no private org  | `full`    |
-| Hosted, waiting for the first answer                                          | `pending` |
+| Hosted or desktop, waiting for the first answer                               | `pending` |
 
 `resolveSessionPrivacy` encodes this table, and its tests walk every row.
 **Full replay requires a verified non-private context.** A visitor with no
@@ -85,6 +90,27 @@ counts.
 - Staff can set it explicitly, including an explicit `false`.
 - The plan does not decide it, so a downgrade or a renewal gap never changes it.
 
+### Session replay off
+
+For a customer whose agreement says session recording is disabled, staff set
+`organizations.sessionReplayOff: true`
+(`userOps/enterprisePrivacy:setSessionReplayOff`, reason required, audited in
+the customer's own log). It is never set automatically and is separate from
+`enterprisePrivacy`. While it is on:
+
+- the backend answers `recording: "off"` and `identity: "id_only"` for anyone
+  with that organization, or one of its projects, in view, and for every
+  member of it (guests included) wherever they are;
+- both recorders stop at once and never start, on every surface, desktop and
+  share links included; analytics stay masked;
+- the relay drops any replay captured under it, whatever the client claimed.
+
+The client remembers an `off` answer per person (`rememberReplayOff`, in
+memory and `localStorage`), so a reload, a navigation, or a slow or failing
+answer keeps that person unrecorded instead of falling back to `masked`.
+
+### How the client asks
+
 The client no longer reads the flag off its organization list. It asks
 `telemetryPrivacy:getContext` (via `useTelemetryPrivacyContext`) with the ids
 in view. The query uses the existing access checks (`resolveProjectAccess`,
@@ -109,7 +135,8 @@ for a previous actor is therefore never read as the current actor's.
   load.
 - **An answer that never comes is `masked`.** If the level is still `pending`
   after 10 seconds (`PRIVACY_PENDING_TIMEOUT_MS`), the session records `masked`.
-  It never falls back to `full`.
+  It never falls back to `full`, and for a person last answered `off` it stays
+  `off`.
 
 ## Changing level mid-session
 
@@ -360,8 +387,7 @@ the relay both strip `request_headers` from it.
 
 ## The relay backstop
 
-`/relay` and `/tlm` (`server/routes/relay.ts`, `server/routes/relay-privacy.ts`,
-`server/routes/relay-replay-privacy.ts`)
+`/relay` and `/tlm` (`server/routes/relay.ts`, `server/routes/relay-privacy.ts`)
 gate every capture request — event batches, replay batches and GET ingestion:
 
 1. Decode the payload once (gzip, base64 form, JSON) and pin it to our
@@ -385,16 +411,17 @@ gate every capture request — event batches, replay batches and GET ingestion:
    from PostHog's remote config — and every property named for a name
    (`project_name`, `serverName`) is masked. Query strings keep only the
    app's own keys, and credential values (`code`, `state`, `token`, …) are
-   redacted whatever their shape. Their `$snapshot_data` is rebuilt from an
-   explicit allowlist of rrweb structures: posthog-js's compressed fields
-   (`cv: "2024-10"`, at most 8 MiB each inflated) are inflated, masked and
-   re-compressed; text, inputs and non-layout attributes are masked, kept
-   `style` values lose their URLs and strings, and stylesheets and CSS rules
-   their URLs; media, embeds and fonts are blocked; console, network and
-   canvas recordings are dropped. An unknown or undecodable
-   structure is refused with a non-retryable `400 unsupported_replay_payload`,
-   never forwarded unchanged.
-5. The client address is forwarded only when every event in the request
+   redacted whatever their shape.
+5. Replay (`$snapshot`) is passed whole or dropped, never decoded or
+   rebuilt. Under `off` every replay is dropped. Under `masked` a replay
+   passes only if its own stamp declares it `masked`; a missing, malformed
+   or laxer stamp is dropped. The stamp is a declaration, not proof: this
+   catches a client recording under the wrong policy, while the masking
+   itself is the client's and is proven by the browser test on what it
+   actually sends. Every replay that passes loses the relay bearer from its
+   `$posthog_config` event. A request left with nothing to forward gets a
+   non-retryable `400 telemetry_restricted`.
+6. The client address is forwarded only when every event in the request
    resolved to the full policy. `Authorization`, privacy-context headers and
    client forwarding headers never reach PostHog. PostHog logs, which carry
    console output that cannot be attributed or masked, are refused.
@@ -403,14 +430,11 @@ It reuses the relay's size, decompression, concurrency and rate limits. A
 request reads its payload under an admission slot, gives the slot back while
 the backend answers (that wait has its own budget: 64 requests, 64 MiB), and
 is admitted again to rewrite it, so a slow backend never holds the slots
-sized for parsing. GET captures take a slot like any other, and compressed
-replay fields count toward the request's admission: a request admitted as
-small inflates them only to the floor, and past it takes a large-payload slot
-or gets a `503`, which posthog-js retries. The DOM walk yields to the event
-loop as it goes. The rewritten payload is forwarded gzip-compressed with
-`compression=gzip-js`, as posthog-js sends it. The
-aggregate `relay.stats` line counts `privacyMasked`, `privacyRejected` and
-`privacyUnresolved` requests; nothing logs payloads, credentials, names or
+sized for parsing. GET captures take a slot like any other. The rewritten
+payload is forwarded gzip-compressed with `compression=gzip-js`, as
+posthog-js sends it. The aggregate `relay.stats` line counts
+`privacyMasked`, `privacyRejected` and `privacyUnresolved` requests and
+`privacyReplayDropped` events; nothing logs payloads, credentials, names or
 emails.
 
 Sentry has no ingestion proxy: it is protected by its client capture options
@@ -429,20 +453,23 @@ and the outbound filters above.
   the test intercepts PostHog and Sentry transports, decodes every payload to
   its last compressed field, and asserts that none of it leaves under a
   private context — while a useful layout and interaction recording, and an
-  error linked to its replay, do. A `full` run is the positive control.
+  error linked to its replay, do. An `off` run proves neither recorder sends
+  anything while analytics and errors still arrive. A `full` run is the
+  positive control.
 
 ## Known gaps
 
 - **Sentry's DOM events.** Sentry offers no hook to edit rrweb events, only
   its own frames, so its DOM masking is fixed at init and applies at every
-  level. Stylesheets in a Sentry replay (CSS-in-JS rules included) are
-  recorded as written; the relay scrubs their URLs for PostHog only.
+  level.
+- **Stylesheet URLs in a masked replay.** Both recorders record stylesheets
+  (CSS-in-JS rules included) as written, so a `url(...)` in a rule — an
+  icon drawn as a CSS mask — keeps its host. Inline `style` attributes are
+  scrubbed (`maskReplayStyle`). An organization that cannot accept this
+  gets session replay off.
 - **Exception messages.** On restricted PostHog events, URLs inside error
   messages are scrubbed, but other text in error messages and stack traces
   is not; general log sanitization is out of scope here.
-- **Restricted replay styling.** Stylesheet URLs (fonts, background images)
-  are scrubbed along with everything else, so a restricted replay can fall
-  back to default fonts.
 
 ## Access and acceptance
 
@@ -450,10 +477,9 @@ and the outbound filters above.
   Access is restricted to named debugging staff, including privileged roles
   and sharing capabilities, and an unauthorized account must not be able to
   view recordings. That is a vendor configuration, verified at rollout.
-- The privacy commitment for enterprise organizations is **masked replay
-  with restricted staff access**, matching the STI-158 acceptance wording.
-  This is a product decision; it does not by itself establish customer
-  acceptance of the revised wording.
+- The default for enterprise organizations is **masked replay with
+  restricted staff access**. An organization whose agreement says recording
+  is disabled gets **session replay off**, which records nothing at all.
 - A privacy rollback disables the affected replay rather than restoring
   unrestricted forwarding.
 

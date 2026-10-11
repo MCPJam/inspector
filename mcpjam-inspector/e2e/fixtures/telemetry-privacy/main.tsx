@@ -7,7 +7,8 @@
  * what would have left the browser.
  *
  * `?privacy=masked` is a member viewing an organization with enterprise
- * privacy; `?privacy=full` is a verified non-private context, the positive
+ * privacy; `?privacy=off` is one viewing an organization with session replay
+ * off; `?privacy=full` is a verified non-private context, the positive
  * control that proves the recorders were capturing all along.
  */
 import { StrictMode, type CSSProperties } from "react";
@@ -37,10 +38,9 @@ import {
   HARNESS_RELAY_TOKEN,
 } from "./constants";
 
-const mode =
-  new URLSearchParams(window.location.search).get("privacy") === "full"
-    ? "full"
-    : "masked";
+const requested = new URLSearchParams(window.location.search).get("privacy");
+const mode: "full" | "masked" | "off" =
+  requested === "full" || requested === "off" ? requested : "masked";
 
 function Harness() {
   useSessionPrivacy(

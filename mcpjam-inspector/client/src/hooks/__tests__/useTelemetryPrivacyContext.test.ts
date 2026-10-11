@@ -57,6 +57,7 @@ describe("useTelemetryPrivacyContext", () => {
       policy: FULL,
       identity: "full",
       actor: "user_A",
+      answered: true,
     });
     expect(server.subscriptions.at(-1)).toEqual({
       projectIds: ["proj_1"],
@@ -77,14 +78,31 @@ describe("useTelemetryPrivacyContext", () => {
       policy: MASKED,
       identity: "id_only",
       actor: null,
+      answered: true,
     });
   });
 
-  it("reads a query error or a malformed answer as conservative", () => {
+  it("reads a query error or a malformed answer as conservative, and not as an answer", () => {
     server.answer.mockReturnValue(new Error("boom"));
-    expect(render(input()).result.current.policy).toEqual(MASKED);
+    expect(render(input()).result.current).toMatchObject({
+      policy: MASKED,
+      answered: false,
+    });
     server.answer.mockReturnValue({ recording: "full" });
-    expect(render(input()).result.current.policy).toEqual(MASKED);
+    expect(render(input()).result.current).toMatchObject({
+      policy: MASKED,
+      answered: false,
+    });
+  });
+
+  it("passes an off answer through", () => {
+    const OFF = { recording: "off", identity: "id_only" };
+    server.answer.mockReturnValue(OFF);
+    expect(render(input()).result.current).toMatchObject({
+      policy: OFF,
+      identity: "id_only",
+      answered: true,
+    });
   });
 
   it("never reads the previous actor's answer as the next actor's", () => {
@@ -111,6 +129,7 @@ describe("useTelemetryPrivacyContext", () => {
       policy: undefined,
       identity: undefined,
       actor: "user_A",
+      answered: false,
     });
   });
 
@@ -122,6 +141,7 @@ describe("useTelemetryPrivacyContext", () => {
       policy: undefined,
       identity: "full",
       actor: "user_A",
+      answered: false,
     });
   });
 

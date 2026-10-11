@@ -53,6 +53,12 @@ export interface TelemetryPrivacyContextState {
   identity: TelemetryIdentity | undefined;
   /** The actor both were resolved for; `null` for an anonymous visitor. */
   actor: string | null;
+  /**
+   * Whether `policy` is the backend's own answer. `false` while there is none
+   * and when the query failed or answered something malformed, where
+   * `policy` is the conservative stand-in.
+   */
+  answered: boolean;
 }
 
 /**
@@ -144,7 +150,12 @@ export function useTelemetryPrivacyContext(
   } | null>(null);
 
   if (!subscribed || actorKey === undefined) {
-    return { policy: undefined, identity: undefined, actor: null };
+    return {
+      policy: undefined,
+      identity: undefined,
+      actor: null,
+      answered: false,
+    };
   }
   const actor = actorKey === ANONYMOUS_TELEMETRY_ACTOR ? null : actorKey;
   if (raw === undefined) {
@@ -153,12 +164,13 @@ export function useTelemetryPrivacyContext(
       policy: undefined,
       identity: last?.key === subscriptionKey ? last.identity : undefined,
       actor,
+      answered: false,
     };
   }
-  const policy =
-    raw instanceof Error || !isTelemetryPolicy(raw)
-      ? { ...CONSERVATIVE_TELEMETRY_POLICY }
-      : { recording: raw.recording, identity: raw.identity };
+  const answered = !(raw instanceof Error) && isTelemetryPolicy(raw);
+  const policy = answered
+    ? { recording: raw.recording, identity: raw.identity }
+    : { ...CONSERVATIVE_TELEMETRY_POLICY };
   lastIdentityRef.current = { key: subscriptionKey, identity: policy.identity };
-  return { policy, identity: policy.identity, actor };
+  return { policy, identity: policy.identity, actor, answered };
 }

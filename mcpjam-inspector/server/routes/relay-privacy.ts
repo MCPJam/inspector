@@ -12,13 +12,10 @@ import {
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryPolicy,
+  type TelemetryRecording,
   withoutIdentifyingProperties,
 } from "../../shared/telemetry-privacy.js";
 import type { TelemetryPolicyResolution } from "../services/telemetry-privacy-policy.js";
-import {
-  type RestrictionBudget,
-  restrictSnapshotData,
-} from "./relay-replay-privacy.js";
 
 /**
  * The relay's privacy gate: what an event may carry to PostHog, decided per
@@ -38,14 +35,19 @@ import {
  *   - every property, `$set` and `$set_once` included, loses the names in its
  *     URLs, paths and hosts, and every property named for a name is masked;
  *     its autocapture elements lose their text and attributes, and its IP
- *     and GeoIP enrichment go;
- *   - its replay data passes `restrictSnapshotData` (relay-replay-privacy.ts):
- *     an explicit allowlist of
- *     rrweb structures, rebuilt field by field with text and inputs masked,
- *     URLs scrubbed from styles and stylesheets, media and fonts blocked,
- *     console and network plugin data removed. Anything the
- *     allowlist does not know is refused (`UnsupportedReplayError`), never
- *     forwarded unchanged.
+ *     and GeoIP enrichment go.
+ *
+ * Replay (`$snapshot`) is masked in the browser, as it is recorded, and the
+ * relay does not rebuild it. It decides only whether a replay event may pass:
+ *   - recording `off`: never;
+ *   - recording `masked`: only when the client's own stamp declares it
+ *     `masked`. A missing, malformed or laxer stamp — an old client, a
+ *     client that did not know the policy — is dropped;
+ *   - recording `full`: yes.
+ * The stamp is a declaration, not proof: this catches a client recording
+ * under the wrong policy, while the masking itself is the client's, covered
+ * by tests on the payloads it actually sends. Every replay that passes loses
+ * the relay bearer from its `$posthog_config` event.
  */
 
 type Json = Record<string, unknown>;
@@ -72,6 +74,11 @@ export function isRestricted(policy: TelemetryPolicy): boolean {
 export interface PolicyDecision {
   /** One policy per event, in order. */
   policies: TelemetryPolicy[];
+  /**
+   * What each event's own stamp says the client recorded under, in order;
+   * `null` when the event has no readable stamp.
+   */
+  declared: Array<TelemetryRecording | null>;
   /** Events whose policy could not be resolved: no stamp, bearer or answer. */
   unresolved: number;
 }
@@ -111,6 +118,9 @@ export async function decideEventPolicies(
     );
   }
   let unresolved = 0;
+  const declared = contexts.map((context) =>
+    context ? context.policy.recording : null,
+  );
   const policies = contexts.map((context) => {
     const answer = context
       ? answers.get(captureContextKey(context))
@@ -121,7 +131,7 @@ export async function decideEventPolicies(
     }
     return mostRestrictivePolicy(answer.policy, context.policy);
   });
-  return { policies, unresolved };
+  return { policies, declared, unresolved };
 }
 
 // ── Events ─────────────────────────────────────────────────────────────
@@ -144,7 +154,8 @@ const URL_PROPERTIES = new Set([
 const NAME_PROPERTY = /(?:^|_)(?:name|email)$|[a-z](?:Name|Email)$/;
 // A property holding a host (`$referring_domain`, `$initial_referring_domain`).
 const DOMAIN_PROPERTY = /(?:^|_)domain$/;
-// Handled on their own: the stamp, replay data and autocapture elements.
+// Handled on their own: the stamp, replay data (masked by the client, passed
+// or dropped whole) and autocapture elements.
 const SEPARATELY_RESTRICTED = new Set([
   TELEMETRY_CONTEXT_PROPERTY,
   "$snapshot_data",
@@ -260,15 +271,31 @@ function scrubElement(element: unknown): unknown {
 }
 
 /**
- * A copy of `event` fit for its policy, stamp removed. Restricted events lose
- * names, IP, URL names, autocapture text, and get their replay masked.
+ * Whether a replay event may be forwarded under `policy`, given what its own
+ * stamp declared. See the module comment.
  */
-export async function applyEventPolicy(
+export function replayAllowed(
+  policy: TelemetryPolicy,
+  declared: TelemetryRecording | null,
+): boolean {
+  if (policy.recording === "full") return true;
+  return policy.recording === "masked" && declared === "masked";
+}
+
+/**
+ * A copy of `event` fit for its policy, stamp removed, or `null` when it must
+ * not be forwarded at all (a replay its policy does not allow). Restricted
+ * events lose names, IP, URL names and autocapture text.
+ */
+export function applyEventPolicy(
   event: unknown,
   policy: TelemetryPolicy,
-  budget: RestrictionBudget,
-): Promise<unknown> {
+  declared: TelemetryRecording | null,
+): unknown {
   if (!isRecord(event)) return event;
+  if (event.event === "$snapshot" && !replayAllowed(policy, declared)) {
+    return null;
+  }
   const properties: Json = isRecord(event.properties)
     ? { ...event.properties }
     : {};
@@ -298,7 +325,7 @@ export async function applyEventPolicy(
     properties.$geoip_disable = true;
   }
 
-  if (policy.recording === "masked") {
+  if (policy.recording !== "full") {
     Object.assign(properties, restrictProperties(properties, 0, false));
     // posthog-js puts `$initial_*` person properties in the event's own
     // `$set_once`, outside `properties`.
@@ -314,12 +341,6 @@ export async function applyEventPolicy(
     if (typeof properties.$elements_chain === "string") {
       properties.$elements_chain = scrubElementsChain(
         properties.$elements_chain,
-      );
-    }
-    if (event.event === "$snapshot" && "$snapshot_data" in properties) {
-      properties.$snapshot_data = await restrictSnapshotData(
-        properties.$snapshot_data,
-        budget,
       );
     }
   }

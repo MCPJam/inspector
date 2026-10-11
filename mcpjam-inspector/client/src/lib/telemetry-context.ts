@@ -27,9 +27,10 @@ import {
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryIdentity,
+  type TelemetryRecording,
   withoutIdentifyingProperties,
 } from "../../../shared/telemetry-privacy";
-import { currentSessionPrivacy } from "./session-privacy";
+import { currentSessionPrivacy, recordingSurface } from "./session-privacy";
 
 // ── Identity grant ─────────────────────────────────────────────────────
 
@@ -132,18 +133,21 @@ export function setTelemetryCaptureContext(ids: {
 
 /**
  * The context an event captured right now is captured under. The label says
- * what this client restricted: `masked` while masked or pending. An `off`
- * surface (npx, Docker) records nothing and masks no analytics
- * (`shouldMaskAnalytics`), so it claims no restriction and the backend's
- * answer decides at the relay.
+ * what this client restricted: `masked` while masked or pending, `off` while
+ * the backend has replay off. An `off` surface (npx, Docker) records nothing
+ * and masks no analytics (`shouldMaskAnalytics`), so it claims no
+ * restriction and the backend's answer decides at the relay.
  */
 export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
   const level = currentSessionPrivacy();
+  let recording: TelemetryRecording = "full";
+  if (level === "masked" || level === "pending") recording = "masked";
+  else if (level === "off" && recordingSurface() !== "off") recording = "off";
   return {
     projectIds: [...contextIds.projectIds],
     organizationIds: [...contextIds.organizationIds],
     policy: {
-      recording: level === "masked" || level === "pending" ? "masked" : "full",
+      recording,
       identity: telemetryNamesAllowed() ? "full" : "id_only",
     },
   };

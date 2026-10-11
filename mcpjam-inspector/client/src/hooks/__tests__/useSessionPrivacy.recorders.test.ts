@@ -44,9 +44,10 @@ async function setup(surface: "hosted" | "desktop" | "npx") {
   usePostHog.mockReturnValue(posthog);
 
   // The backend's recording answer per organization in view.
-  const answers: Record<string, "full" | "masked"> = {
+  const answers: Record<string, "full" | "masked" | "off"> = {
     org_plain: "full",
     org_private: "masked",
+    org_replay_off: "off",
   };
   const levelFor = (
     activeOrganizationId: string,
@@ -134,9 +135,36 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).not.toContain("full");
   });
 
-  it("desktop: masked for everyone, from the first render", async () => {
-    const { posthog } = await setup("desktop");
+  it("desktop: masked for everyone once the backend answers", async () => {
+    const { posthog, levelFor, hook } = await setup("desktop");
+    expect(posthog.log).toEqual(["masked"]);
+    hook.rerender({ level: levelFor("org_plain") });
     expect(posthog.log).toEqual(["masked", "start"]);
+  });
+
+  it("replay off: never starts, and a running recording stops in the same commit", async () => {
+    const { posthog, levelFor, hook } = await setup("hosted");
+    hook.rerender({ level: levelFor("org_replay_off") });
+    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
+
+    hook.rerender({ level: levelFor("org_plain") });
+    expect(posthog.log.at(-1)).toBe("start");
+    posthog.log.length = 0;
+
+    hook.rerender({ level: levelFor("org_replay_off") });
+    expect(posthog.log).toEqual(["stop", "masked"]);
+
+    // Off does not time out into masked recording.
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(posthog.log).toEqual(["stop", "masked"]);
+  });
+
+  it("desktop: replay off is honoured too", async () => {
+    const { posthog, levelFor, hook } = await setup("desktop");
+    hook.rerender({ level: levelFor("org_replay_off") });
+    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
   });
 
   it("npx: off, the recorder is never touched", async () => {

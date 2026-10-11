@@ -29,6 +29,16 @@ describe("mostRestrictivePolicy", () => {
     expect(mostRestrictivePolicy(FULL, FULL)).toEqual(FULL);
   });
 
+  it("ranks off above masked above full, and never loses an off", () => {
+    const OFF = { recording: "off", identity: "id_only" } as const;
+    expect(mostRestrictivePolicy(FULL, OFF, MASKED)).toEqual(OFF);
+    expect(
+      mostRestrictivePolicy({ recording: "off", identity: "full" }, FULL),
+    ).toEqual({ recording: "off", identity: "full" });
+    // A malformed policy is conservative, but an off beside it still wins.
+    expect(mostRestrictivePolicy(OFF, null)).toEqual(OFF);
+  });
+
   it("treats nothing, null and malformed policies as conservative", () => {
     expect(mostRestrictivePolicy()).toEqual(MASKED);
     expect(mostRestrictivePolicy(FULL, null)).toEqual(MASKED);

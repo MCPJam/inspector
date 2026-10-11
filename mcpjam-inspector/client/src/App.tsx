@@ -173,7 +173,12 @@ import {
   useTelemetryPrivacyContext,
 } from "./hooks/useTelemetryPrivacyContext";
 import { usePostHogRelayAuth } from "./hooks/usePostHogRelayAuth";
-import { recordingSurface, resolveSessionPrivacy } from "./lib/session-privacy";
+import {
+  recordingSurface,
+  rememberReplayOff,
+  replayOffRemembered,
+  resolveSessionPrivacy,
+} from "./lib/session-privacy";
 import {
   resetTelemetryIdentity,
   setTelemetryActor,
@@ -4738,11 +4743,12 @@ export default function App() {
     activeProject?.organizationId,
   ];
   const telemetryProjectIds = [convexProjectId];
+  const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
   const telemetryPrivacy = useTelemetryPrivacyContext({
     // Every surface asks: identity applies wherever analytics run, even
     // where replay is off.
     enabled: true,
-    actor: isWorkOsLoading ? undefined : (actorKey ?? null),
+    actor: telemetryActor,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
@@ -4765,6 +4771,22 @@ export default function App() {
       setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
     }
   }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
+  // Replay `off` is remembered per person, so someone the backend last
+  // answered `off` for stays unrecorded while the next answer is slow,
+  // failing or not asked yet, instead of falling back to masked.
+  const answeredRecording = telemetryPrivacy.answered
+    ? telemetryPrivacy.policy?.recording
+    : undefined;
+  useEffect(() => {
+    if (answeredRecording !== undefined) {
+      rememberReplayOff(telemetryPrivacy.actor, answeredRecording === "off");
+    }
+  }, [answeredRecording, telemetryPrivacy.actor]);
+  const telemetryRecording =
+    answeredRecording ??
+    (replayOffRemembered(telemetryActor)
+      ? "off"
+      : telemetryPrivacy.policy?.recording);
   // The session privacy level (lib/session-privacy.ts) for both recorders.
   // Full replay needs the backend to have verified a non-private context and
   // the destination to have finished loading; until it answers, nothing
@@ -4773,7 +4795,7 @@ export default function App() {
     resolveSessionPrivacy({
       surface: recordingSurface(),
       sharedLink: isScenarioChatRoute,
-      recording: telemetryPrivacy.policy?.recording,
+      recording: telemetryRecording,
     }),
     {
       contextReady:

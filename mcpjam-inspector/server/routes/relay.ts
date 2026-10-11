@@ -20,12 +20,6 @@ import {
   isRestricted,
   type PolicyDecision,
 } from "./relay-privacy.js";
-import {
-  gzipDeclaredBytes,
-  RelayBusyError,
-  type RestrictionBudget,
-  UnsupportedReplayError,
-} from "./relay-replay-privacy.js";
 
 /**
  * Same-origin PostHog reverse proxy.
@@ -54,9 +48,10 @@ import {
  * policy of the context it was captured in, as the backend resolves it for
  * the request's bearer (`Authorization`, set through posthog-js
  * `request_headers`). Restricted events lose names, IP and GeoIP, URL names
- * and autocapture text, and their replay is masked from an allowlist of rrweb
- * structures. No bearer, no stamp, or no answer means the conservative
- * policy. The bearer and the stamp never reach PostHog.
+ * and autocapture text. Replay is masked by the client as it records; the
+ * relay drops replay the policy turns `off`, and restricted replay whose
+ * stamp does not declare it masked. No bearer, no stamp, or no answer means
+ * the conservative policy. The bearer and the stamp never reach PostHog.
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -142,11 +137,13 @@ const stats = {
   projectRejects: 0,
   busyRejects: 0,
   // Privacy gate: requests forwarded with at least one restricted event,
-  // refused for a payload the gate cannot vouch for, and carrying at least
-  // one event whose policy could not be resolved.
+  // refused outright (nothing left to forward, or a stream it never
+  // forwards), and carrying at least one event whose policy could not be
+  // resolved; and replay events dropped from forwarded requests.
   privacyMasked: 0,
   privacyRejected: 0,
   privacyUnresolved: 0,
+  privacyReplayDropped: 0,
   latenciesMs: [] as number[],
 };
 
@@ -186,6 +183,7 @@ export function flushRelayStats(): void {
     privacyMasked: stats.privacyMasked,
     privacyRejected: stats.privacyRejected,
     privacyUnresolved: stats.privacyUnresolved,
+    privacyReplayDropped: stats.privacyReplayDropped,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -205,6 +203,7 @@ export function flushRelayStats(): void {
   stats.privacyMasked = 0;
   stats.privacyRejected = 0;
   stats.privacyUnresolved = 0;
+  stats.privacyReplayDropped = 0;
   stats.latenciesMs = [];
 }
 
@@ -554,9 +553,7 @@ const SCAN_MAX_DEPTH = 4096;
 // Capture payloads are admitted once their bodies have arrived: a limited
 // number are inflated and read at a time, and fewer still of those whose text
 // exceeds the floor. Past either limit the relay answers 503, and posthog-js
-// retries later. A restricted replay's compressed fields count too: a request
-// admitted as small may inflate them to the floor, and past that only under a
-// large admission slot.
+// retries later.
 export const RELAY_MAX_PAYLOAD_CHECKS = 16;
 export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
 let payloadChecks = 0;
@@ -597,6 +594,23 @@ function capturePayloadCap(subpath: string): number {
 
 function isGzip(bytes: Uint8Array): boolean {
   return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+// A gzip member is at least a 10-byte header and an 8-byte trailer.
+const GZIP_MIN_BYTES = 18;
+
+/**
+ * The inflated size a gzip member declares in its trailer (ISIZE). Inflation
+ * is held to exactly this size, so a member that declares less than it holds
+ * (or more than one member) fails to inflate.
+ */
+export function gzipDeclaredBytes(bytes: Uint8Array): number | null {
+  if (bytes.length < GZIP_MIN_BYTES) return null;
+  return Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ).readUInt32LE(bytes.length - 4);
 }
 
 function inflateBudget(compressedBytes: number, cap: number): number {
@@ -1295,9 +1309,11 @@ function checkProjectTokens(subpath: string, url: URL): ProjectCheck {
 }
 
 type CaptureOutcome =
-  | { kind: "busy" | "unreadable" | "other" | "unsupported_replay" }
+  | { kind: "busy" | "unreadable" | "other" | "restricted" }
   | {
       kind: "forward";
+      /** Replay events the policy did not allow, dropped from the payload. */
+      dropped: number;
       /** The rewritten body, gzip-compressed; absent for GET. */
       body: Uint8Array<ArrayBuffer> | undefined;
       /** The rewritten query string, `?` included when not empty. */
@@ -1327,13 +1343,11 @@ let policyWaitBytes = 0;
 
 const BUSY = Symbol("busy");
 
-// Runs `work` under an admission slot, a large one too when `large`. The
-// budget it gets bounds the request's compressed replay fields, which widen
-// to a large slot when they need it. BUSY when no slot is free.
+// Runs `work` under an admission slot, a large one too when `large`. BUSY
+// when no slot is free.
 async function admitted<T>(
   large: boolean,
-  cap: number,
-  work: (budget: RestrictionBudget) => Promise<T>,
+  work: () => Promise<T>,
 ): Promise<T | typeof BUSY> {
   if (
     payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
@@ -1342,28 +1356,12 @@ async function admitted<T>(
     return BUSY;
   }
   payloadChecks++;
-  let holdsLarge = large;
-  if (holdsLarge) largePayloadChecks++;
-  const budget: RestrictionBudget = {
-    inflatedBytesLeft: holdsLarge ? cap : INFLATE_FLOOR_BYTES,
-    widen: () => {
-      if (holdsLarge) return;
-      if (largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
-        throw new RelayBusyError();
-      }
-      largePayloadChecks++;
-      holdsLarge = true;
-      budget.inflatedBytesLeft += cap - INFLATE_FLOOR_BYTES;
-    },
-  };
+  if (large) largePayloadChecks++;
   try {
-    return await work(budget);
-  } catch (error) {
-    if (error instanceof RelayBusyError) return BUSY;
-    throw error;
+    return await work();
   } finally {
     payloadChecks--;
-    if (holdsLarge) largePayloadChecks--;
+    if (large) largePayloadChecks--;
   }
 }
 
@@ -1393,30 +1391,26 @@ async function waitForPolicies(
 
 // Rewrites each event under its policy and serializes the payload: a POST
 // body gzip-compressed the way posthog-js sends it, a GET's `data` as JSON.
+// A request left with no event to forward is `restricted`.
 async function rewriteCapture(
   url: URL,
   method: string,
   payload: CapturePayload,
   decision: PolicyDecision,
-  budget: RestrictionBudget,
 ): Promise<CaptureOutcome> {
   const events: Record<string, unknown>[] = [];
-  try {
-    for (let i = 0; i < payload.events.length; i++) {
-      events.push(
-        (await applyEventPolicy(
-          payload.events[i],
-          decision.policies[i],
-          budget,
-        )) as Record<string, unknown>,
-      );
-    }
-  } catch (error) {
-    if (error instanceof UnsupportedReplayError) {
-      return { kind: "unsupported_replay" };
-    }
-    throw error;
+  let dropped = 0;
+  for (let i = 0; i < payload.events.length; i++) {
+    const event = applyEventPolicy(
+      payload.events[i],
+      decision.policies[i],
+      decision.declared[i],
+    );
+    if (event === null) dropped++;
+    else events.push(event as Record<string, unknown>);
+    if (i > 0 && i % 64 === 0) await yieldToEventLoop();
   }
+  if (events.length === 0 && dropped > 0) return { kind: "restricted" };
   const serialized = await serializeCapture({ ...payload, events });
   const isGet = method === "GET" || method === "HEAD";
   const params = new URLSearchParams(url.search);
@@ -1429,6 +1423,7 @@ async function rewriteCapture(
   const query = params.toString();
   return {
     kind: "forward",
+    dropped,
     body: isGet
       ? undefined
       : new Uint8Array(await gzipAsync(Buffer.from(serialized))),
@@ -1474,7 +1469,7 @@ async function processCapture(
   // A GET's `data` is bounded by the URL, so it is admitted as small.
   const large = !isGet && textBytes > INFLATE_FLOOR_BYTES;
 
-  const read = await admitted(large, cap, async () => {
+  const read = await admitted(large, async () => {
     let payload: CapturePayload;
     try {
       if (isGet) {
@@ -1498,8 +1493,8 @@ async function processCapture(
   const decision = await waitForPolicies(read.events, token, textBytes);
   if (decision === BUSY) return { kind: "busy" };
 
-  const outcome = await admitted(large, cap, (budget) =>
-    rewriteCapture(url, method, read, decision, budget),
+  const outcome = await admitted(large, () =>
+    rewriteCapture(url, method, read, decision),
   );
   return outcome === BUSY ? { kind: "busy" } : outcome;
 }
@@ -1604,10 +1599,11 @@ relayRoutes.all("*", async (c) => {
         c.header("Retry-After", "1");
         return c.json({ error: "relay_busy" }, 503);
       }
-      if (capture.kind === "unsupported_replay") {
+      // Nothing the policy allows: a 4xx, which posthog-js does not retry.
+      if (capture.kind === "restricted") {
         stats.privacyRejected++;
         recordResponseStatus(400);
-        return c.json({ error: "unsupported_replay_payload" }, 400);
+        return c.json({ error: "telemetry_restricted" }, 400);
       }
       if (capture.kind !== "forward") {
         stats.projectRejects++;
@@ -1625,6 +1621,7 @@ relayRoutes.all("*", async (c) => {
       }
       if (capture.restricted) stats.privacyMasked++;
       if (capture.unresolved) stats.privacyUnresolved++;
+      stats.privacyReplayDropped += capture.dropped;
       body = capture.body;
       search = capture.search;
       headers.delete("content-encoding");

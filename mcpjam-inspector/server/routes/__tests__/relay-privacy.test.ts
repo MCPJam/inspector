@@ -34,6 +34,7 @@ import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { setTelemetryPolicyQueryForTests } from "../../services/telemetry-privacy-policy.js";
 import {
   encodeCaptureContext,
+  mostRestrictivePolicy,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryPolicy,
 } from "../../../shared/telemetry-privacy.js";
@@ -50,6 +51,7 @@ const ORIGINAL_FETCH = global.fetch;
 const TOKEN = "relay-bearer-token";
 const FULL: TelemetryPolicy = { recording: "full", identity: "full" };
 const MASKED: TelemetryPolicy = { recording: "masked", identity: "id_only" };
+const OFF: TelemetryPolicy = { recording: "off", identity: "id_only" };
 
 const PUBLIC_ORG = "org_public_00000000000000001";
 const PRIVATE_ORG = "org_private_0000000000000001";
@@ -69,11 +71,7 @@ function backend(answers: Record<string, TelemetryPolicy>) {
   setTelemetryPolicyQueryForTests(async (_url, token, context) => {
     calls.push({ token, organizationIds: context.organizationIds });
     const policies = context.organizationIds.map((id) => answers[id] ?? MASKED);
-    return policies.some((p) => p.recording === "masked")
-      ? MASKED
-      : policies.length > 0
-        ? FULL
-        : MASKED;
+    return policies.length > 0 ? mostRestrictivePolicy(...policies) : MASKED;
   });
   return calls;
 }
@@ -370,18 +368,6 @@ function forwarded(callIndex = 0): {
   };
 }
 
-/** Everything a forwarded payload says, compressed fields decoded. */
-function decodedText(value: unknown): string {
-  return JSON.stringify(value, (_key, field) => {
-    if (typeof field === "string" && field.startsWith("\u001f\u008b")) {
-      return JSON.parse(
-        gunzipSync(Buffer.from(field, "latin1")).toString("utf8"),
-      );
-    }
-    return field;
-  });
-}
-
 function gzipLatin1(value: unknown): string {
   return gzipSync(Buffer.from(JSON.stringify(value))).toString("latin1");
 }
@@ -394,6 +380,7 @@ function privacyCounts() {
     masked: fields?.privacyMasked ?? 0,
     rejected: fields?.privacyRejected ?? 0,
     unresolved: fields?.privacyUnresolved ?? 0,
+    replayDropped: fields?.privacyReplayDropped ?? 0,
   };
 }
 
@@ -428,7 +415,12 @@ describe("relay privacy gate", () => {
     // Full replay keeps its content — except the relay bearer.
     expect(sent.text).toContain(SYNTHETIC_PII.domText);
     expect(sent.text).not.toContain(TOKEN);
-    expect(privacyCounts()).toEqual({ masked: 0, rejected: 0, unresolved: 0 });
+    expect(privacyCounts()).toEqual({
+      masked: 0,
+      rejected: 0,
+      unresolved: 0,
+      replayDropped: 0,
+    });
   });
 
   it("keeps person fields for a fully resolved identify", async () => {
@@ -441,48 +433,66 @@ describe("relay privacy gate", () => {
     expect(event.properties.$ip).toBe("203.0.113.9");
   });
 
-  it("does not let a forged permissive label authorize full capture without a bearer", async () => {
+  // ── Replay: passed whole or dropped, never rebuilt ──────────────────
+
+  it("does not let a forged permissive label carry replay without a bearer", async () => {
     const calls = backend({ [PUBLIC_ORG]: FULL });
     const response = await post(
       "/tlm/s/",
       batch([snapshotEvent(stamp([PUBLIC_ORG], FULL))]),
     );
 
-    expect(response.status).toBe(200);
+    // Unresolved is masked, and this replay was not declared masked.
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "telemetry_restricted" });
     expect(calls).toHaveLength(0);
-    const sent = forwarded();
-    expect(findSyntheticPii(decodedText(sent.json))).toEqual([]);
-    expect(sent.headers.get("x-forwarded-for")).toBeNull();
-    expect(sent.headers.get("x-real-ip")).toBeNull();
-    expect(privacyCounts()).toEqual({ masked: 1, rejected: 0, unresolved: 1 });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(privacyCounts()).toMatchObject({ rejected: 1 });
   });
 
   it("does not let a forged permissive label override the backend", async () => {
     backend({ [PRIVATE_ORG]: MASKED });
-    await post("/tlm/s/", batch([snapshotEvent(stamp([PRIVATE_ORG], FULL))]), {
-      Authorization: `Bearer ${TOKEN}`,
-    });
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
-    expect(privacyCounts()).toMatchObject({ masked: 1, unresolved: 0 });
+    const response = await post(
+      "/tlm/s/",
+      batch([snapshotEvent(stamp([PRIVATE_ORG], FULL))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(response.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("lets a restrictive label tighten a permissive backend answer", async () => {
-    backend({ [PUBLIC_ORG]: FULL });
-    await post("/tlm/s/", batch([snapshotEvent(stamp([PUBLIC_ORG], MASKED))]), {
-      Authorization: `Bearer ${TOKEN}`,
+  it.each([
+    [
+      "a bearer the backend refuses (expired, revoked)",
+      async () => {
+        throw new Error("Authentication required");
+      },
+    ],
+    ["a malformed backend answer", async () => ({ recording: "everything" })],
+  ])("treats %s as unresolved", async (_name, query) => {
+    setTelemetryPolicyQueryForTests(query as never);
+    const response = await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(stamp([PUBLIC_ORG], FULL)),
+        identifyEvent(stamp([PUBLIC_ORG], FULL)),
+      ]),
+      { Authorization: `Bearer expired` },
+    );
+    expect(response.status).toBe(200);
+    const sent = forwarded();
+    // The full replay is dropped; the rest is restricted.
+    expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
+      "$identify",
+    ]);
+    expect(findSyntheticPii(sent.text)).toEqual([]);
+    expect(sent.headers.get("x-forwarded-for")).toBeNull();
+    expect(privacyCounts()).toEqual({
+      masked: 1,
+      rejected: 0,
+      unresolved: 1,
+      replayDropped: 1,
     });
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
-  });
-
-  it("treats a bearer the backend refuses (expired, revoked) as unresolved", async () => {
-    setTelemetryPolicyQueryForTests(async () => {
-      throw new Error("Authentication required");
-    });
-    await post("/tlm/s/", batch([snapshotEvent(stamp([PUBLIC_ORG]))]), {
-      Authorization: `Bearer expired`,
-    });
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
-    expect(privacyCounts()).toEqual({ masked: 1, rejected: 0, unresolved: 1 });
   });
 
   it("treats a backend that never answers as unresolved", async () => {
@@ -495,16 +505,131 @@ describe("relay privacy gate", () => {
     );
     await vi.advanceTimersByTimeAsync(5_000);
     const response = await pending;
-    expect(response.status).toBe(200);
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
+    expect(response.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("treats a malformed backend answer as unresolved", async () => {
-    setTelemetryPolicyQueryForTests(async () => ({ recording: "everything" }));
-    await post("/tlm/s/", batch([snapshotEvent(stamp([PUBLIC_ORG]))]), {
+  it("forwards replay the client declared masked as it was recorded, without rebuilding it", async () => {
+    backend({ [PRIVATE_ORG]: MASKED });
+    // What a masked recorder sends: text already starred, a compressed field
+    // left compressed. The relay does not decode, mask or re-encode it.
+    const recorded = [
+      {
+        type: 4,
+        timestamp: 1,
+        data: { href: "https://app.mcpjam.com/", width: 1, height: 1 },
+      },
+      {
+        type: 2,
+        timestamp: 2,
+        cv: "2024-10",
+        data: gzipLatin1({ node: { type: 0, id: 1, childNodes: [] } }),
+      },
+      {
+        type: 3,
+        timestamp: 3,
+        data: { source: 0, texts: [{ id: 9, value: "*** ****" }] },
+      },
+      replayEvents().find(
+        (e: any) => e.type === 5 && e.data.tag === "$posthog_config",
+      ),
+    ];
+    const response = await post(
+      "/tlm/s/",
+      batch([snapshotEvent(stamp([PRIVATE_ORG], MASKED), recorded)]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+
+    expect(response.status).toBe(200);
+    const sent = forwarded();
+    const [event] = sent.json.batch;
+    expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toBeUndefined();
+    expect(event.properties.$geoip_disable).toBe(true);
+    expect(sent.headers.get("x-forwarded-for")).toBeNull();
+    // Byte for byte, except the relay bearer in `$posthog_config`.
+    expect(event.properties.$snapshot_data.slice(0, 3)).toEqual(
+      recorded.slice(0, 3),
+    );
+    expect(event.properties.$snapshot_data[3].data.payload.config).toEqual({
+      api_host: "https://app.mcpjam.com/tlm",
+    });
+    expect(sent.text).not.toContain(TOKEN);
+    expect(privacyCounts()).toMatchObject({ masked: 1, replayDropped: 0 });
+  });
+
+  it("lets a restrictive label tighten a permissive backend answer", async () => {
+    backend({ [PUBLIC_ORG]: FULL });
+    await post("/tlm/s/", batch([snapshotEvent(stamp([PUBLIC_ORG], MASKED))]), {
       Authorization: `Bearer ${TOKEN}`,
     });
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
+    const sent = forwarded();
+    expect(sent.json.batch[0].properties.$geoip_disable).toBe(true);
+    expect(sent.headers.get("x-forwarded-for")).toBeNull();
+  });
+
+  it("drops every replay when the backend has replay off, whatever the client declared, and restricts the rest", async () => {
+    backend({ [PRIVATE_ORG]: OFF });
+    const response = await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(stamp([PRIVATE_ORG], MASKED)),
+        snapshotEvent(stamp([PRIVATE_ORG], FULL)),
+        identifyEvent(stamp([PRIVATE_ORG], FULL)),
+      ]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(response.status).toBe(200);
+    const sent = forwarded();
+    expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
+      "$identify",
+    ]);
+    expect(findSyntheticPii(sent.text)).toEqual([]);
+    expect(sent.headers.get("x-forwarded-for")).toBeNull();
+    expect(privacyCounts()).toMatchObject({ masked: 1, replayDropped: 2 });
+  });
+
+  it("drops replay a client stamped off, even under a permissive answer", async () => {
+    backend({ [PUBLIC_ORG]: FULL });
+    const response = await post(
+      "/tlm/s/",
+      batch([snapshotEvent(stamp([PUBLIC_ORG], OFF))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(response.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request with nothing left to forward with a 4xx, which posthog-js does not retry", async () => {
+    backend({ [PRIVATE_ORG]: OFF });
+    const response = await post(
+      "/tlm/s/",
+      batch([snapshotEvent(stamp([PRIVATE_ORG], MASKED))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "telemetry_restricted" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(privacyCounts()).toMatchObject({ rejected: 1 });
+  });
+
+  it("checks every replay of a mixed batch on its own stamp", async () => {
+    backend({ [PRIVATE_ORG]: MASKED });
+    const response = await post(
+      "/tlm/s/",
+      batch([
+        snapshotEvent(stamp([PRIVATE_ORG], MASKED), [
+          { type: 4, timestamp: 1, data: {} },
+        ]),
+        snapshotEvent(stamp([PRIVATE_ORG], FULL)),
+        snapshotEvent(undefined),
+      ]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
+    expect(response.status).toBe(200);
+    const sent = forwarded();
+    expect(sent.json.batch).toHaveLength(1);
+    expect(findSyntheticPii(sent.text)).toEqual([]);
+    expect(privacyCounts()).toMatchObject({ replayDropped: 2, unresolved: 1 });
   });
 
   it("gates each event of a mixed-context batch by its own context, and withholds the IP", async () => {
@@ -530,15 +655,23 @@ describe("relay privacy gate", () => {
     expect(sent.headers.get("x-forwarded-for")).toBeNull();
   });
 
-  it("masks a legacy client's unstamped events", async () => {
+  it("drops a legacy client's unstamped replay and restricts its other events", async () => {
     backend({ [PUBLIC_ORG]: FULL });
     await post(
       "/relay/s/",
       batch([snapshotEvent(undefined), identifyEvent(undefined)]),
       { Authorization: `Bearer ${TOKEN}` },
     );
-    expect(findSyntheticPii(decodedText(forwarded().json))).toEqual([]);
-    expect(privacyCounts()).toMatchObject({ masked: 1, unresolved: 1 });
+    const sent = forwarded();
+    expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
+      "$identify",
+    ]);
+    expect(findSyntheticPii(sent.text)).toEqual([]);
+    expect(privacyCounts()).toMatchObject({
+      masked: 1,
+      unresolved: 1,
+      replayDropped: 1,
+    });
   });
 
   it("removes identifying person fields, IP and autocapture text from restricted events", async () => {
@@ -673,382 +806,6 @@ describe("relay privacy gate", () => {
         ),
       );
     });
-  });
-
-  it("masks replay text, inputs and attributes, blocks media, and drops console, network and canvas recordings", async () => {
-    await post("/tlm/s/", batch([snapshotEvent(undefined)]));
-    const [event] = forwarded().json.batch;
-    const data = event.properties.$snapshot_data as any[];
-    const text = decodedText(data);
-    expect(findSyntheticPii(text)).toEqual([]);
-    expect(text).not.toContain(TOKEN);
-    // Console, network and canvas recordings are gone; so is app-state.
-    expect(data.some((e) => e.type === 6)).toBe(false);
-    expect(data.some((e) => e.type === 3 && e.data.source === 9)).toBe(false);
-    expect(data.some((e) => e.type === 5 && e.data.tag === "app-state")).toBe(
-      false,
-    );
-    // Layout survives: tags, classes, kept attributes, CSS under <style>.
-    const snapshot = data.find((e) => e.type === 2);
-    const html = snapshot.data.node.childNodes[1];
-    const style = html.childNodes[0].childNodes[0];
-    expect(style.childNodes[0].textContent).toBe(".row { color: red; }");
-    const body = html.childNodes[1];
-    const [h1, input, img, comment] = body.childNodes;
-    expect(h1.attributes).toEqual({
-      class: "title",
-      title: "***",
-      "data-state": "open",
-    });
-    expect(h1.childNodes[0].textContent).toMatch(/^[* ]+$/);
-    expect(input.attributes.type).toBe("text");
-    expect(input.attributes.value).toBe("***");
-    expect(img).toMatchObject({
-      tagName: "img",
-      needBlock: true,
-      childNodes: [],
-      attributes: { rr_width: "32px", rr_height: "32px" },
-    });
-    expect(comment.textContent).toMatch(/^[*\s]*$/);
-    // Incremental data: masked text and inputs, CSS added to a known
-    // <style> kept, interactions intact.
-    const mutation = data.find((e) => e.type === 3 && e.data.source === 0);
-    expect(mutation.data.adds[1].node.textContent).toBe(".added { margin: 0 }");
-    const input5 = data.find((e) => e.type === 3 && e.data.source === 5);
-    expect(input5.data.text).toMatch(/^\*+$/);
-    expect(data.some((e) => e.type === 3 && e.data.source === 2)).toBe(true);
-    const meta = data.find((e) => e.type === 4);
-    expect(meta.data.href).toBe("https://app.mcpjam.com/servers/[name]");
-    const pageview = data.find(
-      (e) => e.type === 5 && e.data.tag === "$pageview",
-    );
-    expect(pageview.data.payload.href).toBe(
-      "https://app.mcpjam.com/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/[name]",
-    );
-  });
-
-  it("scrubs URLs out of kept style attributes and style mutations", async () => {
-    const iconStyle = `width: 20px; mask-image: url("${SYNTHETIC_PII.imageUrl}")`;
-    await post(
-      "/tlm/s/",
-      batch([
-        snapshotEvent(undefined, [
-          {
-            type: 2,
-            timestamp: 1,
-            data: {
-              node: {
-                type: 2,
-                id: 1,
-                tagName: "span",
-                attributes: { class: "icon", style: iconStyle },
-                childNodes: [],
-              },
-            },
-          },
-          {
-            type: 3,
-            timestamp: 2,
-            data: {
-              source: 0,
-              texts: [],
-              removes: [],
-              adds: [],
-              attributes: [
-                { id: 1, attributes: { style: iconStyle } },
-                {
-                  id: 1,
-                  attributes: {
-                    style: {
-                      "background-image": `url(${SYNTHETIC_PII.imageUrl})`,
-                      "mask-image": [
-                        `url("${SYNTHETIC_PII.imageUrl}")`,
-                        "important",
-                      ],
-                      width: "20px",
-                      color: false,
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        ]),
-      ]),
-    );
-    const data = forwarded().json.batch[0].properties.$snapshot_data as any[];
-    expect(findSyntheticPii(decodedText(data))).toEqual([]);
-    expect(data[0].data.node.attributes).toEqual({
-      class: "icon",
-      style: 'width: 20px; mask-image: url("https://[host]/[name]/[name]")',
-    });
-    const [plain, diff] = data[1].data.attributes;
-    expect(plain.attributes.style).toBe(data[0].data.node.attributes.style);
-    expect(diff.attributes.style).toEqual({
-      "background-image": 'url("https://[host]/[name]/[name]")',
-      "mask-image": ['url("https://[host]/[name]/[name]")', "important"],
-      width: "20px",
-      color: false,
-    });
-  });
-
-  it("scrubs URLs out of stylesheets, CSS rules and declarations, and drops fonts", async () => {
-    const customerIcon = "https://mcp.acme-synthetic.example/icons/zelda.svg";
-    await post(
-      "/tlm/s/",
-      batch([
-        snapshotEvent(undefined, [
-          {
-            type: 2,
-            timestamp: 1,
-            data: {
-              node: {
-                type: 0,
-                id: 1,
-                childNodes: [
-                  {
-                    type: 2,
-                    id: 2,
-                    tagName: "style",
-                    attributes: {},
-                    childNodes: [
-                      {
-                        type: 3,
-                        id: 3,
-                        textContent: `.icon { mask-image: url(${customerIcon}); } [data-state="open"] { color: red }`,
-                      },
-                    ],
-                  },
-                  {
-                    type: 2,
-                    id: 4,
-                    tagName: "link",
-                    attributes: {
-                      rel: "stylesheet",
-                      _cssText: `@import "${customerIcon}"; .a { background: url('${customerIcon}') }`,
-                    },
-                    childNodes: [],
-                  },
-                ],
-              },
-            },
-          },
-          {
-            type: 3,
-            timestamp: 2,
-            data: {
-              source: 8,
-              id: 2,
-              adds: [
-                { rule: `.b { background: url("${customerIcon}") }`, index: 0 },
-              ],
-              removes: [{ index: 3 }],
-            },
-          },
-          {
-            type: 3,
-            timestamp: 3,
-            data: {
-              source: 13,
-              id: 2,
-              index: [0],
-              set: {
-                property: "--label",
-                value: `"${SYNTHETIC_PII.name}"`,
-                priority: "",
-              },
-            },
-          },
-          {
-            type: 3,
-            timestamp: 4,
-            data: {
-              source: 15,
-              id: 1,
-              styleIds: [7],
-              styles: [
-                {
-                  styleId: 7,
-                  rules: [
-                    { rule: `.c { cursor: url(${customerIcon}), auto }` },
-                  ],
-                },
-              ],
-            },
-          },
-          {
-            type: 3,
-            timestamp: 5,
-            data: {
-              source: 10,
-              family: "Acme Synthetic Sans",
-              fontSource: customerIcon,
-              buffer: false,
-            },
-          },
-        ]),
-      ]),
-    );
-    const data = forwarded().json.batch[0].properties.$snapshot_data as any[];
-    expect(findSyntheticPii(decodedText(data))).toEqual([]);
-    const [style, link] = data[0].data.node.childNodes;
-    expect(style.childNodes[0].textContent).toBe(
-      '.icon { mask-image: url("https://[host]/[name]/[name]"); } [data-state="open"] { color: red }',
-    );
-    expect(link.attributes._cssText).toBe(
-      '@import "https://[host]/[name]/[name]"; .a { background: url("https://[host]/[name]/[name]") }',
-    );
-    expect(data[1].data).toEqual({
-      source: 8,
-      id: 2,
-      adds: [
-        {
-          rule: '.b { background: url("https://[host]/[name]/[name]") }',
-          index: 0,
-        },
-      ],
-      removes: [{ index: 3 }],
-    });
-    expect(data[2].data.set).toEqual({
-      property: "--label",
-      value: `"${"*".repeat(5)} ${"*".repeat(19)}"`,
-      priority: "",
-    });
-    expect(data[3].data.styles[0].rules[0].rule).toBe(
-      '.c { cursor: url("https://[host]/[name]/[name]"), auto }',
-    );
-    // The font event is gone.
-    expect(data).toHaveLength(4);
-  });
-
-  it("decodes, scrubs and re-encodes posthog-js compressed style sheet rules", async () => {
-    const customerIcon = "https://mcp.acme-synthetic.example/icons/zelda.svg";
-    await post(
-      "/tlm/s/",
-      batch([
-        snapshotEvent(undefined, [
-          {
-            type: 3,
-            timestamp: 1,
-            cv: "2024-10",
-            data: {
-              source: 8,
-              id: 2,
-              adds: gzipLatin1([
-                { rule: `.b { background: url("${customerIcon}") }`, index: 0 },
-              ]),
-              removes: gzipLatin1([{ index: 3 }]),
-            },
-          },
-        ]),
-      ]),
-    );
-    const [rule] = forwarded().json.batch[0].properties.$snapshot_data;
-    expect(rule.cv).toBe("2024-10");
-    expect(typeof rule.data.adds).toBe("string");
-    const inflate = (value: string) =>
-      JSON.parse(gunzipSync(Buffer.from(value, "latin1")).toString("utf8"));
-    expect(inflate(rule.data.adds)).toEqual([
-      {
-        rule: '.b { background: url("https://[host]/[name]/[name]") }',
-        index: 0,
-      },
-    ]);
-    expect(inflate(rule.data.removes)).toEqual([{ index: 3 }]);
-  });
-
-  it("decodes, masks and re-encodes posthog-js compressed snapshots and mutations", async () => {
-    const [meta, full, mutation] = replayEvents() as any[];
-    const compressed = [
-      meta,
-      { ...full, cv: "2024-10", data: gzipLatin1(full.data) },
-      {
-        ...mutation,
-        cv: "2024-10",
-        data: {
-          source: 0,
-          texts: gzipLatin1(mutation.data.texts),
-          attributes: gzipLatin1(mutation.data.attributes),
-          removes: gzipLatin1(mutation.data.removes),
-          adds: gzipLatin1(mutation.data.adds),
-        },
-      },
-    ];
-    const body = gzipSync(batch([snapshotEvent(undefined, compressed)]));
-    const response = await post("/tlm/s/?compression=gzip-js", body);
-
-    expect(response.status).toBe(200);
-    const sent = forwarded();
-    expect(sent.url.searchParams.get("compression")).toBe("gzip-js");
-    const data = sent.json.batch[0].properties.$snapshot_data;
-    // Still compressed the way posthog-js compresses, so the player reads it.
-    expect(data[1].cv).toBe("2024-10");
-    expect(typeof data[1].data).toBe("string");
-    expect(typeof data[2].data.adds).toBe("string");
-    const decoded = decodedText(data);
-    expect(findSyntheticPii(decoded)).toEqual([]);
-    expect(decoded).toContain('"tagName":"h1"');
-    expect(decoded).toContain(".row { color: red; }");
-  });
-
-  it.each([
-    ["an unknown compression version", [{ type: 2, cv: "2031-01", data: "x" }]],
-    ["snapshot data that is not a list", { type: 2 }],
-    [
-      "an unknown node type",
-      [{ type: 2, data: { node: { type: 99, id: 1 } } }],
-    ],
-    [
-      "a compressed field that does not inflate",
-      [{ type: 2, cv: "2024-10", data: "not gzip at all" }],
-    ],
-    ["an unknown incremental source", [{ type: 3, data: { source: 77 } }]],
-    ["an unknown event type", [{ type: 42, data: {} }]],
-    [
-      "an attribute value of an unknown shape",
-      [
-        {
-          type: 2,
-          data: {
-            node: {
-              type: 2,
-              id: 1,
-              tagName: "div",
-              attributes: { title: { nested: SYNTHETIC_PII.name } },
-              childNodes: [],
-            },
-          },
-        },
-      ],
-    ],
-  ])(
-    "refuses a restricted replay with %s instead of forwarding it",
-    async (_name, data) => {
-      const response = await post(
-        "/tlm/s/",
-        batch([snapshotEvent(undefined, data)]),
-      );
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({
-        error: "unsupported_replay_payload",
-      });
-      expect(fetch).not.toHaveBeenCalled();
-      expect(privacyCounts()).toMatchObject({ rejected: 1 });
-    },
-  );
-
-  it("refuses an inner compressed field that inflates past the replay budget", async () => {
-    const bomb = gzipSync(Buffer.alloc(25 * 1024 * 1024, 0x20)).toString(
-      "latin1",
-    );
-    const response = await post(
-      "/tlm/s/",
-      batch([
-        snapshotEvent(undefined, [{ type: 2, cv: "2024-10", data: bomb }]),
-      ]),
-    );
-    expect(response.status).toBe(400);
-    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("gates and rewrites GET ingestion", async () => {

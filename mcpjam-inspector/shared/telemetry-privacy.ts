@@ -1,24 +1,28 @@
 /**
  * Telemetry privacy, shared by the client that captures and the relay that
  * forwards: the policy shape, the capture-context stamp each event carries,
- * the replay structures a restricted recording may keep, and the one URL name
- * scrubber both sides use.
+ * the masking a restricted replay is recorded with (in the browser; the relay
+ * only passes or drops replay), and the one URL name scrubber both sides
+ * use.
  *
  * The policy comes from the backend (`telemetryPrivacy:getContext`), resolved
  * through the viewer's own project and organization access:
  *
- *   recording  `full` | `masked`   what session replay may record
- *   identity   `full` | `id_only`  whether name and email may ride along
+ *   recording  `full` | `masked` | `off`   what session replay may record;
+ *                                          `off` is no replay at all
+ *   identity   `full` | `id_only`          whether name and email may ride
+ *                                          along
  *
  * Anything that cannot be resolved — no answer yet, no access, no
  * authentication, a backend failure — is `CONSERVATIVE_TELEMETRY_POLICY`.
- * Policies combine by taking the stricter value of each field; nothing a
- * client says can make a policy laxer than the backend's.
+ * Policies combine by taking the stricter value of each field (`off` beats
+ * `masked` beats `full`); nothing a client says can make a policy laxer than
+ * the backend's.
  */
 
 import { scrubSensitiveUrl } from "./credential-url";
 
-export type TelemetryRecording = "full" | "masked";
+export type TelemetryRecording = "full" | "masked" | "off";
 export type TelemetryIdentity = "full" | "id_only";
 
 export interface TelemetryPolicy {
@@ -38,14 +42,21 @@ export function isTelemetryPolicy(value: unknown): value is TelemetryPolicy {
   if (typeof value !== "object" || value === null) return false;
   const { recording, identity } = value as Record<string, unknown>;
   return (
-    (recording === "full" || recording === "masked") &&
+    (recording === "full" || recording === "masked" || recording === "off") &&
     (identity === "full" || identity === "id_only")
   );
 }
 
+const RECORDING_RANK: Record<TelemetryRecording, number> = {
+  full: 0,
+  masked: 1,
+  off: 2,
+};
+
 /**
  * The stricter value of each field. A missing or malformed policy counts as
- * the conservative one, so an unknown never relaxes the result.
+ * the conservative one, so an unknown never relaxes the result — and never
+ * relaxes an `off` among the others either.
  */
 export function mostRestrictivePolicy(
   ...policies: ReadonlyArray<TelemetryPolicy | null | undefined>
@@ -54,8 +65,15 @@ export function mostRestrictivePolicy(
   let identity: TelemetryIdentity = "full";
   if (policies.length === 0) return { ...CONSERVATIVE_TELEMETRY_POLICY };
   for (const policy of policies) {
-    if (!isTelemetryPolicy(policy)) return { ...CONSERVATIVE_TELEMETRY_POLICY };
-    if (policy.recording === "masked") recording = "masked";
+    if (!isTelemetryPolicy(policy)) {
+      return mostRestrictivePolicy(
+        CONSERVATIVE_TELEMETRY_POLICY,
+        ...policies.filter(isTelemetryPolicy),
+      );
+    }
+    if (RECORDING_RANK[policy.recording] > RECORDING_RANK[recording]) {
+      recording = policy.recording;
+    }
     if (policy.identity === "id_only") identity = "id_only";
   }
   return { recording, identity };
@@ -238,7 +256,7 @@ export function stripPostHogConfigHeaders(snapshotData: unknown): unknown {
   });
 }
 
-// ── Replay structures a restricted recording keeps ─────────────────────
+// ── What a masked replay keeps (applied by the client's recorders) ──────
 
 /**
  * Attributes a `masked` replay keeps: the ones layout and styling need and
@@ -731,40 +749,4 @@ export function maskReplayStyle(style: string): string {
   );
   const rest = scrubbed.replace(CSS_URL_OR_STRING, "");
   return /url\(|["'\\]/i.test(rest) ? MASKED_ATTRIBUTE_VALUE : scrubbed;
-}
-
-// A `url(` the tokens above cannot read: replaced whole, up to its `)`.
-const CSS_TOKENS_OR_BAD_URL = new RegExp(
-  `${CSS_URL_OR_STRING.source}|url\\([^)]*\\)?`,
-  "gi",
-);
-// A quoted string in a stylesheet that is a URL (`@import "…"`).
-const ABSOLUTE_URL_STRING = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|data:)/i;
-
-/**
- * CSS text — a stylesheet, a `<style>` element's text, a rule — with the URLs
- * in it scrubbed: every `url(...)` argument, and every quoted string that is
- * a URL (`@import "…"`). Unlike an inline style its other strings stay: a
- * stylesheet's selectors and font names are the app's, and masking them would
- * break the selectors that style the replay. A `url(` that cannot be read is
- * replaced whole.
- */
-export function scrubCssUrls(css: string): string {
-  if (!/url\(|["']/i.test(css)) return css;
-  return css.replace(
-    CSS_TOKENS_OR_BAD_URL,
-    (token: string, urlArgument: string | undefined) => {
-      if (urlArgument !== undefined) {
-        const url = scrubUntrustedUrl(cssTokenValue(urlArgument));
-        return `url(${JSON.stringify(url)})`;
-      }
-      if (/^url\(/i.test(token)) {
-        return `url(${JSON.stringify(NAME_PLACEHOLDER)})`;
-      }
-      const value = cssTokenValue(token);
-      return ABSOLUTE_URL_STRING.test(value)
-        ? JSON.stringify(scrubUntrustedUrl(value))
-        : token;
-    },
-  );
 }

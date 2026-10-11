@@ -368,6 +368,51 @@ test.describe("telemetry privacy in the browser", () => {
     expect(sessions.has(exception?.properties.$session_id)).toBe(true);
   });
 
+  test("an organization with replay off records nothing, while analytics and errors still arrive", async ({
+    page,
+  }) => {
+    const captured = await intercept(page);
+    await page.goto("/?privacy=off");
+    await exercise(page);
+
+    // Positive control: the transports are live, so "no replay" below is
+    // the policy, not a page that never sent anything.
+    await expect
+      .poll(
+        () =>
+          sentryItems(captured, "event").length > 0 &&
+          captured.posthog
+            .flatMap((r) => posthogEvents(r.json))
+            .some((e) => e.event === "$exception"),
+        { timeout: 45_000, intervals: [500] },
+      )
+      .toBe(true);
+    // Give a recorder that wrongly started time to flush.
+    await page.waitForTimeout(3_000);
+
+    expect(snapshotEvents(captured)).toEqual([]);
+    expect(sentryItems(captured, "replay_recording")).toEqual([]);
+    expect(sentryItems(captured, "replay_event")).toEqual([]);
+
+    const text = allPayloadText(captured);
+    expect(findSyntheticPii(text)).toEqual([]);
+    expect(text).not.toContain(HARNESS_RELAY_TOKEN);
+
+    const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
+    expect(events.length).toBeGreaterThan(0);
+    for (const event of events) {
+      expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
+        o: [HARNESS_PRIVATE_ORG],
+        r: "off",
+        i: "id_only",
+      });
+    }
+    const errorEvent = JSON.parse(
+      sentryItems(captured, "event")[0].payload.toString("utf8"),
+    );
+    expect(errorEvent.user).toEqual({ id: HARNESS_ACTOR_ID });
+  });
+
   test("a credential URL is redacted by the shared credential sanitizer and never recorded", async ({
     page,
   }) => {
