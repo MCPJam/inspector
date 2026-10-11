@@ -9,11 +9,19 @@ import {
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import {
+  ORG_KEYS_MODEL_REASON,
+  ORG_POLICY_LOADING_REASON,
+} from "@/lib/org-keys-refusal";
+import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
+  compactModelLabel,
   isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "./model-helpers";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+
+export { ORG_KEYS_MODEL_REASON, ORG_POLICY_LOADING_REASON };
 
 // Kept separate from model-helpers so tests can mock the per-source
 // builders (buildAvailableModels / buildAvailableModelsFromOrgConfig)
@@ -353,6 +361,59 @@ function syntheticModelRow(modelId: string): ModelDefinition {
 }
 
 /**
+ * The row a saved model id names when the rows on offer may not list it:
+ * `pool`'s (hosted first), else the hosted catalog's, so a trigger keeps the
+ * model's display name; a synthetic row carrying the id only when neither
+ * lists it.
+ */
+export function savedModelRow(
+  modelId: string,
+  pool: readonly ModelDefinition[] = [],
+): ModelDefinition {
+  return (
+    pool.find(
+      (model) =>
+        String(model.id) === modelId && isMCPJamProvidedModelMenuItem(model),
+    ) ??
+    pool.find((model) => String(model.id) === modelId) ??
+    hostedModelDefinitionsFromSnapshot().find(
+      (model) => String(model.id) === modelId,
+    ) ??
+    syntheticModelRow(modelId)
+  );
+}
+
+/**
+ * A saved model the organization's AI key policy no longer allows (a hosted
+ * or personal-key model saved before the organization required its own
+ * keys). Pickers never list it: it shows only on the trigger, as
+ * {@link orgKeysDisallowedNotice}, so the saved choice is never silently
+ * switched to another model.
+ */
+export function orgKeysDisallowedRow(row: ModelDefinition): ModelDefinition {
+  const { warningReason: _warning, ...rest } = row;
+  return { ...rest, disabled: true, disabledReason: ORG_KEYS_MODEL_REASON };
+}
+
+/** Whether `model` is a {@link orgKeysDisallowedRow}. */
+export function isOrgKeysDisallowedRow(
+  model: ModelDefinition | null | undefined,
+): boolean {
+  return (
+    !!model &&
+    String(model.id) !== "" &&
+    model.disabled === true &&
+    model.disabledReason === ORG_KEYS_MODEL_REASON
+  );
+}
+
+/** "Claude Haiku 4.5 isn't allowed here. Choose an organization model." */
+export function orgKeysDisallowedNotice(model: ModelDefinition): string {
+  const name = compactModelLabel(model.name) || String(model.id);
+  return `${name} isn't allowed here. Choose an organization model.`;
+}
+
+/**
  * The rows a judge picker offers (`purpose: "judge"`): judge-eligible hosted
  * rows, one per id, plus
  *  - the managed default, always selectable (picking it clears the override),
@@ -444,15 +505,7 @@ function withHostedFloor(models: ModelDefinition[]): ModelDefinition[] {
   return models.length > 0 ? models : hostedModelDefinitionsFromSnapshot();
 }
 
-/**
- * The one model-list pipeline shared by every picker surface (Playground
- * chat, eval suite/judge editors, client builder Agent tab): org-managed
- * provider config when present, otherwise local BYOK keys (filtered to
- * MCPJam-provided models in hosted mode), plus locally-detected Ollama and
- * guest locks. Surfaces must not fork this composition — divergence here is
- * what previously left org-only providers (Bedrock, custom) out of pickers.
- */
-export function composeAvailableModels(params: {
+type ComposeAvailableModelsParams = {
   orgConfig: OrgVisibleConfig | undefined;
   isAuthenticated: boolean;
   isOllamaRunning: boolean;
@@ -474,7 +527,92 @@ export function composeAvailableModels(params: {
    * so this stays a drop-in for any caller that hasn't wired the catalog yet.
    */
   hostedCatalog?: ModelDefinition[];
-}): ModelDefinition[] {
+  /**
+   * Model ids the surface has SAVED (the chat's lead and compare picks). When
+   * the organization's policy no longer offers one, it is kept in the list as
+   * an {@link orgKeysDisallowedRow} instead of vanishing — so a surface never
+   * silently switches a saved choice to another model. Pickers show it only
+   * on the trigger, never as a row.
+   */
+  savedModelIds?: readonly (string | null | undefined)[];
+};
+
+/**
+ * Keep each saved id the offered list no longer contains, as an
+ * {@link orgKeysDisallowedRow}. The row is the one the unrestricted list has
+ * for that id (hosted first), else the hosted catalog's, else a synthetic
+ * one; `unrestricted` is computed only when a saved id is actually missing.
+ */
+export function withSavedSelectionLocks(
+  offered: ModelDefinition[],
+  savedModelIds: readonly (string | null | undefined)[] | undefined,
+  unrestricted: () => readonly ModelDefinition[],
+): ModelDefinition[] {
+  const missing = [
+    ...new Set(
+      (savedModelIds ?? [])
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter((id) => id.length > 0),
+    ),
+  ].filter((id) => !offered.some((model) => String(model.id) === id));
+  if (missing.length === 0) return offered;
+  const pool = unrestricted();
+  return [
+    ...offered,
+    ...missing.map((id) => orgKeysDisallowedRow(savedModelRow(id, pool))),
+  ];
+}
+
+/**
+ * The one model-list pipeline shared by every picker surface (Playground
+ * chat, eval suite/judge editors, client builder Agent tab): org-managed
+ * provider config when present, otherwise local BYOK keys (filtered to
+ * MCPJam-provided models in hosted mode), plus locally-detected Ollama and
+ * guest locks. Surfaces must not fork this composition — divergence here is
+ * what previously left org-only providers (Bedrock, custom) out of pickers.
+ *
+ * The organization's AI key policy narrows it:
+ *  - while the org requires its own keys (`aiKeyPolicy.requireOrgKeys`), only
+ *    rows from the connections the backend calls eligible
+ *    (`policyEligibility`) are offered — no hosted rows (and no hosted
+ *    floor), no personal keys, no locally detected Ollama. The list may be
+ *    EMPTY; the picker then offers "Add a provider" / "Ask an organization
+ *    admin".
+ *
+ * A project no organization owns (`unresolved`) carries no policy, so it
+ * composes as today: the backend runs it unless an organization that
+ * requires its own keys is involved, and then refuses it.
+ */
+export function composeAvailableModels(
+  params: ComposeAvailableModelsParams,
+): ModelDefinition[] {
+  const { orgConfig, hostedCatalog, savedModelIds } = params;
+
+  if (orgRequiresOwnKeys(orgConfig)) {
+    // Eligible org connections only; `buildAvailableModelsFromOrgConfig`
+    // applies the policy. Guest / credit locks only ever touch hosted rows,
+    // and there are none.
+    const orgModels = buildAvailableModelsFromOrgConfig(
+      orgConfig,
+      hostedCatalog,
+    );
+    return withSavedSelectionLocks(orgModels, savedModelIds, () =>
+      composeUnrestrictedModels({
+        ...params,
+        // The same providers with no policy: only used to find the row a
+        // saved id named, never offered.
+        orgConfig: orgConfig ? { providers: orgConfig.providers } : undefined,
+      }),
+    );
+  }
+
+  return composeUnrestrictedModels(params);
+}
+
+/** Today's composition, with no organization AI key policy in force. */
+function composeUnrestrictedModels(
+  params: ComposeAvailableModelsParams,
+): ModelDefinition[] {
   const {
     orgConfig,
     isAuthenticated,
@@ -490,7 +628,10 @@ export function composeAvailableModels(params: {
   } = params;
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
-    const orgModels = buildAvailableModelsFromOrgConfig(orgConfig, hostedCatalog);
+    const orgModels = buildAvailableModelsFromOrgConfig(
+      orgConfig,
+      hostedCatalog,
+    );
     const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
       orgModels,
       isOllamaRunning,
