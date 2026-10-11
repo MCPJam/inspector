@@ -7,11 +7,14 @@ name: Slop Ratchet
 # `labeled` / `unlabeled` re-run the check when a CODEOWNER applies or removes
 # `slop-waiver`, so the waiver takes effect without a new push.
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: slop-ratchet-${{ github.ref }}
@@ -30,6 +33,13 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      - uses: actions/github-script@v9
+        id: pull
+        with:
+          script: |
+            const { resolvePull } = require('./.github/scripts/pr-policy.cjs');
+            return await resolvePull(github, context);
+
       - uses: actions/setup-node@v7
         with:
           node-version: "24.14.0"
@@ -39,13 +49,15 @@ jobs:
 
       - name: Compare with the base branch
         env:
-          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
-        run: node scripts/slop/ratchet.mjs --base HEAD^1
+          BASE_SHA: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
+          SLOP_WAIVER: ${{ contains(fromJSON(steps.pull.outputs.result).labels.*.name, 'slop-waiver') }}
+        run: node scripts/slop/ratchet.mjs --base "$BASE_SHA"
 
       # The agent hooks' file rules, for every author: no new root files or
       # scratch notes, and no source file crossing 800 lines.
       - name: Repo hygiene
         if: ${{ !cancelled() }}
         env:
-          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
-        run: node scripts/slop/repo-hygiene.mjs --base HEAD^1
+          BASE_SHA: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
+          SLOP_WAIVER: ${{ contains(fromJSON(steps.pull.outputs.result).labels.*.name, 'slop-waiver') }}
+        run: node scripts/slop/repo-hygiene.mjs --base "$BASE_SHA"

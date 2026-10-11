@@ -1,6 +1,8 @@
 name: Tests
 
 on:
+  merge_group:
+    types: [checks_requested]
   # Run on every PR regardless of its base branch. `branches` filters on the
   # PR's BASE, and a stacked PR is based on the branch below it until that one
   # merges — so any base filter, `main` alone or `main` plus a hand-added
