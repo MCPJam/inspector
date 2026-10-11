@@ -2379,7 +2379,7 @@ export function NewSwarmCreateFlow({
             <div className="flex items-start justify-between gap-8">
               <div className="min-w-0">
                 <h2 className="mb-2 text-2xl font-semibold tracking-[-0.02em] text-foreground">
-                  Create a swarm of your users
+                  Set up your user testing swarm
                 </h2>
                 <p className="text-sm font-medium leading-relaxed text-foreground">
                   Simulated users run through your server so you can see what
