@@ -23,9 +23,15 @@ function git(args, cwd) {
   }).trim();
 }
 
+/** CI systems set CI, mostly to "true", some to "1"; "false" or "0" means not. */
+export function isCI(env) {
+  const value = (env.CI ?? "").trim().toLowerCase();
+  return value !== "" && value !== "0" && value !== "false";
+}
+
 /** What to do in `cwd`: "install", or a reason to leave the repo alone. */
 export function decide(cwd, env = process.env) {
-  if (env.CI) return "skip: CI";
+  if (isCI(env)) return "skip: CI";
   let gitDir;
   try {
     gitDir = git(["rev-parse", "--git-common-dir"], cwd);

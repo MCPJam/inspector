@@ -8,14 +8,16 @@
 command -v node >/dev/null 2>&1 || exit 0
 root="$(git rev-parse --show-toplevel)" || exit 0
 cd "$root" || exit 0
-[ -f scripts/slop/ratchet.mjs ] || exit 0
-
 status=0
-if ! out="$(node scripts/slop/ratchet.mjs --staged 2>&1)"; then
+# Each check runs only if its script exists, so a checkout of an older
+# commit that lacks one still gets the other.
+if [ -f scripts/slop/ratchet.mjs ] &&
+  ! out="$(node scripts/slop/ratchet.mjs --staged 2>&1)"; then
   printf '%s\n\n' "$out" >&2
   status=1
 fi
-if ! out="$(node scripts/slop/repo-hygiene.mjs --staged 2>&1)"; then
+if [ -f scripts/slop/repo-hygiene.mjs ] &&
+  ! out="$(node scripts/slop/repo-hygiene.mjs --staged 2>&1)"; then
   printf '%s\n\n' "$out" | grep -v '^::warning::' >&2
   status=1
 fi

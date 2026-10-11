@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOOKS_PATH, decide, main } from "./install.mjs";
+import { HOOKS_PATH, decide, isCI, main } from "./install.mjs";
 
 const SCRIPTS = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -55,6 +55,15 @@ describe("installer", () => {
     rmSync(plain, { recursive: true });
   });
 
+  it("reads CI=false and CI=0 as not CI", () => {
+    assert.equal(isCI({ CI: "true" }), true);
+    assert.equal(isCI({ CI: "1" }), true);
+    assert.equal(isCI({ CI: "false" }), false);
+    assert.equal(isCI({ CI: "0" }), false);
+    assert.equal(isCI({}), false);
+    assert.equal(decide(repo, { CI: "false" }), "install");
+  });
+
   it("installs once, and leaves an existing hooksPath alone", () => {
     assert.equal(decide(repo, {}), "install");
     main(repo, {});
@@ -95,6 +104,23 @@ describe("pre-commit", () => {
     assert.match(blocked.stderr, /scratch notes/);
     git("rm", "-q", "--cached", "NOTES-item-9.md");
     rmSync(join(repo, "NOTES-item-9.md"));
+  });
+
+  it("still runs the other check when one script is missing", () => {
+    git("mv", "scripts/slop/repo-hygiene.mjs", "scripts/slop/repo-hygiene.off");
+    git("commit", "-qm", "drop hygiene", "--no-verify");
+    writeFileSync(join(repo, "sdk/src/q.ts"), "export const q = r as any;\n");
+    git("add", "sdk/src/q.ts");
+    const blocked = commit(repo);
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.stderr, /`as any` casts/);
+    git("rm", "-q", "--cached", "sdk/src/q.ts");
+    rmSync(join(repo, "sdk/src/q.ts"));
+    writeFileSync(join(repo, "sdk/src/clean.ts"), "export const ok = 1;\n");
+    git("add", "sdk/src/clean.ts");
+    assert.equal(commit(repo).code, 0);
+    git("mv", "scripts/slop/repo-hygiene.off", "scripts/slop/repo-hygiene.mjs");
+    git("commit", "-qm", "restore hygiene", "--no-verify");
   });
 
   it("checks only what is staged, not untracked or unstaged work", () => {
