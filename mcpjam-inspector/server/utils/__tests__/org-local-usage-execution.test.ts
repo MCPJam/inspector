@@ -20,18 +20,26 @@ import type { ModelDefinition } from "@/shared/types";
 
 const modelCalls: Array<Record<string, unknown>> = [];
 const modelBehaviour = vi.hoisted(() => ({
-  current: "ok" as "ok" | "error" | "hang",
+  current: "ok" as "ok" | "error" | "hang" | "reasoning",
 }));
 
-function usage(input: number, output: number) {
+function usage(
+  input: number,
+  output: number,
+  breakdown: { reasoning?: number; cacheRead?: number } = {},
+) {
   return {
     inputTokens: {
       total: input,
-      noCache: input,
-      cacheRead: undefined,
+      noCache: input - (breakdown.cacheRead ?? 0),
+      cacheRead: breakdown.cacheRead,
       cacheWrite: undefined,
     },
-    outputTokens: { total: output, text: output, reasoning: undefined },
+    outputTokens: {
+      total: output,
+      text: output - (breakdown.reasoning ?? 0),
+      reasoning: breakdown.reasoning,
+    },
   };
 }
 
@@ -92,7 +100,10 @@ function mockModel() {
             {
               type: "finish",
               finishReason: { unified: "stop", raw: "stop" },
-              usage: usage(3, 2),
+              usage:
+                modelBehaviour.current === "reasoning"
+                  ? usage(30, 20, { reasoning: 12, cacheRead: 8 })
+                  : usage(3, 2),
             },
           ],
         }),
@@ -402,6 +413,31 @@ describe("local-runtime org turn → /stream/org/local-usage", () => {
     });
     // The key the resolve response handed back never rides the writeback.
     expect(JSON.stringify(body)).not.toContain(RESOLVE_SECRET);
+  });
+
+  it("usage carries the reasoning and cached-input tokens the turn spent", async () => {
+    modelBehaviour.current = "reasoning";
+    await runLocalOrgTurn();
+    await vi.waitFor(() => expect(localUsageBodies()).toHaveLength(1));
+    const [body] = localUsageBodies();
+    expect(body.usage).toEqual({
+      inputTokens: 30,
+      outputTokens: 20,
+      totalTokens: 50,
+      reasoningTokens: 12,
+      cachedInputTokens: 8,
+    });
+  });
+
+  it("usage leaves the breakdown out when the provider reported none", async () => {
+    await runLocalOrgTurn();
+    await vi.waitFor(() => expect(localUsageBodies()).toHaveLength(1));
+    const [body] = localUsageBodies();
+    expect(body.usage).toEqual({
+      inputTokens: 3,
+      outputTokens: 2,
+      totalTokens: 5,
+    });
   });
 
   it("error: the attempt is recorded as an error with a code", async () => {

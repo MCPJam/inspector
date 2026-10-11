@@ -13,20 +13,35 @@ const mockState = vi.hoisted(() => ({
   startPlanChangeAction: vi.fn(),
 }));
 
-vi.mock("convex/react", () => ({
-  useQuery: (name: string, args: unknown) => {
-    mockState.queryCalls.push({ name, args });
-    if (args === "skip") return undefined;
-    if (name === "billing:getOrganizationBillingBundle")
-      return mockState.bundle;
-    return undefined;
-  },
-  useMutation: () => vi.fn(),
-  useAction: (name: string) =>
-    name === "billing:startOrganizationPlanChange"
-      ? mockState.startPlanChangeAction
-      : vi.fn(),
-}));
+vi.mock("convex/react", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return {
+    useQuery: (name: string, args: unknown) => {
+      mockState.queryCalls.push({ name, args });
+      return undefined;
+    },
+    // The bundle is read through `useSoftQuery`, i.e. `useQueries`, which takes
+    // no entry at all for a skipped query and hands back a failure as a value.
+    useQueries: (queries: Record<string, { query: any; args: unknown }>) =>
+      Object.fromEntries(
+        Object.entries(queries).map(([key, { query, args }]) => {
+          const name = getFunctionName(query);
+          mockState.queryCalls.push({ name, args });
+          return [
+            key,
+            name === "billing:getOrganizationBillingBundle"
+              ? mockState.bundle
+              : undefined,
+          ];
+        }),
+      ),
+    useMutation: () => vi.fn(),
+    useAction: (name: string) =>
+      name === "billing:startOrganizationPlanChange"
+        ? mockState.startPlanChangeAction
+        : vi.fn(),
+  };
+});
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => mockState.isUserReady,
@@ -170,6 +185,34 @@ describe("useOrganizationBilling bundled subscription", () => {
     expect(result.current.isLoadingPlanCatalog).toBe(true);
   });
 
+  // 2026-10-04: the bundle hit Convex's read limit for one organization, and
+  // `App` calls this hook on every page, so the thrown error replaced the app.
+  it("hands back a failed bundle instead of throwing, settled and empty", () => {
+    const failure = new Error(
+      "[CONVEX Q(billing:getOrganizationBillingBundle)] Server Error",
+    );
+    mockState.bundle = failure;
+
+    const { result } = renderHook(() =>
+      useOrganizationBilling("org-1", { projectId: "project-1" }),
+    );
+
+    expect(result.current.queryError).toBe(failure);
+    expect(result.current.billingStatus).toBeUndefined();
+    expect(result.current.entitlements).toBeUndefined();
+    expect(result.current.organizationPremiumness).toBeUndefined();
+    expect(result.current.projectPremiumness).toBeUndefined();
+    expect(result.current.planCatalog).toBeUndefined();
+    // Settled, not loading: a gate waiting on a read that is not coming back
+    // would block its action forever. The backend enforces every cap a plan
+    // sets anyway.
+    expect(result.current.isLoadingBilling).toBe(false);
+    expect(result.current.isLoadingEntitlements).toBe(false);
+    expect(result.current.isLoadingOrganizationPremiumness).toBe(false);
+    expect(result.current.isLoadingProjectPremiumness).toBe(false);
+    expect(result.current.isLoadingPlanCatalog).toBe(false);
+  });
+
   it("skips the bundle until the users row exists, and still reads as loading", () => {
     mockState.isUserReady = false;
     mockState.bundle = fullBundle;
@@ -178,7 +221,7 @@ describe("useOrganizationBilling bundled subscription", () => {
       useOrganizationBilling("org-1", { projectId: "project-1" }),
     );
 
-    expect(bundleCalls()[0].args).toBe("skip");
+    expect(bundleCalls()).toHaveLength(0);
     // Gates fail open when they read as settled, so the awaiting-user-row
     // window must stay "loading".
     expect(result.current.isLoadingBilling).toBe(true);
@@ -195,7 +238,7 @@ describe("useOrganizationBilling bundled subscription", () => {
       }),
     );
 
-    expect(bundleCalls()[0].args).toBe("skip");
+    expect(bundleCalls()).toHaveLength(0);
     expect(result.current.isLoadingBilling).toBe(false);
     expect(result.current.isLoadingProjectPremiumness).toBe(false);
   });

@@ -17,6 +17,10 @@
  * user's VM — a browser must never be able to read or write one.
  */
 import { logger } from "../../utils/logger.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../service-credential.js";
 
 export type PluginRuntimeBoxKind = "computer" | "sandbox";
 
@@ -80,7 +84,7 @@ async function postServiceAuthorized(
   signal?: AbortSignal
 ): Promise<unknown | null> {
   const base = process.env.CONVEX_HTTP_URL?.trim();
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  const serviceToken = getServiceCredential();
   if (!base || !serviceToken) return null;
 
   // `addEventListener("abort")` never fires on a signal that already aborted,
@@ -97,7 +101,7 @@ async function postServiceAuthorized(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-inspector-service-token": serviceToken,
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

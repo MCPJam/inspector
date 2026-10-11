@@ -38,6 +38,8 @@ export interface UsePersistedModelReturn {
   setSelectedModelIds: (modelIds: string[]) => void;
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
+  /** False until the saved selection has been read from storage. */
+  isInitialized: boolean;
 }
 
 /**
@@ -169,5 +171,6 @@ export function usePersistedModel(): UsePersistedModelReturn {
     setSelectedModelIds,
     multiModelEnabled,
     setMultiModelEnabled,
+    isInitialized,
   };
 }
