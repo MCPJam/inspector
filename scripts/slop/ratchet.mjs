@@ -12,6 +12,9 @@
  *   node scripts/slop/ratchet.mjs                 # vs merge-base with origin/main
  *   node scripts/slop/ratchet.mjs --base HEAD^1   # CI: the PR merge commit's base
  *
+ * --tracked-only skips untracked files: the Stop hook uses it so a person's
+ * scratch files in the checkout are not reported as the agent's change.
+ *
  * SLOP_WAIVER=true reports the same result and exits 0. CI sets it from the
  * `slop-waiver` label, which a CODEOWNER applies with a reason in the PR.
  */
@@ -33,13 +36,15 @@ function resolveBase(argv) {
   return git(["merge-base", "HEAD", "origin/main"]).trim();
 }
 
-function changedPaths(base) {
+function changedPaths(base, { trackedOnly = false } = {}) {
   const tracked = git(["diff", "--name-only", "--no-renames", "-z", base])
     .split("\0")
     .filter(Boolean);
-  const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"])
-    .split("\0")
-    .filter(Boolean);
+  const untracked = trackedOnly
+    ? []
+    : git(["ls-files", "--others", "--exclude-standard", "-z"])
+        .split("\0")
+        .filter(Boolean);
   return [...new Set([...tracked, ...untracked])].filter(isMeasuredFile);
 }
 
@@ -52,10 +57,10 @@ function readAtBase(base, path) {
   }
 }
 
-export function compare(base) {
+export function compare(base, options) {
   const deltas = Object.fromEntries(RULES.map((rule) => [rule.id, 0]));
   const increases = [];
-  for (const path of changedPaths(base)) {
+  for (const path of changedPaths(base, options)) {
     const before = countFile(path, readAtBase(base, path));
     const after = existsSync(path)
       ? countFile(path, readFileSync(path, "utf8"))
@@ -87,7 +92,7 @@ function report({ deltas, increases }, waived) {
       "",
       waived
         ? "Waived by the `slop-waiver` label."
-        : "Remove the additions, or remove as many elsewhere in the same change. A CODEOWNER can apply `slop-waiver` with a reason."
+        : "Remove the additions, or remove as many elsewhere in the same change. A CODEOWNER can apply `slop-waiver` with a reason.",
     );
   } else {
     lines.push("", "No rule went up.");
@@ -104,5 +109,8 @@ function report({ deltas, increases }, waived) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const base = resolveBase(process.argv.slice(2));
   const waived = process.env.SLOP_WAIVER === "true";
-  process.exitCode = report(compare(base), waived);
+  process.exitCode = report(
+    compare(base, { trackedOnly: process.argv.includes("--tracked-only") }),
+    waived,
+  );
 }

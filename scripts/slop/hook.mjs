@@ -15,14 +15,15 @@
  * there it would hold the action's API key and write token.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path, { dirname } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
 
-const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = dirname(dirname(HERE));
 
 /** Root files that already exist. Anything else at the root needs an RFC. */
 const ROOT_ALLOWLIST = new Set([
@@ -44,10 +45,46 @@ const ROOT_ALLOWLIST = new Set([
 const NOT_IN_HEAD =
   /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/;
 
-function gitShow(path) {
+/**
+ * The repository that contains `dir`, or null outside one. Hooks act on the
+ * session's repository, not the one this script was loaded from: in a git
+ * worktree session `$CLAUDE_PROJECT_DIR` can point at the main checkout.
+ */
+export function repoRootFor(dir) {
+  let existing = dir;
+  // A Write can target a folder that does not exist yet.
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    existing = dirname(existing);
+  }
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: existing,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Not a git checkout: there is nothing to compare against.
+    return null;
+  }
+}
+
+/**
+ * `p` with symlinks resolved, even when it does not exist yet. git reports
+ * the repo root resolved (macOS /var is /private/var), so the edited path
+ * must be resolved too or it looks like it is outside the repository.
+ */
+function resolvedPath(p) {
+  let existing = p;
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    existing = dirname(existing);
+  }
+  return join(realpathSync(existing), path.relative(existing, p));
+}
+
+function gitShow(path, root) {
   try {
     return execFileSync("git", ["show", `HEAD:${path}`], {
-      cwd: ROOT,
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -100,7 +137,7 @@ export function checkEdit(path, { before, after, fileBefore, fileAfter }) {
     const lines = lineCount(fileAfter);
     if (lines > FILE_BUDGET && lines > lineCount(fileBefore)) {
       problems.push(
-        `file is ${lines} lines, over the ${FILE_BUDGET}-line budget, and growing. Split it or put the new code in its own module.`
+        `file is ${lines} lines, over the ${FILE_BUDGET}-line budget, and growing. Split it or put the new code in its own module.`,
       );
     }
   }
@@ -134,9 +171,13 @@ function runStop(input) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
   if (input.stop_hook_active) return 0;
+  const root = repoRootFor(input.cwd ?? process.cwd());
+  if (!root) return 0;
   try {
-    execFileSync("node", ["scripts/slop/ratchet.mjs"], {
-      cwd: ROOT,
+    // Tracked files only: untracked files in the checkout may be a person's
+    // own scratch work, and files the agent writes were checked as it wrote.
+    execFileSync("node", [join(HERE, "ratchet.mjs"), "--tracked-only"], {
+      cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -154,7 +195,9 @@ function main() {
 
   const filePath = input.tool_input?.file_path;
   if (!filePath) return 0;
-  const path = repoPath(filePath);
+  const root = repoRootFor(dirname(filePath));
+  if (!root) return 0;
+  const path = repoPath(resolvedPath(filePath), root);
 
   if (input.hook_event_name === "PreToolUse") {
     const problem = checkNewPath(path, existsSync(filePath));
@@ -165,13 +208,13 @@ function main() {
 
   if (input.hook_event_name === "PostToolUse") {
     if (path.startsWith("..") || !existsSync(filePath)) return 0;
-    const fileBefore = gitShow(path);
+    const fileBefore = gitShow(path, root);
     const fileAfter = readFileSync(filePath, "utf8");
     const fragments = editFragments(
       input.tool_name,
       input.tool_input,
       fileBefore,
-      fileAfter
+      fileAfter,
     );
     const problem = checkEdit(path, { ...fragments, fileBefore, fileAfter });
     if (!problem) return 0;
