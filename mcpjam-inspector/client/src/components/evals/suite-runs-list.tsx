@@ -20,8 +20,13 @@ import {
   hasEnvironmentRun,
   runContextKeys,
 } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRunListItem,
+} from "./types";
 import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
@@ -47,14 +52,17 @@ const RUNS_LIST_METRIC_CELL_CLASS =
  * source — otherwise parent vs. children diverge during live updates.
  */
 export function computeRunEffectiveStats(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   runIterations: EvalIteration[],
 ): {
   effectivePassed: number;
   effectiveTotal: number;
   passRate: number | null;
 } {
-  const iterationResults = runIterations.map((i) => computeIterationResult(i));
+  // Measured results: infra rows count in neither the rate nor its total.
+  const iterationResults = runIterations.map((i) =>
+    computeMeasuredIterationResult(i),
+  );
   const passed = iterationResults.filter((r) => r === "passed").length;
   const failed = iterationResults.filter((r) => r === "failed").length;
   const completedTotal = passed + failed;
@@ -71,7 +79,7 @@ export function computeRunEffectiveStats(
 }
 
 export interface SuiteRunsListProps {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   suiteSource?: "ui" | "sdk";
   onRunClick: (runId: string) => void;
@@ -103,7 +111,7 @@ type RunGroupNode = {
   /** Stable key shared by all child runs (the runGroupId itself). */
   key: string;
   runGroupId: string;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   /** Latest timestamp across children (completedAt ?? createdAt). */
   latestTimestamp: number;
 };
@@ -112,13 +120,13 @@ type RunStandaloneNode = {
   kind: "standalone";
   /** The run id, used as a stable key. */
   key: string;
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   latestTimestamp: number;
 };
 
 type RunListNode = RunGroupNode | RunStandaloneNode;
 
-function getRunTimestamp(run: EvalSuiteRun): number {
+function getRunTimestamp(run: EvalSuiteRunListItem): number {
   return run.completedAt ?? run.createdAt ?? 0;
 }
 
@@ -161,8 +169,8 @@ export function SuiteRunsList({
   // group. Runs without `runGroupId` render exactly as before (no
   // chevron, no aggregate), preserving the legacy layout.
   const nodes = useMemo<RunListNode[]>(() => {
-    const groups = new Map<string, EvalSuiteRun[]>();
-    const standalones: EvalSuiteRun[] = [];
+    const groups = new Map<string, EvalSuiteRunListItem[]>();
+    const standalones: EvalSuiteRunListItem[] = [];
     for (const run of runs) {
       if (run.runGroupId) {
         const existing = groups.get(run.runGroupId);
@@ -308,7 +316,7 @@ export function SuiteRunsList({
 }
 
 interface StandaloneRunRowProps {
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   runIterations: EvalIteration[];
   hostNamesById?: Map<string, string | null>;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
@@ -439,7 +447,7 @@ interface GroupRunRowsProps {
   onTestCaseClick?: (testCaseId: string) => void;
 }
 
-function computeChildDuration(run: EvalSuiteRun): number | null {
+function computeChildDuration(run: EvalSuiteRunListItem): number | null {
   if (run.completedAt && run.createdAt) {
     return Math.max(run.completedAt - run.createdAt, 0);
   }
@@ -455,7 +463,7 @@ function computeChildDuration(run: EvalSuiteRun): number | null {
 // not always populate `result`, so a parent that only checks `result === "failed"`
 // would render a green border over a child whose passRate is below criteria.
 export function computeEffectiveRunResult(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   passRate: number | null,
 ):
   | "passed"
@@ -494,7 +502,10 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
-      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+      return {
+        label: "Failed",
+        className: "bg-destructive/50 text-foreground",
+      };
     case "inconclusive":
       // Amber, not red: the run did not measure enough to decide, which is not
       // the same claim as a failure.
@@ -503,7 +514,10 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
         className: "bg-warning/50 text-foreground",
       };
     case "cancelled":
-      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
+      return {
+        label: "Cancelled",
+        className: "bg-muted text-muted-foreground",
+      };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
@@ -557,10 +571,7 @@ function GroupRunRows({
   const childStats = group.runs.map((run) => ({
     run,
     iterations: iterationsByRun.get(run._id) ?? [],
-    stats: computeRunEffectiveStats(
-      run,
-      iterationsByRun.get(run._id) ?? [],
-    ),
+    stats: computeRunEffectiveStats(run, iterationsByRun.get(run._id) ?? []),
   }));
 
   // Mean across children's effective pass rates. Children with a null
@@ -603,16 +614,15 @@ function GroupRunRows({
     | "cancelled"
     | "passed"
     | "pending"
-    | "timed_out" =
-    anyRunning
-      ? "running"
-      : anyFailed
-        ? "failed"
-        : anyCancelled
-          ? "cancelled"
-          : anyPending
-            ? "pending"
-            : "passed";
+    | "timed_out" = anyRunning
+    ? "running"
+    : anyFailed
+      ? "failed"
+      : anyCancelled
+        ? "cancelled"
+        : anyPending
+          ? "pending"
+          : "passed";
 
   const timestampLabel = formatTime(group.latestTimestamp);
   const shortGroupId = group.runGroupId.slice(0, 8);

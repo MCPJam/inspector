@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/electron/main";
+import { onUncaughtExceptionIntegration } from "@sentry/node";
 
 /**
  * Exit reasons that mean the process died badly.
@@ -188,7 +189,9 @@ export function crashReportingIntegrations(
     // `registerMainProcessCrashHandlers` registers one. Without this the app
     // would capture a fatal main-process error, log it, and then keep running
     // in an undefined state instead of showing the crash and dying.
-    Sentry.onUncaughtExceptionIntegration({
+    // The Node SDK's integration, not @sentry/electron's: from 7 on the
+    // Electron one takes no options and never exits (5 re-exported this one).
+    onUncaughtExceptionIntegration({
       exitEvenIfOtherHandlersAreRegistered: true,
     }),
   ];

@@ -52,6 +52,7 @@ import App, {
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
 import LoadingScreen from "./components/LoadingScreen";
+import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
 import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
 import { NotFoundRoute } from "./components/routing/not-found-route";
@@ -80,6 +81,10 @@ type AppRouter = ReturnType<typeof createBrowserRouter>;
  * for. App gates all three behind its own loading states anyway.
  */
 function AppEntryLandingRoute() {
+  // The first-run overlay owns OAuth-return progress. Rendering the generic
+  // app loader underneath it creates a visible extra loading screen while the
+  // callback state hydrates.
+  if (getFirstRunOAuthReturnServerName()) return null;
   return <LoadingScreen />;
 }
 

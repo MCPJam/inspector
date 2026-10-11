@@ -20,8 +20,8 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.96`,
- * `@ai-sdk/harness-claude-code@1.0.100`, `@ai-sdk/harness-codex@1.0.98`) and
+ * pinned exactly (`@ai-sdk/harness@1.0.117`,
+ * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
  * every command they emit is a literal in their own source, not model- or
  * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
  * below. An adapter upgrade that changes one of them fails CLOSED — the
@@ -121,8 +121,25 @@ export interface CommandTranslationContext {
    * verified managed bundle.
    */
   adapterBootstrapDir: string;
-  /** Verified, read-only managed runtime bundle root that stands in for it. */
+  /** Verified, read-only managed runtime bundle root that stands in for it —
+   *  the VENDOR half of the runtime. */
   managedBundleRoot: string;
+  /**
+   * The verified Inspector layer — the half of the runtime that is MCPJam's
+   * own code — when this harness's bridge comes from one. Bootstrap files the
+   * layer holds (`layerFiles`) resolve here instead of into the pack, and
+   * Codex's `--bootstrap-dir` becomes a vendor path plus this layer path.
+   */
+  layerRoot?: string;
+  /** Relative names of the files `layerRoot` holds. */
+  layerFiles?: readonly string[];
+  /**
+   * The verified pack the layer's launcher may resolve bare imports into
+   * (`--mcpjam-vendor-root`, consumed by the launcher before the bridge reads
+   * argv). Claude Code's bridge imports the agent SDK from it; for a bridge
+   * that bundles everything it is simply unused.
+   */
+  launcherVendorRoot?: string;
   /**
    * The pinned adapter's declared bootstrap files, relative to
    * `adapterBootstrapDir`. Straight from the manifest — an adapter cannot
@@ -138,15 +155,13 @@ export interface CommandTranslationContext {
   /** Absolute path to the Node launcher shipped/verified with the bundle. */
   nodeExecutable: string;
   /**
-   * The script the bridge launch actually runs, when the pack ships a launcher
-   * wrapper in front of the verbatim `bridge.mjs`.
+   * The script the bridge launch actually runs: the launcher in front of the
+   * bridge (the Inspector layer's, or a legacy pack's).
    *
-   * The adapters' bridges bind `0.0.0.0`, and the provider byte-compares the
-   * recipe's `bridge.mjs` against the pack's copy — so the loopback constraint
-   * cannot be applied by editing the bridge. The pack's `launcher.mjs` forces
-   * every listener onto loopback and then imports the unmodified bridge.
+   * The adapters' bridges bind `0.0.0.0`, so the launcher forces every
+   * listener onto loopback and then imports the bridge beside it.
    *
-   * Optional: a pack without a launcher launches the remapped `bridge.mjs`
+   * Optional: a runtime without a launcher launches the remapped `bridge.mjs`
    * itself, and the exposure probe is what refuses it.
    */
   bridgeLauncherPath?: string;
@@ -167,6 +182,15 @@ export interface CommandTranslationContext {
    * function, awaited everywhere, has no such seam.
    */
   confine: (path: string) => Promise<string>;
+  /**
+   * Confine a path to the session's OWN state directory — never the granted
+   * workspace. Required for operands that hold runtime state (Codex's bridge
+   * and session-data directories: rollouts, `CODEX_HOME`, the relay
+   * credential), which must not land in the user's checkout even though the
+   * workspace is a writable root for everything else. Defaults to `confine`
+   * where a provider supplies no narrower check.
+   */
+  confineToSessionState?: (path: string) => Promise<string>;
 }
 
 /**
@@ -202,11 +226,16 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
     "mkdir -p '<workDir>' '<bridgeStateDir>'",
     "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
   ],
+  // MCPJam's app-server adapter (`codex-appserver/`), the only Codex adapter
+  // that runs locally. The exec adapter's `--cli-shim-dir` launch is not a
+  // local shape and is refused.
   codex: [
     "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "mkdir -p '<workDir>' '<bridgeStateDir>'",
+    "node node_modules/@openai/codex/bin/codex.js --version",
+    "mkdir -p '<workDir>' '<bridgeStateDir>' '<sessionDataDir>'",
     "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir " +
-      "'<bridgeStateDir>' --cli-shim-dir '<cliShimDir>'",
+      "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
+      "'<bootstrapDir>'",
   ],
 };
 
@@ -412,6 +441,20 @@ export function classifyBootstrapPath(
     };
   }
   if (ctx.adapterBootstrapFiles.includes(relative)) {
+    // An asset the Inspector layer holds is the layer's copy, never the
+    // pack's: the pack is vendor bytes only. `relative` is a declared, flat
+    // file name here, so joining it cannot leave the layer.
+    if (
+      ctx.layerRoot !== undefined &&
+      ctx.layerFiles?.includes(relative) === true &&
+      !relative.includes("/")
+    ) {
+      return {
+        kind: "bundle-asset",
+        bundlePath: `${ctx.layerRoot}${sep}${relative}`,
+        relativePath: relative,
+      };
+    }
     return {
       kind: "bundle-asset",
       bundlePath: remapBootstrapPath(normalized, ctx),
@@ -546,8 +589,10 @@ function matchBootstrapInstall(
     };
   }
   if (
-    ctx.harnessId === "claude-code" &&
-    command === "./node_modules/.bin/claude --version"
+    (ctx.harnessId === "claude-code" &&
+      command === "./node_modules/.bin/claude --version") ||
+    (ctx.harnessId === "codex" &&
+      command === "node node_modules/@openai/codex/bin/codex.js --version")
   ) {
     return {
       kind: "noop",
@@ -570,12 +615,18 @@ async function matchBridgeLaunch(
   // The EXACT flag vector each pinned adapter emits, in order. Matching a
   // subset, a permutation, or another harness's flags would let an adapter
   // change slip through as a valid launch — the opposite of the fail-closed
-  // behaviour this module promises. Codex carries `--cli-shim-dir`; Claude
-  // Code does not.
+  // behaviour this module promises. The Codex (app-server) bridge also names
+  // its session-data directory and the bootstrap directory it loads Codex
+  // from.
   const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> =
     {
       "claude-code": ["--workdir", "--bridge-state-dir"],
-      codex: ["--workdir", "--bridge-state-dir", "--cli-shim-dir"],
+      codex: [
+        "--workdir",
+        "--bridge-state-dir",
+        "--session-data-dir",
+        "--bootstrap-dir",
+      ],
     };
   const flags = expected[ctx.harnessId];
 
@@ -599,7 +650,15 @@ async function matchBridgeLaunch(
   }
 
   const args: string[] = [
-    ctx.bridgeLauncherPath ?? remapBootstrapPath(expectedBridge, ctx),
+    ctx.bridgeLauncherPath ??
+      (ctx.layerRoot !== undefined
+        ? `${ctx.layerRoot}${sep}bridge.mjs`
+        : remapBootstrapPath(expectedBridge, ctx)),
+    // The launcher's own argument, never the bridge's: only where a launcher
+    // is in front, and only the verified pack.
+    ...(ctx.bridgeLauncherPath !== undefined && ctx.launcherVendorRoot !== undefined
+      ? ["--mcpjam-vendor-root", ctx.launcherVendorRoot]
+      : []),
   ];
   for (let i = 0; i < flags.length; i += 1) {
     const flag = tokens[1 + i * 2]!;
@@ -612,6 +671,42 @@ async function matchBridgeLaunch(
       );
     }
     assertPlainPathOperand(value, command);
+    if (flag === "--bootstrap-dir") {
+      // Exactly the adapter's bootstrap directory. In a sandbox it holds
+      // everything; locally it is SPLIT along the two trusted sources: the
+      // vendor half (Codex's `bin/codex.js` and platform package) is the
+      // digest-verified pack, and the MCPJam half (the host-tools MCP
+      // entrypoint Codex spawns) is the Inspector layer.
+      if (
+        posix.normalize(value) !== posix.normalize(ctx.adapterBootstrapDir)
+      ) {
+        throw new CommandTranslationError(
+          `--bootstrap-dir names ${JSON.stringify(value)}, but the only ` +
+            `bootstrap this session may load is its managed bundle`,
+          command,
+        );
+      }
+      if (ctx.layerRoot !== undefined) {
+        args.push(
+          "--vendor-dir",
+          remapBootstrapPath(value, ctx),
+          "--layer-dir",
+          ctx.layerRoot,
+        );
+      } else {
+        args.push(flag, remapBootstrapPath(value, ctx));
+      }
+      continue;
+    }
+    if (
+      ctx.harnessId === "codex" &&
+      (flag === "--bridge-state-dir" || flag === "--session-data-dir")
+    ) {
+      // Runtime state (rollouts, CODEX_HOME, the relay credential) stays in
+      // the session's own directory, never in the user's checkout.
+      args.push(flag, await (ctx.confineToSessionState ?? ctx.confine)(value));
+      continue;
+    }
     args.push(flag, await ctx.confine(value));
   }
   assertArgvAllowed(args);
