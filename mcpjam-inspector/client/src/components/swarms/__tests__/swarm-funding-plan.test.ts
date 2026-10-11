@@ -9,6 +9,7 @@ import {
   fundingPreviewRuns,
   fundingReviewNotice,
   fundingSplitOf,
+  launchOutOfCreditsReason,
   launchRunOverrides,
   withChosenIterations,
 } from "../swarm-funding-plan";
@@ -232,6 +233,62 @@ describe("fundingSplitOf", () => {
   it("is null when sponsorship is unsupported or the preview covers a different number of runs", () => {
     expect(fundingSplitOf(preview({ supported: false }), 1)).toBeNull();
     expect(fundingSplitOf(preview(), 2)).toBeNull();
+  });
+});
+
+describe("launchOutOfCreditsReason", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  const split = (sponsored: number) => ({
+    sponsored,
+    credits: 15 - sponsored,
+    total: 15,
+  });
+
+  it("blocks a launch the split says has nothing sponsored", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: undefined,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("blocks when no sponsored allowance is left, even before the goals exist", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: null,
+        pendingGoals: 3,
+        allowanceRemaining: 0,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("never blocks a launch that is or may be sponsored", () => {
+    for (const input of [
+      { split: split(5), pendingGoals: 0, allowanceRemaining: 5 },
+      // The new goals are not in the split yet.
+      { split: split(0), pendingGoals: 2, allowanceRemaining: undefined },
+      // Sponsorship not known here at all.
+      { split: null, pendingGoals: 0, allowanceRemaining: undefined },
+    ]) {
+      expect(
+        launchOutOfCreditsReason({ outOfCreditsReason: REASON, ...input }),
+      ).toBeNull();
+    }
+  });
+
+  it("never blocks while the org can spend", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: null,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: 0,
+      }),
+    ).toBeNull();
   });
 });
 

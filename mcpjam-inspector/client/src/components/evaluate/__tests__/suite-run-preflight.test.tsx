@@ -9,6 +9,7 @@ import {
   runPreflight,
   RunPreflightNotices,
   scopePreflightToHosts,
+  scopePreflightToEnvironments,
 } from "../suite-run-preflight";
 import { SuiteRunReviewContent } from "../suite-run-review";
 import type { EvalCase, EvalSuite } from "../../evals/types";
@@ -651,5 +652,30 @@ describe("Setup Run with a preflight", () => {
       expect.anything(),
       expect.objectContaining({ throwOnFailure: true }),
     );
+  });
+});
+
+describe("scopePreflightToEnvironments credits gate", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  // env-locked runs a locked MCPJam model; env-byok runs the user's own key.
+  const preflight = {
+    disconnected: [],
+    removed: [],
+    refused: [],
+    disabledProviders: [],
+    outOfCreditsReason: null,
+    outOfCreditsReasonForEnvironments: (ids: readonly string[]) =>
+      ids.length > 0 && ids.every((id) => id === "env-locked") ? REASON : null,
+  };
+
+  it("blocks once only locked environments are picked", () => {
+    expect(
+      scopePreflightToEnvironments(preflight, ["env-locked", "env-byok"])
+        .outOfCreditsReason,
+    ).toBeNull();
+    expect(
+      scopePreflightToEnvironments(preflight, ["env-locked"])
+        .outOfCreditsReason,
+    ).toBe(REASON);
   });
 });
