@@ -194,10 +194,10 @@ export function evaluateDevEnv(input) {
       warnings.push({
         code: "port-busy",
         message:
-          `Port ${PORT} is already in use. The Electron renderer proxies /api to a` +
-          ` hardcoded localhost:${PORT}, so a separate 'npm run dev' already holding it` +
-          ` will serve that server's responses into this window.`,
-        fix: `Stop the other process first (lsof -ti tcp:${PORT} | xargs kill)`,
+          `Port ${PORT} is already in use (another Inspector, probably 'npm run dev').` +
+          ` electron:dev will start its embedded server on the next free port and` +
+          ` point the renderer at it, so both can run side by side.`,
+        fix: `Nothing, unless you need ${PORT} itself: then stop the other process (lsof -ti tcp:${PORT} | xargs kill)`,
       });
     }
     if (envDevelopmentMissing) {

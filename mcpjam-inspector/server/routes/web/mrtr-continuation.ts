@@ -1,3 +1,4 @@
+import { pluginFormFileGrants } from "../../services/plugin-host/form-file-grants.js";
 /**
  * Hosted MRTR continuation resume/cancel routes (MCP 2026-07-28 §12.5).
  *
@@ -18,6 +19,7 @@
  * without the engine.
  */
 import { Hono } from "hono";
+import { pluginFormSources } from "../../services/plugin-host/form-sources.js";
 import { z } from "zod";
 import type {
   InputResponses,
@@ -50,12 +52,14 @@ import {
 } from "../../utils/mrtr-hosted-collector.js";
 import {
   cancelContinuation,
+  scrubContinuation,
   redactContinuationForLog,
 } from "../../utils/mrtr-continuation-state.js";
 import { logger } from "../../utils/logger.js";
 import {
   isMrtrResumeSubmission,
-  type MrtrResumeSubmission,
+  isMrtrPrivateResumeSubmission,
+  type MrtrResumePayload,
 } from "@/shared/mrtr-continuation";
 
 const mrtrContinuation = new Hono();
@@ -65,15 +69,22 @@ const elicitationResponseSchema = z.object({
   content: z.record(z.string(), z.unknown()).optional(),
 });
 
-const resumeSchema = projectServerSchema.extend({
-  continuationId: z.string().min(1),
-  round: z.number().int().nonnegative(),
-  responses: z.record(z.string(), elicitationResponseSchema),
-  /** The protocol era the continuation was bound to (part of the fingerprint). */
-  negotiatedEra: z.string().min(1),
-  chatSessionId: z.string().min(1).optional(),
-  oauthTokens: z.record(z.string(), z.string()).optional(),
-});
+const resumeSchema = projectServerSchema
+  .extend({
+    continuationId: z.string().min(1),
+    round: z.number().int().nonnegative(),
+    responses: z.record(z.string(), elicitationResponseSchema).optional(),
+    responsesBlobId: z.string().min(1).max(512).optional(),
+    /** The protocol era the continuation was bound to (part of the fingerprint). */
+    negotiatedEra: z.string().min(1),
+    chatSessionId: z.string().min(1).optional(),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
+  })
+  .refine(
+    (value) =>
+      (value.responses === undefined) !== (value.responsesBlobId === undefined),
+    "Supply inline responses or a private answer receipt",
+  );
 
 /**
  * Collapse the per-server `oauthTokens` map onto the single-server
@@ -96,7 +107,11 @@ function normalizeResumeOAuth(
   if (typeof rawBody.oauthAccessToken === "string") return rawBody;
   const serverId = rawBody.serverId;
   const tokens = rawBody.oauthTokens;
-  if (typeof serverId !== "string" || tokens === null || typeof tokens !== "object") {
+  if (
+    typeof serverId !== "string" ||
+    tokens === null ||
+    typeof tokens !== "object"
+  ) {
     return rawBody;
   }
   const token = (tokens as Record<string, unknown>)[serverId];
@@ -128,8 +143,10 @@ mrtrContinuation.post("/resume", async (c) =>
       continuationId: rawBody.continuationId,
       round: rawBody.round,
       responses: rawBody.responses,
+      responsesBlobId: rawBody.responsesBlobId,
     };
-    if (!isMrtrResumeSubmission(submissionCandidate)) {
+    const inline = isMrtrResumeSubmission(submissionCandidate);
+    if (!inline && !isMrtrPrivateResumeSubmission(submissionCandidate)) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -142,20 +159,22 @@ mrtrContinuation.post("/resume", async (c) =>
     // would otherwise be stored and forwarded to the MCP server. Reject
     // oversized content here (never truncate — a truncated response would drive
     // a different request) before it reaches the store.
-    for (const [key, response] of Object.entries(
-      submissionCandidate.responses,
-    )) {
-      if (response.content === undefined) continue;
-      const bytes = Buffer.byteLength(
-        JSON.stringify(response.content),
-        "utf8",
-      );
-      if (bytes > MRTR_RESPONSE_CONTENT_MAX_BYTES) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          `Response content for "${key}" is ${bytes} bytes, over the ${MRTR_RESPONSE_CONTENT_MAX_BYTES}-byte per-response cap`,
+    if (isMrtrResumeSubmission(submissionCandidate)) {
+      for (const [key, response] of Object.entries(
+        submissionCandidate.responses,
+      )) {
+        if (response.content === undefined) continue;
+        const bytes = Buffer.byteLength(
+          JSON.stringify(response.content),
+          "utf8",
         );
+        if (bytes > MRTR_RESPONSE_CONTENT_MAX_BYTES) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            `Response content for "${key}" is ${bytes} bytes, over the ${MRTR_RESPONSE_CONTENT_MAX_BYTES}-byte per-response cap`,
+          );
+        }
       }
     }
 
@@ -169,14 +188,16 @@ mrtrContinuation.post("/resume", async (c) =>
 
     try {
       const serverId = body.serverId;
-      const submission: MrtrResumeSubmission = {
+      const submission: MrtrResumePayload = {
         continuationId: body.continuationId,
         round: body.round,
         // The Zod-normalized values, NOT the raw ones that merely passed the
         // structural predicate above: `elicitationResponseSchema` strips keys
         // the contract does not declare, and it must be that narrowed shape
         // that reaches the store and the MCP server.
-        responses: body.responses,
+        ...(body.responsesBlobId !== undefined
+          ? { responsesBlobId: body.responsesBlobId }
+          : { responses: body.responses! }),
       };
 
       // Warm the connection so the client exists AND its negotiated identity is
@@ -265,9 +286,10 @@ mrtrContinuation.post("/cancel", async (c) =>
   handleRoute(c, async () => {
     assertBearerToken(c);
     const bearer = await getConvexBearerForRequest(c);
-    const body = await readJsonBody<{ continuationId?: unknown; reason?: unknown }>(
-      c,
-    );
+    const body = await readJsonBody<{
+      continuationId?: unknown;
+      reason?: unknown;
+    }>(c);
     if (typeof body.continuationId !== "string" || !body.continuationId) {
       throw new WebRouteError(
         400,
@@ -290,7 +312,40 @@ mrtrContinuation.post("/cancel", async (c) =>
         res.error,
       );
     }
+    pluginFormSources.closeSettledMrtrParent(body.continuationId);
+    if (res.status === "cancelled")
+      pluginFormFileGrants.closeSettledMrtrParent(body.continuationId);
     return { ok: true, continuationStatus: res.status };
+  }),
+);
+
+/** Terminal browser ACK uses the existing actor-owned scrub; never drives a leg. */
+mrtrContinuation.post("/ack", async (c) =>
+  handleRoute(c, async () => {
+    assertBearerToken(c);
+    const bearer = await getConvexBearerForRequest(c);
+    const body = await readJsonBody<{ continuationId?: unknown }>(c);
+    if (
+      typeof body.continuationId !== "string" ||
+      !body.continuationId ||
+      body.continuationId.length > 256
+    )
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "continuationId is required",
+      );
+    const result = await scrubContinuation(bearer, {
+      continuationId: body.continuationId,
+    });
+    if (!result.ok)
+      throw new WebRouteError(
+        result.status,
+        ErrorCode.INTERNAL_ERROR,
+        "Continuation acknowledgment was refused",
+      );
+    pluginFormSources.closeSettledMrtrParent(body.continuationId);
+    return { ok: true };
   }),
 );
 

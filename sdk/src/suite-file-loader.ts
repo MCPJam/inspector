@@ -161,6 +161,8 @@ export type ResolvedEvalSuiteFileCase = {
   title: string;
   /** Authored analytics grouping label; absent remains unlabelled. */
   intent?: string;
+  /** Optional scenario/context note authored on the case. */
+  scenario?: string;
   /** Authored case kind; absent means derive from matchOptions. */
   kind?: "capability" | "regression";
   steps: EvalSuiteFileCase["steps"];
@@ -660,6 +662,9 @@ function resolveCase(
     ...(typeof authoredCase.intent === "string"
       ? { intent: authoredCase.intent }
       : {}),
+    ...(authoredCase.scenario === undefined
+      ? {}
+      : { scenario: authoredCase.scenario }),
     ...(authoredCase.kind === "capability" || authoredCase.kind === "regression"
       ? { kind: authoredCase.kind }
       : {}),
