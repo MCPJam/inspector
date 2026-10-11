@@ -64,6 +64,10 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
+import {
+  requestedModelSelectionSchema,
+  selectionModelMismatch,
+} from "./model-selection-schema.js";
 
 const clients = new Hono();
 const HOST_CATALOG_FETCH_TIMEOUT_MS = 6_500;
@@ -566,6 +570,22 @@ const createClientSchema = z
     }
   });
 
+/**
+ * A `set` ready for the write. A saved selection carries its own model, so a
+ * selection sent WITHOUT `modelId` pins that model: the backend requires the
+ * bare id and the selection to agree, and a caller who sent one has already
+ * said which model they mean.
+ */
+function setForWrite<T extends { modelId?: string; modelSelection?: unknown }>(
+  set: T,
+): T {
+  const selection = set.modelSelection as { modelId?: string } | null | undefined;
+  if (set.modelId === undefined && selection && selection.modelId) {
+    return { ...set, modelId: selection.modelId };
+  }
+  return set;
+}
+
 const impactSchema = z.strictObject({
   liveEnvironmentCount: z.number().int().min(0),
   scenarioAttachmentCount: z.number().int().min(0),
@@ -590,6 +610,15 @@ const impactSchema = z.strictObject({
 const clientSetSchema = z
   .strictObject({
     modelId: z.string().trim().min(1).optional(),
+    /**
+     * The saved model choice (source, connection, settings such as
+     * `reasoningEffort`). It must be FOR `modelId` when both are sent, and
+     * sending one alone pins its model. A STORED legacy selection read back
+     * from a client (`source: "legacy"`, "own key only") may be sent back
+     * verbatim. `null` clears the saved selection and keeps the bare
+     * `modelId`.
+     */
+    modelSelection: requestedModelSelectionSchema.nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
     temperature: z.number().finite().nullable().optional(),
     requireToolApproval: z.boolean().nullable().optional(),
@@ -639,6 +668,12 @@ const clientSetSchema = z
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "`set` must name at least one field to change.",
+  })
+  .superRefine((value, ctx) => {
+    const mismatch = selectionModelMismatch(value.modelId, value.modelSelection);
+    if (mismatch) {
+      ctx.addIssue({ code: "custom", path: ["modelSelection"], message: mismatch });
+    }
   });
 
 /**
@@ -935,7 +970,7 @@ async function updateClientHandler(c: Context) {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          ...(body.set === undefined ? {} : { set: body.set }),
+          ...(body.set === undefined ? {} : { set: setForWrite(body.set) }),
           ...tokens,
         } as any,
       );

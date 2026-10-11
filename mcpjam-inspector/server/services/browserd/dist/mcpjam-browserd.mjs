@@ -9717,6 +9717,9 @@ var DEFAULT_CORS_ORIGINS = [
   // Hono server
   `http://127.0.0.1:${SERVER_PORT}`,
   // Hono server production
+  `http://[::1]:${CLIENT_PORT}`,
+  // IPv6 loopback, same two ports
+  `http://[::1]:${SERVER_PORT}`,
   "https://staging.mcpjam.com"
   // Hosted deployment
 ];

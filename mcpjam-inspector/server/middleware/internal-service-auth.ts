@@ -19,10 +19,16 @@
  * Possession of the service token is the only thing that authorizes these
  * routes; the request id merely names which row is being worked on.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import {
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+  getServiceCredential,
+  presentedServiceCredentialMatches,
+} from "../services/service-credential.js";
 
-export const INSPECTOR_SERVICE_TOKEN_HEADER = "x-inspector-service-token";
+// Re-exported for the callers that already import it from here. The one
+// definition lives in `services/service-credential.ts`.
+export { INSPECTOR_SERVICE_TOKEN_HEADER };
 
 /**
  * The configured token, trimmed, or null when unset or whitespace-only.
@@ -47,24 +53,7 @@ export const INSPECTOR_SERVICE_TOKEN_HEADER = "x-inspector-service-token";
  * misconfiguration; it never widens who is authorized.
  */
 export function getConfiguredInspectorServiceToken(): string | null {
-  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  return token ? token : null;
-}
-
-/**
- * Constant-time equality over SHA-256 digests of both sides.
- *
- * Digesting first is not belt-and-braces: `timingSafeEqual` throws on a length
- * mismatch, so a raw comparison has to branch on length before it runs — and
- * that branch leaks the secret's length to anyone who can time it. Two digests
- * are always 32 bytes, so the length check can never fail and there is nothing
- * to branch on. A plain `!==` would be worse still, bailing at the first
- * mismatched byte and leaking the divergence position.
- */
-function tokenMatches(presented: string, configured: string): boolean {
-  const left = createHash("sha256").update(presented, "utf8").digest();
-  const right = createHash("sha256").update(configured, "utf8").digest();
-  return timingSafeEqual(left, right);
+  return getServiceCredential();
 }
 
 /**
@@ -83,15 +72,11 @@ function tokenMatches(presented: string, configured: string): boolean {
  * cannot be reached for by accident.
  */
 export function isAuthorizedInternalServiceRequest(c: Context): boolean {
-  const configured = getConfiguredInspectorServiceToken();
-  if (!configured) {
-    return false;
-  }
-  const presented = c.req.header(INSPECTOR_SERVICE_TOKEN_HEADER)?.trim();
-  if (!presented) {
-    return false;
-  }
-  return tokenMatches(presented, configured);
+  // Constant-time over SHA-256 digests of both sides (see
+  // `constantTimeTokenEquals`): no length branch, no early exit.
+  return presentedServiceCredentialMatches(
+    c.req.header(INSPECTOR_SERVICE_TOKEN_HEADER),
+  );
 }
 
 /**
