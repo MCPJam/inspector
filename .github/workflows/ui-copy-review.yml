@@ -13,6 +13,8 @@ name: UI Copy Review
 #
 # `labeled` / `unlabeled` re-run it when a CODEOWNER applies `slop-waiver`.
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   # Judges the PR's diff and labels, which the queue's merge commit lacks. The
@@ -48,7 +50,7 @@ jobs:
     name: UI Copy Review
     # A fork's PR cannot read ANTHROPIC_API_KEY. The regex copy rules in the
     # Slop Ratchet still run there.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -65,13 +67,22 @@ jobs:
       # change what runs with the credentials below.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
           path: .reviewer
           sparse-checkout: |
             scripts/slop
+            .github/scripts
             .agents/skills/ui-copy
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: actions/github-script@v9
+        id: pull
+        if: github.event_name == 'merge_group'
+        with:
+          script: |
+            const { resolvePull } = require('./.reviewer/.github/scripts/pr-policy.cjs');
+            return await resolvePull(github, context);
 
       - uses: actions/setup-node@v7
         with:
@@ -79,15 +90,16 @@ jobs:
 
       - name: Review the copy this change adds
         env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
+          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') || contains(fromJSON(steps.pull.outputs.result || '{}').labels.*.name, 'slop-waiver') }}
         run: |
           if [ ! -f .reviewer/scripts/slop/copy-review.mjs ]; then
             echo "::notice::The base branch has no copy reviewer yet, so this PR cannot be reviewed from trusted code. The first PR after this one merges will be."
             exit 0
           fi
-          node .reviewer/scripts/slop/copy-review.mjs --base HEAD^1
+          node .reviewer/scripts/slop/copy-review.mjs --base "$BASE_SHA"

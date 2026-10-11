@@ -1,6 +1,8 @@
 name: Dependency Audit
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     # See the note in lint.yml: `branches` filters on the PR's BASE, so a
     # stacked PR never matches `main` and is never audited.

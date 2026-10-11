@@ -1,6 +1,8 @@
 name: Build and Test
 
 on:
+  merge_group:
+    types: [checks_requested]
   # Run on every PR regardless of its base branch. See the note in test.yml:
   # `branches` filters on the PR's BASE, so a stacked PR — based on the branch
   # below it until that one merges — never matched `main` and was never built
@@ -42,6 +44,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      - name: Test merge queue PR resolution
+        run: node --test .github/scripts/__tests__/pr-policy.test.cjs
 
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
