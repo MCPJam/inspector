@@ -57,7 +57,7 @@ describe("installer", () => {
 
   it("installs once, and leaves an existing hooksPath alone", () => {
     assert.equal(decide(repo, {}), "install");
-    main(repo);
+    main(repo, {});
     assert.equal(git("config", "--get", "core.hooksPath").trim(), HOOKS_PATH);
     assert.equal(decide(repo, {}), "skip: already installed");
     git("config", "core.hooksPath", ".husky");
@@ -76,7 +76,7 @@ describe("installer", () => {
 describe("pre-commit", () => {
   const { repo, git } = makeRepo();
   after(() => rmSync(repo, { recursive: true, force: true }));
-  main(repo);
+  main(repo, {});
 
   it("blocks a staged type escape, and --no-verify skips it", () => {
     writeFileSync(join(repo, "sdk/src/a.ts"), "export const a = b as any;\n");

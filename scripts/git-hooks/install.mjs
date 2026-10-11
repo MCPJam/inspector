@@ -51,8 +51,8 @@ export function decide(cwd, env = process.env) {
   return "install";
 }
 
-export function main(cwd = process.cwd()) {
-  const decision = decide(cwd);
+export function main(cwd = process.cwd(), env = process.env) {
+  const decision = decide(cwd, env);
   if (decision === "install") {
     git(["config", "core.hooksPath", HOOKS_PATH], cwd);
     console.log(`git hooks: core.hooksPath set to ${HOOKS_PATH}`);
