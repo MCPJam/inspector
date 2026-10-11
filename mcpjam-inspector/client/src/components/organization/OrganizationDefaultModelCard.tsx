@@ -1,14 +1,34 @@
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { Loader2 } from "lucide-react";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
 import {
+  orgAiModelSelectionKey,
   orgAiModelsOf,
   useOrgAiConfig,
   type OrgAiModelCheck,
   type OrgAiModelEntry,
   type OrgAiModelKind,
+  type OrgAiModelTestResult,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
@@ -27,6 +47,14 @@ function connectionIdOf(
   return selection?.connectionRef?.kind === "orgProvider"
     ? selection.connectionRef.id
     : undefined;
+}
+
+function sameSelection(
+  a: ModelSelection | null | undefined,
+  b: ModelSelection | null | undefined,
+): boolean {
+  if (!a || !b) return !a && !b;
+  return orgAiModelSelectionKey(a) === orgAiModelSelectionKey(b);
 }
 
 function relativeTime(timestamp: number): string {
@@ -64,7 +92,22 @@ export function OrganizationDefaultModelCard({
   /** The organization's provider rows, from `useOrgModelConfig`. */
   providers: OrgModelProvider[] | undefined;
 }) {
-  const { config, unsupported } = useOrgAiConfig(organizationId);
+  const {
+    config,
+    unsupported,
+    error,
+    isSaving,
+    testError,
+    isTesting,
+    setAiModel,
+    testAiModel,
+  } = useOrgAiConfig(organizationId);
+
+  const [testingKind, setTestingKind] = useState<OrgAiModelKind | null>(null);
+  const [pendingEmbeddingChange, setPendingEmbeddingChange] = useState<{
+    selection: ModelSelection | null;
+    onSaved?: () => void;
+  } | null>(null);
 
   const aiModels = unsupported ? null : orgAiModelsOf(config);
   if (!config || !aiModels) return null;
@@ -77,6 +120,53 @@ export function OrganizationDefaultModelCard({
   const suggestions = canChange ? aiModels.suggestions : {};
   const title =
     aiModels.kinds.length === 1 ? "Default AI model" : "Default AI models";
+
+  const commit = async (
+    kind: OrgAiModelKind,
+    selection: ModelSelection | null,
+    onSaved?: () => void,
+  ) => {
+    try {
+      await setAiModel(kind, selection);
+      onSaved?.();
+    } catch {
+      // The hook keeps the backend's message for the alert below.
+    }
+  };
+
+  /**
+   * Save, unless the embedding model changes: vectors from two embedding
+   * models are never compared, so that change is confirmed first.
+   */
+  const requestSave = (
+    kind: OrgAiModelKind,
+    selection: ModelSelection | null,
+    onSaved?: () => void,
+  ) => {
+    if (
+      kind === "embedding" &&
+      !sameSelection(selection, aiModels.models.embedding?.selection)
+    ) {
+      setPendingEmbeddingChange({ selection, onSaved });
+      return;
+    }
+    void commit(kind, selection, onSaved);
+  };
+
+  const runTest = async (
+    kind: OrgAiModelKind,
+    candidate?: ModelSelection,
+  ): Promise<OrgAiModelTestResult | undefined> => {
+    setTestingKind(kind);
+    try {
+      return await testAiModel(kind, candidate);
+    } catch {
+      // The hook keeps the message for the alert below.
+      return undefined;
+    } finally {
+      setTestingKind(null);
+    }
+  };
 
   return (
     <Card
@@ -111,6 +201,22 @@ export function OrganizationDefaultModelCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3 p-0">
+        {error ? (
+          <Alert variant="destructive" data-testid="org-ai-default-model-error">
+            <AlertTitle>Couldn&apos;t save the model</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {testError ? (
+          <Alert
+            variant="destructive"
+            data-testid="org-ai-default-model-test-error"
+          >
+            <AlertTitle>Couldn&apos;t test the model</AlertTitle>
+            <AlertDescription>{testError}</AlertDescription>
+          </Alert>
+        ) : null}
+
         {locked ? (
           <p
             className="text-xs text-muted-foreground"
@@ -136,12 +242,56 @@ export function OrganizationDefaultModelCard({
                 entry={entry}
                 suggestion={suggestion}
                 providers={providers}
+                canManage={canManage}
+                canChange={canChange}
                 locked={locked}
+                isSaving={isSaving}
+                isTesting={isTesting}
+                isTestingThis={testingKind === kind}
+                onTestSaved={() => void runTest(kind)}
+                onUseSuggestion={(next) => requestSave(kind, next)}
+                onClear={() => requestSave(kind, null)}
               />
             );
           })}
         </ul>
       </CardContent>
+
+      <AlertDialog
+        open={pendingEmbeddingChange !== null}
+        onOpenChange={(next) => {
+          if (!next && !isSaving) setPendingEmbeddingChange(null);
+        }}
+      >
+        <AlertDialogContent data-testid="org-ai-embedding-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change the embedding model?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The session map and clustering only compare vectors made by the
+              same embedding model, so sessions embedded with the current model
+              won&apos;t be compared with sessions embedded with the new one.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSaving}
+              onClick={(event) => {
+                event.preventDefault();
+                const pending = pendingEmbeddingChange;
+                if (!pending) return;
+                void commit(
+                  "embedding",
+                  pending.selection,
+                  pending.onSaved,
+                ).finally(() => setPendingEmbeddingChange(null));
+              }}
+            >
+              {isSaving ? "Saving…" : "Change embedding model"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
@@ -186,16 +336,36 @@ function ModelRow({
   entry,
   suggestion,
   providers,
+  canManage,
+  canChange,
   locked,
+  isSaving,
+  isTesting,
+  isTestingThis,
+  onTestSaved,
+  onUseSuggestion,
+  onClear,
 }: {
   kind: OrgAiModelKind;
   entry: OrgAiModelEntry | null;
   suggestion: ModelSelection | undefined;
   providers: OrgModelProvider[] | undefined;
+  canManage: boolean;
+  /** An admin on a plan that allows choosing a model. */
+  canChange: boolean;
   locked: boolean;
+  isSaving: boolean;
+  isTesting: boolean;
+  isTestingThis: boolean;
+  onTestSaved: () => void;
+  onUseSuggestion: (selection: ModelSelection) => void;
+  onClear: () => void;
 }) {
-  const { label, runs } = ORG_AI_MODEL_PRESENTATION[kind];
+  const { label, noun, runs } = ORG_AI_MODEL_PRESENTATION[kind];
   const selection = entry?.selection;
+  // A model that can't run (its connection was removed, …) is re-chosen,
+  // not tested: the test would only repeat the backend's reason.
+  const testable = Boolean(selection) && canChange && !entry?.problem;
 
   return (
     <li
@@ -210,6 +380,35 @@ function ModelRow({
           <p className="text-sm font-medium">{label}</p>
           <p className="text-xs text-muted-foreground">{runs}</p>
         </div>
+        {canManage ? (
+          <div className="flex items-center gap-1">
+            {testable ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Test ${noun}`}
+                disabled={isTesting}
+                onClick={onTestSaved}
+              >
+                {isTestingThis ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : null}
+                Test
+              </Button>
+            ) : null}
+            {selection ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Clear ${noun}`}
+                disabled={isSaving}
+                onClick={onClear}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -246,6 +445,16 @@ function ModelRow({
                 </>
               ) : null}
             </p>
+            {suggestion && canChange ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => onUseSuggestion(suggestion)}
+              >
+                Use suggested model
+              </Button>
+            ) : null}
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { OrgAiConfig, OrgAiModelEntry } from "@/hooks/useOrgAiConfig";
@@ -68,6 +69,11 @@ const DEFAULT_MODEL = orgSelection(
   "conn_openai",
   "openai/gpt-5-mini",
   "gpt-5-mini",
+);
+const EMBEDDING = orgSelection(
+  "conn_openai",
+  "openai/text-embedding-3-small",
+  "text-embedding-3-small",
 );
 
 function saved(
@@ -224,6 +230,21 @@ describe("OrganizationDefaultModelCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("tests the saved model", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      aiModels: { default: saved(DEFAULT_MODEL) },
+    });
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Test default AI model" }),
+    );
+
+    expect(mocks.testAiModel).toHaveBeenCalledWith("default", undefined);
+    expect(mocks.setAiModel).not.toHaveBeenCalled();
+  });
+
   it("shows a failed test's result", () => {
     hookState.config = makeConfig({
       aiModels: {
@@ -245,6 +266,34 @@ describe("OrganizationDefaultModelCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a suggestion without saving it until clicked", async () => {
+    const user = userEvent.setup();
+    const suggestion = orgSelection(
+      "conn_anthropic",
+      "anthropic/claude-sonnet-4.5",
+      "claude-sonnet-4-5",
+    );
+    hookState.config = makeConfig({
+      aiModelSuggestions: { default: suggestion },
+    });
+    renderCard();
+
+    const row = screen.getByTestId("org-ai-model-default");
+    expect(
+      within(row).getByText(
+        /Suggested: Anthropic · anthropic\/claude-sonnet-4\.5/,
+      ),
+    ).toBeInTheDocument();
+    expect(mocks.setAiModel).not.toHaveBeenCalled();
+
+    await user.click(
+      within(row).getByRole("button", { name: "Use suggested model" }),
+    );
+
+    expect(mocks.setAiModel).toHaveBeenCalledTimes(1);
+    expect(mocks.setAiModel).toHaveBeenCalledWith("default", suggestion);
+  });
+
   it("never offers a suggestion over a saved model", () => {
     hookState.config = makeConfig({
       aiModels: { default: saved(DEFAULT_MODEL) },
@@ -262,6 +311,45 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.queryByRole("button", { name: "Use suggested model" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("clears the model by saving null", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      aiModels: { default: saved(DEFAULT_MODEL) },
+    });
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Clear default AI model" }),
+    );
+
+    expect(mocks.setAiModel).toHaveBeenCalledWith("default", null);
+  });
+
+  it("confirms an embedding change before saving it", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      supportedModelKinds: ["default", "embedding"],
+      aiModels: { default: null, embedding: saved(EMBEDDING) },
+    });
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Clear embedding model" }),
+    );
+    expect(mocks.setAiModel).not.toHaveBeenCalled();
+    expect(screen.getByTestId("org-ai-embedding-confirm")).toHaveTextContent(
+      /only compare vectors made by the same embedding model/,
+    );
+
+    await user.click(
+      within(screen.getByTestId("org-ai-embedding-confirm")).getByRole(
+        "button",
+        { name: "Change embedding model" },
+      ),
+    );
+    expect(mocks.setAiModel).toHaveBeenCalledWith("embedding", null);
   });
 
   it("is read-only for members", () => {
@@ -321,6 +409,32 @@ describe("OrganizationDefaultModelCard", () => {
         screen.queryByRole("button", { name: "Use suggested model" }),
       ).not.toBeInTheDocument();
     });
+
+    it("keeps a saved model visible and clearable after the org left Enterprise", async () => {
+      const user = userEvent.setup();
+      hookState.config = makeConfig({
+        canEnable: false,
+        aiModels: { default: saved(DEFAULT_MODEL) },
+      });
+      renderCard();
+
+      const row = screen.getByTestId("org-ai-model-default");
+      expect(row).not.toHaveClass("opacity-60");
+      expect(
+        within(row).getByText("OpenAI · openai/gpt-5-mini"),
+      ).toBeInTheDocument();
+      expect(
+        within(row).queryByRole("button", { name: "Change default AI model" }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(row).queryByRole("button", { name: "Test default AI model" }),
+      ).not.toBeInTheDocument();
+
+      await user.click(
+        within(row).getByRole("button", { name: "Clear default AI model" }),
+      );
+      expect(mocks.setAiModel).toHaveBeenCalledWith("default", null);
+    });
   });
 
   it("says what the model does with the policy off", () => {
@@ -337,5 +451,19 @@ describe("OrganizationDefaultModelCard", () => {
         /Model pickers never use it, and each suite still chooses its own judge\./,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows why the last save or test failed", () => {
+    hookState.error =
+      "Choosing a default model is available on Enterprise plans.";
+    hookState.testError = "Not authorized for organization AI settings";
+    renderCard();
+
+    expect(screen.getByTestId("org-ai-default-model-error")).toHaveTextContent(
+      "Choosing a default model is available on Enterprise plans.",
+    );
+    expect(
+      screen.getByTestId("org-ai-default-model-test-error"),
+    ).toHaveTextContent("Not authorized for organization AI settings");
   });
 });
