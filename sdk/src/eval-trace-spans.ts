@@ -1,9 +1,9 @@
 import type {
   ModelMessage,
-  TelemetryIntegration,
+  Telemetry,
   OnStepStartEvent,
-  OnToolCallStartEvent,
-  OnToolCallFinishEvent,
+  ToolExecutionStartEvent,
+  ToolExecutionEndEvent,
   OnStepFinishEvent,
 } from "ai";
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
@@ -163,12 +163,18 @@ export type EvalSpanSink = {
  * Times are relative to runStartedAt via rel().
  */
 /**
- * AI SDK TelemetryIntegration that records eval timeline spans.
+ * AI SDK telemetry integration that records eval timeline spans.
  *
- * Uses native `onStepStart`, `onToolCallStart`, `onToolCallFinish`, and
- * `onStepFinish` lifecycle hooks — each provides `stepNumber` directly,
- * avoiding the synthetic-step-number bugs that arise when the execute-wrapper
- * fallback passes `undefined`.
+ * Uses the native `onStepStart`, `onToolExecutionStart`, `onToolExecutionEnd`,
+ * and `onStepEnd` lifecycle hooks. Step events carry `stepNumber`; AI SDK 7's
+ * tool-execution events do not, so a tool is attributed to the step that
+ * started most recently — tools execute inside the step that called them.
+ * Either way the step is the SDK's own, avoiding the synthetic-step-number
+ * bugs that arise when the execute-wrapper fallback passes `undefined`.
+ *
+ * The hook names matter: AI SDK 7 never calls the v6 `onToolCallStart` /
+ * `onToolCallFinish`, so an integration still using them records no tool
+ * spans at all, without an error.
  *
  * Message range indices are NOT set here; call `patchEvalSpansMessageRangesFromSteps`
  * after `generateText` resolves to fill them from `result.steps`.
@@ -183,45 +189,51 @@ export function createEvalSpanIntegration(options: {
    * from the caller's model config — the AI SDK step event does not expose it.
    */
   provider?: string;
-}): TelemetryIntegration & {
+}): Telemetry & {
   getSpans: () => EvalTraceSpanInput[];
   finalizeFailure: (errorLabel?: string) => void;
 } {
   const { rel, serverIdByTool, provider } = options;
   const sink = createEvalSpanSink(rel);
+  let currentStepNumber: number | undefined;
 
   return {
     onStepStart(event: OnStepStartEvent) {
+      currentStepNumber = event.stepNumber;
       sink.onStepStart(event.stepNumber, rel(), {
-        modelId: event.model?.modelId,
+        modelId: event.modelId,
       });
     },
 
-    onToolCallStart(event: OnToolCallStartEvent) {
+    onToolExecutionStart(event: ToolExecutionStartEvent) {
       const toolName = event.toolCall.toolName;
       sink.onToolStart(
         event.toolCall.toolCallId,
         toolName,
-        event.stepNumber,
+        currentStepNumber,
         undefined,
         { serverId: serverIdByTool?.get(toolName) }
       );
     },
 
-    onToolCallFinish(event: OnToolCallFinishEvent) {
+    onToolExecutionEnd(event: ToolExecutionEndEvent) {
+      const succeeded = event.toolOutput.type === "tool-result";
       // A policy refusal is not an executed call: no MCP request was made, so
       // it gets no tool span and cannot read as a tool error — the rule the
       // hosted trace capture applies to the same marker.
-      if (event.success && isToolPolicyBlockResult(event.output)) {
+      if (
+        event.toolOutput.type === "tool-result" &&
+        isToolPolicyBlockResult(event.toolOutput.output)
+      ) {
         sink.discardTool(event.toolCall.toolCallId);
         return;
       }
       sink.onToolEnd(event.toolCall.toolCallId, {
-        status: event.success ? "ok" : "error",
+        status: succeeded ? "ok" : "error",
       });
     },
 
-    onStepFinish(event: OnStepFinishEvent) {
+    onStepEnd(event: OnStepFinishEvent) {
       const responseTimestamp =
         event.response?.timestamp instanceof Date
           ? event.response.timestamp.toISOString()

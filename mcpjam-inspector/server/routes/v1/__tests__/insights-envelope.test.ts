@@ -726,6 +726,44 @@ describe("eval-run judge request", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("forwards the judge's selection (effort included) and refuses a mismatched pair", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const selection = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      settings: { reasoningEffort: "low" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeSelection: selection } },
+    );
+
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const mismatch = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "openai/gpt-5-mini", modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(mismatch.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("sends NO override when the caller stated none", async () => {
     // The mutation clears a previously persisted override when the arg is
     // absent, so re-grading without restating one returns to suite-config

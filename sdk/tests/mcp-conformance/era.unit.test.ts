@@ -101,6 +101,7 @@ describe("CHECK_ERAS map", () => {
     const legacyOnly: MCPCheckId[] = [
       "server-initialize",
       "ping",
+      "logging-set-level",
       "server-sse-polling-session",
       "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
@@ -117,7 +118,6 @@ describe("CHECK_ERAS map", () => {
       "tools-input-schemas-valid",
       "prompts-list",
       "resources-list",
-      "logging-set-level",
       "completion-complete",
       "protocol-invalid-method-error",
       // Every revision publishes its own JSON Schema, so the requirement reads
