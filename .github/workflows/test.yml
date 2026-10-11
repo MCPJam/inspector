@@ -17,9 +17,13 @@ on:
   pull_request:
   # The merge queue tests the merged result before it lands on main; without
   # this trigger the queue's required checks never report and entries time out.
+  #
+  # There is deliberately no `push: main`. The queue moves main to the exact
+  # commit it just tested, so a push run would test that commit a second time.
+  # Release's gates find green runs by commit, not by event, so they count the
+  # queue's run, and warm-node-modules.yml saves on main the node_modules cache
+  # that PR runs restore.
   merge_group:
-  push:
-    branches: [main]
 
 # Every job here runs untrusted-ish code — `npm ci` lifecycle scripts and the
 # test suites themselves. Pin the token to read-only so that stays true even if
@@ -42,7 +46,7 @@ env:
 jobs:
   authoring-mirror:
     name: Compare authoring contracts with backend
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    if: github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     # About 3x the slowest green run with a warm node_modules cache, so a cold
     # install still fits and a hung step fails in minutes instead of six hours.
