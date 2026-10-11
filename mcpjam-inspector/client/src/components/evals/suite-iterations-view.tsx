@@ -2224,6 +2224,8 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
