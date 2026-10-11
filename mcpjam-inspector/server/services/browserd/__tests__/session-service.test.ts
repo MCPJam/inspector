@@ -189,6 +189,7 @@ describe("BrowserSessionService", () => {
       expect(JSON.parse(String(lookupInit.body))).toEqual({
         projectId: "project-1",
         profileId: "profile-1",
+        rangedArtifacts: true,
       });
       expect(lookupInit.redirect).toBe("error");
 
@@ -295,6 +296,30 @@ describe("BrowserSessionService", () => {
         }),
       ).rejects.toThrow(/file storage/);
       expect(requestFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("downloads a signed artifact only from the configured control-plane origin", async () => {
+      const location = "https://convex.example/web/artifact?t=synthetic-token";
+      const requestFetch = archiveFetch(location);
+      const service = new BrowserSessionService({ baseUrl: "https://convex.example", enabled: true, fetch: requestFetch });
+      await expect(service.downloadProfile({ projectId: "project-1", profileId: "profile-1", bearer: "user-token" })).resolves.toEqual(ARCHIVE);
+      expect(requestFetch.mock.calls[1][1]).not.toHaveProperty("headers");
+    });
+
+    it.each([
+      "https://other.convex.site/web/artifact?t=synthetic",
+      "https://convex.example/web/artifact?other=synthetic",
+      "https://convex.example/web/artifact?t=",
+      "https://convex.example/web/artifact?t=synthetic&t=other",
+      "https://convex.example/web/artifact?t=synthetic&redirect=other",
+      "https://convex.example/web/artifact?t=synthetic#fragment",
+      "https://user:pass@convex.example/web/artifact?t=synthetic",
+      "https://convex.example/web/artifact/other?t=synthetic",
+    ])("refuses untrusted or malformed signed archive locations: %s", async (location) => {
+      const requestFetch = archiveFetch(location);
+      const service = new BrowserSessionService({ baseUrl: "https://convex.example", enabled: true, fetch: requestFetch });
+      await expect(service.resolveProfileArchive({ projectId: "project-1", profileId: "profile-1", bearer: "user-token" })).rejects.toThrow(/file storage/);
+      expect(requestFetch).toHaveBeenCalledOnce();
     });
 
     describe("storage origins from this deployment's configuration", () => {

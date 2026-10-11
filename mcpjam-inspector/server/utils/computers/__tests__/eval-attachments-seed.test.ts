@@ -45,6 +45,26 @@ describe("seedAttachmentsIntoSandbox", () => {
     expect(new TextDecoder().decode(writes[0].bytes)).toBe("col1\n1\n2");
   });
 
+  it("writes the entire signed ranged attachment", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), {
+      status: 206, headers: { "Content-Range": "bytes 0-1/4" },
+    })).mockResolvedValueOnce(new Response(new Uint8Array([3, 4]), {
+      status: 206, headers: { "Content-Range": "bytes 2-3/4" },
+    }));
+    const writer = vi.fn(async () => {});
+    await seedAttachmentsIntoSandbox({ sandboxId: "synthetic", attachments: [att({ size: 4 })], writer, fetchImpl });
+    expect(writer).toHaveBeenCalledWith({ sandboxId: "synthetic", files: [{ path: att().path, bytes: new Uint8Array([1, 2, 3, 4]) }] });
+  });
+
+  it("never writes any attachment if access is revoked between ranges", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response(new Uint8Array([1]), {
+      status: 206, headers: { "Content-Range": "bytes 0-0/4" },
+    })).mockResolvedValueOnce(new Response("gone", { status: 404 }));
+    const writer = vi.fn(async () => {});
+    await expect(seedAttachmentsIntoSandbox({ sandboxId: "synthetic", attachments: [att()], writer, fetchImpl })).rejects.toThrow(/Failed to download/);
+    expect(writer).not.toHaveBeenCalled();
+  });
+
   it("no-ops for an empty attachment list (no writer call)", async () => {
     const writer = vi.fn(async () => {});
     await seedAttachmentsIntoSandbox({

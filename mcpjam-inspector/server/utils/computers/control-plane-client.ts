@@ -450,13 +450,10 @@ export interface ResolvedEvalAttachmentsCase {
  * blobs and mints download URLs; a `url: null` means the pin vanished, and
  * the caller must fail the iteration honestly rather than seed a missing file.
  *
- * The service token rides along when this server holds one (MJ-005): the
- * backend then answers with locations that serve an attachment of any size.
- * Without it, it answers with signed links, which serve smaller files only.
- * A token already rejected at boot (`markServiceTokenRejected`) is not
- * presented, since the backend answers an invalid token with 403 rather than
- * with signed links. Either way the URLs are read by this server alone
- * (`seedAttachmentsIntoSandbox`) and are never returned to a caller.
+ * This client negotiates range-capable, lifecycle-scoped artifact links.
+ * A service token rides along when available; a token already rejected at
+ * boot is not presented. The URLs are read by this server alone through the
+ * bounded range downloader and are never returned to a caller.
  */
 export async function resolveEvalRunAttachments(args: {
   bearer: string;
@@ -471,7 +468,7 @@ export async function resolveEvalRunAttachments(args: {
         ? { "x-inspector-service-token": getServiceToken()! }
         : {}),
     },
-    { runId: args.runId },
+    { runId: args.runId, rangedArtifacts: true },
     args.signal,
   );
 }

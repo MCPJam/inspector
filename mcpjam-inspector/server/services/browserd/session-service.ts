@@ -13,6 +13,8 @@ import {
   INSPECTOR_SERVICE_TOKEN_HEADER,
 } from "../../middleware/internal-service-auth.js";
 import { getConfiguredConvexOrigins } from "../../env.js";
+import { downloadArtifactBytes } from "../../utils/artifact-download.js";
+import { MAX_BROWSER_PROFILE_ARCHIVE_BYTES } from "./profile-archive.js";
 
 export type BrowserSessionOwnerKind =
   "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
@@ -154,13 +156,15 @@ function originOf(value: string | undefined): string | null {
 function assertArchiveStorageLocation(
   url: URL,
   storageOrigins: readonly string[],
+  artifactOrigins: readonly string[],
 ): void {
-  if (
-    !storageOrigins.includes(url.origin) ||
-    !url.pathname.startsWith(STORAGE_PATH_PREFIX) ||
-    url.username ||
-    url.password
-  ) {
+  const storage = storageOrigins.includes(url.origin) &&
+    url.pathname.startsWith(STORAGE_PATH_PREFIX);
+  const signedArtifact = artifactOrigins.includes(url.origin) &&
+    url.pathname === "/web/artifact" &&
+    url.searchParams.size === 1 && url.searchParams.getAll("t").length === 1 &&
+    Boolean(url.searchParams.get("t")?.trim());
+  if ((!storage && !signedArtifact) || url.username || url.password || url.hash) {
     throw new Error(
       `browser profile download URL is not on this deployment's file storage (got ${url.origin})`,
     );
@@ -251,12 +255,18 @@ export class BrowserSessionService {
   private readonly requestFetch: typeof globalThis.fetch;
   private readonly baseUrl: string | undefined;
   private readonly storageOrigins: readonly string[];
+  private readonly artifactOrigins: readonly string[];
   readonly enabled: boolean;
 
   constructor(options: BrowserSessionServiceOptions = {}) {
     this.requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = options.baseUrl ?? process.env.CONVEX_HTTP_URL?.trim();
     this.enabled = options.enabled ?? Boolean(this.baseUrl);
+    const configuredOrigin = originOf(this.baseUrl);
+    this.artifactOrigins = [
+      ...getConfiguredConvexOrigins().http,
+      ...(configuredOrigin ? [configuredOrigin] : []),
+    ];
     if (options.storageOrigin !== undefined) {
       const origin = originOf(options.storageOrigin);
       this.storageOrigins = origin ? [origin] : [];
@@ -515,7 +525,7 @@ export class BrowserSessionService {
         bearer: args.bearer,
         projectId: args.projectId,
         signal: args.signal,
-        body: { profileId: args.profileId },
+        body: { profileId: args.profileId, rangedArtifacts: true },
       },
       serviceTokenHeaders(),
     );
@@ -532,7 +542,7 @@ export class BrowserSessionService {
     // thing that should ride cleartext because a signed URL happened to say
     // `http:`.
     assertSecureTransport(location, "browser profile download URL");
-    assertArchiveStorageLocation(location, this.storageOrigins);
+    assertArchiveStorageLocation(location, this.storageOrigins, this.artifactOrigins);
     return location;
   }
 
@@ -545,15 +555,11 @@ export class BrowserSessionService {
   }): Promise<Uint8Array | null> {
     const downloadUrl = await this.resolveProfileArchive(args);
     if (!downloadUrl) return null;
-    const response = await this.requestFetch(downloadUrl, {
-      method: "GET",
-      redirect: "error",
+    return downloadArtifactBytes(downloadUrl, {
+      fetchImpl: this.requestFetch,
       signal: args.signal,
+      maxBytes: MAX_BROWSER_PROFILE_ARCHIVE_BYTES,
     });
-    if (!response.ok) {
-      throw new Error(`browser profile download returned ${response.status}`);
-    }
-    return new Uint8Array(await response.arrayBuffer());
   }
 }
 

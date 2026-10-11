@@ -30,6 +30,7 @@ import {
 import { MAX_BROWSER_PROFILE_ARCHIVE_BYTES } from "../../services/browserd/profile-archive.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import type { RequestEventMap } from "../../utils/log-events.js";
+import { ArtifactDownloadError, openArtifactDownload } from "../../utils/artifact-download.js";
 
 /** The owner check is small metadata: the same 10s as the proxied operations. */
 const LOOKUP_TIMEOUT_MS = 10_000;
@@ -165,15 +166,6 @@ async function resolveArchiveLocation(
   }
 }
 
-/** The length the archive's server declared, when it still applies. */
-function declaredLength(response: Response): number | null {
-  // A body the fetch decoded no longer has the length declared for it.
-  const encoding = response.headers.get("content-encoding");
-  if (encoding && encoding.trim().toLowerCase() !== "identity") return null;
-  const value = response.headers.get("content-length")?.trim();
-  return value && /^\d+$/.test(value) ? Number(value) : null;
-}
-
 /**
  * The archive body, passed through chunk by chunk. Cut — and the upstream
  * read cancelled — when no chunk moves for `ARCHIVE_IDLE_TIMEOUT_MS` or the
@@ -266,11 +258,10 @@ async function streamArchive(
     () => transfer.abort(),
     ARCHIVE_RESPONSE_TIMEOUT_MS,
   );
-  let upstream: Response;
+  let upstream: Awaited<ReturnType<typeof openArtifactDownload>>;
   try {
-    upstream = await fetch(location, {
-      method: "GET",
-      redirect: "error",
+    upstream = await openArtifactDownload(location, {
+      maxBytes: MAX_BROWSER_PROFILE_ARCHIVE_BYTES,
       signal: AbortSignal.any([transfer.signal, c.req.raw.signal]),
     });
   } catch (error) {
@@ -282,27 +273,17 @@ async function streamArchive(
         "Browser profile download timed out",
       );
     }
+    if (error instanceof ArtifactDownloadError && error.status !== undefined) {
+      reportFailure(c, { stage: "archive", statusCode: error.status });
+      throw error.status === 404 ? refusalFor(404) : archiveUnavailable();
+    }
     reportFailure(c, { stage: "archive", errorMessage: errorMessage(error) });
     throw archiveUnavailable();
   } finally {
     clearTimeout(responseTimeout);
   }
 
-  if (!upstream.ok || !upstream.body) {
-    // Unread, the body holds its connection until GC.
-    await upstream.body?.cancel().catch(() => undefined);
-    reportFailure(c, { stage: "archive", statusCode: upstream.status });
-    throw upstream.status === 404 ? refusalFor(404) : archiveUnavailable();
-  }
-  const length = declaredLength(upstream);
-  if (length !== null && length > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
-    await upstream.body.cancel().catch(() => undefined);
-    reportFailure(c, {
-      stage: "archive",
-      errorMessage: "browser profile archive exceeds the 256 MB limit",
-    });
-    throw archiveUnavailable();
-  }
+  const length = upstream.length;
 
   // Headers are built here, never copied from the upstream response.
   return new Response(streamWithLimits(upstream.body, transfer), {
