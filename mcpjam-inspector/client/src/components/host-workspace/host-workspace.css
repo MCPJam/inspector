@@ -1,0 +1,21 @@
+[data-host-workspace-takeover="true"] > :not([data-host-workspace-app-panel]) {
+  display: none;
+}
+
+[data-host-workspace-split="true"]
+  > [data-testid="pinned-conversation-target-notice"] {
+  inset-inline-end: 50%;
+}
+
+[data-host-workspace-app-panel] [data-mcp-app-workspace-surfaces],
+[data-host-workspace-app-panel] [data-mcp-app-workspace-instance] {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Retained Apps drawn in the right rail or the global takeover fill it. */
+[data-retained-app-surfaces] [data-mcp-app-workspace-surfaces],
+[data-retained-app-surfaces] [data-mcp-app-workspace-instance] {
+  height: 100%;
+  min-height: 0;
+}

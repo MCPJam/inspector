@@ -1,0 +1,27 @@
+#!/bin/sh
+# Slop checks on what is staged, for every author: people, Claude Code,
+# Codex, Cursor and Devin all commit through git. The same rules run in CI
+# (scripts/slop/), so this only moves the failure earlier.
+#
+# Skip once with `git commit --no-verify`. SLOP_WAIVER=true reports and passes.
+
+command -v node >/dev/null 2>&1 || exit 0
+root="$(git rev-parse --show-toplevel)" || exit 0
+cd "$root" || exit 0
+status=0
+# Each check runs only if its script exists, so a checkout of an older
+# commit that lacks one still gets the other.
+if [ -f scripts/slop/ratchet.mjs ] &&
+  ! out="$(node scripts/slop/ratchet.mjs --staged 2>&1)"; then
+  printf '%s\n\n' "$out" >&2
+  status=1
+fi
+if [ -f scripts/slop/repo-hygiene.mjs ] &&
+  ! out="$(node scripts/slop/repo-hygiene.mjs --staged 2>&1)"; then
+  printf '%s\n\n' "$out" | grep -v '^::warning::' >&2
+  status=1
+fi
+if [ "$status" -ne 0 ]; then
+  echo "pre-commit: fix the above, or skip once with git commit --no-verify." >&2
+fi
+exit "$status"

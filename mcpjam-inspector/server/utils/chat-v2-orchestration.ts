@@ -1,3 +1,4 @@
+import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
   type ConnectionsByServerId,
@@ -26,6 +27,7 @@ import {
   type MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
 import { withinToolListingBudget } from "./within-budget.js";
@@ -673,6 +675,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  modelToolExecutor?: ModelToolExecutor;
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -711,6 +714,13 @@ export interface PrepareChatV2Options {
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at. Under an effort the resolved
+   * temperature is omitted (a default temperature is not a request, and
+   * reasoning providers reject or ignore one); an EXPLICIT temperature is
+   * refused by the direct routes before it gets here.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   /**
    * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering.
@@ -1341,6 +1351,7 @@ export async function prepareChatV2(
     modelDefinition,
     systemPrompt,
     temperature,
+    reasoningEffort,
     requireToolApproval,
     respectToolVisibility,
     excludeMcpToolNames,
@@ -1414,7 +1425,7 @@ export async function prepareChatV2(
               mcpClientManager.getToolsForAiSdkByServer(
                 knownSelectedServers,
                 toolOptions,
-              ),
+              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
             ),
             selectedGroups,
             {
@@ -1424,7 +1435,11 @@ export async function prepareChatV2(
               },
             },
           )
-        : await listToolsWithinBudget(
+        : options.modelToolExecutor
+          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
+            ), options.modelToolExecutor)))
+          : await listToolsWithinBudget(
             mcpClientManager.getToolsForAiSdk(
               knownSelectedServers,
               toolOptions,
@@ -1945,11 +1960,11 @@ export async function prepareChatV2(
   //
   // The persisted `hostConfig.temperature` is unaffected and stays numeric:
   // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
-  const resolvedTemperature = modelDefinitionSupportsTemperature(
-    modelDefinition,
-  )
-    ? temperature
-    : undefined;
+  const resolvedTemperature =
+    reasoningEffort === undefined &&
+    modelDefinitionSupportsTemperature(modelDefinition)
+      ? temperature
+      : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>
