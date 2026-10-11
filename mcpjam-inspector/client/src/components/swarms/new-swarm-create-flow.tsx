@@ -8,6 +8,7 @@
  * Nothing is written until Create & launch. After launch, Run swarm shows the
  * live persona × client matrix; leaving keeps runs going on Overview.
  */
+import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
@@ -358,6 +359,12 @@ async function runWithConcurrency<T>(
 }
 
 function errorMessageOf(err: unknown, fallback: string): string {
+  // The org's AI key policy refused it: name every dependency that can't run
+  // on the organization's providers, not only the first. A refusal with no
+  // list (generation, until it runs on organization keys) reads as the
+  // shared copy for its code.
+  const refused = aiLaunchRefusalSentence(err);
+  if (refused) return refused;
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
