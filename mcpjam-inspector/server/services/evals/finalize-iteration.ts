@@ -1,5 +1,6 @@
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
@@ -650,6 +651,12 @@ export function buildIterationFinishParams(args: {
   startedAt: number;
   error?: string;
   errorDetails?: string;
+  /**
+   * OUR infrastructure failed this trial (`@/shared/eval-infra-error`). Only
+   * ever set with `status: "failed"`; forces the verdict to not-passed, and the
+   * backend then excludes the row from every rate and refunds its unit fee.
+   */
+  infraError?: EvalInfraError;
   /** Case-level + per-turn predicate results; persisted to metadata.predicates. */
   predicateResults?: unknown[];
   /** Fail-fast skipped steps (PR6); persisted to metadata.skippedSteps. */
@@ -946,7 +953,10 @@ export function buildIterationFinishParams(args: {
 
   return {
     iterationId,
-    passed: effectivePassed,
+    // An infra row has no verdict to report: it is stored `failed` + `failed`
+    // and excluded by every reader, never counted as a pass.
+    passed: args.infraError ? false : effectivePassed,
+    ...(args.infraError ? { infraError: args.infraError } : {}),
     toolsCalled: evaluation.toolsCalled,
     usage,
     messages,
@@ -1090,6 +1100,8 @@ export type FinalizeEvalIterationParams = {
   startedAt?: number;
   error?: string;
   errorDetails?: string;
+  /** OUR infrastructure failed this trial; sent only with `status: "failed"`. */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
   // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -1103,6 +1115,34 @@ export type FinalizeEvalIterationParams = {
    */
   onRunDeleted?: () => void;
 };
+
+/**
+ * The terminal `updateTestIteration` write. A backend that predates
+ * `infraError` rejects the unknown argument by name (deploy skew): the row is
+ * then written once more without it — counted as it was before the field
+ * existed — rather than left `running` for the stale sweep.
+ */
+async function writeIterationResult(
+  convexClient: ConvexHttpClient,
+  args: Record<string, unknown> & { iterationId: string },
+): Promise<void> {
+  try {
+    await convexClient.action("testSuites:updateTestIteration" as any, args);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    if (args.infraError === undefined || !message.includes("infraError")) {
+      throw caught;
+    }
+    logger.warn("[evals] backend rejected infraError; writing without it", {
+      iterationId: args.iterationId,
+    });
+    const { infraError: _infraError, ...withoutInfraError } = args;
+    await convexClient.action(
+      "testSuites:updateTestIteration" as any,
+      withoutInfraError,
+    );
+  }
+}
 
 /**
  * Shared finalize step for both the multi-iteration suite-run recorder
@@ -1154,6 +1194,7 @@ export async function finalizeEvalIteration(
     startedAt,
     error,
     errorDetails,
+    infraError,
     resultSource,
     metadata,
     onRunDeleted,
@@ -1311,7 +1352,7 @@ export async function finalizeEvalIteration(
   let iterationGoneOrCancelled = false;
   const usagePayload = buildIterationUsagePayload(usage);
   try {
-    await convexClient.action("testSuites:updateTestIteration" as any, {
+    await writeIterationResult(convexClient, {
       iterationId,
       status: iterationStatus === "completed" ? "completed" : iterationStatus,
       result,
@@ -1385,6 +1426,9 @@ export async function finalizeEvalIteration(
         : {}),
       error,
       errorDetails,
+      // Paired with `status: "failed"` by construction; sent only when set,
+      // so every other write is byte-identical to before.
+      ...(infraError && iterationStatus === "failed" ? { infraError } : {}),
       resultSource,
       // Merge user-provided metadata with token usage breakdown, then
       // sanitize: metadata can carry nested predicate rows whose

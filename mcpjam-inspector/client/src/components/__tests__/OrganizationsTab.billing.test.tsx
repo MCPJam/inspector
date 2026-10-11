@@ -314,6 +314,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: () => undefined,
+  // Credit balance still reaches this hook through the rendered billing tree.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/useOrgSharePolicy", () => ({
@@ -444,6 +446,27 @@ describe("OrganizationsTab billing", () => {
       isLoading: false,
     });
   });
+
+  it.each(["plans", "billing"] as const)(
+    "%s keeps billing management without a tax verification card",
+    (section) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            hasCustomer: true,
+          }),
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
+      expect(
+        screen.queryByRole("region", { name: "Tax ID verification" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Manage billing" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it.each(["plans", "billing"] as const)(
     "does not promote local installation on %s in hosted mode",
@@ -1708,7 +1731,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(2));
   });
 
-  it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
+  it("billing view hides Manage billing for non-owners and shows owner-only copy", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -1727,7 +1750,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.queryByRole("button", { name: "Manage plan" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
@@ -1884,7 +1907,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByRole("button", { name: "Keep Team annual plan" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Manage plan" }),
+      screen.getByRole("button", { name: "Manage billing" }),
     ).toBeInTheDocument();
   });
 
@@ -2051,7 +2074,7 @@ describe("OrganizationsTab billing", () => {
       screen.queryByRole("button", { name: "View plans" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Manage plan" }),
+      screen.queryByRole("button", { name: "Manage billing" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Upgrade plan" }),
@@ -2646,7 +2669,7 @@ describe("OrganizationsTab billing", () => {
   it.each([
     {
       name: "billing portal",
-      buttonName: "Manage plan",
+      buttonName: "Manage billing",
       flow: "manage_billing",
       openBilling: "portal" as const,
     },
@@ -3369,7 +3392,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage billing" }));
 
     await waitFor(() => {
       expect(openPortal).toHaveBeenCalledWith(
