@@ -1,3 +1,4 @@
+import { deleteRunBatch } from "@/lib/deletion-batch";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,7 +29,7 @@ export type RunLaunchDeleteTarget = {
  * writes and the runner stops on its next check.
  */
 export function useDeleteRunLaunch(
-  deleteRun: ((runId: string) => Promise<void>) | undefined,
+  deleteRun: ((runId: string) => Promise<unknown>) | undefined,
 ) {
   const [target, setTarget] = useState<RunLaunchDeleteTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -36,25 +37,12 @@ export function useDeleteRunLaunch(
   const confirm = async () => {
     if (!target || !deleteRun) return;
     setDeleting(true);
-    const pending = [...target.runIds];
     try {
-      while (pending.length > 0) {
-        await deleteRun(pending[0]);
-        pending.shift();
-        // Drop each deleted run from the target as it goes, so a retry
-        // after a later failure only asks for the runs still left — a
-        // deleted run would fail again and block the retry for good.
-        setTarget({ ...target, runIds: [...pending] });
-      }
-      toast.success(
-        target.runIds.length > 1
-          ? `Deleted ${target.runIds.length} runs`
-          : "Run deleted",
-      );
-      setTarget(null);
-    } catch (error) {
-      console.error("Failed to delete run(s):", error);
-      toast.error("Failed to delete run");
+      const outcome = await deleteRunBatch(target.runIds, deleteRun);
+      (outcome.refused ? toast.error : toast.success)(outcome.message);
+      setTarget(outcome.remaining.length
+        ? { ...target, runIds: outcome.remaining }
+        : null);
     } finally {
       setDeleting(false);
     }
@@ -77,7 +65,7 @@ export function useDeleteRunLaunch(
           </DialogTitle>
           <DialogDescription>
             {count > 1
-              ? `This deletes all ${count} runs in this launch (one per client), with their results. This cannot be undone.`
+              ? `Delete the ${count} selected runs in this launch and their results? Any remaining runs stay selected while deletion is in progress. This cannot be undone.`
               : "This deletes the run and its results. This cannot be undone."}
           </DialogDescription>
         </DialogHeader>

@@ -566,7 +566,7 @@ export function SuiteIterationsView({
   onCancelRun: (runId: string | readonly string[]) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
-  onDirectDeleteRun: (runId: string) => Promise<void>;
+  onDirectDeleteRun: (runId: string) => Promise<unknown>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;

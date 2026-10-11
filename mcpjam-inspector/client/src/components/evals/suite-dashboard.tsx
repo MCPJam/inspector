@@ -61,7 +61,7 @@ export interface SuiteDashboardProps {
   /** Click a run row — opens run detail. */
   onRunClick: (runId: string) => void;
   /** Delete a single run (rail hover trash; groups delete all their host runs). */
-  onDirectDeleteRun?: (runId: string) => Promise<void>;
+  onDirectDeleteRun?: (runId: string) => Promise<unknown>;
   /** Per-row Run button inside the cases list. */
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;

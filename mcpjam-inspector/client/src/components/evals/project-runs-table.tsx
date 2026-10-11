@@ -258,7 +258,7 @@ export function ProjectRunsTable({
    * Evaluate layout only: adds a delete button to each row the caller may
    * delete. A row is one launch, so it deletes every run in it.
    */
-  onDeleteRun?: (runId: string) => Promise<void>;
+  onDeleteRun?: (runId: string) => Promise<unknown>;
   /** Per-run permission; every run in a row must pass for its button. */
   canDeleteRun?: (row: ProjectRunRow) => boolean;
   historyMetricsEnabled?: boolean;

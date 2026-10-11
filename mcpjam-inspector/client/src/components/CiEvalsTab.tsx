@@ -1,3 +1,4 @@
+import { deletionMessage } from "@/lib/deletion-message";
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -444,7 +445,6 @@ export function CiEvalsTab({
     },
     [deletingSuiteId, mutations.deleteSuiteMutation, selectedSuiteId],
   );
-
   const handleDeleteRun = useCallback(
     async (runId: string) => {
       if (deletingRunId) return;
@@ -456,8 +456,8 @@ export function CiEvalsTab({
 
       setDeletingRunId(runId);
       try {
-        await handlers.directDeleteRun(runId);
-        toast.success("Run deleted");
+        const result = await handlers.directDeleteRun(runId);
+        toast.success(deletionMessage(result, "Run deleted"));
 
         if (
           route.type === "run-detail" &&

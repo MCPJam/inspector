@@ -108,6 +108,7 @@ describe("RunGroupItem delete button stays visible in the narrow rail (PUR-28)",
 
     await user.click(screen.getByRole("button", { name: "Delete run group" }));
 
+    expect(screen.getByRole("dialog")).toHaveTextContent("Any remaining runs stay selected while deletion is in progress.");
     // Confirm dialog for the whole group (both runs).
     expect(
       screen.getByRole("heading", { name: /Delete run group/i }),
@@ -124,9 +125,6 @@ describe("RunGroupItem delete button stays visible in the narrow rail (PUR-28)",
 
   it("surfaces failure feedback when a deletion rejects", async () => {
     const onDeleteRun = vi.fn().mockRejectedValue(new Error("network down"));
-    // confirmDeleteRuns logs the failure via console.error before toasting;
-    // swallow it so the expected rejection doesn't clutter test output.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
     renderRail(longLabelGroup, { onDeleteRun });
 
@@ -136,12 +134,31 @@ describe("RunGroupItem delete button stays visible in the narrow rail (PUR-28)",
     // The delete was attempted, and the failure surfaced as error feedback
     // rather than a silent no-op.
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Failed to delete run"),
+      expect(toast.error).toHaveBeenCalledWith("2 run(s) not confirmed. Retry explicitly."),
     );
     expect(onDeleteRun).toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
 
-    consoleError.mockRestore();
+  });
+
+  it("keeps only unsubmitted runs in the confirmation after a partial accepted batch", async () => {
+    const onDeleteRun = vi.fn()
+      .mockResolvedValueOnce({ deleted: true })
+      .mockResolvedValueOnce({ accepted: true, deleted: false, requestId: "receipt" });
+    const runs = [...longLabelGroup, { ...longLabelGroup[1], _id: "twoenv03" }];
+    const user = userEvent.setup();
+    renderRail(runs, { onDeleteRun });
+    await user.click(screen.getByRole("button", { name: "Delete run group" }));
+    await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+      "Deleted 1 run(s). Deletion started for 1 run. 1 run(s) not submitted. Retry after deletion finishes.",
+    ));
+    expect(onDeleteRun).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("dialog")).toHaveTextContent("This cannot be undone.");
+    onDeleteRun.mockResolvedValueOnce({ deleted: true });
+    await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+    expect(onDeleteRun.mock.calls.map(([id]) => id)).toEqual(["twoenv01", "twoenv02", "twoenv03"]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("renders the delete button for a group carrying no host/environment context data", () => {

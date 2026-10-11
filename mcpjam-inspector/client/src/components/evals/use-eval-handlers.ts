@@ -1865,12 +1865,7 @@ export function useEvalHandlers({
   // Direct delete function - actually performs the deletion (for batch delete)
   const directDeleteRun = useCallback(
     async (runId: string) => {
-      try {
-        await mutations.deleteRunMutation({ runId });
-      } catch (error) {
-        console.error("Failed to delete run:", error);
-        throw error;
-      }
+      return mutations.deleteRunMutation({ runId });
     },
     [mutations.deleteRunMutation],
   );

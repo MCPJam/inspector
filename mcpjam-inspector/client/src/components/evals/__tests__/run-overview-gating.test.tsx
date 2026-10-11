@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
+import { errorToastMessage } from "@/test/utils";
+import { toast } from "sonner";
 import { RunOverview } from "../run-overview";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
@@ -36,6 +40,28 @@ describe("RunOverview canDeleteRuns", () => {
     runsViewMode: "runs" as const,
     onViewModeChange: vi.fn(),
   };
+
+  it("keeps the second selected run after an accepted batch and reports refusal on explicit retry", async () => {
+    const user = userEvent.setup();
+    const remove = vi.fn().mockResolvedValueOnce({ accepted: true, deleted: false, requestId: "receipt" });
+    renderWithProviders(<RunOverview {...baseProps} runs={[baseRun, { ...baseRun, _id: "run-2", runNumber: 2 }]}
+      onDirectDeleteRun={remove} canDeleteRuns />);
+    for (const box of screen.getAllByRole("checkbox", { name: /Select run/i })) await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Any remaining runs stay selected while deletion is in progress.");
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(remove.mock.calls).toEqual([["run-1"]]);
+    expect(toast.success).toHaveBeenLastCalledWith(
+      "Deletion started for 1 run. 1 run(s) not submitted. Retry after deletion finishes.",
+    );
+    expect(screen.getByRole("checkbox", { name: /Select run run-2/i })).toBeChecked();
+    remove.mockRejectedValueOnce(new Error("DELETION_IN_PROGRESS"));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(remove.mock.calls).toEqual([["run-1"], ["run-2"]]);
+    expect(toast.error).toHaveBeenLastCalledWith(errorToastMessage("1 run(s) not confirmed. Retry explicitly."), { duration: 8000 });
+    expect(screen.getByRole("checkbox", { name: /Select run run-2/i })).toBeChecked();
+  });
 
   it("shows per-run selection checkboxes when canDeleteRuns is true", () => {
     renderWithProviders(<RunOverview {...baseProps} canDeleteRuns />);

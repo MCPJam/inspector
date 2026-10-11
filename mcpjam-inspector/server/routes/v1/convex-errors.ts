@@ -645,6 +645,14 @@ export function translateConvexWriteError(
     );
   }
 
+  if (code === "DELETION_PROTOCOL_REQUIRED" || code === "DELETION_IN_PROGRESS") {
+    return new WebRouteError(409, ErrorCode.CONFLICT,
+      code === "DELETION_IN_PROGRESS"
+        ? "Another deletion is in progress. Retry after it finishes."
+        : "Deletion is unavailable until the deletion workflow is enabled.",
+      { code });
+  }
+
   if (code === "CONFLICT") {
     return new WebRouteError(
       409,
@@ -706,12 +714,6 @@ export function translateConvexWriteError(
   // which is what keeps the two entry points from disagreeing about the same
   // payload.
   //
-  // ── ORDERING: ahead of the prose fallbacks, behind every coded branch. ───
-  //
-  // Behind the coded branches because those are canonical: a billing cap is a
-  // 429 and a precondition failure is a 409, and a generic 400 in front of
-  // them would flatten both.
-  //
   // AHEAD of the prose fallbacks because those sniff `error.message`, which
   // for a `ConvexError` is Convex's framing wrapped around the JSON of its
   // data — the backend's own `message` INCLUDED. So a deliberate refusal that
@@ -724,10 +726,6 @@ export function translateConvexWriteError(
   // to the codes we have not enumerated yet, which is exactly the population
   // that cannot get an explicit branch in advance.
   //
-  // Nothing that reached the prose block WITHOUT `{ code, message }` moves:
-  // an uncoded ConvexError, a string-data refusal, a dead socket and a
-  // validator rejection all still fall through to the same branches in the
-  // same order.
   if (code?.trim() && structuredMessage?.trim()) {
     // The unclassified refusal stays VISIBLE. The terminal 500 below used to
     // be where a never-before-seen code showed up, and its log is how we

@@ -987,7 +987,7 @@ export function useServerState({
     | ((
         serverName: string,
         options?: { removeFromCloud?: boolean },
-      ) => Promise<void>)
+      ) => Promise<unknown>)
     | null
   >(null);
 
@@ -2588,19 +2588,19 @@ export function useServerState({
       );
 
       if (!existingServer) {
-        logger.warn("Server not found in Convex for deletion", { serverName });
-        return;
+        toast.error("Saved server not found. Refresh before removing it.");
+        throw new Error("Server not found in cloud; refresh before removing it.");
       }
 
       try {
-        await convexDeleteServer({
-          serverId: existingServer._id,
-        });
+        return await convexDeleteServer({ serverId: existingServer._id });
       } catch (error) {
         logger.error("Failed to remove server from Convex", {
           serverName,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+        toast.error("Could not confirm server removal. Refresh before retrying.");
+        throw error;
       }
     },
     [
@@ -4516,7 +4516,7 @@ export function useServerState({
         // snapshot.
         if (isRename && originalServerName) {
           await handleRemoveServerRef.current?.(originalServerName, {
-            removeFromCloud: !hostedWriteTarget,
+            removeFromCloud: false,
           });
         }
 
@@ -5190,19 +5190,15 @@ export function useServerState({
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
-    // Slice 5: env removal handled by Convex deleteServer; only OAuth local
-    // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
-    // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
-    // Env now lives on the Convex server doc; removal happens via the
-    // server-delete mutation. No localStorage cleanup needed.
   }, []);
 
   const removeServerFromStateAndCloud = useCallback(
     async (serverName: string) => {
+      const result = await removeServerFromConvex(serverName);
       cleanupServerLocalArtifacts(serverName);
       dispatch({ type: "REMOVE_SERVER", name: serverName });
-      await removeServerFromConvex(serverName);
+      return result;
     },
     [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex],
   );
@@ -5215,7 +5211,7 @@ export function useServerState({
         cleanupServerLocalArtifacts(serverName);
         dispatch({ type: "REMOVE_SERVER", name: serverName });
       } else {
-        await removeServerFromStateAndCloud(serverName);
+        return await removeServerFromStateAndCloud(serverName);
       }
     },
     [

@@ -1,3 +1,4 @@
+import { deleteRunBatch } from "@/lib/deletion-batch";
 import { useRunGroupSummaries } from "./use-run-group-summaries";
 /**
  * Master-detail results surface for a multi-host suite. Replaces the
@@ -142,7 +143,7 @@ export interface SuiteResultsSplitProps {
    * Delete a single run. When provided, the rail shows a hover trash on each run
    * (and run group — deleting a group removes all its host runs).
    */
-  onDeleteRun?: (runId: string) => Promise<void>;
+  onDeleteRun?: (runId: string) => Promise<unknown>;
   /** Delete test cases — renders a trash control on each matrix case row. */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /**
@@ -606,23 +607,14 @@ export function SuiteResultsSplit({
     if (!deleteTarget || !onDeleteRun) return;
     setIsDeletingRuns(true);
     try {
-      for (const id of deleteTarget.ids) {
-        await onDeleteRun(id);
-        forgetRuns([id]);
-      }
-      toast.success(
-        deleteTarget.ids.length > 1
-          ? `Deleted ${deleteTarget.ids.length} runs`
-          : "Run deleted",
-      );
-      // If the open run was deleted, leave it so the URL stops pointing at it.
-      if (selectedRunId && deleteTarget.ids.includes(selectedRunId)) {
-        onExitRun?.();
-      }
-      setDeleteTarget(null);
-    } catch (error) {
-      console.error("Failed to delete run(s):", error);
-      toast.error("Failed to delete run");
+      const outcome = await deleteRunBatch(deleteTarget.ids, onDeleteRun);
+      const acknowledged = outcome.receipts.map(({ id }) => id);
+      forgetRuns(acknowledged);
+      (outcome.refused ? toast.error : toast.success)(outcome.message);
+      if (selectedRunId && acknowledged.includes(selectedRunId)) onExitRun?.();
+      setDeleteTarget(outcome.remaining.length
+        ? { ...deleteTarget, ids: outcome.remaining }
+        : null);
     } finally {
       setIsDeletingRuns(false);
     }
@@ -1141,7 +1133,7 @@ export function SuiteResultsSplit({
             </DialogTitle>
             <DialogDescription>
               {(deleteTarget?.ids.length ?? 0) > 1
-                ? `Delete ${deleteTarget?.ids.length} runs in ${deleteTarget?.label}? This cannot be undone.`
+                ? `Delete the ${deleteTarget?.ids.length} selected runs in ${deleteTarget?.label} and their results? Any remaining runs stay selected while deletion is in progress. This cannot be undone.`
                 : `Delete run ${deleteTarget?.label}? This cannot be undone.`}
             </DialogDescription>
           </DialogHeader>

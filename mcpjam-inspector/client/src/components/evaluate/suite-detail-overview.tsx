@@ -208,7 +208,7 @@ export function SuiteDetailOverview({
    * Adds a delete button to each run history row the caller may delete. A
    * row is one launch, so it deletes every run in it. Absent hides the column.
    */
-  onDeleteRun?: (runId: string) => Promise<void>;
+  onDeleteRun?: (runId: string) => Promise<unknown>;
   /** Per-run permission; every run in a row must pass for its button. */
   canDeleteRun?: (run: EvalSuiteRunListItem) => boolean;
   /**

@@ -1,3 +1,4 @@
+import { deleteRunBatch } from "@/lib/deletion-batch";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { Button } from "@mcpjam/design-system/button";
@@ -149,7 +150,7 @@ interface RunOverviewProps {
   }>;
   onRunClick: (runId: string) => void;
   onCompareRuns?: (baseRunId: string, compareRunId: string) => void;
-  onDirectDeleteRun: (runId: string) => Promise<void>;
+  onDirectDeleteRun: (runId: string) => Promise<unknown>;
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
@@ -494,25 +495,18 @@ export function RunOverview({
     onCompareRuns(selectedRunsForCompare[0]._id, selectedRunsForCompare[1]._id);
   }, [canCompareSelected, onCompareRuns, selectedRunsForCompare]);
 
-  const confirmBatchDeleteRuns = useCallback(() => {
+  const confirmBatchDeleteRuns = useCallback(async () => {
     const runIds = Array.from(selectedRunIds);
     if (runIds.length === 0) return;
-
     setDeletingRunId("batch");
-    Promise.all(runIds.map((runId) => onDirectDeleteRun(runId)))
-      .then(() => {
-        setSelectedRunIds(new Set());
-        setShowBatchDeleteModal(false);
-        toast.success(`Deleted ${runIds.length} run(s) successfully`);
-      })
-      .catch((error) => {
-        console.error("Failed to delete runs:", error);
-        toast.error("Failed to delete some runs");
-      })
-      .finally(() => {
-        setDeletingRunId(null);
-        setShowBatchDeleteModal(false);
-      });
+    try {
+      const outcome = await deleteRunBatch(runIds, onDirectDeleteRun);
+      setSelectedRunIds(new Set(outcome.remaining));
+      (outcome.refused ? toast.error : toast.success)(outcome.message);
+    } finally {
+      setDeletingRunId(null);
+      setShowBatchDeleteModal(false);
+    }
   }, [selectedRunIds, onDirectDeleteRun]);
 
   // Mixed suites label by the newest run's origin, not suite provenance.
@@ -1002,9 +996,9 @@ export function RunOverview({
               {selectedRunIds.size !== 1 ? "s" : ""}?
               <br />
               <br />
-              This will permanently delete all iterations and results associated
-              with {selectedRunIds.size === 1 ? "this run" : "these runs"}. This
-              action cannot be undone.
+              This deletes the selected runs and their results. Any remaining
+              runs stay selected while deletion is in progress. This cannot be
+              undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

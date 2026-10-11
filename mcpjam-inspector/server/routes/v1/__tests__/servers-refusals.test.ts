@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { ConvexError } from "convex/values";
 
 const config = vi.hoisted(() => ({ hosted: false }));
 
@@ -106,6 +107,18 @@ describe("POST /v1/projects/:projectId/servers refusals", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
+
+  it.each(["DELETION_PROTOCOL_REQUIRED", "DELETION_IN_PROGRESS"])(
+    "answers a code-only %s delete refusal with a safe conflict response",
+    async (code) => {
+      convex.mutation.mockRejectedValueOnce(new ConvexError({ code }));
+      const response = await createApp().request("/api/v1/projects/project-a/servers/server-a", { method: "DELETE" });
+      expect(response.status).toBe(409);
+      await expectNoConvexFraming(response);
+      expect(await response.json()).toMatchObject({ code: "CONFLICT", details: { code } });
+      expect(convex.query).not.toHaveBeenCalled();
+    },
+  );
 
   it("answers the authorization refusal with 403", async () => {
     convex.action.mockRejectedValue(convexError({ kind: "forbidden" }));
