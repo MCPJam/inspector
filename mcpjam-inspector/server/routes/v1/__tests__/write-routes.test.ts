@@ -75,12 +75,14 @@ vi.mock("../../web/auth.js", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    action: convexActionMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      action: convexActionMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";
