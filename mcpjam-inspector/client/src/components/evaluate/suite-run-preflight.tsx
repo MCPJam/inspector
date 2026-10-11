@@ -9,7 +9,10 @@ import { shouldQueryProjectId, useProjectServers } from "@/hooks/useProjects";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useHostList } from "@/hooks/useClients";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import {
+  loadedOrgModelConfig,
+  useHostedOrgModelConfig,
+} from "@/hooks/use-hosted-org-model-config";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -341,7 +344,9 @@ export function useSuiteRunPreflight({
     projectServers,
     knownOnly: Boolean(planned ?? suite.environmentIds?.length),
     availableModelIds: availableModels.map((model) => String(model.id)),
-    orgConfig,
+    // Absent while the organization's AI settings load: no provider reads as
+    // disabled before they answer.
+    orgConfig: loadedOrgModelConfig(orgConfig),
   });
   // The models are locked in `availableModels` only while the org is out.
   const creditsReasonFor = (models: typeof targets.models) =>
