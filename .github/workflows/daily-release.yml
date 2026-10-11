@@ -1,0 +1,72 @@
+name: Daily Inspector release
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+      timezone: America/Los_Angeles
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: daily-inspector-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'MCPJam/inspector' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: Read pending release plan
+        run: npx changeset status --output="$RUNNER_TEMP/daily-release-plan.json"
+      - name: Prepare the full release when eligible
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { readFileSync } = require("node:fs");
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const { dailyReleaseDecision } = await import(`${workspace}/.github/scripts/daily-release.mjs`);
+            const { VERSION_PR_BRANCH } = await import(`${workspace}/.github/scripts/release-pr.mjs`);
+            const { unpublishedVersions } = await import(`${workspace}/.github/scripts/unpublished-versions.mjs`);
+            const { owner, repo } = context.repo;
+            let activeRun = null;
+            for (const workflow_id of ["prepare-release.yml", "release.yml"]) {
+              for (const status of ["in_progress", "queued", "waiting", "pending", "requested"]) {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id, branch: "main", status, per_page: 1,
+                });
+                activeRun = data.workflow_runs[0]?.html_url ?? activeRun;
+              }
+            }
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, state: "open", base: "main", head: `${owner}:${VERSION_PR_BRANCH}`,
+            });
+            const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+            const decision = dailyReleaseDecision({
+              activeRun,
+              versionPr: prs[0]?.html_url,
+              unpublished: unpublishedVersions((path) => readJson(`${workspace}/${path}`)),
+              releases: readJson(`${process.env.RUNNER_TEMP}/daily-release-plan.json`).releases,
+            });
+            core.info(decision.reason);
+            await core.summary.addRaw(decision.reason).write();
+            if (!decision.dispatch) return;
+            // The version PR still needs review and merge before release-trigger.yml ships it.
+            await github.rest.actions.createWorkflowDispatch({
+              owner, repo, workflow_id: "prepare-release.yml", ref: "main",
+              inputs: { deploy_backend_prod: "true", deploy_webapp: "true", skip_verify: "false" },
+            });
+            await core.summary.addRaw("\nDispatched Prepare release. Review and merge its version PR to start production deployment after CI and staging pass.").write();
