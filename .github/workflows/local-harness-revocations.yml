@@ -1,0 +1,110 @@
+# Revoke a local-harness runtime pack: no Inspector selects a revoked digest
+# again, not as its desired pack and not as a fallback (invariant 4).
+#
+# Dispatch with the harness, tree digest and reason. This appends the entry to
+# `mcpjam-inspector/local-harness-revocations/revocations.json`, bumps its
+# `sequence`, signs it with the pack key in the protected environment, attests
+# both files, and opens the `bot/local-harness-pack-revocations` PR. Merging it
+# is what revokes the pack: Inspectors fetch the list from main.
+#
+# A push to main that changes the list (a hand edit, or that PR merging) is
+# re-signed here; Ed25519 signatures are deterministic, so an already-signed
+# list produces no diff and no PR.
+name: Local harness pack revocations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mcpjam-inspector/local-harness-revocations/revocations.json"
+  workflow_dispatch:
+    inputs:
+      harness:
+        description: Harness whose pack to revoke (empty to only re-sign).
+        required: false
+        type: string
+        default: ""
+      tree_digest:
+        description: The pack's tree digest (sha256:…).
+        required: false
+        type: string
+        default: ""
+      reason:
+        description: Shown to users whose Inspector can no longer run it.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-harness-revocations
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    if: github.ref == 'refs/heads/main'
+    environment: local-harness-pack-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      # No credential persisted into the checkout; the PR step authenticates
+      # git from its own GH_TOKEN (the release token: GitHub runs no checks
+      # for a PR pushed with GITHUB_TOKEN).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24"
+
+      - name: Add the revocation
+        if: inputs.tree_digest != ''
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS: ${{ inputs.harness }}
+          DIGEST: ${{ inputs.tree_digest }}
+          REASON: ${{ inputs.reason }}
+        run: node scripts/local-harness-revocations.mjs add --harness "$HARNESS" --digest "$DIGEST" --reason "$REASON"
+
+      - name: Sign and verify against the key the Inspector carries
+        working-directory: mcpjam-inspector
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          node scripts/local-harness-revocations.mjs sign
+          node scripts/local-harness-revocations.mjs verify
+
+      - name: Anything to propose?
+        id: diff
+        run: |
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Attest the signed list
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            mcpjam-inspector/local-harness-revocations/revocations.json
+            mcpjam-inspector/local-harness-revocations/revocations.json.sig
+
+      - name: Open or refresh the revocation PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sequence="$(jq -r .sequence mcpjam-inspector/local-harness-revocations/revocations.json)"
+          text="$(jq -n --arg seq "$sequence" --arg run "$RUN_URL" '{
+            branch: "bot/local-harness-pack-revocations",
+            title: ("chore(local-harness): revocation list " + $seq),
+            body: ("Signs local-harness pack revocation list **" + $seq + "**. Once merged, no Inspector selects a listed pack — as its desired pack or as a fallback — and an Inspector whose only installed pack is listed fails closed with the stated reason.\n\n- Signed and attested by " + $run + "\n- Review the entries in `revocations.json`; never edit the `.sig` by hand.")
+          }')"
+          git add mcpjam-inspector/local-harness-revocations/
+          bash .github/scripts/local-harness-bot-pr.sh "$text"

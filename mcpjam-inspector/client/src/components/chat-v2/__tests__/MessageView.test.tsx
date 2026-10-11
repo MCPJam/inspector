@@ -12,6 +12,9 @@ import {
   widgetStateContextText,
 } from "@/shared/user-context-message";
 
+const copiedText = vi.hoisted(() => vi.fn(async (_text: string) => true));
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard: copiedText }));
+
 // Mock PartSwitch
 vi.mock("../thread/part-switch", () => ({
   PartSwitch: ({ part, role }: { part: any; role: string }) => (
@@ -340,6 +343,48 @@ describe("MessageView", () => {
       expect(
         screen.queryByTestId("user-message-bubble"),
       ).not.toBeInTheDocument();
+    });
+
+    it("edits and copies a titled App item using its underlying text", async () => {
+      const onEditUserMessage = vi.fn(async () => true);
+      const message = createMessage({
+        id: "titled-app-message",
+        role: "user",
+        parts: [
+          {
+            type: "data-plugin-message-text",
+            data: { title: "Visible title", text: "Underlying instruction" },
+          },
+          { type: "text", text: "Second block" },
+        ],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+      await waitFor(() =>
+        expect(copiedText).toHaveBeenCalledWith(
+          "Underlying instruction\n\nSecond block",
+        ),
+      );
+      fireEvent.click(editButton());
+      expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+        "Underlying instruction\n\nSecond block",
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "Underlying instruction edited\n\nSecond block" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() =>
+        expect(onEditUserMessage).toHaveBeenCalledWith(
+          message,
+          "Underlying instruction edited\n\nSecond block",
+        ),
+      );
     });
 
     it("preserves every text part of a multi-part user message", () => {
