@@ -75,18 +75,30 @@ const GENERIC_ORG_POLICY_CODE_IN_TEXT =
  * `data` / `body`, or the `details` of a `PlatformApiError`, where the
  * platform API's envelope puts it), else a code named in its message.
  * `undefined` when it is not one.
+ *
+ * The code fields are read through the `cause` chain, as `describe.ts` reads
+ * an HTTP status: a wrapper that keeps the refusal on its cause would
+ * otherwise be classified by that cause's 403.
  */
 export function orgPolicyRefusal(
   error: unknown,
   message: string,
 ): { slug: string; rawCode: string } | undefined {
-  if (error && typeof error === "object") {
-    const record = error as {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (
+    let depth = 0;
+    depth < 5 && current && typeof current === "object" && !seen.has(current);
+    depth++
+  ) {
+    seen.add(current);
+    const record = current as {
       code?: unknown;
       data?: { code?: unknown };
       body?: { code?: unknown };
       details?: { code?: unknown };
       failureCode?: unknown;
+      cause?: unknown;
     };
     for (const candidate of [
       record.data?.code,
@@ -99,6 +111,7 @@ export function orgPolicyRefusal(
       const slug = orgPolicySlugForCode(candidate);
       if (slug) return { slug, rawCode: candidate.trim().toLowerCase() };
     }
+    current = record.cause;
   }
   const textMatch =
     DISTINCT_ORG_POLICY_CODE_IN_TEXT.exec(message) ??
