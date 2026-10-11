@@ -274,19 +274,26 @@ describe("project write routes: delegated org scope", () => {
   });
 
   describe("DELETE /v1/projects/:projectId", () => {
-    it("rejects the immediate-delete protocol before making any backend call", async () => {
+    it("rejects legacy deletion when the receipt protocol is available", async () => {
       stubDelegatedKeyBoundTo("org_a");
-
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/proj_in_a",
-        undefined,
-        "sk_live_secret"
-      );
-
+      convexQueryMock.mockResolvedValueOnce({ available: true, protocolVersion: 1, scopeTypes: ["project", "organization"] });
+      const res = await request("DELETE", "/api/v1/projects/proj_in_a", undefined, "sk_live_secret");
       expect(res.status).toBe(409);
       expect(convexMutationMock).not.toHaveBeenCalled();
-      expect(convexQueryMock).not.toHaveBeenCalled();
+    });
+    it("preserves legacy deletion and delegated scope checks while unavailable", async () => {
+      stubDelegatedKeyBoundTo("org_a");
+      convexQueryMock.mockResolvedValueOnce({ available: false, protocolVersion: 1, scopeTypes: ["project", "organization"] });
+      const res = await request("DELETE", "/api/v1/projects/proj_in_a", undefined, "sk_live_secret");
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledTimes(1);
+    });
+    it("does not fall back when capability lookup fails", async () => {
+      stubDelegatedKeyBoundTo("org_a");
+      convexQueryMock.mockRejectedValueOnce(new Error("Network unavailable"));
+      const res = await request("DELETE", "/api/v1/projects/proj_in_a", undefined, "sk_live_secret");
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });
 });
