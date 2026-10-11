@@ -46,17 +46,9 @@ export type StopSwarmRunOutcome = "stopped" | "settled" | "refused";
 export function useStopSwarmRun(runningRunIds: readonly string[]) {
   const cancelJourneyRun = useMutation(SWARM_MUTATIONS.cancelJourneyRun as any);
   const [busy, setBusy] = useState(false);
-  /**
-   * This viewer stopped the run, in this visit.
-   *
-   * The wave reads cannot tell a deliberate stop from a failure — both settle
-   * on `issues`. Telling the person who just pressed Stop that their run
-   * "Completed with issues" says their action broke something. This is the
-   * one piece of positive evidence available, so it is used, and only for as
-   * long as it is trustworthy: a reload has no memory of the click and
-   * honestly falls back to what the data supports.
-   */
+  /** Local evidence for older servers that do not expose cancellation fields. */
   const [stoppedHere, setStoppedHere] = useState(false);
+  const [stoppedRunIds, setStoppedRunIds] = useState<string[]>([]);
 
   /**
    * Stop every still-running goal in this wave.
@@ -106,11 +98,26 @@ export function useStopSwarmRun(runningRunIds: readonly string[]) {
         toast.info("Run had already finished");
         return "settled";
       }
+      const cleanupPending = results.some(
+        (r) => r.status === "fulfilled" && r.value?.cleanupPending === true,
+      );
       setStoppedHere(true);
+      setStoppedRunIds((current) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...results.flatMap((result, index) =>
+              result.status === "fulfilled" ? [runningRunIds[index]] : [],
+            ),
+          ]),
+        ),
+      );
       toast.success(
         refused.length === 0
-          ? "Run stopped"
-          : `Run stopped: ${refused.length} ${
+          ? cleanupPending
+            ? "Stop requested"
+            : "Run stopped"
+          : `${cleanupPending ? "Stop requested" : "Run stopped"}: ${refused.length} ${
               refused.length === 1 ? "goal" : "goals"
             } could not be stopped`,
       );
@@ -120,7 +127,7 @@ export function useStopSwarmRun(runningRunIds: readonly string[]) {
     }
   }, [cancelJourneyRun, runningRunIds]);
 
-  return { stop, busy, stoppedHere };
+  return { stop, busy, stoppedHere, stoppedRunIds };
 }
 
 /**

@@ -1,7 +1,12 @@
+import {
+  recordUpdateDiagnostic,
+  updateDiagnosticSnapshot,
+} from "./update-diagnostics.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/electron/main";
+import { sentryUserId } from "../../../shared/sentry-identity.js";
 import log from "electron-log";
 import {
   installedVersionMatches,
@@ -128,6 +133,9 @@ export async function reportPendingInstallResults(
       version: current ?? "unknown",
       at: Date.now(),
     };
+    recordUpdateDiagnostic(row.id, "launch_verification", {
+      result: row.observed.outcome,
+    });
   }
   // Freeze the FIRST launch result before network I/O; an offline launch must
   // not later be reported as a different version after another update.
@@ -141,15 +149,25 @@ export async function reportPendingInstallResults(
         update_reason: "install_outcome",
         update_attempt_id: row.id,
       };
+      const diagnostics = updateDiagnosticSnapshot(row.id);
       Sentry.withScope((scope) => {
         scope.addEventProcessor((event) => ({
           ...event,
-          user: undefined,
+          user: sentryUserId(event.user),
+          server_name: undefined,
           request: undefined,
           extra: undefined,
           breadcrumbs: [],
-          tags,
-          contexts: { update: event.contexts?.update },
+          tags: {
+            ...tags,
+            ...(event.tags?.actor_kind
+              ? { actor_kind: event.tags.actor_kind }
+              : {}),
+          },
+          contexts: {
+            update: event.contexts?.update,
+            update_diagnostics: diagnostics,
+          },
         }));
         Sentry.captureEvent({
           event_id: row.outcomeEventId,
@@ -163,6 +181,7 @@ export async function reportPendingInstallResults(
           fingerprint: ["desktop-update-install-outcome"],
           tags,
           contexts: {
+            update_diagnostics: diagnostics,
             update: {
               attempt_id: row.id,
               failure_event_id: row.failureEventId,
