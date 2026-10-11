@@ -227,9 +227,16 @@ function runStop(input) {
     });
     return 0;
   } catch (error) {
-    if (error.status !== 1) return 0;
-    process.stderr.write(`${error.stdout}\n`);
-    return 2;
+    // Only a finished report is a finding. A crash also exits 1 (Node's code
+    // for an uncaught exception, as when the repo has no origin/main), and a
+    // broken check must not block the turn: show why, and let it end.
+    if (error.status === 1 && error.stdout?.includes("## Slop ratchet")) {
+      process.stderr.write(`${error.stdout}\n`);
+      return 2;
+    }
+    const detail = error.stderr || error.message;
+    process.stderr.write(`slop Stop check skipped: ${detail}\n`);
+    return 0;
   }
 }
 

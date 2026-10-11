@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -657,6 +657,22 @@ describe("hooks in another checkout", async () => {
     rmSync(join(repo, "sdk/src/before.ts"));
     rmSync(join(repo, "sdk/src/during.ts"));
     rmSync(snapshotFile(session, realpathSync(repo)), { force: true });
+  });
+
+  it("lets the turn end when the ratchet itself fails", () => {
+    const bare = mkdtempSync(join(tmpdir(), "slop-hook-bare-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: bare });
+      // No commits and no origin/main: the ratchet cannot find a base.
+      const result = spawnSync("node", [HOOK], {
+        input: JSON.stringify({ hook_event_name: "Stop", cwd: bare }),
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0);
+      assert.match(result.stderr, /slop Stop check skipped/);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
   });
 
   it("stops on tracked changes but not on someone's untracked files", () => {
