@@ -107,7 +107,7 @@ export function OrgAiCardBoundary({
             <AlertTitle>Couldn&apos;t show {title}</AlertTitle>
             <AlertDescription className="space-y-2">
               <p>
-                Couldn&apos;t load this setting. Reload the page and try again.
+                Couldn&apos;t load this setting. Try again in a moment.
               </p>
               <Button variant="outline" size="sm" onClick={reset}>
                 Try again
