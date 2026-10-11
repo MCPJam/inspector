@@ -26,7 +26,38 @@
  * consumes this.
  */
 
+import * as apps from "@modelcontextprotocol/ext-apps/app-bridge";
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { z } from "zod";
+
+// app-bridge's extensionless type exports are not resolvable by NodeNext; same
+// vendor declaration workaround as tool-result-schema.ts.
+const { McpUiMessageRequestSchema } = apps as unknown as {
+  McpUiMessageRequestSchema: z.ZodObject<{
+    method: z.ZodLiteral<"ui/message">;
+    params: z.ZodObject;
+  }>;
+};
+// ext-apps' base ui/message schema strips params._meta. Owned extension
+// dispatch must receive the full envelope before enforcing target/send policy.
+const ownedMessageRequestSchema = McpUiMessageRequestSchema.extend({
+  params: McpUiMessageRequestSchema.shape.params.extend({
+    _meta: z.record(z.string(), z.unknown()).optional(),
+  }),
+});
+class ExtensionAppBridge extends AppBridge {
+  static preserveOwnedMessageMetadata(
+    bridge: AppBridge,
+    handler: NonNullable<HostBridgeCallbacks["onSendMessage"]>
+  ) {
+    // This is the inherited official bridge wrapper, not a module-identity
+    // check. Retained bridges made before an HMR update need the same schema.
+    (bridge as ExtensionAppBridge).replaceRequestHandler(
+      ownedMessageRequestSchema,
+      (request) => handler(request.params)
+    );
+  }
+}
 import {
   applyToolResultPolicy,
   type ToolResultPolicy,
@@ -98,7 +129,7 @@ export function createHostAppBridge(opts: {
   };
   hostContext?: McpUiHostContext;
 }): AppBridge {
-  return new AppBridge(
+  return new ExtensionAppBridge(
     null,
     opts.hostInfo,
     {
@@ -117,6 +148,9 @@ export function createHostAppBridge(opts: {
 // import the MCP v1 SDK types package directly (forbidden in client/src by the
 // `check:mcp-v1-runtime-imports` guard). The types flow through ext-apps.
 type CallToolReturn = Awaited<ReturnType<NonNullable<AppBridge["oncalltool"]>>>;
+type ReadResourceParams = Parameters<
+  NonNullable<AppBridge["onreadresource"]>
+>[0];
 type ReadResourceReturn = Awaited<
   ReturnType<NonNullable<AppBridge["onreadresource"]>>
 >;
@@ -188,8 +222,12 @@ export interface HostBridgeCallbacks {
   onAppInitialized?: (bridge: AppBridge) => void;
   /** `ui/message` text content (host follow-up). */
   onSendFollowUp?: (text: string) => void;
+  /** Complete owned message envelope; no first-text truncation. */
+  onSendMessage?: (params: unknown) => Promise<Record<string, unknown>>;
   /** `ui/open-link`. */
   onOpenLink?: (url: string) => void;
+  /** Dedicated admitted plugin navigation; never opens an OS/browser URL. */
+  onOpenAppLink?: (url: string) => Promise<void>;
   /** App-initiated `tools/call` dispatcher. Resolves to a CallToolResult. */
   onCallTool?: (
     name: string,
@@ -199,6 +237,11 @@ export interface HostBridgeCallbacks {
   onAppToolInvocation?: (update: AppToolInvocationUpdate) => void;
   /** `resources/read`. */
   onReadResource?: (uri: string) => Promise<ReadResourceReturn>;
+  /** Full resource request and cancellation context for owned file resources. */
+  onReadResourceV2?: (
+    params: ReadResourceParams,
+    extra: Parameters<NonNullable<AppBridge["onreadresource"]>>[1]
+  ) => Promise<ReadResourceReturn>;
   /** `resources/list`. */
   onListResources?: (
     params: ListResourcesParams
@@ -222,6 +265,11 @@ export interface HostBridgeCallbacks {
     toolCallId: string,
     params: UpdateModelContextParams
   ) => void;
+  /** Owned extension response, including its model-context update receipt. */
+  onUpdateModelContextV2?: (
+    toolCallId: string,
+    params: UpdateModelContextParams
+  ) => Promise<{ _meta?: Record<string, unknown> }>;
   /** `ui/download-file`. */
   onDownloadFile?: (
     params: DownloadFileParams
@@ -289,7 +337,9 @@ export function registerHostBridgeHandlers(
   // They are a SEPARATE surface from the `window.openai` shim; folding the
   // shim matrix in here would break the advertise = enforce contract.
   if (effectiveHostCapabilities.message) {
-    bridge.onmessage = async ({ content }) => {
+    bridge.onmessage = async (params) => {
+      if (callbacks.onSendMessage) return await callbacks.onSendMessage(params);
+      const { content } = params;
       // Cast the ui/message content-block array to a minimal structural element
       // type so this line typechecks under BOTH resolution modes this source is
       // compiled in: the SDK's own NodeNext build (where the ext-apps content
@@ -306,8 +356,25 @@ export function registerHostBridgeHandlers(
     };
   }
 
+  if (effectiveHostCapabilities.message && callbacks.onSendMessage) {
+    ExtensionAppBridge.preserveOwnedMessageMetadata(
+      bridge,
+      callbacks.onSendMessage
+    );
+  }
+
   if (effectiveHostCapabilities.openLinks) {
     bridge.onopenlink = async ({ url }) => {
+      if (/^(?:codex|chatgpt):|^https:\/\/chatgpt\.com\/plugins\//.test(url)) {
+        if (!callbacks.onOpenAppLink) return { isError: true };
+        try {
+          await callbacks.onOpenAppLink(url);
+          return {};
+        } catch {
+          return { isError: true };
+        }
+      }
+
       // The URL is widget-controlled and flows into the host's `window.open`.
       // Only http(s) may be opened — `javascript:`/`data:`/`vbscript:`/`file:`
       // and other schemes would let a malicious widget run script or smuggle
@@ -399,7 +466,7 @@ export function registerHostBridgeHandlers(
         // `structuredContent` is invisible to the widget author otherwise.
         const result = applyToolResultPolicy(
           rawResult,
-          getMatrix?.()?.toolResult,
+          getMatrix?.()?.toolResult
         );
         callbacks.onAppToolInvocation?.({
           id: invocationId,
@@ -432,7 +499,10 @@ export function registerHostBridgeHandlers(
   }
 
   if (effectiveHostCapabilities.serverResources) {
-    bridge.onreadresource = async ({ uri }) => {
+    bridge.onreadresource = async (params, extra) => {
+      if (callbacks.onReadResourceV2)
+        return callbacks.onReadResourceV2(params, extra);
+      const { uri } = params;
       if (!callbacks.onReadResource) {
         throw new Error("Resource reads not supported");
       }
@@ -483,6 +553,8 @@ export function registerHostBridgeHandlers(
 
   if (effectiveHostCapabilities.updateModelContext) {
     bridge.onupdatemodelcontext = async (params) => {
+      if (callbacks.onUpdateModelContextV2)
+        return callbacks.onUpdateModelContextV2(currentToolCallId(), params);
       callbacks.onUpdateModelContext?.(currentToolCallId(), params);
       return {};
     };

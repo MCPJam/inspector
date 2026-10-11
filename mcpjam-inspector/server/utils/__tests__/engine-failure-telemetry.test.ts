@@ -274,17 +274,18 @@ describe("engine failure telemetry", () => {
     const chunks = errorChunks();
     expect(chunks).toHaveLength(1);
     expect(Object.keys(chunks[0]).sort()).toEqual(["errorText", "type"]);
-    // The parsed sentence, not the raw JSON envelope.
-    expect(chunks[0].errorText).toBe(
-      "MCPJam is experiencing a configuration issue.",
-    );
+    // Preserve the structured failure so the client can classify and render it.
+    expect(JSON.parse(chunks[0].errorText)).toEqual({
+      message: "MCPJam is experiencing a configuration issue.",
+      code: "mcpjam_api_error",
+      statusCode: 401,
+      isRetryable: false,
+    });
   });
 
   it("keeps the code on a mid-stream provider_not_allowlisted chunk so the client can pick its banner", async () => {
-    // Every other mid-stream chunk reaches the client as its bare sentence
-    // (see above). This one cannot: without the code the client falls back to
-    // the generic error box, and the allowlist banner — no retry, no API-key
-    // advice — is chosen from the code alone.
+    // The allowlist banner is chosen from the structured code. Preserve its
+    // details so the client can explain the restriction without API-key advice.
     const message =
       'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
     const details =
