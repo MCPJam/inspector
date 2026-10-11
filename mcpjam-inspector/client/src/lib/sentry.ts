@@ -232,7 +232,11 @@ export function initSentry() {
         ),
         hint,
       ),
-    beforeBreadcrumb: (breadcrumb) => filterSentryBreadcrumb(breadcrumb),
+    // The config's content scrub first (`shared/sentry-config.ts`: console
+    // arguments and request URLs keep their shape, not their values), then
+    // the privacy level's filter.
+    beforeBreadcrumb: (breadcrumb) =>
+      filterSentryBreadcrumb(config.beforeBreadcrumb(breadcrumb)),
     // Replay recordings' rrweb events cannot be edited as they are recorded;
     // the page URL in their Meta events is scrubbed on the way out.
     transport: (options) =>
