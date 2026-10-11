@@ -242,7 +242,9 @@ describe("skills/list", () => {
     await expect(
       listAllServerSkills(manager, { serverId: SERVER_ID })
     ).rejects.toThrow(/Exceeded \d+ pages while draining skills\/list/);
-  });
+    // The production cap requires 1,000 real HTTP pages. Leave room for the
+    // parallel CI lane while still requiring the bounded-pagination error.
+  }, 30_000);
 });
 
 describe("skills/get", () => {

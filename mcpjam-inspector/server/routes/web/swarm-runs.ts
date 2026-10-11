@@ -16,8 +16,16 @@ import {
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { getRunningJourneyStreamHub } from "../../services/sessionSimulation/swarm-runner.js";
-import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
+import {
+  launchJourneyRun,
+  showableReason,
+} from "../../services/sessionSimulation/launch-journey-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
+import {
+  previewSwarmFunding,
+  SwarmAgentError,
+} from "../../services/swarm-agent.js";
+import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
@@ -164,7 +172,98 @@ const startRunSchema = z.object({
    * journey definition write is checked with.
    */
   sessionsPerTarget: z.number().int().optional(),
+  /**
+   * How many of this run's conversations the caller was shown as sponsored.
+   * Optional and shape-checked here; the backend compares it against the real
+   * allocation and answers a typed 409 (`swarm_funding_changed`) on a mismatch.
+   */
+  expectedSponsored: z.number().int().min(0).optional(),
 });
+
+const fundingPreviewSchema = z.object({
+  projectId: z.string().min(1),
+  runs: z
+    .array(
+      z.object({
+        journeyRefId: z.string().min(1),
+        // Forwarded, never stripped: the backend resolves an omitted kind from
+        // the session count, which is not how the wizard's launch resolves it.
+        kind: z.enum(["swarm", "user_testing"]).optional(),
+        environmentIds: z.array(z.string().min(1)).optional(),
+        sessionsPerTarget: z.number().int().optional(),
+      }),
+    )
+    // Empty is a read of the allowance alone (the usage surfaces use it).
+    .max(50),
+});
+
+/**
+ * How a wave's conversations would be funded: the sponsored allowance versus
+ * the organization's credits. Read-only. The runner capability is asserted by
+ * THIS process (never the caller), and a server without INSPECTOR_SERVICE_TOKEN
+ * answers `supported: false` with nothing sponsored, so the wizard can only
+ * promise what a launch from this same server can deliver.
+ */
+swarmRuns.post("/funding-preview", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = await getConvexBearerForRequest(c);
+    const body = parseWithSchema(
+      fundingPreviewSchema,
+      await readJsonBody<unknown>(c),
+    );
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing CONVEX_HTTP_URL configuration",
+      );
+    }
+    try {
+      return await previewSwarmFunding(convexHttpUrl, bearerToken, body);
+    } catch (err) {
+      // The backend answers a preview it cannot make (iterations out of range,
+      // a run it cannot read, a caller it does not know, a conflict) with a 4xx
+      // and the reason as a plain `error` string. That is the request's to
+      // fix, so it stays at the status it was refused with, carrying the
+      // reason; rethrown as is, a 400 or a 409 surfaced as a 500, and a 403 as
+      // an upstream-auth failure whose message names the deployment. The
+      // Inspector does not repeat the backend's bounds, which would drift from
+      // them.
+      //
+      // The reason is the whole of what is forwarded: no body is handed over,
+      // so the backend's envelope (and whatever it carries) never rides along.
+      // A 5xx is left to the default mapping, as before.
+      if (err instanceof SwarmAgentError) {
+        const reason = previewRejectionReason(err);
+        const refusal = upstreamRefusalRouteError({
+          status: err.status,
+          bodyText: "",
+          message: reason,
+          fallbackMessage: reason,
+        });
+        if (refusal) throw refusal;
+      }
+      throw err;
+    }
+  }),
+);
+
+/**
+ * The reason in a backend 400 body, or a sentence of ours when it has none.
+ * Held to the same bar as a launch refusal's reason: one short plain sentence,
+ * never markup, never a line break of any kind.
+ */
+function previewRejectionReason(err: SwarmAgentError): string {
+  const fallback =
+    "The sponsored split could not be previewed for this request.";
+  try {
+    const reason = (JSON.parse(err.bodyText) as { error?: unknown }).error;
+    return showableReason(reason) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * Launch a multi-host swarm (journey-execution) run (PR 3d).
@@ -225,6 +324,9 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             : {}),
           ...(body.sessionsPerTarget !== undefined
             ? { sessionsPerTarget: body.sessionsPerTarget }
+            : {}),
+          ...(body.expectedSponsored !== undefined
+            ? { expectedSponsored: body.expectedSponsored }
             : {}),
         }
       );

@@ -27,13 +27,17 @@ import {
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
+import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
 
 function formatChatHistoryModelLabel(
   session: ChatHistorySession,
 ): string | null {
   const raw = session.modelId?.trim();
   if (!raw) return null;
-  return getModelById(raw)?.name ?? raw;
+  // Plus the effort the session's last turn ran at (" · High").
+  return `${getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
+    session.modelSelection,
+  )}`;
 }
 
 function formatRelativeTime(timestamp: number): string {
