@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -36,6 +36,7 @@ const requestDeletion = makeFunctionReference<"mutation">(
   "deletionRequests:request",
 );
 const getDeletion = makeFunctionReference<"query">("deletionRequests:status");
+const replayDeletion = makeFunctionReference<"query">("deletionRequests:replay");
 const authorizeDeletion = makeFunctionReference<"mutation">(
   "deletionRequests:authorizeReceipt",
 );
@@ -103,40 +104,53 @@ deletions.get("/deletions/capabilities", async (c) => {
   return v1Resource(c, await readDeletionCapabilities(client(token)));
 });
 
-deletions.post("/deletions", async (c) => {
-  const rawKey = c.req.header("Idempotency-Key")?.trim();
-  if (!rawKey || rawKey.length > 128) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "A valid Idempotency-Key header is required",
-    );
+function requestKey(c: Context): string {
+  const key = c.req.header("Idempotency-Key")?.trim();
+  if (!key || key.length > 128) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR,
+      "A valid Idempotency-Key header is required");
   }
+  return key;
+}
+
+async function requestBody(c: Context) {
   let raw: unknown;
-  try {
-    raw = await c.req.json();
-  } catch {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body",
-    );
-  }
-  const body = parseWithSchema(requestSchema, raw);
+  try { raw = await c.req.json(); }
+  catch { throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid JSON body"); }
+  return parseWithSchema(requestSchema, raw);
+}
+
+function receiptResponse(c: Context, raw: unknown, status: 200 | 202) {
+  const receipt = receiptSchema.parse(raw);
+  const statusUrl = `/api/v1/deletions/${encodeURIComponent(receipt.requestId)}`;
+  c.header("Location", statusUrl);
+  c.header("Cache-Control", "no-store");
+  return v1Resource(c, { ...receipt, statusUrl }, status);
+}
+
+deletions.post("/deletions", async (c) => {
+  const rawKey = requestKey(c);
+  const body = await requestBody(c);
   const token = await getConvexBearerForRequest(c);
   try {
-    const receipt = receiptSchema.parse(
-      await client(token).mutation(requestDeletion, {
-        scope: body.scope,
-        idempotencyKey: rawKey,
-      }),
-    );
-    const statusUrl = `/api/v1/deletions/${encodeURIComponent(receipt.requestId)}`;
-    c.header("Location", statusUrl);
-    return v1Resource(c, { ...(receipt as object), statusUrl }, 202);
+    return receiptResponse(c, await client(token).mutation(requestDeletion, {
+      scope: body.scope, idempotencyKey: rawKey,
+    }), 202);
   } catch (error) {
     throw writeError(error);
   }
+});
+
+/** Returns only an existing actor-bound receipt; this path cannot accept deletion. */
+deletions.post("/deletions/replay", async (c) => {
+  const idempotencyKey = requestKey(c);
+  const body = await requestBody(c);
+  const token = await getConvexBearerForRequest(c);
+  try {
+    const receipt = await client(token).query(replayDeletion, { scope: body.scope, idempotencyKey });
+    if (!receipt) throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Deletion request not found");
+    return receiptResponse(c, receipt, 200);
+  } catch (error) { throw writeError(error); }
 });
 
 deletions.get("/deletions/:requestId", async (c) => {

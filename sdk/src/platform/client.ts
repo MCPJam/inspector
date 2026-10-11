@@ -1,4 +1,4 @@
-import { deleteProject as negotiatedDeleteProject, requestDeletion as negotiatedRequestDeletion, type PlatformDeletionCapabilities, type PlatformProjectDeletion } from "./deletion.js";
+import { deleteProject as negotiatedDeleteProject, requestDeletion as negotiatedRequestDeletion, replayDeletion as replayExistingDeletion, type DeletionParams, type DeletionOptions, type PlatformDeletionCapabilities, type PlatformProjectDeletion } from "./deletion.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -865,11 +865,11 @@ export class PlatformApiClient {
     return negotiatedDeleteProject(this.request.bind(this), params.projectId, options);
   }
 
-  requestDeletion(
-    params: { scope: { type: "organization" | "project"; id: string } },
-    options: RequestOptions & { idempotencyKey: string }
-  ): Promise<PlatformDeletionReceipt> {
+  requestDeletion(params: DeletionParams, options: DeletionOptions): Promise<PlatformDeletionReceipt> {
     return negotiatedRequestDeletion(this.request.bind(this), params.scope, options);
+  }
+  replayDeletion(params: DeletionParams, options: DeletionOptions): Promise<PlatformDeletionReceipt> {
+    return replayExistingDeletion(this.request.bind(this), params.scope, options);
   }
 
   getDeletion(

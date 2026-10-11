@@ -117,6 +117,31 @@ describe("v1 deletion request contract", () => {
     });
   });
 
+  it("replays through a query only without capability preflight or intake", async () => {
+    queryMock.mockResolvedValue(receipt);
+    const response = await makeApp().request("/api/v1/deletions/replay", {
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "saved-key" },
+      body: JSON.stringify({ scope: receipt.scope }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBe("/api/v1/deletions/request_1");
+    expect(queryMock).toHaveBeenCalledOnce();
+    expect(queryMock.mock.calls[0][1]).toEqual({ scope: receipt.scope, idempotencyKey: "saved-key" });
+    expect(getBearerMock).toHaveBeenCalledOnce();
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("returns an opaque replay miss without creating a request", async () => {
+    queryMock.mockResolvedValue(null);
+    const response = await makeApp().request("/api/v1/deletions/replay", {
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "saved-key" },
+      body: JSON.stringify({ scope: receipt.scope }),
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("reads status through the receipt grant without project preflight", async () => {
     queryMock.mockResolvedValue(receipt);
     const response = await makeApp().request("/api/v1/deletions/request_1");

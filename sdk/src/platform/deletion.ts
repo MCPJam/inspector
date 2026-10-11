@@ -7,6 +7,8 @@ const capabilitySchema = z.object({ available: z.boolean(), protocolVersion: z.l
   scopeTypes: z.array(z.enum(["project", "organization"])), });
 export type PlatformDeletionCapabilities = z.infer<typeof capabilitySchema>;
 export type PlatformProjectDeletion = PlatformDeletionReceipt | { id: string; deleted: boolean };
+export type DeletionParams = { scope: { type: "organization" | "project"; id: string } };
+export type DeletionOptions = RequestOptions & { idempotencyKey: string };
 type Transport = <T>(method: "GET" | "POST" | "DELETE", path: string,
   init: { body?: unknown }, options?: RequestOptions) => Promise<T>;
 
@@ -30,4 +32,13 @@ export async function deleteProject(transport: Transport, projectId: string,
     throw new PlatformApiError("A reusable deletion request key is required.", "VALIDATION_ERROR", { status: 400 });
   }
   return transport("POST", "/deletions", { body: { scope: { type: "project", id: projectId } } }, options);
+}
+
+/** Query-only recovery of a previously accepted request, even while intake is disabled. */
+export async function replayDeletion(transport: Transport,
+  scope: DeletionParams["scope"], options: DeletionOptions): Promise<PlatformDeletionReceipt> {
+  if (!options.idempotencyKey?.trim() || options.idempotencyKey.length > 128) {
+    throw new PlatformApiError("A reusable deletion request key is required.", "VALIDATION_ERROR", { status: 400 });
+  }
+  return transport("POST", "/deletions/replay", { body: { scope } }, options);
 }

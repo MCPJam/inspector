@@ -129,7 +129,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "delete /projects/{projectId}": "deleteProject",
 
   // Deletion requests are asynchronous and never masquerade as completion.
+  "get /deletions/capabilities": "getDeletionCapabilities",
   "post /deletions": "requestDeletion",
+  "post /deletions/replay": "replayDeletion",
   "get /deletions/{requestId}": "getDeletion",
   "post /deletions/{requestId}/authorize": "authorizeDeletion",
   "post /deletions/{requestId}/cancel": "cancelDeletion",
