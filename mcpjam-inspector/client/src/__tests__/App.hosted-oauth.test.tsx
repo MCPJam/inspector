@@ -4226,6 +4226,62 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  it("refuses a STDIO command in hosted onboarding before it connects", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(
+      screen.getByText(
+        "Enter an HTTPS URL. STDIO works only in the local and desktop apps.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "npx -y @modelcontextprotocol/server-everything" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Set up your server" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "cannot start STDIO servers",
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "View technical details" }),
+    ).not.toBeInTheDocument();
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "first_run_onboarding_connection_started",
+      expect.anything(),
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_failed",
+      expect.objectContaining({
+        transport: "stdio",
+        failure_stage: "validation",
+      }),
+    );
+  });
+
   it("asks for OAuth authorization inside onboarding and resumes on approval", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -4443,51 +4499,6 @@ describe("App hosted OAuth callback handling", () => {
       projectId: "project-1",
       serverId: "server-secure",
     });
-  });
-
-  it("preserves quoted arguments in a first-run stdio command", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    mockUnseenOnboardingState();
-    window.history.replaceState({}, "", "/servers");
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
-    const appState = createAppStateMock();
-    mockUseAppState.mockReturnValue(appState);
-
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: 'node server.js --config "My Files/config.json" ""' },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    await waitFor(() => {
-      expect(appState.handleConnect).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "stdio",
-          command: "node",
-          args: ["server.js", "--config", "My Files/config.json", ""],
-        }),
-        expect.objectContaining({
-          suppressErrorToast: true,
-          suppressSuccessToast: true,
-          requestOAuthAuthorization: expect.any(Function),
-        }),
-      );
-    });
-    expect(mockTrack).toHaveBeenCalledWith(
-      "first_run_onboarding_connection_started",
-      {
-        location: "first_run_onboarding",
-        server_kind: "personal",
-        transport: "stdio",
-        authentication: "auto",
-      },
-    );
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {

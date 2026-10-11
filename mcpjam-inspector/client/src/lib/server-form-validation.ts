@@ -85,3 +85,24 @@ export function validateServerFormData(
   }
   return null;
 }
+
+export const SERVER_INPUT_TRANSPORT_HINT = HOSTED_MODE
+  ? "Enter an HTTPS URL. STDIO works only in the local and desktop apps."
+  : "HTTP, SSE, and stdio all work.";
+
+const HOSTED_STDIO_ERROR =
+  "MCPJam’s hosted web app cannot start STDIO servers. Enter a full HTTPS URL, such as https://mcp.example.com/mcp. To connect over STDIO, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+
+/**
+ * First-run onboarding adds only a server the user typed, never a plugin
+ * component, so hosted mode has no runtime that can start its STDIO command.
+ * Refuse it here, where the user can still edit the input, instead of letting
+ * the connect fail. The shared validator stays permissive because plugin
+ * STDIO components do have a hosted runtime.
+ */
+export function validateFirstRunServerFormData(
+  formData: ServerFormData,
+): string | null {
+  if (HOSTED_MODE && formData.type === "stdio") return HOSTED_STDIO_ERROR;
+  return validateServerFormData(formData);
+}

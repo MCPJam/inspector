@@ -68,6 +68,51 @@ describe("validateServerFormData", () => {
   });
 });
 
+const importFirstRunValidator = async (hosted: boolean) => {
+  vi.resetModules();
+  vi.doMock("@/lib/config", () => ({ HOSTED_MODE: hosted }));
+  return (await import("../server-form-validation"))
+    .validateFirstRunServerFormData;
+};
+
+const stdioForm = {
+  name: "everything",
+  type: "stdio",
+  command: "npx -y @modelcontextprotocol/server-everything",
+} as ServerFormData;
+
+describe("validateFirstRunServerFormData", () => {
+  it("refuses STDIO in hosted mode before the connect starts", async () => {
+    const validate = await importFirstRunValidator(true);
+    expect(validate(stdioForm)).toMatch(/cannot start STDIO servers/i);
+  });
+
+  it("refuses a bare host that onboarding read as a STDIO command", async () => {
+    const validate = await importFirstRunValidator(true);
+    expect(validate({ ...stdioForm, command: "mcp.example.com/mcp" })).toMatch(
+      /Enter a full HTTPS URL/i,
+    );
+  });
+
+  it("allows STDIO in local mode", async () => {
+    const validate = await importFirstRunValidator(false);
+    expect(validate(stdioForm)).toBeNull();
+  });
+
+  it("keeps the shared HTTPS rule in hosted mode", async () => {
+    const validate = await importFirstRunValidator(true);
+    expect(validate(httpForm({ url: "http://mcp.example.com/mcp" }))).toMatch(
+      /hosted web app requires an HTTPS/i,
+    );
+    expect(validate(httpForm())).toBeNull();
+  });
+
+  it("leaves the shared validator open to hosted STDIO", async () => {
+    const validate = await importValidator(true);
+    expect(validate(stdioForm)).toBeNull();
+  });
+});
+
 describe("validateBearerTargetUrl", () => {
   it("rejects bearer credentials over public HTTP", async () => {
     const validate = await importBearerValidator();

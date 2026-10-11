@@ -25,6 +25,7 @@ import { AuthenticationSection } from "@/components/connection/shared/Authentica
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 import {
   getConfidentialCimdBlockReason,
+  SERVER_INPUT_TRANSPORT_HINT,
   validateOAuthClientId,
   validateOAuthClientSecret,
 } from "@/lib/server-form-validation";
@@ -78,6 +79,7 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error?: string;
+      isValidationError?: boolean;
     }
   | {
       status: "connected";
@@ -90,6 +92,7 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error: string;
+      isValidationError?: boolean;
     };
 
 export interface FirstRunServerDraft {
@@ -975,7 +978,7 @@ export function FirstRunOnboardingOverlay({
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[10.5px] text-muted-foreground">
-                    HTTP, SSE, and stdio all work.
+                    {SERVER_INPUT_TRANSPORT_HINT}
                   </p>
                 )}
                 <Button
@@ -1033,7 +1036,10 @@ export function FirstRunOnboardingOverlay({
                 </p>
                 {connectionState.error ? (
                   <div className="mt-3">
-                    <ConnectionFailureNotice error={connectionState.error} />
+                    <ConnectionFailureNotice
+                      error={connectionState.error}
+                      isValidationError={connectionState.isValidationError}
+                    />
                   </div>
                 ) : null}
                 <Button
@@ -1220,6 +1226,7 @@ export function FirstRunOnboardingOverlay({
                 <ConnectionFailureNotice
                   key={connectionState.error}
                   error={connectionState.error}
+                  isValidationError={connectionState.isValidationError}
                 />
               ) : null}
 
@@ -1344,7 +1351,13 @@ function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
   );
 }
 
-function ConnectionFailureNotice({ error }: { error: string }) {
+function ConnectionFailureNotice({
+  error,
+  isValidationError = false,
+}: {
+  error: string;
+  isValidationError?: boolean;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
   const detailsId = "first-run-connection-error-details";
 
@@ -1362,9 +1375,10 @@ function ConnectionFailureNotice({ error }: { error: string }) {
         </span>
         <div className="min-w-0 flex-1 pt-0.5">
           <p className="text-[12px] leading-4 font-semibold text-card-foreground">
-            Failed to connect to MCP server
+            {isValidationError ? error : "Failed to connect to MCP server"}
           </p>
           <Button
+            hidden={isValidationError}
             type="button"
             variant="ghost"
             className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
