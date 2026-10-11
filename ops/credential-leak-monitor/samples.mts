@@ -90,7 +90,7 @@ export function routeSamples(): LeakSample[] {
   return samples;
 }
 
-/** Shapes that are not one route: any secret key, presigned URLs, userinfo. */
+/** Shapes that are not one route — any secret key, presigned URLs, userinfo. */
 export function genericSamples(): LeakSample[] {
   return [
     {
