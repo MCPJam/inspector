@@ -381,7 +381,10 @@ vi.mock("@/lib/apis/eval-authoring-api", async (importOriginal) => ({
   readAuthoringJob: vi.fn(),
   authoringRequest: vi.fn(),
 }));
-import { readAuthoringJob } from "@/lib/apis/eval-authoring-api";
+import {
+  AuthoringRequestError,
+  readAuthoringJob,
+} from "@/lib/apis/eval-authoring-api";
 import { followAuthoringJob } from "../eval-workspace";
 describe("authoring polling recovery", () => {
   it("retries reads with the same job ID and resets the budget after success", async () => {
@@ -408,6 +411,37 @@ describe("authoring polling recovery", () => {
       await polling;
       expect(read).toHaveBeenCalledTimes(6);
       expect(read.mock.calls.every(([id]) => id === "job")).toBe(true);
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)],
+      ).toMatchObject({ status: "ready", error: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("retries an unreadable 2xx read instead of treating it as a refusal", async () => {
+    vi.useFakeTimers();
+    const read = vi.mocked(readAuthoringJob);
+    read
+      .mockReset()
+      .mockRejectedValueOnce(
+        new AuthoringRequestError(
+          "The case authoring service is unavailable. Please try again.",
+          200,
+        ),
+      )
+      .mockResolvedValueOnce({
+        jobId: "job",
+        phase: "draft",
+        drafts: [],
+        warnings: [],
+        error: null,
+        status: "completed",
+      });
+    try {
+      const polling = followAuthoringJob(scope, "job");
+      await vi.runAllTimersAsync();
+      await polling;
+      expect(read).toHaveBeenCalledTimes(2);
       expect(
         useEvalGeneration.getState().suites[evalSuiteKey(scope)],
       ).toMatchObject({ status: "ready", error: undefined });
