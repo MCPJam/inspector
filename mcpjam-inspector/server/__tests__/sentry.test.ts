@@ -139,6 +139,39 @@ describe("initServerSentry", () => {
     expect(lastConfig().sendDefaultPii).toBe(false);
   });
 
+  it("summarizes the request body the http integration attaches", () => {
+    // `sendDefaultPii: false` does not stop the integration from attaching
+    // the incoming body. The summary keeps what a triager reads.
+    initServerSentry();
+    const event = lastConfig().beforeSend({
+      request: {
+        url: "https://app.mcpjam.com/api/web/tools/call?serverId=srv_1",
+        data: JSON.stringify({
+          toolName: "create_invoice",
+          parameters: { email: "jane@acme.com", amount: 4200 },
+        }),
+      },
+    });
+
+    expect(event.request).toEqual({
+      url: "https://app.mcpjam.com/api/web/tools/call",
+      data: "{toolName: string(14), parameters: {email: string(13), amount: number}}",
+    });
+  });
+
+  it("cuts outgoing-request breadcrumbs to the host", () => {
+    initServerSentry();
+    const crumb = lastConfig().beforeBreadcrumb({
+      category: "http",
+      data: { url: "https://mcp.acme.com/tenants/42/mcp", status_code: 500 },
+    });
+
+    expect(crumb.data).toEqual({
+      url: "https://mcp.acme.com",
+      status_code: 500,
+    });
+  });
+
   // The baked version is captured at module load (it has to stay a literal
   // `process.env.X` so esbuild's `define` can substitute it), so these two
   // re-import the module rather than stubbing after the fact.

@@ -33,6 +33,7 @@ new HostRunner(options: HostRunnerOptions)
 | `apiKey`          | `string`                         | Yes      | -           | API key for the LLM provider                                  |
 | `systemPrompt`    | `string`                         | No       | `undefined` | System prompt for the LLM. An empty string (`""`) is treated as "none given" and falls back to `"You are a helpful assistant."`. |
 | `temperature`     | `number`                         | No       | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
+| `reasoningEffort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max"` | No | `undefined` | Reasoning effort, applied through the provider's own AI SDK option. Replaces the temperature while set. A model with no effort control **throws at construction** (`capability_missing`) instead of running without it. See [reasoningEffort](#reasoningeffort). |
 | `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
 | `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
 | `mcpClientManager`| `MCPClientManager`               | No       | `undefined` | Same connected manager used for `connectToServer` / `getToolsForAiSdk`. **Required** to populate [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on each [`PromptResult`](/sdk/reference/prompt-result) (see note below). |
@@ -269,6 +270,41 @@ Controls response randomness. Range: 0.0 (deterministic) to 1.0 (creative).
 temperature: 0.1; // More deterministic, better for testing
 temperature: 0.9; // More creative
 ```
+
+### reasoningEffort
+
+Reasoning effort for the model. The runner maps it through the same table the
+hosted runner uses (`reasoningEffortProviderOptions`) into the provider's own
+`providerOptions` — OpenAI `reasoningEffort`, Anthropic `effort` (with adaptive
+thinking on models that need it), Google `thinkingConfig.thinkingLevel` — and
+also works for `mcpjam/…` models, which speak Anthropic's and OpenAI's own wire
+formats.
+
+```typescript
+const agent = new HostRunner({
+  tools: await manager.getTools(),
+  model: "openai/gpt-5",
+  apiKey: process.env.OPENAI_API_KEY,
+  reasoningEffort: "high",
+});
+agent.getReasoningEffort(); // "high"
+```
+
+- **Refused, never dropped.** A model or provider with no effort control the
+  installed AI SDK provider exposes (for example `openai/gpt-4o`) makes the
+  constructor throw `capability_missing`, before any request is made. `withOptions`
+  carries the effort with the runner and re-checks it against a new `model`.
+- **Replaces the temperature.** While an effort is set the runner does not send a
+  temperature, and the recorded context reports what was sent.
+- **Saved clients.** `runWithClient` applies the effort on the saved client's
+  hosted model selection (`settings.reasoningEffort`) — and its saved
+  `settings.temperature` — instead of discarding them with the selection. A host
+  snapshot carries no model selection, so pass `reasoningEffort` yourself when you
+  build a runner from a `Host`.
+- Which levels a model accepts: `supportedReasoningEfforts` on the
+  [model catalog](/reference/public-api#reasoning-effort) (`GET /v1/models`) for
+  hosted models, and `supportedReasoningEfforts()` from `@mcpjam/sdk/host-config`
+  for provider models.
 
 ### maxSteps
 

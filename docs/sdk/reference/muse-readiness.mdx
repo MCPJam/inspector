@@ -1,0 +1,262 @@
+---
+title: "Muse readiness SDK"
+description: "Grade your MCP server against Meta's Muse connector guidelines with gatherMuseReadinessEvidence and gradeMuseReadiness."
+icon: "book"
+---
+
+Use `gatherMuseReadinessEvidence` and `gradeMuseReadiness` to check your MCP server against Meta's Muse connector guidelines before submitting. The two functions are split so you can gather evidence on one machine and grade on another — or supply your own pre-fetched tool listing when the server requires credentials.
+
+<Note>
+  Muse readiness is a local preflight, not a submission guarantee. Meta reviews every connector by hand — a risk assessment, a per-tool review, and end-to-end QA — so a `ready` result means the stated requirements are met, not that approval is certain.
+</Note>
+
+## Import
+
+```typescript
+import {
+  gatherMuseReadinessEvidence,
+  gradeMuseReadiness,
+  formatMuseClassificationSheet,
+  isMuseReadinessResult,
+} from "@mcpjam/sdk";
+```
+
+`gatherMuseReadinessEvidence` is a Node-only export (it dials the network). `gradeMuseReadiness`, `formatMuseClassificationSheet`, and `isMuseReadinessResult` are pure functions and are also available from `@mcpjam/sdk/browser`.
+
+---
+
+## Quick example
+
+```typescript
+import {
+  gatherMuseReadinessEvidence,
+  gradeMuseReadiness,
+  formatMuseClassificationSheet,
+} from "@mcpjam/sdk";
+
+const evidence = await gatherMuseReadinessEvidence({
+  enteredUrl: "https://your-server.com/mcp",
+  fetchFn: fetch,
+});
+
+const result = gradeMuseReadiness(evidence);
+
+console.log(result.technicalStatus); // "ready" | "not-ready" | "incomplete"
+console.log(result.status);          // submission-ready rollup
+console.log(result.summary);
+
+// Print the §5.6 classification table
+console.log(formatMuseClassificationSheet(result.classificationSheet));
+```
+
+---
+
+## gatherMuseReadinessEvidence()
+
+Dials the server and collects everything `gradeMuseReadiness` needs. Returns a plain `MuseReadinessInput` object that survives `JSON.stringify`.
+
+```typescript
+gatherMuseReadinessEvidence(
+  options: GatherMuseReadinessEvidenceOptions
+): Promise<MuseReadinessInput>
+```
+
+### GatherMuseReadinessEvidenceOptions
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `enteredUrl` | `string` | Yes | The connector URL exactly as the user entered it. Never canonicalized. |
+| `fetchFn` | `typeof fetch` | No | The transport. Without it the gatherer dials nothing and every wire lane reports its gap — the honest outcome for a run assembled from supplied evidence alone. |
+| `signal` | `AbortSignal` | No | Composed into every request so a cancelled run stops the one in flight. |
+| `capabilities` | `MuseRunnerCapability[]` | No | Runner capabilities to declare (e.g. `["dns"]`). |
+| `tools` | `DirectoryToolEvidence[]` | No | A tool listing the caller already holds — typically one read with the submitter's credentials, since an OAuth connector refuses an anonymous `tools/list`. Supplying it skips the dial. |
+| `submissionProfile` | `unknown` | No | The §5 submission profile. Validated during grading; issues become findings. |
+| `evidenceSources` | `string[]` | No | Suite results consumed as evidence, named for the report. |
+| `timeoutMs` | `number` | No | Per-request timeout in ms. |
+| `maxRedirects` | `number` | No | Maximum redirects to follow. |
+| `headers` | `Record<string, string>` | No | Extra HTTP headers. |
+
+### Supplying a pre-fetched tool listing
+
+When the server requires credentials, pass the listing you already hold:
+
+```typescript
+const tools = await myAuthenticatedClient.listTools();
+
+const evidence = await gatherMuseReadinessEvidence({
+  enteredUrl: "https://your-server.com/mcp",
+  tools: tools.tools, // skips the dial
+  submissionProfile: myProfile,
+});
+```
+
+An explicit empty array (`tools: []`) tells the grader the server advertises no tools — it is not the same as omitting `tools`.
+
+---
+
+## gradeMuseReadiness()
+
+Grades gathered evidence. Pure — no network, no clock, no randomness. Same evidence in, same result out.
+
+```typescript
+gradeMuseReadiness(input: MuseReadinessInput): MuseReadinessResult
+```
+
+### MuseReadinessResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `readinessKind` | `"muse-directory-readiness"` | Discriminator. Use `isMuseReadinessResult(result)` to narrow a union. |
+| `status` | `MuseLaneStatus` | The `submission-ready` rollup — the headline verdict. `"ready"`, `"not-ready"`, or `"incomplete"`. |
+| `technicalStatus` | `MuseLaneStatus` | The `technical-preflight` rollup, answerable without a submission profile. |
+| `summary` | `string` | Human-readable rollup of `status`, naming what is missing when incomplete. |
+| `context` | `MuseReadinessRunContext` | Target URL, declared capabilities, and evidence sources. |
+| `lanes` | `MuseReadinessLaneResult[]` | Per-lane results (see [Lanes](#lanes)). |
+| `findings` | `MuseReadinessFinding[]` | Every graded statement about the target. |
+| `classificationSheet` | `MuseClassificationRow[]` | Suggested Read / Write / Sensitive-write class for every listed tool. Empty when no listing was captured. |
+| `policySnapshotDate` | `string` | ISO date of the policy corpus this run graded against. |
+| `engineVersion` | `string` | Engine version stamp. |
+| `startedAt` | `string` | ISO timestamp when gathering started. |
+| `durationMs` | `number` | Total duration in ms. |
+
+### Verdicts
+
+| `status` | Meaning |
+|----------|---------|
+| `"ready"` | Every requirement this run could evaluate is satisfied. |
+| `"not-ready"` | At least one requirement is unmet. |
+| `"incomplete"` | Nothing failed, but at least one requirement could not be evaluated — typically because no submission profile was supplied. |
+
+---
+
+## isMuseReadinessResult()
+
+Type guard that narrows an unknown value to `MuseReadinessResult` by checking the `readinessKind` discriminator. Available from both `@mcpjam/sdk` and `@mcpjam/sdk/browser`.
+
+```typescript
+isMuseReadinessResult(value: unknown): value is MuseReadinessResult
+```
+
+```typescript
+import { isMuseReadinessResult } from "@mcpjam/sdk/browser";
+
+if (isMuseReadinessResult(result)) {
+  console.log(result.technicalStatus); // TypeScript knows the type
+}
+```
+
+---
+
+## Lanes
+
+Muse readiness runs four lanes. Each answers a different question.
+
+| Lane | What it checks | Can fail a verdict? |
+|------|---------------|---------------------|
+| `runtime-compatibility` | HTTPS reachability and redirect behavior | Yes |
+| `tool-policy` | Tool listing against §3–§4 (no credential in listing, combined read/write tools classified as write) | Yes |
+| `submission-artifacts` | The §5 submission profile: overview, contacts, attestations, tool documentation, credentials, test account, and per-tool classifications | Yes |
+| `experience-insights` | Heuristics over names and descriptions (sensitive-write signals, concealed writes, money-movement, trade tools) | Never — advisory only |
+
+### Two staged verdicts
+
+| Stage | Lanes rolled up | When answerable |
+|-------|----------------|-----------------|
+| `technical-preflight` | `runtime-compatibility`, `tool-policy` | Always — no profile needed |
+| `submission-ready` | `runtime-compatibility`, `tool-policy`, `submission-artifacts` | Requires a submission profile; `incomplete` without one |
+
+---
+
+## formatMuseClassificationSheet()
+
+Renders the classification sheet as the Markdown table §5.6 asks submitters to include in their documentation.
+
+```typescript
+formatMuseClassificationSheet(
+  rows: readonly MuseClassificationRow[]
+): string
+```
+
+```typescript
+const markdown = formatMuseClassificationSheet(result.classificationSheet);
+// | Tool | Classification | Basis |
+// | --- | --- | --- |
+// | `search_products` | Read | declared; matches the suggestion |
+// | `place_order` | Sensitive write | suggested: name contains "order"; ... |
+```
+
+The table uses the declared class from the submission profile where one exists, and the suggested class otherwise. A declared class that disagrees with the suggestion shows both, so a wrong row is easy to spot and overrule.
+
+---
+
+## Submission profile
+
+Supply a submission profile to grade the §5 requirements. All fields are optional — omitting a field leaves the corresponding checks `not-evaluated` rather than failing them.
+
+```typescript
+const evidence = await gatherMuseReadinessEvidence({
+  enteredUrl: "https://your-server.com/mcp",
+  fetchFn: fetch,
+  submissionProfile: {
+    overview: "A product search and ordering connector for Acme Store.",
+    contacts: [{ name: "Jane Smith", email: "jane@example.com" }],
+    toolClassifications: {
+      search_products: "read",
+      place_order: "sensitive-write",
+    },
+    testAccount: {
+      instructions: "Use the sandbox credentials in the shared vault.",
+    },
+    readOnlyOption: false,
+  },
+});
+```
+
+### MuseSubmissionProfile fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `overview` | `string` | Short description of what the connector does. |
+| `contacts` | `Array<{ name: string; email: string }>` | Submission contacts. |
+| `attestations` | `string[]` | Attestation identifiers the submitter has agreed to. |
+| `toolDocumentation` | `Record<string, string>` | Per-tool documentation keyed by tool name. |
+| `integrationCredentials` | `object` | Credentials for Muse's review team. |
+| `readOnlyOption` | `boolean` | Whether the connector offers a read-only mode. |
+| `testAccount` | `object` | Test account details for end-to-end QA. |
+| `toolClassifications` | `Record<string, MuseToolClass>` | Declared Read / Write / Sensitive-write class per tool. |
+
+`MuseToolClass` is `"read"`, `"write"`, or `"sensitive-write"`.
+
+---
+
+## Classification sheet
+
+The classification sheet is a suggested Read / Write / Sensitive-write class for every listed tool. It is a starting point for the §5.6 documentation table — Meta classifies each tool itself during review.
+
+```typescript
+import { buildMuseClassificationSheet } from "@mcpjam/sdk";
+
+const sheet = buildMuseClassificationSheet(tools, {
+  place_order: "sensitive-write", // declared overrides
+});
+```
+
+Each `MuseClassificationRow` has:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tool` | `string` | Tool name. |
+| `suggested` | `MuseToolClass` | Suggested class based on annotations and heuristics. |
+| `basis` | `MuseClassificationBasis` | Why the base class was chosen: `"annotation"`, `"combined-operations"`, or `"default"`. |
+| `reasons` | `string[]` | One line per signal behind the suggestion. |
+| `declared` | `MuseToolClass \| undefined` | The submitter's declared class, when a profile supplied one. |
+
+---
+
+## Related
+
+- [Muse readiness CLI](/cli/reference#readiness-check-muse) — `readiness check muse` and `readiness start muse`
+- [Claude readiness CLI](/cli/reference) — `readiness check claude` and `readiness start claude`
+- [OpenAI readiness CLI](/cli/reference) — `readiness check openai` and `readiness start openai`
+- [Protocol Conformance SDK](/sdk/reference/protocol-conformance) — MCP protocol checks
+- [Host Compat SDK](/sdk/reference/host-compat) — host compatibility evaluation

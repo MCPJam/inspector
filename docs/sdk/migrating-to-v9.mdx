@@ -1,0 +1,98 @@
+---
+title: "Migrating to SDK 9.0"
+description: "What changed in @mcpjam/sdk 9.0, and how to upgrade from 8.x."
+icon: "arrow-up-right"
+---
+
+SDK 9.0 moves to **AI SDK 7** (`ai@7`) and raises the minimum Node.js version to **22**. Most upgrades are a dependency bump and a one-line image-reading change; the rest of the SDK API is unchanged.
+
+## Breaking changes
+
+### Node.js 22 or later required
+
+`@mcpjam/sdk` now requires Node.js 22 or later. Node.js 18 and 20 are no longer supported.
+
+```bash
+node --version  # must be >= 22.0.0
+```
+
+### AI SDK 7 (`ai@7`)
+
+The SDK now depends on `ai@7` and the v7 line of every model provider package. If your project imports from `ai` or any `@ai-sdk/*` package directly, upgrade those to their v7 releases as well.
+
+```bash
+npm install ai@^7 @ai-sdk/anthropic@^2 @ai-sdk/openai@^2
+# (adjust for whichever providers you use)
+```
+
+### MCP tool image parts changed shape
+
+Model-visible MCP tool images are now emitted as AI SDK 7 `file` parts:
+
+```typescript
+// SDK 9.0 shape (AI SDK 7)
+{ type: "file", mediaType: "image/png", data: { type: "data", data: "<base64>" } }
+
+// SDK 8.x shape (AI SDK 6) — rejected by AI SDK 7
+{ type: "media", ... }
+```
+
+If you read image parts from a `PromptResult` or a raw message array, replace direct property access with the new `readModelOutputImage` helper, which accepts all three historical shapes (`file`, `media`, and `image-data`):
+
+```typescript
+import { readModelOutputImage } from "@mcpjam/sdk";
+
+for (const part of result.messages.flatMap((m) => m.content ?? [])) {
+  const img = readModelOutputImage(part);
+  if (img) {
+    // img.mediaType — e.g. "image/png"
+    // img.data      — base64 string
+  }
+}
+```
+
+`readModelOutputImage` returns `null` for any part that is not an image, so it is safe to call on every part in a loop.
+
+### `@mcpjam/chat-ui` peer dependency
+
+If you use `@mcpjam/chat-ui`, update its peer dependencies:
+
+```bash
+npm install ai@^7 @ai-sdk/react@^4
+```
+
+## What did not change
+
+- The `HostRunner`, `HostRuntime`, `Host`, `MCPClientManager`, `EvalTest`, `EvalSuite`, and all conformance suite APIs are unchanged.
+- Model string format (`provider/model-id`) is unchanged.
+- Reporting, result upload, and CI integration are unchanged.
+- The `@mcpjam/vitest` and `@mcpjam/widget-react` packages updated their `@mcpjam/sdk` peer to `^9.0.0` with no other changes.
+
+## Upgrade checklist
+
+<Steps>
+  <Step title="Check your Node.js version">
+    ```bash
+    node --version  # must be >= 22.0.0
+    ```
+  </Step>
+  <Step title="Bump the SDK">
+    ```bash
+    npm install @mcpjam/sdk@^9
+    ```
+  </Step>
+  <Step title="Upgrade AI SDK peer dependencies">
+    ```bash
+    npm install ai@^7
+    # Add any @ai-sdk/* packages your project uses at their v7 releases
+    ```
+  </Step>
+  <Step title="Replace image-part reads with readModelOutputImage">
+    Search your codebase for direct reads of `.type === "media"` or `.type === "image-data"` on message parts and replace them with `readModelOutputImage(part)`.
+  </Step>
+  <Step title="Update @mcpjam/chat-ui if used">
+    ```bash
+    npm install @mcpjam/chat-ui@^0.5 ai@^7 @ai-sdk/react@^4
+    ```
+  </Step>
+</Steps>

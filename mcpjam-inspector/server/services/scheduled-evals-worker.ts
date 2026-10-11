@@ -38,6 +38,7 @@ import {
   translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
+import { getServiceCredential } from "./service-credential.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -70,7 +71,7 @@ export function isScheduledEvalsWorkerEnabled(): boolean {
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }

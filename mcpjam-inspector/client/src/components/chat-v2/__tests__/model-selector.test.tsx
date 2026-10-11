@@ -6,6 +6,7 @@ import { defaultFilter } from "cmdk";
 import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
+import { noRunnableHarnessModel } from "@/lib/harness-model-locks";
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -707,6 +708,35 @@ describe("ModelSelector", () => {
     expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
   });
 
+  // A harness host none of the rows runs on: the stand-in says why, never
+  // "No matching models", and the hand-off to add a key stays.
+  it("explains a harness host's empty list and keeps the hand-off", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={noRunnableHarnessModel("claude-code")}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      await screen.findByText(
+        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models."
+      )
+    ).toBeVisible();
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /manage organization models/i })
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the providers tab hidden with no keys and no hand-off", async () => {
     const user = userEvent.setup();
     const freeOnly = byokIntentModels.filter((model) => model.hosted);
@@ -1073,5 +1103,90 @@ describe("multi-select rows are keyed by source and connection", () => {
     const row = screen.getByRole("option", { name: /Hosted GPT-4o/ });
     expect(row).toHaveAttribute("aria-disabled", "true");
     expect(row).toHaveTextContent("Custom tag");
+  });
+});
+
+describe("per-row efforts", () => {
+  const gpt = models[0]!;
+  const claude = models[1]!;
+
+  it("multi-select: a model's efforts toggle model × effort picks and the menu stays open", async () => {
+    const onModelEffortSelect = vi.fn();
+    const onRemovePickedEntry = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={gpt}
+        availableModels={models}
+        onModelChange={vi.fn()}
+        enableMultiModel
+        multiModelEnabled
+        selectedModels={[gpt, claude]}
+        onSelectedModelsChange={vi.fn()}
+        onMultiModelEnabledChange={vi.fn()}
+        rowEfforts={(model) =>
+          model.id === gpt.id
+            ? {
+                levels: ["none", "low", "high"],
+                isPicked: (effort) => effort === "low" || effort === "high",
+              }
+            : undefined
+        }
+        onModelEffortSelect={onModelEffortSelect}
+        pickedEntries={[
+          { key: "gpt-low", model: gpt, label: "GPT-4.1 · Low" },
+          { key: "gpt-high", model: gpt, label: "GPT-4.1 · High" },
+          { key: "claude", model: claude, label: "Claude 3.7 Sonnet" },
+        ]}
+        onRemovePickedEntry={onRemovePickedEntry}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("model-selector-trigger"));
+    // One chip per pick: the same model twice, at two efforts.
+    expect(screen.getByText("GPT-4.1 · Low")).toBeInTheDocument();
+    expect(screen.getByText("GPT-4.1 · High")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("option", { name: /GPT-4\.1/ }));
+    const menu = await screen.findByTestId("model-effort-menu");
+    const item = (name: string) =>
+      Array.from(menu.querySelectorAll("button")).find(
+        (button) => button.textContent === name,
+      )!;
+    // Default and None are both offered; picked levels are checked. At the
+    // limit of three, an unpicked level can't join.
+    expect(item("Default")).toBeDisabled();
+    expect(item("None")).toBeDisabled();
+    expect(item("Low")).toHaveAttribute("aria-checked", "true");
+    expect(item("Low")).toHaveAttribute("role", "menuitemcheckbox");
+
+    await userEvent.click(item("High"));
+    expect(onModelEffortSelect).toHaveBeenCalledWith(gpt, "high");
+    // A toggle keeps the menu open for more picks.
+    expect(screen.getByTestId("model-effort-menu")).toBeInTheDocument();
+  });
+
+  it("single-select: picking an effort picks the model and closes the menu", async () => {
+    const onModelEffortSelect = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={claude}
+        availableModels={models}
+        onModelChange={vi.fn()}
+        rowEfforts={(model) =>
+          model.id === gpt.id ? { levels: ["none", "low", "high"] } : undefined
+        }
+        onModelEffortSelect={onModelEffortSelect}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("model-selector-trigger"));
+    await userEvent.click(screen.getByRole("option", { name: /GPT-4\.1/ }));
+    const menu = await screen.findByTestId("model-effort-menu");
+    const none = Array.from(menu.querySelectorAll("button")).find(
+      (button) => button.textContent === "None",
+    )!;
+    await userEvent.click(none);
+    expect(onModelEffortSelect).toHaveBeenCalledWith(gpt, "none");
+    await waitFor(() =>
+      expect(screen.queryByTestId("model-effort-menu")).toBeNull(),
+    );
   });
 });

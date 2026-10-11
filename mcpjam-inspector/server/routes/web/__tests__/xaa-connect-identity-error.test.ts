@@ -8,10 +8,12 @@ vi.mock("@sentry/node", () => ({
 }));
 
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: vi.fn(),
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 // Spy on the mint so the test can prove the identity error blocks the mint
@@ -54,9 +56,11 @@ vi.mock("@mcpjam/sdk", async () => {
   );
   return {
     ...actual,
-    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
-      disconnectAllServers: vi.fn(),
-    })),
+    MCPClientManager: mcpClientManagerMock.mockImplementation(function () {
+      return {
+        disconnectAllServers: vi.fn(),
+      };
+    }),
   };
 });
 vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
