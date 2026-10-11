@@ -59,7 +59,8 @@ import {
   type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
-import { OrgAiConfigBoundary } from "./OrgAiConfigBoundary";
+import { OrgAiCardBoundary, OrgAiConfigBoundary } from "./OrgAiConfigBoundary";
+import { OrganizationDefaultModelCard } from "./OrganizationDefaultModelCard";
 import { OrganizationOrgKeysPolicyCard } from "./OrganizationOrgKeysPolicyCard";
 
 // ---------------------------------------------------------------------------
@@ -360,15 +361,30 @@ function OrganizationProviderSettings({
 
         {/* Keyed by the org: a boundary that has caught stays in its
             fallback for the life of the element. It renders nothing on a
-            backend that does not serve the AI config yet. */}
+            backend that does not serve the AI config yet. One boundary for
+            both cards: they read the same query, so one failure shows one
+            error. The default model card has its own as well, so a bug in
+            it never hides the switch. */}
         <OrgAiConfigBoundary
           key={`org-ai-keys:${organizationId}`}
           name="org-ai-keys-policy"
         >
-          <OrganizationOrgKeysPolicyCard
-            organizationId={organizationId}
-            isAdmin={isAdmin}
-          />
+          <div className="space-y-6">
+            <OrganizationOrgKeysPolicyCard
+              organizationId={organizationId}
+              isAdmin={isAdmin}
+            />
+            <OrgAiCardBoundary
+              name="org-ai-default-model"
+              title="the default AI model"
+            >
+              <OrganizationDefaultModelCard
+                organizationId={organizationId}
+                isAdmin={isAdmin}
+                providers={providers}
+              />
+            </OrgAiCardBoundary>
+          </div>
         </OrgAiConfigBoundary>
 
         <CardContent className="space-y-1 p-0">

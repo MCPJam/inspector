@@ -68,3 +68,57 @@ export function OrgAiConfigBoundary({
     </ErrorBoundary>
   );
 }
+
+/**
+ * A failure of the shared AI config query itself, by the query's name in the
+ * message. {@link OrgAiConfigBoundary} shows and reports that one, once, for
+ * every card that reads the query.
+ */
+export function isOrgAiConfigQueryError(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  return message.includes(ORG_AI_CONFIG_QUERY);
+}
+
+/**
+ * Isolates one AI settings card inside {@link OrgAiConfigBoundary}, so a
+ * render bug in it shows a short error in its place and never takes the AI
+ * keys switch down with it.
+ *
+ * A failure of the shared query is not this card's to show: the outer
+ * boundary shows one message for it and reports it. Here it renders nothing
+ * and is not reported a second time.
+ */
+export function OrgAiCardBoundary({
+  name,
+  title,
+  children,
+}: {
+  name: string;
+  /** What the card would have shown, for the error ("the default AI model"). */
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <ErrorBoundary
+      name={name}
+      fallback={({ error, reset }) =>
+        error && isOrgAiConfigQueryError(error) ? null : (
+          <Alert variant="destructive" data-testid={`${name}-error`}>
+            <AlertTitle>Couldn&apos;t show {title}</AlertTitle>
+            <AlertDescription className="space-y-2">
+              <p>
+                Couldn&apos;t load this setting. Reload the page and try again.
+              </p>
+              <Button variant="outline" size="sm" onClick={reset}>
+                Try again
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )
+      }
+      isExpectedError={isOrgAiConfigQueryError}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
