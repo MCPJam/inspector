@@ -426,9 +426,13 @@ const readinessSchema = z.object({
 
 conformance.post("/readiness/:publisher", async (c) => {
   const publisher = c.req.param("publisher");
-  if (publisher !== "claude" && publisher !== "openai") {
+  if (
+    publisher !== "claude" &&
+    publisher !== "openai" &&
+    publisher !== "muse"
+  ) {
     return c.json(
-      { success: false, error: "publisher must be claude or openai" },
+      { success: false, error: "publisher must be claude, openai or muse" },
       400,
     );
   }
