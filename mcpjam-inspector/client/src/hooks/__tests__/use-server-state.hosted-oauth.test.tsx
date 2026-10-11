@@ -3,6 +3,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useServerState } from "../use-server-state";
 import { writeHostedOAuthPendingMarker } from "@/lib/hosted-oauth-callback";
+import { markFirstRunServerChoiceStarted } from "@/lib/onboarding-state";
+import { FIRST_RUN_OAUTH_CANCELLED_EVENT } from "@/lib/first-run-oauth-return";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 const {
@@ -78,6 +80,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   isElectronMcpCallbackState: (state: string | null | undefined) =>
     Boolean(state?.startsWith("electron_mcp:")),
   readStoredOAuthConfig: readStoredOAuthConfigMock,
+  resolveOAuthCustomHeaders: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -170,8 +173,8 @@ function renderHostedServerState(
       isLoading: false,
       isAuthenticated: true,
       hasSignedInUser: true,
-        currentUserId: "user_1",
-        oauthProjectIds: new Set(["ws_1"]),
+      currentUserId: "user_1",
+      oauthProjectIds: new Set(["ws_1"]),
       isAuthLoading: false,
       isLoadingProjects: false,
       useLocalFallback: false,
@@ -243,20 +246,97 @@ describe("useServerState hosted OAuth callback guards", () => {
 
   it("keeps the base connection intact when adding an account fails", async () => {
     window.history.replaceState({}, "", "/");
-    const { initiateOAuth, clearOAuthData } = await import("@/lib/oauth/mcp-oauth");
+    const { initiateOAuth, clearOAuthData } =
+      await import("@/lib/oauth/mcp-oauth");
     const { deleteServer } = await import("@/state/mcp-api");
-    vi.mocked(initiateOAuth).mockResolvedValue({ success: false, error: "Consent declined" } as any);
+    vi.mocked(initiateOAuth).mockResolvedValue({
+      success: false,
+      error: "Consent declined",
+    } as any);
     vi.mocked(clearOAuthData).mockClear();
     vi.mocked(deleteServer).mockClear();
     const dispatch = vi.fn();
     const { result } = renderHostedServerState(dispatch);
     await act(async () => {
-      await result.current.handleReconnect("asana", { forceOAuthFlow: true, connectionIntent: { kind: "add" } });
+      await result.current.handleReconnect("asana", {
+        forceOAuthFlow: true,
+        connectionIntent: { kind: "add" },
+      });
     });
     expect(clearOAuthData).not.toHaveBeenCalled();
     expect(deleteServer).not.toHaveBeenCalled();
-    expect(dispatch.mock.calls.some(([action]) => ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type))).toBe(false);
+    expect(
+      dispatch.mock.calls.some(([action]) =>
+        ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type),
+      ),
+    ).toBe(false);
   });
+
+  it("preserves inline toast suppression through a forced OAuth reconnect", async () => {
+    const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
+    vi.mocked(initiateOAuth).mockResolvedValue({
+      success: true,
+      serverConfig: { url: "https://mcp.asana.com/sse" },
+    } as any);
+    const { result } = renderHostedServerState();
+
+    await act(async () => {
+      await result.current.handleReconnect("asana", {
+        forceOAuthFlow: true,
+        connectionIntent: { kind: "add" },
+        suppressErrors: true,
+        suppressSuccessToast: true,
+      });
+    });
+
+    expect(
+      JSON.parse(localStorage.getItem("mcp-hosted-oauth-pending") ?? "{}"),
+    ).toMatchObject({
+      serverName: "asana",
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { outcome: "success", result: { success: true, serverName: "asana" } },
+    {
+      outcome: "failure",
+      result: { success: false, error: "Consent declined" },
+    },
+  ])(
+    "honors toast suppression on an add-account callback $outcome",
+    async ({ result }) => {
+      writeHostedOAuthPendingMarker({
+        surface: "project",
+        initiatingUserId: "user_1",
+        connectionIntent: { kind: "add" },
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        returnPath: "#servers",
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+      });
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      mockHandleOAuthCallback.mockResolvedValue(result);
+      vi.mocked(sonnerToast.error).mockClear();
+
+      renderHostedServerState();
+
+      await waitFor(() => {
+        expect(mockHandleOAuthCallback).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(window.location.search).toBe("");
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(sonnerToast.error).not.toHaveBeenCalled();
+    },
+  );
 
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and
@@ -419,7 +499,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "project",
-      initiatingUserId: "user_1",
+          initiatingUserId: "user_1",
           projectId: "ws_1",
           serverId: "srv_asana",
           serverName: "asana",
@@ -492,11 +572,14 @@ describe("useServerState hosted OAuth callback guards", () => {
         }),
       );
       expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
-      const action = vi.mocked(sonnerToast.error).mock.calls.at(-1)?.[1]?.action as any;
+      const action = vi.mocked(sonnerToast.error).mock.calls.at(-1)?.[1]
+        ?.action as any;
       if (reason === "guest" || reason === "changed") {
         expect(action.label).toBe("Sign in");
         action.onClick();
-        expect(requestSignIn).toHaveBeenCalledWith("/p/abcdefghijklmnop/servers");
+        expect(requestSignIn).toHaveBeenCalledWith(
+          "/p/abcdefghijklmnop/servers",
+        );
       } else {
         expect(action).toBeUndefined();
         expect(requestSignIn).not.toHaveBeenCalled();
@@ -562,7 +645,9 @@ describe("useServerState hosted OAuth callback guards", () => {
     act(() => prepare("first"));
     expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(1);
     act(() => prepare("second"));
-    await waitFor(() => expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(mockHandleOAuthCallback).toHaveBeenCalledTimes(2),
+    );
   });
   it("forwards the OAuth callback state parameter to completeHostedOAuthCallback", async () => {
     window.history.replaceState(
@@ -622,7 +707,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "project",
-      initiatingUserId: "user_1",
+          initiatingUserId: "user_1",
           serverName: "asana",
         }),
         "oauth-code",
@@ -632,6 +717,94 @@ describe("useServerState hosted OAuth callback guards", () => {
         }),
       );
     });
+  });
+
+  it("discards a late first-run OAuth completion after Cancel", async () => {
+    markFirstRunServerChoiceStarted("asana");
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      returnPath: "/servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    let finishCallback!: (value: {
+      success: boolean;
+      serverName: string;
+      serverConfig: { url: string };
+    }) => void;
+    mockHandleOAuthCallback.mockReturnValue(
+      new Promise((resolve) => {
+        finishCallback = resolve;
+      }),
+    );
+    const dispatch = vi.fn();
+    renderHostedServerState(dispatch);
+    await waitFor(() => expect(mockHandleOAuthCallback).toHaveBeenCalledOnce());
+
+    act(() => {
+      window.dispatchEvent(new Event(FIRST_RUN_OAUTH_CANCELLED_EVENT));
+      window.history.replaceState({}, "", "/home");
+      finishCallback({
+        success: true,
+        serverName: "asana",
+        serverConfig: { url: "https://mcp.asana.com/sse" },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(window.location.pathname).toBe("/home");
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_SUCCESS" }),
+    );
+  });
+
+  it("does not publish a successful reconnect after Cancel during the post-OAuth check", async () => {
+    markFirstRunServerChoiceStarted("asana");
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      returnPath: "/servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: { url: "https://mcp.asana.com/sse" },
+    });
+    let finishConnection!: (value: {
+      success: boolean;
+      initInfo: object;
+    }) => void;
+    testConnectionMock.mockReturnValue(
+      new Promise((resolve) => {
+        finishConnection = resolve;
+      }),
+    );
+    const dispatch = vi.fn();
+    renderHostedServerState(dispatch);
+    await waitFor(() => expect(testConnectionMock).toHaveBeenCalled());
+
+    act(() => {
+      window.dispatchEvent(new Event(FIRST_RUN_OAUTH_CANCELLED_EVENT));
+      window.history.replaceState({}, "", "/home");
+      finishConnection({ success: true, initInfo: {} });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_SUCCESS" }),
+    );
+    expect(window.location.pathname).toBe("/home");
   });
 
   it("reuses hosted stored OAuth credentials on reconnect before falling back to interactive OAuth", async () => {
@@ -783,15 +956,26 @@ describe("useServerState hosted OAuth callback guards", () => {
   });
 
   it("opens the known server's OAuth flow when a user action requests readiness", async () => {
-    mockReconnectServer.mockResolvedValueOnce({ success: false, error: 'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.' });
-    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({ kind: "redirect" });
+    mockReconnectServer.mockResolvedValueOnce({
+      success: false,
+      error:
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+    });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
+      kind: "redirect",
+    });
     const { result } = renderHostedServerState(vi.fn());
     await act(async () => {
-      await result.current.ensureServersReady(["asana"], { allowInteractiveOAuthFlow: true });
+      await result.current.ensureServersReady(["asana"], {
+        allowInteractiveOAuthFlow: true,
+      });
     });
     expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
       expect.objectContaining({ name: "asana", useOAuth: true }),
-      expect.objectContaining({ allowInteractiveOAuthFlow: true, beforeRedirect: expect.any(Function) }),
+      expect.objectContaining({
+        allowInteractiveOAuthFlow: true,
+        beforeRedirect: expect.any(Function),
+      }),
     );
   });
 
@@ -803,14 +987,14 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
     mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
       kind: "reauth_required",
-      error: "OAuth consent is required for asana. Click Reconnect to continue.",
+      error:
+        "OAuth consent is required for asana. Click Reconnect to continue.",
     });
 
     const dispatch = vi.fn();
     const { result } = renderHostedServerState(dispatch);
     let readiness:
-      | Awaited<ReturnType<typeof result.current.ensureServersReady>>
-      | undefined;
+      Awaited<ReturnType<typeof result.current.ensureServersReady>> | undefined;
 
     await act(async () => {
       readiness = await result.current.ensureServersReady(["asana"]);

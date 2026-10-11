@@ -7,8 +7,9 @@
  * `sandboxMode: 'danger-full-access'`, and whose `doStart` rejects any
  * permission mode but `allow-all`. That is not a mode we failed to select: exec
  * is a batch transport with no channel to interrupt and no way to ask. Every
- * capability gap in MCPJam's Codex host traces back to it — no approvals, two
- * attributable tools, MCP through a shell shim.
+ * capability gap in MCPJam's Codex host traced back to it — no approvals, two
+ * attributable tools, MCP through a shell shim — so this adapter replaced it
+ * for every Codex turn, hosted and local.
  *
  * `codex app-server` is the long-lived JSON-RPC transport the editor
  * integrations use, and it carries all of it: real approval requests, typed
@@ -55,6 +56,7 @@ import {
   writeSkills as writeHarnessSkills,
 } from "@ai-sdk/harness/utils";
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import { WebSocket } from "ws";
 import { logger } from "../../logger.js";
 import { CODEX_APPSERVER_BUILTIN_TOOLS } from "./codex-appserver-builtin-tools.js";
@@ -76,10 +78,21 @@ import {
   turnConfigurationFingerprintInput,
   type TurnFingerprintTool,
 } from "./shared/turn-fingerprint.js";
+import {
+  sandboxPolicyFingerprint,
+  type CodexWorkspaceWriteSandboxPolicy,
+} from "./shared/sandbox-policy.js";
 
 export const CODEX_APPSERVER_HARNESS_ID = "codex";
 
-/** Skills live where Codex reads them, the same root the exec transport uses. */
+/**
+ * The model a turn runs when neither the turn nor the settings name one —
+ * the published `@ai-sdk/harness-codex` adapter's default, so switching
+ * transports never changes which model an unconfigured host gets.
+ */
+export const DEFAULT_CODEX_APPSERVER_MODEL = "gpt-5.5";
+
+/** Skills live where Codex reads them, the same root the retired exec transport used. */
 const CODEX_SKILLS_SUBDIR = ".agents/skills";
 
 export type CodexAppServerSettings = {
@@ -94,7 +107,44 @@ export type CodexAppServerSettings = {
   /** Extra `config.toml` values, layered per thread. */
   codexConfig?: Record<string, unknown>;
   startupTimeoutMs?: number;
+  /**
+   * Explicit command-sandbox policy for every turn (`turn/start.sandboxPolicy`).
+   * Set ONLY by the local unattended arm — see `shared/sandbox-policy.ts`. It
+   * is not a permission mode and never widens one; the bridge refuses
+   * `allow-all` under local supervision without it.
+   */
+  sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
+  /** Bridge port override. Default: the session's first leased port. */
+  port?: number;
 };
+
+/**
+ * The port the bridge binds: the one the sandbox session LEASED for it.
+ *
+ * Not `0`. A random port works only where every port is reachable; the local
+ * provider resolves endpoints for leased ports only (and refuses any other),
+ * and E2B exposes the port it was created with. Mirrors the published
+ * adapter's `resolveBridgePort`.
+ */
+function resolveBridgePort(
+  sandboxSession: SandboxSession | HarnessV1NetworkSandboxSession,
+  override: number | undefined,
+): number {
+  if (override !== undefined) return override;
+  if (
+    "ports" in sandboxSession &&
+    Array.isArray(sandboxSession.ports) &&
+    sandboxSession.ports.length > 0
+  ) {
+    return sandboxSession.ports[0]!;
+  }
+  throw new HarnessCapabilityUnsupportedError({
+    harnessId: CODEX_APPSERVER_HARNESS_ID,
+    message:
+      "The codex app-server harness needs a TCP port leased by the sandbox " +
+      "session (`ports: [<port>]`).",
+  });
+}
 
 type Channel = SandboxChannel<OutboundMessage, InboundMessage>;
 
@@ -209,11 +259,20 @@ function openWebSocket(
 function fingerprintTurnConfiguration(input: {
   instructions: string | undefined;
   tools: readonly TurnFingerprintTool[];
+  sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy> | undefined;
 }): string {
-  return createHash("sha256")
-    .update(turnConfigurationFingerprintInput(input))
-    .digest("hex")
-    .slice(0, 16);
+  // The sandbox policy joins the hash only when there is one, so every
+  // existing hosted lane keeps the fingerprint it already has.
+  const hash = createHash("sha256").update(
+    turnConfigurationFingerprintInput({
+      instructions: input.instructions,
+      tools: input.tools,
+    }),
+  );
+  if (input.sandboxPolicy) {
+    hash.update(`\u0000sandbox:${sandboxPolicyFingerprint(input.sandboxPolicy)}`);
+  }
+  return hash.digest("hex").slice(0, 16);
 }
 
 function extractUserText(prompt: HarnessV1Prompt | undefined): string {
@@ -260,14 +319,37 @@ export function createCodexAppServer(
       const toolSafeSandboxSession =
         getRestrictedSandboxSession(sandboxSession);
       const sandboxId = "id" in sandboxSession ? sandboxSession.id : undefined;
-      const workDir =
-        startOpts.sessionWorkDir ??
-        (await resolveSandboxDefaultWorkingDirectory({ sandboxSession }));
+      /*
+       * WHERE THINGS LIVE — mirroring the published adapter, because the
+       * framework and the local provider both assume this layout:
+       *
+       *  - the bootstrap recipe is applied by the FRAMEWORK under the session's
+       *    DEFAULT working directory, so that is where `bridge.mjs` is;
+       *  - bridge and Codex state go under
+       *    `<defaultWorkingDirectory>/.agent-runs/<sessionId>`, which on a
+       *    cloud box is the box and on a user's machine is session-owned state;
+       *  - only the agent's cwd is `sessionWorkDir` — which locally is the
+       *    user's checkout, and must never receive Codex's state or rollouts.
+       *
+       * Resolving the bootstrap against `sessionWorkDir` pointed the bridge
+       * launch at a directory nothing was ever written to.
+       */
+      const defaultWorkingDirectory =
+        await resolveSandboxDefaultWorkingDirectory({
+          sandboxSession,
+          ...(startOpts.abortSignal
+            ? { abortSignal: startOpts.abortSignal }
+            : {}),
+        });
+      const workDir = startOpts.sessionWorkDir ?? defaultWorkingDirectory;
       const sandboxHomeDir = await resolveSandboxHomeDir({
         sandbox: toolSafeSandboxSession,
       });
-      const bootstrapDir = `${workDir}/${CODEX_APPSERVER_BOOTSTRAP_DIR}`;
-      const sessionDataDir = `${workDir}/.harness-session/codex-appserver`;
+      const bootstrapDir = posix.resolve(
+        defaultWorkingDirectory,
+        CODEX_APPSERVER_BOOTSTRAP_DIR,
+      );
+      const sessionDataDir = `${defaultWorkingDirectory}/.agent-runs/${startOpts.sessionId}`;
       const bridgeStateDir = `${sessionDataDir}/bridge`;
       const timeoutMs = settings.startupTimeoutMs ?? 120_000;
 
@@ -375,6 +457,20 @@ export function createCodexAppServer(
         }
       }
 
+      // A CONTINUATION carries decisions for approvals a live Codex process
+      // was waiting on. With that process gone, a rerun re-drives the thread:
+      // Codex proposes actions afresh, and the framework would apply the
+      // stored decision to whichever request reuses its id. Nothing approved
+      // for one action may run another, so refuse rather than rerun.
+      if (isContinue && respawnStrategy !== "replay") {
+        throw new Error(
+          "The Codex session holding this approval is no longer running, so " +
+            "the pending action will not run. Start a new turn; anything " +
+            "proposed then will ask for approval again.",
+        );
+      }
+
+      const port = resolveBridgePort(sandboxSession, settings.port);
       const token = createBridgeToken();
       const env: Record<string, string> = {
         // Fall back to the credential environment captured when this session
@@ -384,7 +480,7 @@ export function createCodexAppServer(
         // resumed turn cannot authenticate.
         ...(settings.auth ?? parsed.sandboxCredentialEnvironment ?? {}),
         BRIDGE_CHANNEL_TOKEN: token,
-        BRIDGE_WS_PORT: "0",
+        BRIDGE_WS_PORT: String(port),
         ...(respawnStrategy === "replay"
           ? { BRIDGE_REPLAY_FROM_DISK: "1" }
           : {}),
@@ -588,23 +684,33 @@ function createCodexAppServerSession(input: {
     tools: ReadonlyArray<{ name: string }>;
     abortSignal?: AbortSignal;
   }): Promise<{ restartThread: boolean }> => {
-    await writeHarnessSkills({
+    const skillsResult = await writeHarnessSkills({
       sandbox: input.sandbox,
-      rootDir: `${input.sandboxHomeDir}/${CODEX_SKILLS_SUBDIR}`,
+      // Same split as `@ai-sdk/harness-codex`'s own call, so both land on
+      // `$HOME/.agents/skills`.
+      homePath: input.sandboxHomeDir,
+      skillsDir: CODEX_SKILLS_SUBDIR,
       skills: turnInput.skills,
       abortSignal: turnInput.abortSignal,
     });
     const fingerprint = fingerprintTurnConfiguration({
       instructions: turnInput.instructions,
       tools: turnInput.tools,
+      sandboxPolicy: input.settings.sandboxPolicy,
     });
     // Codex reads its MCP server's tool list ONCE, when it starts. A changed
     // tool set therefore cannot be applied to a live thread — there is no
     // `tools/list_changed` handling here — so the thread restarts instead of
     // silently serving a stale catalog.
+    //
+    // Skills likewise: Codex indexes `.agents/skills` when a thread starts, so
+    // a changed skill set on a live thread is invisible to the model. Parity
+    // with the published adapter, which restarts on `skillsResult.changed`.
     const restartThread =
-      latestFingerprint !== undefined && latestFingerprint !== fingerprint;
+      (latestThreadId !== undefined && skillsResult.changed) ||
+      (latestFingerprint !== undefined && latestFingerprint !== fingerprint);
     latestFingerprint = fingerprint;
+    if (restartThread) pendingResumeThreadId = undefined;
     return { restartThread };
   };
 
@@ -769,9 +875,8 @@ function createCodexAppServerSession(input: {
         description: tool.description,
         inputSchema: tool.inputSchema,
       })),
-      ...(turnInput.model || input.settings.model
-        ? { model: turnInput.model ?? input.settings.model }
-        : {}),
+      model:
+        turnInput.model || input.settings.model || DEFAULT_CODEX_APPSERVER_MODEL,
       ...(turnInput.instructions
         ? { instructions: turnInput.instructions }
         : {}),
@@ -786,6 +891,9 @@ function createCodexAppServerSession(input: {
         ? { codexConfig: input.settings.codexConfig }
         : {}),
       ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+      ...(input.settings.sandboxPolicy
+        ? { sandboxPolicy: { ...input.settings.sandboxPolicy, writableRoots: [...input.settings.sandboxPolicy.writableRoots] } }
+        : {}),
       ...(pendingResumeThreadId
         ? { resumeThreadId: pendingResumeThreadId }
         : {}),

@@ -37,6 +37,8 @@
  * declares it. The browser-secrets entry below is conditional, not temporary.
  */
 import { browserSecretPlaceholdersEnabled } from "../../config.js";
+import { SWARM_SPONSORSHIP_CAPABILITY } from "../../../shared/swarm-sponsorship.js";
+import { hasServiceCredential } from "../service-credential.js";
 
 const HARNESS_EXECUTION = "harness-execution";
 
@@ -58,6 +60,43 @@ export function runnerCapabilities(
       ? [BROWSER_MATERIALIZED_SECRETS]
       : []),
   ];
+}
+
+/**
+ * Swarm-only: this server can attest a sponsored (MCPJam-paid) swarm
+ * conversation. Kept out of {@link runnerCapabilities} because evals share that
+ * list and have no sponsored conversations.
+ *
+ * Declared only while INSPECTOR_SERVICE_TOKEN is set. The token is the proof
+ * the backend requires on every sponsored call, so advertising the capability
+ * without it would let the backend allocate sponsored conversations this
+ * process could only fail. An older runner never sends the string, so the
+ * backend allocates it nothing.
+ */
+export function swarmSponsorshipCapabilities(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
+  return hasServiceCredential(env)
+    ? [SWARM_SPONSORSHIP_CAPABILITY]
+    : [];
+}
+
+/**
+ * The harnesses THIS runner will execute on the member's machine for a launch
+ * that asks for the local venue: one `local-harness:<id>` per harness.
+ *
+ * The backend stamps a target local only for a harness the runner declares
+ * here (a runner that declares none is read as one that predates the
+ * declaration, for which the local venue means Claude Code alone). So a launch
+ * declares exactly the harnesses it has checked it can run — machine, rollout
+ * and authorization — and a Codex host is never stamped local for a runner
+ * that would not run it there, nor a Claude Code host for one that can run
+ * only Codex. Sorted and de-duplicated so the list hashes stably.
+ */
+export function localHarnessCapabilities(
+  harnessIds: readonly string[] | undefined,
+): string[] {
+  return [...new Set(harnessIds ?? [])].sort().map((id) => `local-harness:${id}`);
 }
 
 /** @deprecated Use {@link runnerCapabilities}, which reads the flag at call time. */

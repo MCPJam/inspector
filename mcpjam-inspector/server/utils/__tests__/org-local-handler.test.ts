@@ -611,6 +611,35 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(deltas).toEqual(["Hi"]);
   });
 
+  it("hands the caller's provider options (a reasoning effort) to streamText, and nothing without them", async () => {
+    const run = async (extra: Record<string, unknown>) => {
+      streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+      const response = handleLocalOrgChatModel({
+        provider: buildResolvedProvider(),
+        projectId: "proj",
+        modelId: "gpt-4-turbo",
+        messages: [{ role: "user", content: "hi" } as any],
+        systemPrompt: "s",
+        tools: {} as any,
+        ...extra,
+      });
+      const reader = response.body?.getReader();
+      if (reader) {
+        while (!(await reader.read()).done);
+      }
+      return streamTextMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+    };
+
+    const withEffort = await run({
+      providerOptions: { openai: { reasoningEffort: "high" } },
+    });
+    expect(withEffort.providerOptions).toEqual({
+      openai: { reasoningEffort: "high" },
+    });
+    const without = await run({});
+    expect(without.providerOptions).toBeUndefined();
+  });
+
   it("does NOT invoke onConversationComplete when the stream errors mid-flight (Cursor PR-review fix)", async () => {
     // Legacy route 3 gated ingestion on `!streamErrored`. The collapse
     // dropped that guard; fix wires `onEngineError` -> local flag, and
