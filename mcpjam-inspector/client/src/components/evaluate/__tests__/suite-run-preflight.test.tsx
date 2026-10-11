@@ -679,3 +679,53 @@ describe("scopePreflightToEnvironments credits gate", () => {
     ).toBe(REASON);
   });
 });
+
+describe("Setup Run — the backend's AI key policy refusal", () => {
+  const suite = {
+    _id: "suite",
+    name: "Checkout",
+    environment: { servers: [] },
+  } as unknown as EvalSuite;
+  const cases = [{ _id: "one", runs: 1, models: [] }] as unknown as EvalCase[];
+
+  it("lists every problem the launch was refused for", async () => {
+    render(
+      <SuiteRunReviewContent
+        suite={suite}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi.fn().mockRejectedValue(
+          new ConvexError({
+            code: "org_keys_required",
+            message: "This organization requires its own provider keys…",
+            problems: [
+              {
+                dependency: "target",
+                label: "anthropic/claude-haiku-4.5",
+                code: "org_keys_required",
+                reason:
+                  "anthropic/claude-haiku-4.5 is not a model from an organization provider. Choose a model from an organization provider.",
+              },
+              {
+                dependency: "judge",
+                label: "The judge",
+                code: "org_keys_required",
+                reason: "Choose a judge model from an organization provider.",
+              },
+            ],
+          }),
+        )}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Start run/ }));
+    const list = await screen.findByTestId("ai-launch-problems");
+    expect(list.querySelectorAll("li")).toHaveLength(2);
+    expect(list).toHaveTextContent(
+      "Model: anthropic/claude-haiku-4.5 is not a model from an organization provider.",
+    );
+    expect(list).toHaveTextContent(
+      "Judge: Choose a judge model from an organization provider.",
+    );
+  });
+});

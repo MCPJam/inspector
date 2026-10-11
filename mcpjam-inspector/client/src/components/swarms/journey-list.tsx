@@ -20,6 +20,11 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
 import {
+  aiLaunchRefusalOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
+import { AiLaunchProblemsList } from "@/components/shared/ai-launch-problems-list";
+import {
   JUDGE_CREDITS_COST_NOTE,
   JUDGE_ORG_PROVIDER_COST_NOTE,
   JudgesSection,
@@ -285,6 +290,9 @@ function JourneyBlock({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  // The org's AI key policy refused the launch: every dependency that can't
+  // run on the organization's providers, listed together.
+  const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
   const runSessions = useRunSessionsContext();
 
   const typedRuns = runs as JourneyRun[];
@@ -345,6 +353,7 @@ function JourneyBlock({
   const onRun = async () => {
     if (launching) return;
     setLaunchError(null);
+    setLaunchProblems([]);
     setLaunching(true);
     try {
       const result = await onLaunch(journey._id);
@@ -355,7 +364,15 @@ function JourneyBlock({
       // plus the actions that clear it. Repeating it inline under the goal
       // would say the same thing twice with nothing to act on.
       if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
+      // A refusal under the organization's AI key policy. Until swarms run
+      // on organization keys, the simulated user arrives here as
+      // `org_runtime_unsupported`, whose reason names no fix.
+      const refusal = aiLaunchRefusalOf(e);
+      setLaunchProblems(refusal?.problems ?? []);
+      setLaunchError(
+        refusal?.message ??
+          (e instanceof Error ? e.message : "Failed to start run"),
+      );
     } finally {
       setLaunching(false);
     }
@@ -456,9 +473,10 @@ function JourneyBlock({
       </div>
 
       {launchError ? (
-        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
-          {launchError}
-        </p>
+        <div className="mt-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+          <p>{launchError}</p>
+          <AiLaunchProblemsList problems={launchProblems} />
+        </div>
       ) : null}
 
       {/* One result cell per execution TARGET (env or host) — latest outcome +
