@@ -1158,6 +1158,7 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 export {
   describeError,
   describeAsSlug,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -1173,6 +1174,7 @@ export type {
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
+  OrgPolicyRefusalCode,
 } from "./error-describer/index.js";
 
 // OAuth conformance

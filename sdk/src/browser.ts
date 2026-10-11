@@ -383,6 +383,7 @@ export {
   describeError,
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -398,6 +399,7 @@ export type {
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
+  OrgPolicyRefusalCode,
 } from "./error-describer/index.js";
 
 export type {
