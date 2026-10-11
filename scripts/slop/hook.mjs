@@ -49,10 +49,23 @@ const ROOT_ALLOWLIST = new Set([
 const NOT_IN_HEAD =
   /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/;
 
+function revParse(dir, args) {
+  return execFileSync("git", ["rev-parse", "--path-format=absolute", ...args], {
+    cwd: dir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+    .trim()
+    .split("\n");
+}
+
 /**
- * The repository that contains `dir`, or null outside one. Hooks act on the
- * session's repository, not the one this script was loaded from: in a git
- * worktree session `$CLAUDE_PROJECT_DIR` can point at the main checkout.
+ * The checkout that contains `dir`, when it is this repository: its main
+ * checkout or one of its worktrees. Hooks act on the session's checkout, not
+ * the one this script was loaded from: in a git worktree session
+ * `$CLAUDE_PROJECT_DIR` can point at the main checkout. Null outside a git
+ * checkout, and in another repository (a session here can also edit a
+ * sibling repo), whose files these rules were not written for.
  */
 export function repoRootFor(dir) {
   let existing = dir;
@@ -61,11 +74,13 @@ export function repoRootFor(dir) {
     existing = dirname(existing);
   }
   try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: existing,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const [root, common] = revParse(existing, [
+      "--show-toplevel",
+      "--git-common-dir",
+    ]);
+    // Every worktree of a repository shares its common git directory.
+    const [ours] = revParse(ROOT, ["--git-common-dir"]);
+    return realpathSync(common) === realpathSync(ours) ? root : null;
   } catch {
     // Not a git checkout: there is nothing to compare against.
     return null;

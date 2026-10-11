@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  cpSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -585,100 +586,128 @@ describe("pr-size verdict", async () => {
   });
 });
 
-describe("hooks in another checkout", async () => {
+describe("hooks in a worktree", async () => {
   const { snapshotFile } = await import("./hook.mjs");
-  const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
-  const repo = mkdtempSync(join(tmpdir(), "slop-hook-repo-"));
-  after(() => rmSync(repo, { recursive: true, force: true }));
-  const git = (...args) =>
-    execFileSync("git", args, { cwd: repo, encoding: "utf8" });
-  const hook = (event) => {
-    try {
-      execFileSync("node", [HOOK], {
-        input: JSON.stringify(event),
-        encoding: "utf8",
-        stdio: "pipe",
-      });
-      return 0;
-    } catch (error) {
-      return error.status;
-    }
+  const SLOP = dirname(fileURLToPath(import.meta.url));
+  // Resolved: node runs a symlinked script under its real path, and the hook
+  // runs only when it is the main module (macOS /var is /private/var).
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), "slop-hook-")));
+  after(() => rmSync(temp, { recursive: true, force: true }));
+  const git = (cwd, ...args) =>
+    execFileSync("git", args, { cwd, encoding: "utf8" });
+  /** A repository with these scripts committed, so it can run its own hook. */
+  const makeRepo = (name) => {
+    const dir = join(temp, name);
+    mkdirSync(join(dir, "sdk/src"), { recursive: true });
+    git(dir, "init", "-q");
+    git(dir, "config", "user.email", "test@example.com");
+    git(dir, "config", "user.name", "test");
+    cpSync(SLOP, join(dir, "scripts/slop"), { recursive: true });
+    writeFileSync(join(dir, "sdk/src/a.ts"), "export const a = 1;\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-qm", "base");
+    return dir;
   };
+  const run = (event, hook) =>
+    spawnSync("node", [hook], {
+      input: JSON.stringify(event),
+      encoding: "utf8",
+    });
 
-  git("init", "-q");
-  git("config", "user.email", "test@example.com");
-  git("config", "user.name", "test");
-  mkdirSync(join(repo, "sdk/src"), { recursive: true });
-  writeFileSync(join(repo, "sdk/src/a.ts"), "export const a = 1;\n");
-  git("add", ".");
-  git("commit", "-qm", "base");
+  // The hook loads from the main checkout, as `$CLAUDE_PROJECT_DIR` does in
+  // a worktree session, and the session works in the worktree.
+  const repo = makeRepo("repo");
   // The ratchet compares with origin/main, which a fresh repo lacks.
-  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+  const wt = join(temp, "wt");
+  git(repo, "worktree", "add", "-q", "--detach", wt);
+  const HOOK = join(repo, "scripts/slop/hook.mjs");
+  const hook = (event) => run(event, HOOK).status;
 
-  it("checks an edit in the session's repo, not the hook's", () => {
-    writeFileSync(join(repo, "sdk/src/a.ts"), "export const a = b as any;\n");
+  it("checks an edit in the session's worktree, not the hook's checkout", () => {
+    writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
     const code = hook({
       hook_event_name: "PostToolUse",
       tool_name: "Edit",
       tool_input: {
-        file_path: join(repo, "sdk/src/a.ts"),
+        file_path: join(wt, "sdk/src/a.ts"),
         old_string: "1",
         new_string: "b as any",
       },
     });
     assert.equal(code, 2);
+    git(wt, "checkout", "--", "sdk/src/a.ts");
+  });
+
+  it("leaves another repository alone", () => {
+    const other = makeRepo("other");
+    git(other, "update-ref", "refs/remotes/origin/main", "HEAD");
+    const newRootFile = (dir) => ({
+      hook_event_name: "PreToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: join(dir, "PLAN.md"), content: "plan" },
+    });
+    assert.equal(hook(newRootFile(wt)), 2);
+    assert.equal(hook(newRootFile(other)), 0);
+    writeFileSync(join(other, "sdk/src/a.ts"), "export const a = b as any;\n");
+    assert.equal(
+      hook({
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: {
+          file_path: join(other, "sdk/src/a.ts"),
+          old_string: "1",
+          new_string: "b as any",
+        },
+      }),
+      0,
+    );
+    assert.equal(hook({ hook_event_name: "Stop", cwd: other }), 0);
   });
 
   it("counts files created during the turn, not files that were already there", () => {
     const session = `test-${process.pid}-${Date.now()}`;
-    git("checkout", "--", "sdk/src/a.ts");
-    writeFileSync(join(repo, "sdk/src/before.ts"), "p.catch(() => {});\n");
+    writeFileSync(join(wt, "sdk/src/before.ts"), "p.catch(() => {});\n");
     assert.equal(
       hook({
         hook_event_name: "UserPromptSubmit",
-        cwd: repo,
+        cwd: wt,
         session_id: session,
       }),
       0,
     );
     assert.equal(
-      hook({ hook_event_name: "Stop", cwd: repo, session_id: session }),
+      hook({ hook_event_name: "Stop", cwd: wt, session_id: session }),
       0,
     );
     // What a Bash command might create: no Edit or Write hook saw it.
     writeFileSync(
-      join(repo, "sdk/src/during.ts"),
+      join(wt, "sdk/src/during.ts"),
       "export const d = x as any;\n",
     );
     assert.equal(
-      hook({ hook_event_name: "Stop", cwd: repo, session_id: session }),
+      hook({ hook_event_name: "Stop", cwd: wt, session_id: session }),
       2,
     );
-    rmSync(join(repo, "sdk/src/before.ts"));
-    rmSync(join(repo, "sdk/src/during.ts"));
-    rmSync(snapshotFile(session, realpathSync(repo)), { force: true });
+    rmSync(join(wt, "sdk/src/before.ts"));
+    rmSync(join(wt, "sdk/src/during.ts"));
+    rmSync(snapshotFile(session, realpathSync(wt)), { force: true });
   });
 
   it("lets the turn end when the ratchet itself fails", () => {
-    const bare = mkdtempSync(join(tmpdir(), "slop-hook-bare-"));
-    try {
-      execFileSync("git", ["init", "-q"], { cwd: bare });
-      // No commits and no origin/main: the ratchet cannot find a base.
-      const result = spawnSync("node", [HOOK], {
-        input: JSON.stringify({ hook_event_name: "Stop", cwd: bare }),
-        encoding: "utf8",
-      });
-      assert.equal(result.status, 0);
-      assert.match(result.stderr, /slop Stop check skipped/);
-    } finally {
-      rmSync(bare, { recursive: true, force: true });
-    }
+    // No origin/main: the ratchet cannot find a base.
+    const bare = makeRepo("no-origin");
+    const result = run(
+      { hook_event_name: "Stop", cwd: bare },
+      join(bare, "scripts/slop/hook.mjs"),
+    );
+    assert.equal(result.status, 0);
+    assert.match(result.stderr, /slop Stop check skipped/);
   });
 
   it("ignores an unwritable GITHUB_STEP_SUMMARY", () => {
-    git("checkout", "--", "sdk/src/a.ts");
     const result = spawnSync("node", [HOOK], {
-      input: JSON.stringify({ hook_event_name: "Stop", cwd: repo }),
+      input: JSON.stringify({ hook_event_name: "Stop", cwd: wt }),
       encoding: "utf8",
       env: {
         ...process.env,
@@ -689,10 +718,9 @@ describe("hooks in another checkout", async () => {
   });
 
   it("stops on tracked changes but not on someone's untracked files", () => {
-    git("checkout", "--", "sdk/src/a.ts");
-    writeFileSync(join(repo, "sdk/src/scratch.ts"), "p.catch(() => {});\n");
-    assert.equal(hook({ hook_event_name: "Stop", cwd: repo }), 0);
-    writeFileSync(join(repo, "sdk/src/a.ts"), "export const a = b as any;\n");
-    assert.equal(hook({ hook_event_name: "Stop", cwd: repo }), 2);
+    writeFileSync(join(wt, "sdk/src/scratch.ts"), "p.catch(() => {});\n");
+    assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 0);
+    writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
+    assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
   });
 });
