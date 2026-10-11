@@ -57,7 +57,8 @@
     "check:mirrors": "node scripts/check-authoring-mirror.mjs",
     "slop:measure": "node scripts/slop/measure.mjs",
     "slop:check": "node scripts/slop/ratchet.mjs",
-    "slop:size": "node scripts/slop/pr-size.mjs"
+    "slop:size": "node scripts/slop/pr-size.mjs",
+    "slop:copy": "node scripts/slop/copy-review.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
