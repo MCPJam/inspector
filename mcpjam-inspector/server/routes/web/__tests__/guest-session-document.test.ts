@@ -2,14 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono, type Context } from "hono";
 
 // Mock the upstream source module so we control mint outcomes deterministically.
-const mockFetchConvexGuestSession = vi.fn();
-const mockFetchRemoteGuestSession = vi.fn();
+const mockFetchGuestSession = vi.fn();
 
 vi.mock("../../../utils/guest-session-source.js", () => ({
-  fetchConvexGuestSession: (...args: unknown[]) =>
-    mockFetchConvexGuestSession(...args),
-  fetchRemoteGuestSession: (...args: unknown[]) =>
-    mockFetchRemoteGuestSession(...args),
+  fetchGuestSession: (...args: unknown[]) => mockFetchGuestSession(...args),
 }));
 
 // Deterministic IP hash; the real impl degrades to null without a pepper but
@@ -107,7 +103,7 @@ describe("guest-session document bootstrap", () => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env.NODE_ENV = "production";
-    // Force the Convex source branch (shouldFetchGuestSessionFromConvex()).
+    // The document bootstrap only runs on a hosted deployment.
     process.env.VITE_MCPJAM_HOSTED_MODE = "true";
   });
 
@@ -118,7 +114,7 @@ describe("guest-session document bootstrap", () => {
   });
 
   it("injects an escaped blob and forwards cookies on a successful mint", async () => {
-    mockFetchConvexGuestSession.mockResolvedValue({
+    mockFetchGuestSession.mockResolvedValue({
       kind: "session",
       session: {
         // guestId carries breakout-attempt characters to verify escaping.
@@ -149,7 +145,7 @@ describe("guest-session document bootstrap", () => {
   });
 
   it("does not inject a blob for a non-allowed Host (host-allowlist gating)", async () => {
-    mockFetchConvexGuestSession.mockResolvedValue({
+    mockFetchGuestSession.mockResolvedValue({
       kind: "session",
       session: {
         guestId: "g",
@@ -165,13 +161,13 @@ describe("guest-session document bootstrap", () => {
 
     expect(res.status).toBe(200);
     expect(body).not.toContain("__MCP_GUEST_BOOTSTRAP__");
-    expect(mockFetchConvexGuestSession).not.toHaveBeenCalled();
+    expect(mockFetchGuestSession).not.toHaveBeenCalled();
     // no-store is unconditional regardless of gating.
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it("does not inject a blob for a tunnel forwarded host", async () => {
-    mockFetchConvexGuestSession.mockResolvedValue({
+    mockFetchGuestSession.mockResolvedValue({
       kind: "session",
       session: { guestId: "g", token: "t", expiresAt: Date.now() + 60_000 },
       setCookies: [],
@@ -184,11 +180,11 @@ describe("guest-session document bootstrap", () => {
     const body = await res.text();
 
     expect(body).not.toContain("__MCP_GUEST_BOOTSTRAP__");
-    expect(mockFetchConvexGuestSession).not.toHaveBeenCalled();
+    expect(mockFetchGuestSession).not.toHaveBeenCalled();
   });
 
   it("serves 200 without a blob when the mint fails (degrade, never 500)", async () => {
-    mockFetchConvexGuestSession.mockResolvedValue({
+    mockFetchGuestSession.mockResolvedValue({
       kind: "error",
       status: 503,
       setCookies: [],
@@ -204,7 +200,7 @@ describe("guest-session document bootstrap", () => {
   });
 
   it("serves 200 without a blob when the mint throws", async () => {
-    mockFetchConvexGuestSession.mockRejectedValue(new Error("boom"));
+    mockFetchGuestSession.mockRejectedValue(new Error("boom"));
 
     const app = await buildDocumentApp();
     const res = await get(app);
@@ -217,7 +213,7 @@ describe("guest-session document bootstrap", () => {
   it("bounds the whole mint against the 1500ms deadline (provisioning hang)", async () => {
     // Simulate a hung mint that never resolves — the whole-helper race must
     // abandon it and serve blob-less within the deadline.
-    mockFetchConvexGuestSession.mockImplementation(() => new Promise(() => {}));
+    mockFetchGuestSession.mockImplementation(() => new Promise(() => {}));
 
     vi.useFakeTimers();
     try {

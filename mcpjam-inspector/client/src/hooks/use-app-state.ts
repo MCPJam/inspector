@@ -1,5 +1,12 @@
 import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -29,6 +36,8 @@ import {
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
+import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
+import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type { ServerWithName } from "@/state/app-types";
@@ -45,6 +54,7 @@ export interface PendingDashboardOAuthState {
 }
 
 const PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS = 30 * 1000;
+const PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS = 500;
 
 interface ActiveOrganizationSelection {
   organizationId?: string;
@@ -204,13 +214,19 @@ export function useAppState({
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
+  const oauthCallbackLocation = `${window.location.pathname}${window.location.search}`;
+
   useEffect(() => {
     if (!window.electronAPI?.diagnostics) return;
     const report = () =>
       recordDesktopActivity({
         kind: "auth",
         phase: "state",
-        auth: isWorkOsLoading ? "loading" : currentUserId ? "signed_in" : "guest",
+        auth: isWorkOsLoading
+          ? "loading"
+          : currentUserId
+            ? "signed_in"
+            : "guest",
         version: __APP_VERSION__,
       });
     report();
@@ -223,6 +239,10 @@ export function useAppState({
   const [isLoading, setIsLoading] = useState(true);
   const [pendingDashboardOAuth, setPendingDashboardOAuth] =
     useState<PendingDashboardOAuthState | null>(null);
+  const clearPendingDashboardOAuth = useCallback(() => {
+    clearHostedOAuthPendingState();
+    setPendingDashboardOAuth(null);
+  }, []);
   const hasHydratedAppStateRef = useRef(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
@@ -413,22 +433,77 @@ export function useAppState({
   // selection state (selectedServer, multi-select) is intentionally
   // ephemeral.
 
+  const pendingDashboardOAuthConnectionStatus = pendingDashboardOAuth
+    ? appState.servers[pendingDashboardOAuth.serverName]?.connectionStatus
+    : undefined;
+
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
-    const pendingServer = appState.servers[pendingDashboardOAuth.serverName];
+    // A failed runtime row is not terminal while an OAuth callback is being
+    // resumed. Project hydration can publish the pre-authorization 401 before
+    // the callback owner imports the credential and performs its credential-
+    // aware reconnect. Dropping this marker on that transient failure lets
+    // onboarding launch a second OAuth flow and loses its return destination.
+    // Success is terminal; genuine callback failures are bounded by the
+    // timeout below and are surfaced by the callback recovery owner.
+    if (pendingDashboardOAuthConnectionStatus === "connected") {
+      setPendingDashboardOAuth(null);
+      return;
+    }
+
+    // The project callback owner clears the persistent marker before it
+    // restores the app route. If no terminal runtime row was published, drop
+    // the UI-only copy now so first-run onboarding can perform its single
+    // recovery reconnect instead of spinning until the 30-second safety cap.
     if (
-      pendingServer?.connectionStatus === "connected" ||
-      pendingServer?.connectionStatus === "failed"
+      !hasHostedOAuthCallbackParams() &&
+      !readPendingDashboardOAuthFromStorage()
     ) {
       setPendingDashboardOAuth(null);
+      return;
     }
-  }, [appState.servers, pendingDashboardOAuth]);
+
+    if (
+      pendingDashboardOAuthConnectionStatus !== "failed" ||
+      hasHostedOAuthCallbackParams()
+    ) {
+      return;
+    }
+
+    // The callback owner dispatches its final connection result immediately
+    // before restoring the route. On that first route render React can still
+    // expose the pre-authorization 401 for one commit. Give the callback's
+    // CONNECT_SUCCESS a brief chance to land; if failure remains stable, drop
+    // the resume marker so onboarding can show its authorization recovery UI.
+    const timeoutId = window.setTimeout(() => {
+      setPendingDashboardOAuth((current) =>
+        current?.serverName === pendingDashboardOAuth.serverName &&
+        current.startedAt === pendingDashboardOAuth.startedAt
+          ? null
+          : current,
+      );
+    }, PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    oauthCallbackLocation,
+    pendingDashboardOAuth,
+    pendingDashboardOAuthConnectionStatus,
+  ]);
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
 
-    const elapsedMs = Date.now() - pendingDashboardOAuth.startedAt;
-    if (elapsedMs >= PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS) {
+    // Time spent approving access at the provider does not count against the
+    // UI timeout: while the callback's code/error params are present, the
+    // clock starts when the callback lands. That still bounds a callback held
+    // behind an auth or project gate that never resolves. Callback completion
+    // or the restored route releases the marker sooner.
+    const remainingMs = hasHostedOAuthCallbackParams()
+      ? PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS
+      : PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS -
+        (Date.now() - pendingDashboardOAuth.startedAt);
+    if (remainingMs <= 0) {
       setPendingDashboardOAuth(null);
       return;
     }
@@ -440,10 +515,10 @@ export function useAppState({
           ? null
           : current,
       );
-    }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
+    }, remainingMs);
 
     return () => window.clearTimeout(timeoutId);
-  }, [pendingDashboardOAuth]);
+  }, [oauthCallbackLocation, pendingDashboardOAuth]);
 
   useEffect(() => {
     if (!HOSTED_MODE) return;
@@ -469,11 +544,14 @@ export function useAppState({
         pendingServer?.connectionStatus === "connecting" ||
         pendingServer?.connectionStatus === "oauth-flow"
       ) {
-        dispatch({
-          type: "CONNECT_FAILURE",
+        const cancelled = {
+          type: "CONNECT_FAILURE" as const,
           name: pendingOAuth.serverName,
-          error: "Authorization was cancelled. Try again.",
-        });
+          error: OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
+        };
+        dispatch(cancelled);
+        // Outside `useServerState`'s wrapped dispatch, so record it here.
+        connectOutcomeTracker.observe(cancelled);
       }
     };
 
@@ -524,9 +602,7 @@ export function useAppState({
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
   const [activeHostId, setActiveHostId, isActiveHostSelectionHydrated] =
-    usePreviewedHostId(
-      activeSharedProjectId ?? null,
-    );
+    usePreviewedHostId(activeSharedProjectId ?? null);
   const { host: selectedHost } = useHost({
     isAuthenticated,
     hostId: activeHostId,
@@ -865,6 +941,7 @@ export function useAppState({
     clearConvexActiveProjectSelection,
     clearLocalFallbackProjectSelection,
     pendingDashboardOAuth,
+    clearPendingDashboardOAuth,
 
     projectServers: serverState.projectServers,
     displayServerConfigs: serverState.displayServerConfigs,
@@ -902,6 +979,7 @@ export function useAppState({
     handleDisconnect: serverState.handleDisconnect,
     handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
+    reconnectServerWithResult: serverState.reconnectServerWithResult,
     connectServerWithResult: serverState.connectServerWithResult,
     reconnectServerForClientSwitch: serverState.reconnectServerForClientSwitch,
     ensureServersReady: serverState.ensureServersReady,
