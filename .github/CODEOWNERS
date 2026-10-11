@@ -1,13 +1,27 @@
-# GitHub reads CODEOWNERS only from /.github, the repo root, or /docs. The
-# "Standard BC" ruleset on main requires a code-owner review, so this file is
-# what makes that rule enforce anything.
-#
-# The last matching pattern wins.
+# Owners are review contacts, not additional required approvals. Where code-owner
+# review is required, any one listed owner can approve; the author cannot self-approve.
+# The last matching rule replaces earlier owners, so each area includes a backup.
 
+# Default reviewers for paths without a more specific owner.
 * @prathmeshpatel @chelojimenez @ignaciojimenezr
 
-# Dependency manifests have no owner, so dependabot-auto-merge.yml's bot
-# approval still satisfies the ruleset for the update classes it queues. A
-# person changing one of these still needs the ruleset's one approval.
+# Inspector UI and server; existing maintainers back up the additional reviewers.
+/mcpjam-inspector/client/ @ignaciojimenezr @nachocossio @olartgabo
+/mcpjam-inspector/server/ @chelojimenez @ignaciojimenezr @nachocossio
+
+# SDK, protocol/OAuth support, and product documentation.
+/sdk/ @chelojimenez @ZeHuari @nachocossio
+/docs/ @ignaciojimenezr @Paoli99
+
+# CI and quality policy have explicit owners regardless of the application area.
+/.github/ @prathmeshpatel @chelojimenez @olartgabo
+/scripts/slop/ @prathmeshpatel @chelojimenez @olartgabo
+/scripts/git-hooks/ @prathmeshpatel @chelojimenez @olartgabo
+
+# Keep ownership changes with the repository administrators.
+/.github/CODEOWNERS @prathmeshpatel @chelojimenez @ignaciojimenezr
+
+# Preserve Dependabot auto-merge: these filenames are exempt at every depth.
+# They still require the normal PR approval, but not a code-owner approval.
 package.json
 package-lock.json
