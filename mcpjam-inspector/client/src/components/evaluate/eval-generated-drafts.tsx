@@ -1,6 +1,7 @@
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
 import { EvalModelChoices } from "./eval-target-matrix";
+import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
@@ -557,18 +558,21 @@ function AuthoringDraftSettings({
       <EvalModelChoices
         testId="authoring-models"
         disabled={disabled}
+        // Drafts store model ids alone, so an effort picked here would be lost.
+        effortEditable={false}
         availableModels={availableModels}
         value={{
           includeClientDefaults: false,
           // A draft persisted by an older build, or staged from a case that
           // inherits the suite's models, carries no list of its own.
-          explicitModelIds: (draft.input.models ?? []).map(
-            (model) => model.model,
-          ),
+          explicitTargets: (draft.input.models ?? []).map((model) => ({
+            modelId: model.model,
+          })),
         }}
         onChange={(value) =>
           editGeneratedDraft(scope, draft.id, draft.revision, {
-            models: value.explicitModelIds.flatMap((id) => {
+            // Drafts store model ids alone: one entry per id.
+            models: explicitModelIds(value).flatMap((id) => {
               const model = availableModels.find(
                 (model) => String(model.id) === id,
               );

@@ -506,10 +506,17 @@ export async function runCloudOp<
   ) => Promise<TOutput>,
   extra: Omit<ResolveProjectSelectorOptions, "flagProject"> & {
     extras?: RunPlatformOperationExtras;
+    /**
+     * Per-command deadline when the caller did not pass `--timeout`, matching
+     * `getGlobalOptions`. Without this a caller that computed a longer default
+     * for itself still got the 30s one here, because this function resolved
+     * the options a second time and independently.
+     */
+    defaultTimeoutMs?: number;
   } = {}
 ): Promise<TOutput> {
-  const globalOptions = getGlobalOptions(command);
-  const { extras: nestedExtras, ...selectorExtra } = extra;
+  const { defaultTimeoutMs, extras: nestedExtras, ...selectorExtra } = extra;
+  const globalOptions = getGlobalOptions(command, defaultTimeoutMs);
   const resolved = resolveCloudProjectArgs(options, selectorExtra);
   return runPlatformOperation(
     platformOptionsOf(command),

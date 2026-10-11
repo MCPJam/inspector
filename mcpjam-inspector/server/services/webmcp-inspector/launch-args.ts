@@ -8,7 +8,7 @@
  * origin in a trial.
  *
  * `--enable-features=WebMCP` is the MINIMAL switch that works: probed against
- * the pinned Chromium (151.0.7922.34 / Playwright 1.62.1), it is the shortest
+ * the pinned Chromium (153.0.8010.12 / Playwright 1.63.0), it is the shortest
  * argument set for which `document.modelContext` is defined and a page's
  * registrations reach `WebMCP.toolsAdded`. `--enable-blink-features=WebMCP`,
  * `--enable-features=WebMCPTesting` and
@@ -37,9 +37,10 @@ export const WEBMCP_BASE_LAUNCH_ARGS: readonly string[] = [
 
 /**
  * Evaluated in the page to decide whether this browser actually supports
- * WebMCP. `document.modelContext` is the current API; Chromium 151 still
- * aliases `navigator.modelContext` to the same object, so either would do — we
- * read the documented one and fall back, rather than requiring both.
+ * WebMCP. `document.modelContext` is the current API, and at the pinned build
+ * the only one: Chromium 151 still aliased `navigator.modelContext` to the
+ * same object, and 153 no longer defines it at all. We read the documented one
+ * and fall back, so an older build that only has the alias still probes true.
  */
 export const PAGE_API_PROBE =
   "!!(document.modelContext ?? navigator.modelContext)";

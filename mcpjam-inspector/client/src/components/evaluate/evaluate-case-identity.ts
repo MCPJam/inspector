@@ -34,6 +34,7 @@ import {
 } from "@mcpjam/sdk/contract";
 
 import type { EvalIteration } from "../evals/types";
+import { iterationSelectionKey } from "@/lib/eval-target-key";
 
 /**
  * The backend's `CONTRACT_CASE_ID_PATTERN`.
@@ -67,7 +68,8 @@ function contractCaseId(space: "k" | "c" | "d", raw: string): string | null {
 export type CaseIterationIdentity = Pick<
   EvalIteration,
   "testCaseId" | "testCaseSnapshot"
->;
+> &
+  Partial<Pick<EvalIteration, "targetKey">>;
 
 /**
  * Every id this iteration could be filed under, MOST SPECIFIC FIRST.
@@ -118,9 +120,13 @@ export function executionVariantOf(
   const model = snapshot?.model;
   if (model === undefined || model.length === 0) return undefined;
   const provider = snapshot?.provider;
+  // Two entries of one model (Sonnet at Low and at High) are two variants;
+  // a default selection adds nothing, so its key is unchanged.
+  const selectionKey = iterationSelectionKey(iteration);
   return {
     model,
     ...(provider !== undefined && provider.length > 0 ? { provider } : {}),
+    ...(selectionKey !== undefined ? { selectionKey } : {}),
   };
 }
 

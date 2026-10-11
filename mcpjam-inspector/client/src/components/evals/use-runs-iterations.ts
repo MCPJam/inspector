@@ -1,7 +1,7 @@
 import { useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useMemo } from "react";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalIteration, EvalSuiteRunListItem } from "./types";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
 import {
   previousCompletedRunOf,
@@ -11,7 +11,7 @@ import {
 const runDetailsQuery = makeFunctionReference<
   "query",
   { runId: string },
-  { run: EvalSuiteRun; iterations: EvalIteration[] } | null
+  { run: EvalSuiteRunListItem; iterations: EvalIteration[] } | null
 >("testSuites:getTestSuiteRunDetails");
 
 export interface RunsIterations {
@@ -56,7 +56,10 @@ export function useRunsIterations(
     let isLoading = false;
     for (const runId of key ? key.split(",") : []) {
       const result = results[runId] as
-        { iterations: EvalIteration[] } | null | Error | undefined;
+        | { iterations: EvalIteration[] }
+        | null
+        | Error
+        | undefined;
       if (result === undefined) {
         isLoading = true;
         continue;
@@ -89,8 +92,8 @@ export function useRunsIterations(
  * explicit baseline the page was handed. A handful of runs, never the suite.
  */
 export function runPageRunIds(
-  selected: EvalSuiteRun,
-  runs: readonly EvalSuiteRun[],
+  selected: EvalSuiteRunListItem,
+  runs: readonly EvalSuiteRunListItem[],
   previousRunId: string | null,
 ): string[] {
   const launch = launchRuns(selected, runs);

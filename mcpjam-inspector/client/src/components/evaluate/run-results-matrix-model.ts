@@ -1,14 +1,31 @@
 import { compactModelIdTail } from "@/lib/environment-label";
-import { computeIterationResult } from "../evals/pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "../evals/pass-criteria";
 import {
   iterationLatencyP95,
   sumIterationCost,
   runClientIdentity,
   snapshotTestModels,
 } from "../evals/helpers";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
+import {
+  iterationTargetKey,
+  modelIdFromTargetKey,
+  runIterationTargetKey,
+  runTargetKey,
+  targetKeyLabels,
+} from "@/lib/eval-target-key";
 
-export function launchRuns(run: EvalSuiteRun, runs: readonly EvalSuiteRun[]) {
+export function launchRuns<TRun extends EvalSuiteRunListItem>(
+  run: TRun,
+  runs: readonly TRun[],
+) {
   return [
     run,
     ...runs.filter(
@@ -38,6 +55,20 @@ export function resultCounts(iterations: readonly EvalIteration[]) {
   return counts;
 }
 
+/**
+ * {@link resultCounts} over the rows a PASS RATE may count: a row OUR
+ * infrastructure failed is left out (`computeMeasuredIterationResult`).
+ * Labels (`cellResult`) keep reading every row.
+ */
+export function measuredResultCounts(iterations: readonly EvalIteration[]) {
+  return resultCounts(
+    iterations.filter(
+      (iteration) =>
+        computeMeasuredIterationResult(iteration) !== "infra_error",
+    ),
+  );
+}
+
 /** Match the overall result displayed for a case/client/model cell. */
 export function cellResult(iterations: readonly EvalIteration[]) {
   if (!iterations.length) return null;
@@ -56,14 +87,14 @@ export function matrixCaseKey(iteration: EvalIteration): string {
   );
 }
 
-export function buildRunResultsMatrix({
+export function buildRunResultsMatrix<TRun extends EvalSuiteRunListItem>({
   run,
   runs,
   iterations,
   hostNamesById,
 }: {
-  run: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
+  run: TRun;
+  runs: readonly TRun[];
   iterations: readonly EvalIteration[];
   hostNamesById: ReadonlyMap<string, string | null>;
 }) {
@@ -78,10 +109,10 @@ export function buildRunResultsMatrix({
     );
     const models = new Map<string, EvalIteration[]>();
     for (const iteration of targetIterations) {
+      // Keyed by TARGET (`targetKey`, the bare model id for a default
+      // selection), so two efforts of one model are two columns.
       const model =
-        targetRun.effectiveModelId ??
-        iteration.testCaseSnapshot?.model ??
-        "Client default";
+        runIterationTargetKey(targetRun, iteration) ?? "Client default";
       const bucket = models.get(model) ?? [];
       bucket.push(iteration);
       models.set(model, bucket);
@@ -96,7 +127,10 @@ export function buildRunResultsMatrix({
     // is the case list for a QUEUED run and still the case list for one in
     // flight — a case the recorder has not reached yet belongs on screen as an
     // empty cell, not missing until its first iteration lands.
-    const snapshotTests = targetRun.configSnapshot?.tests ?? [];
+    const snapshotTests =
+      "tests" in (targetRun.configSnapshot ?? {})
+        ? (targetRun as unknown as EvalSuiteRun).configSnapshot.tests
+        : [];
     for (const test of snapshotTests) {
       // Key onto the recorded iteration when this case HAS started, so it does
       // not also render as a second, title-keyed row.
@@ -115,10 +149,11 @@ export function buildRunResultsMatrix({
     if (targetIterations.length === 0) {
       for (const test of snapshotTests) {
         const snapshotModels = snapshotTestModels(test).map(
-          (entry) => entry.model,
+          (entry) =>
+            iterationTargetKey({ testCaseSnapshot: entry }) ?? entry.model,
         );
         for (const model of targetRun.effectiveModelId
-          ? [targetRun.effectiveModelId]
+          ? [runTargetKey(targetRun) ?? targetRun.effectiveModelId]
           : snapshotModels.length
             ? snapshotModels
             : ["Client default"]) {
@@ -127,12 +162,16 @@ export function buildRunResultsMatrix({
       }
     }
     if (!models.size)
-      models.set(targetRun.effectiveModelId ?? "Client default", []);
+      models.set(runTargetKey(targetRun) ?? "Client default", []);
     return [...models].map(([model, items]) => ({
       key: JSON.stringify([targetRun._id, model]),
       run: targetRun,
       client: runClientIdentity(targetRun, hostNamesById).name,
-      modelId: model,
+      /** The model id this target ran (the target key without its selection). */
+      modelId: modelIdFromTargetKey(model),
+      /** `comparisonKey` of the selection; the bare model id when default. */
+      targetKey: model,
+      // Relabelled below once every target is known (only what differs).
       model: compactModelIdTail(model),
       iterations: items,
       counts: resultCounts(items),
@@ -146,6 +185,14 @@ export function buildRunResultsMatrix({
       ),
     }));
   });
+  const labels = targetKeyLabels(
+    targets
+      .map((target) => target.targetKey)
+      .filter((key) => key !== "Client default"),
+  );
+  for (const target of targets) {
+    target.model = labels.get(target.targetKey) ?? target.model;
+  }
   const rows = [...cases.values()].sort((a, b) => {
     const failures = (key: string) =>
       targets.reduce(
