@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Commit what the caller staged to the harness's ONE bot branch and open, or
-# refresh, its ONE pull request — for the local-harness pack pipeline's pin
-# and equivalence PRs.
+# Commit what the caller staged to ONE bot branch and open, or refresh, its ONE
+# pull request — for the local-harness revocation list
+# (`local-harness-revocations.yml`). Pack pins no longer use it: they ride in
+# the version PR that `prepare-release.yml` opens.
 #
 #   bash .github/scripts/local-harness-bot-pr.sh '<{"branch","title","body"} JSON>'
 #

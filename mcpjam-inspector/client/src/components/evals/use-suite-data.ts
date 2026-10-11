@@ -20,6 +20,7 @@ import {
   EvalIteration,
   EvalSuite,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
 
@@ -36,8 +37,11 @@ import {
  * `passCriteria.minimumPassRate`, which is 0-100); this returns 0-100 to
  * match `passRate` in the same trend rows.
  */
-export function computeRunJudgeScore(run: EvalSuiteRun): number | null {
-  const cases = run.goalCompletion?.cases;
+export function computeRunJudgeScore(
+  run: EvalSuiteRun | EvalSuiteRunListItem,
+): number | null {
+  if ("judgeScore" in run) return run.judgeScore ?? null;
+  const cases = "goalCompletion" in run ? run.goalCompletion?.cases : undefined;
   if (!cases || cases.length === 0) return null;
   const scores = cases
     .map((c) => c.score)
@@ -67,7 +71,7 @@ export function useSuiteData(
   cases: EvalCase[],
   rawIterations: EvalIteration[],
   rawAllIterations: EvalIteration[],
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   aggregate: SuiteAggregate | null,
 ) {
   const iterations = useMemo(
@@ -147,13 +151,9 @@ export function useSuiteData(
         }
 
         const passed =
-          realTimeTotal > 0
-            ? realTimePassed
-            : (run.summary?.passed ?? 0);
+          realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0);
         const total =
-          realTimeTotal > 0
-            ? realTimeTotal
-            : (run.summary?.total ?? 0);
+          realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
 
         return {
           runId: run._id,
@@ -166,7 +166,10 @@ export function useSuiteData(
           judgeScore: computeRunJudgeScore(run),
           // Ran under a per-run judge override — divergence from the suite's
           // judge calibration must be visible on the trend, not silent.
-          judgeOffConfig: run.judgeConfigOverride !== undefined,
+          judgeOffConfig:
+            run.judgeOffConfig === true ||
+            ("judgeConfigOverride" in run &&
+              run.judgeConfigOverride !== undefined),
         };
       })
       .filter(
@@ -477,7 +480,7 @@ export function useSuiteData(
  * they no longer appear in the model breakdown.
  */
 export function useSuiteDataFromMetrics(
-  runs: EvalSuiteRun[],
+  runs: EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
 ) {
   const runTrendData = useMemo(() => {
@@ -507,12 +510,16 @@ export function useSuiteDataFromMetrics(
           runId: run._id,
           runIdDisplay: formatRunId(run._id),
           passRate,
-          passed: realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0),
+          passed:
+            realTimeTotal > 0 ? realTimePassed : (run.summary?.passed ?? 0),
           total: realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0),
           label: formatTime(run.completedAt ?? run.createdAt),
           runNumber: run.runNumber,
           judgeScore: computeRunJudgeScore(run),
-          judgeOffConfig: run.judgeConfigOverride !== undefined,
+          judgeOffConfig:
+            run.judgeOffConfig === true ||
+            ("judgeConfigOverride" in run &&
+              run.judgeConfigOverride !== undefined),
         };
       })
       .filter(

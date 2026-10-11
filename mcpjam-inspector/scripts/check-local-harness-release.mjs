@@ -237,8 +237,8 @@ async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expec
     if (accepted === null) {
       blockers.push(
         `the published ${label} pack was built from different inputs, and no equivalence ` +
-          `record says a rebuild from this checkout's reproduced it. Merge the pin PR ` +
-          `local-harness-pack-auto.yml opened for ${harnessId} (or run it).`,
+          `record says a rebuild from this checkout's reproduced it. Start the release ` +
+          `again (prepare-release.yml): it publishes and pins ${harnessId}'s pack in the version PR.`,
       );
     }
   }

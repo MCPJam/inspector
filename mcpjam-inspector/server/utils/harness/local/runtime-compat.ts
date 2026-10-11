@@ -7,7 +7,7 @@
  * hand-typed `lifecycleConformanceVersion` stamp in `compatibility.ts`, and
  * scripts parsed both back out of the TypeScript with regexes. One generated
  * JSON file (`runtime-compat.generated.json`) now carries all of it, written by
- * `scripts/write-pack-digests.mjs` (and by the publication workflow's pin PR),
+ * `scripts/write-pack-digests.mjs` (which `prepare-release.yml` runs for each pin),
  * reviewed in a diff, and read here and by every script without a parser for
  * TypeScript source.
  *

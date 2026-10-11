@@ -16,6 +16,12 @@ import { toast } from "sonner";
 import { SuiteResultsSplit } from "../suite-results-split";
 import { contextSuite, envRun, hostRun } from "./run-context-fixtures";
 import type { EvalSuiteRun } from "../types";
+const groupQuery = vi.hoisted(() => vi.fn());
+const groupClient = { query: groupQuery };
+vi.mock("convex/react", async (importOriginal) => ({
+  ...await importOriginal<typeof import("convex/react")>(),
+  useConvex: () => groupClient,
+}));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
@@ -51,6 +57,7 @@ function renderRail(
   runs: EvalSuiteRun[],
   extra?: Partial<React.ComponentProps<typeof SuiteResultsSplit>>,
 ) {
+  groupQuery.mockImplementation(async () => ({ page: runs, isDone: true, continueCursor: "" }));
   return renderWithProviders(
     <SuiteResultsSplit
       suite={contextSuite}

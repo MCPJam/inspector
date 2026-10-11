@@ -122,6 +122,7 @@ jobs:
   plan:
     name: plan legs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       claude_pack_version: ${{ steps.plan.outputs.claude_pack_version }}
       codex_pack_version: ${{ steps.plan.outputs.codex_pack_version }}
@@ -143,6 +144,7 @@ jobs:
   unit:
     name: foundation unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Read pack toolchain pins
@@ -167,8 +169,12 @@ jobs:
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
+      # The SDK first: the browser harness bundle in `pretest` pulls in
+      # widget-react, which resolves `@mcpjam/sdk` subpaths from dist.
       - name: Build shared contracts and adapter fixtures
-        run: npm run pretest -w @mcpjam/inspector
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
@@ -179,6 +185,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_claude == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -232,10 +239,12 @@ jobs:
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform ${{ matrix.platform_key }} \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
             --skip-archive
@@ -401,6 +410,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_windows == 'true'
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -477,10 +487,12 @@ jobs:
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform win32-x64 \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
@@ -620,6 +632,7 @@ jobs:
     needs: [unit, plan]
     if: needs.plan.outputs.run_codex == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     continue-on-error: ${{ !matrix.certified }}
     strategy:
       fail-fast: false
@@ -669,11 +682,13 @@ jobs:
       - name: Build the Codex pack
         if: needs.plan.outputs.codex_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --harness codex \
             --platform ${{ matrix.platform_key }} \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
             --skip-archive
@@ -782,6 +797,7 @@ jobs:
     # would certify a platform whose scenarios had not run.
     needs: [scenarios, windows, plan]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
@@ -805,6 +821,7 @@ jobs:
     name: codex conformance version
     needs: [codex-scenarios, plan]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:

@@ -160,6 +160,7 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformMuseReadinessStartBody,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
   PlatformReadinessRun,
@@ -3190,6 +3191,31 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * Start a Muse (Meta) connector readiness run.
+   *
+   * Free, and only ever free: Muse has no AI observations, so the body has no
+   * field that can spend.
+   */
+  startMuseReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformMuseReadinessStartBody,
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, idempotencyKey } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId
+      )}/readiness-runs/muse`,
+      { body: pickReadinessStartBody({ idempotencyKey }) },
+      options
+    );
+  }
+
   /** Lane statuses, coverage and the observation axis. Poll this. */
   getReadinessRun(
     params: { projectId: string; runId: string },
@@ -4026,6 +4052,12 @@ export class PlatformApiClient {
       goalId: string;
       swarmRunId?: string;
       environmentIds?: string[];
+      /**
+       * How many of this launch's conversations you expect to be sponsored.
+       * A different actual split is a 409 `swarm_funding_changed` (see
+       * `describeSwarmFundingChange`) and nothing is created.
+       */
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformGoalRunLaunched> {
@@ -4040,6 +4072,9 @@ export class PlatformApiClient {
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
             : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
+            : {}),
         },
       },
       options
@@ -4047,7 +4082,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running goal run.
+   * Request a stop for a running goal run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on
@@ -4302,6 +4337,7 @@ export class PlatformApiClient {
       journeyId: string;
       waveId?: string;
       environmentIds?: string[];
+      expectedSponsored?: number;
     },
     options?: RequestOptions
   ): Promise<PlatformJourneyRunLaunched> {
@@ -4316,6 +4352,9 @@ export class PlatformApiClient {
           ...(params.environmentIds?.length
             ? { environmentIds: params.environmentIds }
             : {}),
+          ...(params.expectedSponsored !== undefined
+            ? { expectedSponsored: params.expectedSponsored }
+            : {}),
         },
       },
       options
@@ -4323,7 +4362,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running journey run.
+   * Request a stop for a running journey run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on

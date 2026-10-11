@@ -4,7 +4,11 @@ import {
   iterationLatencyP95,
   percentile,
 } from "./helpers";
-import type { EvalIteration, EvalRunMetrics, EvalSuiteRun } from "./types";
+import type {
+  EvalIteration,
+  EvalRunMetrics,
+  EvalSuiteRunListItem,
+} from "./types";
 
 /**
  * Per-run metrics for the suite page.
@@ -22,7 +26,9 @@ import type { EvalIteration, EvalRunMetrics, EvalSuiteRun } from "./types";
 
 const ACTIVE_RUN_STATUSES = new Set(["pending", "running", "grading"]);
 
-export function isActiveRun(run: Pick<EvalSuiteRun, "status">): boolean {
+export function isActiveRun(
+  run: Pick<EvalSuiteRunListItem, "status">,
+): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
 }
 
@@ -32,7 +38,7 @@ export function isActiveRun(run: Pick<EvalSuiteRun, "status">): boolean {
  * its iterations carry no stored verdict (only the browser's tool-call matcher
  * can grade those, so the server's pass counts would be short).
  */
-export function runNeedsIterationFold(run: EvalSuiteRun): boolean {
+export function runNeedsIterationFold(run: EvalSuiteRunListItem): boolean {
   if (isActiveRun(run)) return true;
   if (!run.metrics) return true;
   return run.metrics.results.unscored > 0;
@@ -206,7 +212,7 @@ export function metricsByRunFromIterations(
  * else a fold of the run's loaded iterations, else `null` (still loading).
  */
 export function resolveRunMetrics(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   iterations: readonly EvalIteration[] | undefined,
 ): RunMetrics | null {
   if (!runNeedsIterationFold(run) && run.metrics) return run.metrics;
@@ -224,7 +230,7 @@ export type RunMetricsByRun = ReadonlyMap<string, RunMetrics>;
  * back to the stored summary while nothing has been decided.
  */
 export function computeRunEffectiveStatsFromMetrics(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   metrics: RunMetrics | null | undefined,
 ): {
   effectivePassed: number;
