@@ -79,6 +79,39 @@ export function getSubsectionsForGroup(
       }
       return subs;
     }
+    case "limits": {
+      // One rail entry per clock, in the same nesting order the rows render:
+      // turn inside tool call inside iteration inside run, then the retry
+      // count. Unconditional — every suite has budgets, because a suite that
+      // authors none still runs under the platform defaults.
+      return [
+        {
+          id: "turnTimeoutMs",
+          label: manifestLabel("turnTimeoutMs"),
+          target: { type: "row", key: "turnTimeoutMs" },
+        },
+        {
+          id: "toolCallTimeoutMs",
+          label: manifestLabel("toolCallTimeoutMs"),
+          target: { type: "row", key: "toolCallTimeoutMs" },
+        },
+        {
+          id: "iterationTimeoutMs",
+          label: manifestLabel("iterationTimeoutMs"),
+          target: { type: "row", key: "iterationTimeoutMs" },
+        },
+        {
+          id: "runTimeoutMs",
+          label: manifestLabel("runTimeoutMs"),
+          target: { type: "row", key: "runTimeoutMs" },
+        },
+        {
+          id: "turnRetries",
+          label: manifestLabel("turnRetries"),
+          target: { type: "row", key: "turnRetries" },
+        },
+      ];
+    }
     case "triggers": {
       const subs: SuiteSettingsSubsection[] = [];
       if (options.showSchedule) {

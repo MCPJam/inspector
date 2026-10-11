@@ -1,3 +1,4 @@
+import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 import { Hono } from "hono";
 import { z } from "zod";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
@@ -133,8 +134,12 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         ACCEPTED_WIDGET_MIMETYPES.has(contentMimeType);
       const mimeTypeWarning = !mimeTypeValid
         ? contentMimeType
-          ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
-          : `Missing mimetype - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
+          ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[
+              ...ACCEPTED_WIDGET_MIMETYPES,
+            ].join(", ")}`
+          : `Missing mimetype - expected one of: ${[
+              ...ACCEPTED_WIDGET_MIMETYPES,
+            ].join(", ")}`
         : null;
 
       let html = extractHtmlFromResourceContent(content);
@@ -153,9 +158,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       // item and the `resources/list` entry — a server that declares
       // `_meta.ui` only at listing level used to render blank here while
       // working fine locally.
-      const resourceMeta = content._meta as
-        | Record<string, unknown>
-        | undefined;
+      const resourceMeta = content._meta as Record<string, unknown> | undefined;
 
       // Best-effort listing lookup: servers without `resources/list` (or
       // that don't return this URI) simply fall through to the content
@@ -221,6 +224,10 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
+        resourceDisplayHints: readResourceDisplayHints(
+          resourceMeta,
+          listingMeta,
+        ),
         declaredDomain,
         viewOriginLabel: viewOriginLabelForConfig(
           manager.getServerConfig?.(body.serverId),
