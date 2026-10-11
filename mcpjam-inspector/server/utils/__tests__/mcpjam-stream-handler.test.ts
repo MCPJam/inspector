@@ -19,6 +19,7 @@ import {
   toolApprovalClaimKey,
 } from "../tool-approval-token";
 import { logger } from "../logger";
+import { STEP_LIMIT_REFUSAL_MESSAGE } from "@/shared/turn-step-budget";
 
 /**
  * An approval id the engine itself would have minted for this call (MJ-008).
@@ -3426,7 +3427,11 @@ describe("mcpjam-stream-handler", () => {
     describe("step limit", () => {
       const runAtStep = async (
         existingSteps: number,
-        opts: { maxSteps: number; extraBodyFields?: Record<string, unknown> },
+        opts: {
+          maxSteps: number;
+          extraBodyFields?: Record<string, unknown>;
+          reasoningEffort?: "high";
+        },
       ) => {
         const messages = [
           { role: "user", content: "go" },
@@ -3467,6 +3472,27 @@ describe("mcpjam-stream-handler", () => {
         expect(bodies).toHaveLength(2);
         expect(bodies[0].toolChoice).toBeUndefined();
         expect(bodies[1].toolChoice).toBe("none");
+      });
+
+      it("sends the turn's reasoning effort as the top-level body field on every step", async () => {
+        (global.fetch as any).mockClear();
+        await runAtStep(4, {
+          maxSteps: 6,
+          reasoningEffort: "high",
+          extraBodyFields: { providerKey: "anthropic" },
+        } as never);
+        const bodies = sentBodies();
+        expect(bodies.length).toBeGreaterThan(0);
+        for (const body of bodies) {
+          expect(body.reasoningEffort).toBe("high");
+          expect(body.providerKey).toBe("anthropic");
+        }
+      });
+
+      it("sends no reasoningEffort field when the turn has none", async () => {
+        (global.fetch as any).mockClear();
+        await runAtStep(5, { maxSteps: 6 });
+        expect("reasoningEffort" in sentBodies()[0]).toBe(false);
       });
 
       it("lets a caller's own toolChoice win on the last step", async () => {
@@ -3531,6 +3557,168 @@ describe("mcpjam-stream-handler", () => {
     });
 
 
+    describe("a continuation that arrives with its step budget already spent", () => {
+      // Six steps already bought by the current user message, ceiling six:
+      // the loop can take no step. This is the request a browser kept
+      // re-posting every few seconds, because the answer used to be a
+      // SUCCESSFUL `length` finish that changed nothing in its last step.
+      const spentHistory = () =>
+        [
+          { role: "user", content: "go" },
+          ...Array.from({ length: 6 }).map((_, index) => ({
+            role: "assistant",
+            content: [{ type: "text", text: `s${index + 1}` }],
+          })),
+        ] as any;
+
+      it("fails a browser-sent one without a model call or a persisted turn", async () => {
+        const onConversationComplete = vi.fn();
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          clientSuppliedHistory: true,
+          onConversationComplete,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        // An error ends the browser's automatic resend; a finish did not.
+        expect(writtenChunks).toContainEqual({
+          type: "error",
+          errorText: STEP_LIMIT_REFUSAL_MESSAGE,
+        });
+        expect(writtenChunks.some((c: any) => c?.type === "finish")).toBe(
+          false,
+        );
+        expect(onConversationComplete).not.toHaveBeenCalled();
+      });
+
+      it("still processes an answered approval on the budget's last step", async () => {
+        // The model asked for approval on its final allowed step; the user's
+        // click must still be honored. Answering it costs no model call.
+        vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: [
+            { role: "user", content: "go" },
+            ...Array.from({ length: 5 }).map((_, index) => ({
+              role: "assistant",
+              content: [{ type: "text", text: `s${index + 1}` }],
+            })),
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-last",
+                  toolName: "ui_execute_tool",
+                  input: {},
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId: "approval-last",
+                  toolCallId: "call-last",
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-approval-response",
+                  approvalId: "approval-last",
+                  approved: false,
+                },
+              ],
+            },
+          ] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: { ui_execute_tool: { needsApproval: true } } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          clientSuppliedHistory: true,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+        expect(
+          writtenChunks.filter((c: any) => c.type === "tool-output-denied"),
+        ).toMatchObject([{ toolCallId: "call-last" }]);
+      });
+
+      it("keeps the quiet `length` finish for history the server built itself", async () => {
+        // Eval / swarm / durable callers never re-post on their own; their
+        // behavior at the ceiling is unchanged.
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+        expect(
+          writtenChunks.find((c: any) => c?.type === "finish"),
+        ).toMatchObject({ finishReason: "length" });
+      });
+
+      it("still runs a browser-sent continuation that has steps left", async () => {
+        global.fetch = vi.fn().mockResolvedValue(
+          createSseResponse([
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "Done." },
+            { type: "text-end", id: "t1" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        );
+
+        await handleMCPJamFreeChatModel({
+          messages: spentHistory(),
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 7,
+          clientSuppliedHistory: true,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+      });
+    });
+
     it("emits the aggregated turn usage via messageMetadata (preserving #2213)", async () => {
       // Single-step turn with non-trivial usage. Must surface as
       // messageMetadata on the finish chunk, NOT totalUsage. Regression
@@ -3572,6 +3760,60 @@ describe("mcpjam-stream-handler", () => {
       // #2213 invariant: totalUsage must NOT be emitted on the client
       // finish chunk; clients read usage from messageMetadata.
       expect((finishChunk as any).totalUsage).toBeUndefined();
+    });
+
+    it("drops backend chunks the browser's AI SDK would reject, and reports each type once", async () => {
+      // A chunk type the browser's AI SDK does not know. On 2026-10-05 that was
+      // `{type:"custom"}` (an AI SDK 7 backend, an AI SDK 6 browser); this
+      // build's AI SDK accepts `custom`, so a made-up type stands in for the
+      // next drift.
+      const unknownChunk = {
+        type: "future-chunk",
+        kind: "provider.event",
+        providerMetadata: { anthropic: { id: "msg_1" } },
+      };
+      (global.fetch as any).mockReset();
+      (global.fetch as any) = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "start-step" },
+          unknownChunk,
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "hello" },
+          { type: "text-end", id: "t1" },
+          unknownChunk,
+          { type: "finish-step" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const types = writtenChunks
+        .filter((chunk) => chunk?.type !== "data-trace-event")
+        .map((chunk) => chunk.type);
+      expect(types).not.toContain("future-chunk");
+      expect(types).toEqual(
+        expect.arrayContaining(["start-step", "text-delta", "finish-step"]),
+      );
+
+      const rejected = (logger.systemEvent as any).mock.calls.filter(
+        ([event]: [string]) => event === "chat.stream.chunk_rejected",
+      );
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0][2]).toEqual({
+        chunkType: "future-chunk",
+        fields: ["type", "kind", "providerMetadata"],
+      });
     });
 
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
@@ -4128,6 +4370,70 @@ describe("mcpjam-stream-handler", () => {
       expect(event.httpStatus).toBe(500);
       expect(event.rawText).toBe("upstream broke");
     });
+
+    it.each([
+      { statusCode: 400, code: "provider_error", isRetryable: false },
+      { statusCode: 401, code: "provider_auth_error", isRetryable: false },
+      { statusCode: 429, code: "provider_rate_limit", isRetryable: true },
+      { statusCode: 503, code: "provider_error", isRetryable: true },
+    ].flatMap(error => [false, true].map(partial => ({ ...error, partial }))))(
+      "preserves HTTP $statusCode provider error once (partial: $partial)",
+      async ({ partial, statusCode, code, isRetryable }) => {
+        const error = {
+          message: statusCode === 400
+            ? "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key."
+            : `Provider rejected the request (${statusCode}).`,
+          code,
+          statusCode,
+          isRetryable,
+          details: "Original provider diagnostic",
+        };
+        global.fetch = vi.fn().mockResolvedValue(
+          createSseResponse([
+            { type: "start" },
+            ...(partial
+              ? [
+                  { type: "text-start", id: "text" },
+                  { type: "text-delta", id: "text", delta: "Partial answer" },
+                  { type: "text-end", id: "text" },
+                ]
+              : []),
+            { type: "error", errorText: JSON.stringify(error) },
+          ]),
+        );
+        vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+        const onEngineError = vi.fn();
+        await handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "hello" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          onEngineError,
+        });
+        await lastExecution;
+        const errors = writtenChunks.filter((chunk) => chunk.type === "error");
+        expect(errors).toHaveLength(1);
+        expect(JSON.parse(errors[0].errorText)).toEqual(error);
+        expect(onEngineError).toHaveBeenCalledTimes(1);
+        expect(onEngineError.mock.calls[0][0]).toMatchObject({
+          message: error.message,
+          code: error.code,
+          httpStatus: statusCode,
+          isRetryable,
+          details: error.details,
+        });
+        if (partial)
+          expect(writtenChunks).toContainEqual(
+            expect.objectContaining({
+              type: "text-delta",
+              delta: "Partial answer",
+            }),
+          );
+      },
+    );
 
     it("fires `onEngineError` (via outer catch) when SSE parser fails mid-stream (PR 5b-followup-2 review — CodeRabbit Major 'Parser failures bypass onEngineError')", async () => {
       // CodeRabbit followup-2 review fix: the pre-fix
