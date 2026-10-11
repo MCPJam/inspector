@@ -510,6 +510,10 @@ it("repeated rejection of fresh tokens stays blocked after the SDK gives up", as
         ([, options]) => options.source === "convex_auth_recovery",
       );
     expect(episodes).toHaveLength(1);
+    expect(episodes[0][1]).toMatchObject({
+      level: "warning",
+      fingerprint: ["convex_auth_recovery_failed"],
+    });
     expect(episodes[0][1].extra).toMatchObject({
       outcome: "failed",
       mode: "workos",

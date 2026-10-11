@@ -41,7 +41,10 @@ export interface ReportOptions {
    * site. Sentry only.
    */
   tags?: Record<string, string>;
-  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  /**
+   * Grouping override for both sinks, for a call site whose stacks are all
+   * alike. PostHog receives it joined as `$exception_fingerprint`.
+   */
   fingerprint?: string[];
 }
 
@@ -240,7 +243,10 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
     if (isErrorCaptureSurface() && !isCredentialBearingPath()) {
       posthog.captureException(normalized, {
         source: options.source,
-        level: options.level ?? "error",
+        $exception_level: options.level ?? "error",
+        ...(options.fingerprint
+          ? { $exception_fingerprint: options.fingerprint.join(":") }
+          : {}),
         ...requestIdTag,
         ...(queryTags
           ? { ...queryTags, page_location: page }
