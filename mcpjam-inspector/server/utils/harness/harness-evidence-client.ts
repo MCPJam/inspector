@@ -35,6 +35,11 @@
 import { logger } from "../logger.js";
 import { writeUntilAcknowledged } from "../acknowledged-write.js";
 import type { WriteAttempt } from "../acknowledged-write.js";
+import {
+  getServiceCredential,
+  hasServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../services/service-credential.js";
 
 /**
  * Attempts per write, and the backoff between them. Worst case per write is
@@ -223,7 +228,7 @@ function classify(response: EvidenceTransportResponse): WriteAttempt<true> {
 export function isHarnessEvidenceConfigured(): boolean {
   return Boolean(
     process.env.CONVEX_HTTP_URL?.trim() &&
-    process.env.INSPECTOR_SERVICE_TOKEN?.trim(),
+    hasServiceCredential(),
   );
 }
 
@@ -238,7 +243,7 @@ export function isHarnessEvidenceConfigured(): boolean {
 export function createConvexEvidenceTransport(bearer?: string): HarnessEvidenceTransport {
   return async (path, body, init) => {
     const base = process.env.CONVEX_HTTP_URL?.trim();
-    const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+    const token = getServiceCredential();
     if (!base || (!token && !bearer)) {
       return {
         status: 500,
@@ -251,7 +256,7 @@ export function createConvexEvidenceTransport(bearer?: string): HarnessEvidenceT
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(bearer ? { authorization: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}` } : { "x-inspector-service-token": token! }),
+          ...(bearer ? { authorization: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}` } : { [INSPECTOR_SERVICE_TOKEN_HEADER]: token! }),
         },
         body: JSON.stringify(body),
         ...(init.signal ? { signal: init.signal } : {}),

@@ -229,6 +229,16 @@ export class ElicitationManager {
     return this.pendingSequence;
   }
 
+  /** Extension input shares the existing scoped watchdog tokens and age bounds. */
+  async trackInput<T>(serverId: string, run: () => T | Promise<T>): Promise<T> {
+    const token = this.beginPending(serverId);
+    try {
+      return await run();
+    } finally {
+      this.endPending(token);
+    }
+  }
+
   private beginPending(serverId: string): symbol {
     const token = Symbol("elicitation-pending");
     this.pendingElicitationEntries.set(token, {
