@@ -102,10 +102,11 @@ describe("canonicalSelectionModelId", () => {
       { id: "mistral-small-2603", provider: "mistral" },
       "mistralai/mistral-small-2603",
     ],
+    [{ id: "claude-opus-5", provider: "anthropic" }, "anthropic/claude-opus-5"],
     // No known canonical id: no selection, the legacy id stays.
     [{ id: "grok-3", provider: "xai" }, null],
     [{ id: "mistral-large-latest", provider: "mistral" }, null],
-    [{ id: "claude-opus-5", provider: "anthropic" }, null],
+    [{ id: "claude-unknown-test-model", provider: "anthropic" }, null],
     [{ id: "deepseek-chat", provider: "deepseek" }, null],
     [{ id: "llama3.2:latest", provider: "ollama" }, "ollama/llama3.2:latest"],
     [{ id: "openai/gpt-4o", provider: "openrouter" }, "openai/gpt-4o"],

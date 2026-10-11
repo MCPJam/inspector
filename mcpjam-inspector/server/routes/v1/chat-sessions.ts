@@ -1,4 +1,5 @@
 import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
+import type { ModelReasoningEffort } from "@mcpjam/sdk";
 /**
  * Public v1 AGENT PLAYGROUND surface — drive a conversation and read what it
  * produced.
@@ -107,6 +108,8 @@ type SessionRow = {
     serverIds?: string[];
     systemPrompt?: string;
     temperature?: number;
+    /** What the conversation ran at; see `chatResumeConfigValidator`. */
+    reasoningEffort?: ModelReasoningEffort;
   };
 };
 
