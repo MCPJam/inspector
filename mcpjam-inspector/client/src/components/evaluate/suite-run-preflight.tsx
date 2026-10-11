@@ -13,6 +13,14 @@ import {
   loadedOrgModelConfig,
   useHostedOrgModelConfig,
 } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
+import {
+  orgKeyProblemsOf,
+  type PreflightModel,
+  type PreflightOrgConfig,
+  type PreflightSelection,
+} from "./suite-run-preflight-org-keys";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -44,6 +52,14 @@ export type RunPreflight = {
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /** Org provider keys a run model needs that the org has not enabled. */
   disabledProviders: string[];
+  /**
+   * While the organization requires its own provider keys: each required AI
+   * dependency that cannot run on its providers (an MCPJam-provided or
+   * personal target model, or an organization connection that can't run it).
+   * The run cannot start; the backend refuses the same launch.
+   * Absent when there are none.
+   */
+  orgKeyProblems?: string[];
 };
 
 export type RunPreflightState = RunPreflight & {
@@ -64,10 +80,10 @@ export function runPreflight(input: {
   servers: Readonly<Record<string, { connectionStatus?: string }>>;
   /** Absent while loading or outside a project: nothing reads as removed. */
   projectServers?: readonly { _id: string; name: string }[];
-  models: readonly { model: string; provider: string }[];
+  models: readonly PreflightModel[];
   availableModelIds?: readonly string[];
   /** Absent while loading: no provider reads as disabled. */
-  orgConfig?: { providers: { providerKey: string; enabled: boolean }[] };
+  orgConfig?: PreflightOrgConfig;
   refused?: readonly string[];
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /**
@@ -91,6 +107,22 @@ export function runPreflight(input: {
     if (!known && input.knownOnly) continue;
     const gone = !known && input.projectServers !== undefined;
     (gone ? removed : disconnected).push(ref);
+  }
+  const orgConfig = input.orgConfig;
+  if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
+    // Under the policy the organization's own connections are the only
+    // source; "is the provider enabled" is subsumed by these problems.
+    const problems = orgKeyProblemsOf(orgConfig, input.models);
+    return {
+      disconnected,
+      removed,
+      refused: [...(input.refused ?? [])],
+      ...(input.refusalByEnvironment
+        ? { refusalByEnvironment: input.refusalByEnvironment }
+        : {}),
+      disabledProviders: [],
+      ...(problems.length > 0 ? { orgKeyProblems: problems } : {}),
+    };
   }
   const disabledProviders = new Set<string>();
   for (const { model, provider } of input.orgConfig ? input.models : []) {
@@ -123,9 +155,31 @@ export function runPreflight(input: {
 type PreflightEnvironment = Pick<
   ProjectEnvironmentView,
   "environmentId" | "hostId" | "modelId"
->;
+> & {
+  /** The saved selection behind the environment's model override. */
+  modelSelection?: PreflightSelection | null;
+};
 
-type PreflightTarget = { hostId: string; modelId?: string };
+type PreflightTarget = {
+  hostId: string;
+  modelId?: string;
+  /** The saved selection behind `modelId` (an org pick names its connection). */
+  modelSelection?: PreflightSelection | null;
+};
+
+/**
+ * `selection` when it was saved for `model` (or names no model), else
+ * `undefined`: a selection is never carried onto another model.
+ */
+function selectionForModel(
+  selection: PreflightSelection | null | undefined,
+  model: string,
+): PreflightSelection | undefined {
+  if (!selection) return undefined;
+  return !selection.modelId || selection.modelId === model
+    ? selection
+    : undefined;
+}
 
 /** The servers and models a launch of this suite would need. */
 export function preflightTargets({
@@ -140,13 +194,18 @@ export function preflightTargets({
   suite: EvalSuite;
   cases: readonly EvalCase[];
   environments: readonly PreflightEnvironment[];
-  hosts: readonly { hostId: string; modelId?: string | null }[];
+  /** A client's model, and its saved selection when the browser knows it. */
+  hosts: readonly {
+    hostId: string;
+    modelId?: string | null;
+    modelSelection?: PreflightSelection | null;
+  }[];
   environmentServerRefs: readonly string[];
   /** The client/model cells the run will launch; else the attached ones. */
   targets?: readonly PreflightTarget[];
   /** The servers those cells run on, when the sheet picks them (a group). */
   serverRefs?: readonly string[];
-}): { serverRefs: string[]; models: { model: string; provider: string }[] } {
+}): { serverRefs: string[]; models: PreflightModel[] } {
   const environmentIds = suite.environmentIds ?? [];
   // Without planned cells, a suite without environments keeps its own launch:
   // an SDK suite's servers and models are what its CI ran, a legacy suite's
@@ -158,23 +217,44 @@ export function preflightTargets({
       serverRefs: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
       models: cases.flatMap((item) => item.models ?? []),
     };
-  // A cell runs its own model, else its client's.
-  const cells =
+  // A cell runs its own model, else its client's, each with the selection
+  // saved for it: an organization model and MCPJam's model of the same id are
+  // told apart only by that selection.
+  const cells: readonly PreflightTarget[] =
     targets ??
     environmentIds.flatMap((id) => {
       const environment = environments.find(
         (item) => item.environmentId === id,
       );
       return environment
-        ? [{ hostId: environment.hostId, modelId: environment.modelId }]
+        ? [
+            {
+              hostId: environment.hostId,
+              modelId: environment.modelId,
+              ...(environment.modelSelection
+                ? { modelSelection: environment.modelSelection }
+                : {}),
+            },
+          ]
         : [];
     });
-  const models = cells.flatMap((cell) => {
-    const model =
-      cell.modelId ||
-      hosts.find((host) => host.hostId === cell.hostId)?.modelId;
+  const models = cells.flatMap((cell): PreflightModel[] => {
+    const client = hosts.find((item) => item.hostId === cell.hostId);
+    const host = cell.modelId ? undefined : client;
+    const model = cell.modelId || host?.modelId;
     const provider = model ? classifyModelIdProvider(model) : null;
-    return model && provider ? [{ model, provider: provider.provider }] : [];
+    if (!model || !provider) return [];
+    const selection = selectionForModel(
+      cell.modelId ? cell.modelSelection : host?.modelSelection,
+      model,
+    );
+    return [
+      {
+        model,
+        provider: provider.provider,
+        ...(selection ? { selection } : {}),
+      },
+    ];
   });
   return { serverRefs: [...(serverRefs ?? environmentServerRefs)], models };
 }
@@ -211,10 +291,16 @@ export function readEnvironmentResolutions(
   serverRefs: string[];
   refusals: string[];
   refusalByEnvironment: Record<string, string>;
+  /**
+   * Each client's saved model selection, from environments that inherit the
+   * client's model. Absent when none does.
+   */
+  hostModelSelections?: Record<string, PreflightSelection>;
 } {
   const serverRefs: string[] = [];
   const refusals = new Set<string>();
   const refusalByEnvironment: Record<string, string> = {};
+  const hostModelSelections: Record<string, PreflightSelection> = {};
   for (const [environmentId, resolved] of Object.entries(results)) {
     if (resolved instanceof Error) {
       const code = (resolved as { data?: { code?: unknown } }).data?.code;
@@ -239,15 +325,44 @@ export function readEnvironmentResolutions(
         );
       continue;
     }
-    const servers = (resolved as { servers?: unknown } | undefined)?.servers;
+    const resolution = resolved as
+      | {
+          servers?: unknown;
+          hostId?: unknown;
+          modelSource?: unknown;
+          effectiveModelId?: unknown;
+          effectiveModelSelection?: unknown;
+        }
+      | undefined;
+    const servers = resolution?.servers;
     if (Array.isArray(servers))
       for (const server of servers as Array<{
         serverId: string;
         name?: string;
       }>)
         serverRefs.push(server.name?.trim() || server.serverId);
+    // An environment that inherits its client's model resolves the client's
+    // saved selection, which the client list does not carry.
+    const selection = resolution?.effectiveModelSelection as
+      PreflightSelection | null | undefined;
+    if (
+      resolution?.modelSource === "host" &&
+      typeof resolution.hostId === "string" &&
+      typeof resolution.effectiveModelId === "string" &&
+      selection &&
+      typeof selection === "object" &&
+      selection.modelId === resolution.effectiveModelId
+    )
+      hostModelSelections[resolution.hostId] = selection;
   }
-  return { serverRefs, refusals: [...refusals], refusalByEnvironment };
+  return {
+    serverRefs,
+    refusals: [...refusals],
+    refusalByEnvironment,
+    ...(Object.keys(hostModelSelections).length > 0
+      ? { hostModelSelections }
+      : {}),
+  };
 }
 
 export function useEnvironmentResolutions(
@@ -327,11 +442,22 @@ export function useSuiteRunPreflight({
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
     planned?.templateOnlyIds,
   );
+  const hostModelSelections = environment.hostModelSelections;
+  // Each client with the saved selection its environments resolved, so an
+  // organization model and MCPJam's model of the same id are told apart.
+  const hostsWithSelections = hostModelSelections
+    ? hosts.map((host) => {
+        const selection = hostModelSelections[host.hostId];
+        return selection && selection.modelId === host.modelId
+          ? { ...host, modelSelection: selection }
+          : host;
+      })
+    : hosts;
   const targets = preflightTargets({
     suite,
     cases,
     environments,
-    hosts,
+    hosts: hostsWithSelections,
     environmentServerRefs: environment.serverRefs,
     targets: planned?.targets,
     serverRefs: planned?.serverRefs,
@@ -344,8 +470,7 @@ export function useSuiteRunPreflight({
     projectServers,
     knownOnly: Boolean(planned ?? suite.environmentIds?.length),
     availableModelIds: availableModels.map((model) => String(model.id)),
-    // Absent while the organization's AI settings load: no provider reads as
-    // disabled before they answer.
+    // Pending reads as loading: nothing is judged before the policy is known.
     orgConfig: loadedOrgModelConfig(orgConfig),
   });
   // The models are locked in `availableModels` only while the org is out.
@@ -367,7 +492,7 @@ export function useSuiteRunPreflight({
                 suite: { ...suite, environmentIds: [...environmentIds] },
                 cases,
                 environments,
-                hosts,
+                hosts: hostsWithSelections,
                 environmentServerRefs: [],
               }).models,
             ),
@@ -456,7 +581,11 @@ export function connectOutcome(
 }
 
 export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
-  return Boolean(preflight?.removed.length || preflight?.refused.length);
+  return Boolean(
+    preflight?.removed.length ||
+    preflight?.refused.length ||
+    preflight?.orgKeyProblems?.length,
+  );
 }
 
 export function RunPreflightNotices({
@@ -481,11 +610,13 @@ export function RunPreflightNotices({
   } | null>(null);
   const { disconnected, removed, refused, disabledProviders, serverName } =
     preflight;
+  const orgKeyProblems = preflight.orgKeyProblems ?? [];
   if (
     !disconnected.length &&
     !removed.length &&
     !refused.length &&
-    !disabledProviders.length
+    !disabledProviders.length &&
+    !orgKeyProblems.length
   )
     return null;
   const openServers = (
@@ -519,6 +650,29 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
+      {orgKeyProblems.length > 0 && (
+        <div className="space-y-1" data-testid="preflight-org-key-problems">
+          {orgKeyProblems.map((message) => (
+            <p key={`org-keys:${message}`} className="text-destructive">
+              {message}
+            </p>
+          ))}
+          {preflight.manageModels ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={disabled}
+              onClick={preflight.manageModels}
+            >
+              {MANAGE_AI_PROVIDERS}
+            </Button>
+          ) : (
+            <p className="text-muted-foreground">
+              {ASK_ORG_ADMIN} if no organization model fits.
+            </p>
+          )}
+        </div>
+      )}
       {refused.map((message) => (
         <p key={`refused:${message}`} className="text-destructive">
           {message}{" "}

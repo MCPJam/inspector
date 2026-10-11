@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import {
   connectOutcome,
+  hasBlockingPreflight,
   preflightTargets,
   readEnvironmentResolutions,
   runPreflight,
@@ -12,6 +13,7 @@ import {
   scopePreflightToEnvironments,
 } from "../suite-run-preflight";
 import { SuiteRunReviewContent } from "../suite-run-review";
+import { plannedPreflight } from "../suite-run-matrix";
 import type { EvalCase, EvalSuite } from "../../evals/types";
 
 const connected = { connectionStatus: "connected" };
@@ -677,6 +679,346 @@ describe("scopePreflightToEnvironments credits gate", () => {
       scopePreflightToEnvironments(preflight, ["env-locked"])
         .outOfCreditsReason,
     ).toBe(REASON);
+  });
+});
+
+describe("runPreflight while the organization requires its own keys", () => {
+  // Each connection carries the backend's verdict; the sheet only reads it.
+  const policy = {
+    providers: [
+      {
+        id: "conn_anthropic",
+        providerKey: "anthropic",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: { eligible: true },
+      },
+      {
+        id: "conn_router",
+        providerKey: "openrouter",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: {
+          eligible: false,
+          code: "org_keys_required" as const,
+        },
+      },
+    ],
+    aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+  };
+
+  it("blocks a hosted target and a personal-key target", () => {
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [
+        { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+        { model: "llama3.2:latest", provider: "ollama" },
+        {
+          model: "anthropic/claude-sonnet-4.5",
+          provider: "anthropic",
+          selection: {
+            source: "org",
+            connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+          },
+        },
+        {
+          model: "openai/gpt-4o",
+          provider: "openrouter",
+          selection: {
+            source: "org",
+            connectionRef: { kind: "orgProvider", id: "conn_router" },
+          },
+        },
+      ],
+      orgConfig: policy,
+    });
+
+    expect(preflight.disabledProviders).toEqual([]);
+    expect(preflight.orgKeyProblems).toHaveLength(3);
+    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+      /anthropic\/claude-haiku-4\.5 is an MCPJam-provided model/,
+    );
+    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+      /llama3\.2:latest runs on a personal or local key/,
+    );
+    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+      /openai\/gpt-4o uses an organization provider connection that can't run it/,
+    );
+    expect(
+      preflight.orgKeyProblems!.every((problem) =>
+        problem.endsWith("Choose a model from an organization provider."),
+      ),
+    ).toBe(true);
+    expect(hasBlockingPreflight(preflight)).toBe(true);
+  });
+
+  it("lets an eligible org model through", () => {
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
+      orgConfig: policy,
+    });
+    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(hasBlockingPreflight(preflight)).toBe(false);
+  });
+
+  it("follows the backend's verdict, and blocks a connection without one", () => {
+    const models = [
+      {
+        model: "anthropic/claude-sonnet-4.5",
+        provider: "anthropic",
+        selection: {
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+        },
+      },
+    ];
+    const anthropic = policy.providers[0]!;
+    // The backend refuses this Anthropic connection: so does the sheet.
+    const refused = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models,
+      orgConfig: {
+        ...policy,
+        providers: [
+          {
+            ...anthropic,
+            policyEligibility: {
+              eligible: false,
+              code: "org_keys_required" as const,
+            },
+          },
+        ],
+      },
+    });
+    expect(refused.orgKeyProblems).toHaveLength(1);
+    expect(refused.orgKeyProblems![0]).toMatch(
+      /uses an organization provider connection that can't run it/,
+    );
+    // An older backend sends no verdict: not eligible under the policy.
+    const { policyEligibility: _verdict, ...noVerdict } = anthropic;
+    expect(
+      runPreflight({
+        serverRefs: [],
+        servers: {},
+        models,
+        orgConfig: { ...policy, providers: [noVerdict] },
+      }).orgKeyProblems,
+    ).toHaveLength(1);
+    // The verdict never looks at keys: an eligible connection with no saved
+    // key can't run the model either.
+    expect(
+      runPreflight({
+        serverRefs: [],
+        servers: {},
+        models,
+        orgConfig: {
+          ...policy,
+          providers: [{ ...anthropic, hasSecret: false }],
+        },
+      }).orgKeyProblems,
+    ).toHaveLength(1);
+  });
+
+  it("renders the problems as blocking notices with the admin action", async () => {
+    const manageModels = vi.fn();
+    render(
+      <RunPreflightNotices
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: [],
+          disabledProviders: [],
+          orgKeyProblems: ["The judge is an MCPJam-provided model."],
+          serverName: (ref) => ref,
+          manageModels,
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("The judge is an MCPJam-provided model."),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    );
+    expect(manageModels).toHaveBeenCalled();
+  });
+});
+
+describe("an organization model chosen for an environment or matrix cell, under the policy", () => {
+  // The org's own OpenAI connection and MCPJam's hosted model share the
+  // canonical id `openai/gpt-5`; only the saved selection tells them apart.
+  const strict = {
+    providers: [
+      {
+        id: "conn_openai",
+        providerKey: "openai",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: { eligible: true },
+      },
+    ],
+    aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+  };
+  const fallback = { provider: "none", model: "none" } as const;
+  const orgGpt5 = {
+    modelId: "openai/gpt-5",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_openai" },
+    nativeModelId: "gpt-5",
+    fallback,
+  } as const;
+  const hostedGpt5 = {
+    modelId: "openai/gpt-5",
+    source: "hosted",
+    fallback,
+  } as const;
+  const suite = {
+    _id: "suite",
+    name: "S",
+    environmentIds: ["env"],
+  } as unknown as EvalSuite;
+
+  // The real composition the run sheet uses: the plan's targets, through
+  // `preflightTargets`, into `runPreflight`.
+  const preflightFor = (
+    input: Partial<Parameters<typeof preflightTargets>[0]>,
+  ) =>
+    runPreflight({
+      ...preflightTargets({
+        suite,
+        cases: [],
+        environments: [],
+        hosts: [{ hostId: "claude", modelId: "anthropic/claude-sonnet-4-5" }],
+        environmentServerRefs: [],
+        ...input,
+      }),
+      servers: {},
+      orgConfig: strict,
+    });
+  const MCPJAM_PROVIDED = /openai\/gpt-5 is an MCPJam-provided model/;
+
+  it("lets a new matrix cell's eligible org choice through, and blocks a hosted choice of the same id", () => {
+    const cell = (modelSelection: unknown) =>
+      plannedPreflight([
+        {
+          stack: { hostId: "claude", modelId: "openai/gpt-5", modelSelection },
+        },
+      ] as never);
+
+    const org = preflightFor({ targets: cell(orgGpt5).targets });
+    expect(org.orgKeyProblems).toBeUndefined();
+    expect(hasBlockingPreflight(org)).toBe(false);
+
+    const hosted = preflightFor({ targets: cell(hostedGpt5).targets });
+    expect(hosted.orgKeyProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
+    expect(hasBlockingPreflight(hosted)).toBe(true);
+  });
+
+  it("carries a reused environment's own selection into its cell", () => {
+    const plan = [
+      {
+        environmentId: "env",
+        stack: { hostId: "claude", modelId: "openai/gpt-5" },
+      },
+    ] as never;
+    const environments = [
+      {
+        environmentId: "env",
+        modelId: "openai/gpt-5",
+        modelSelection: orgGpt5 as never,
+      },
+    ];
+
+    const org = preflightFor({
+      targets: plannedPreflight(plan, environments).targets,
+    });
+    expect(org.orgKeyProblems).toBeUndefined();
+
+    const hosted = preflightFor({
+      targets: plannedPreflight(plan, [
+        { ...environments[0]!, modelSelection: hostedGpt5 as never },
+      ]).targets,
+    });
+    expect(hosted.orgKeyProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
+  });
+
+  it("carries an attached environment's selection when no cells are planned", () => {
+    const environment = {
+      environmentId: "env",
+      hostId: "claude",
+      modelId: "openai/gpt-5",
+    };
+    expect(
+      preflightFor({
+        environments: [{ ...environment, modelSelection: orgGpt5 }],
+      }).orgKeyProblems,
+    ).toBeUndefined();
+    expect(
+      preflightFor({
+        environments: [{ ...environment, modelSelection: hostedGpt5 }],
+      }).orgKeyProblems?.join("\n"),
+    ).toMatch(MCPJAM_PROVIDED);
+  });
+
+  it("carries the client's selection to a cell that inherits the client's model", () => {
+    const hostWith = (modelSelection: unknown) => [
+      {
+        hostId: "claude",
+        modelId: "openai/gpt-5",
+        modelSelection: modelSelection as never,
+      },
+    ];
+    expect(
+      preflightFor({
+        targets: [{ hostId: "claude" }],
+        hosts: hostWith(orgGpt5),
+      }).orgKeyProblems,
+    ).toBeUndefined();
+    expect(
+      preflightFor({
+        targets: [{ hostId: "claude" }],
+        hosts: hostWith(hostedGpt5),
+      }).orgKeyProblems?.join("\n"),
+    ).toMatch(MCPJAM_PROVIDED);
+  });
+
+  it("never carries a selection onto a model it was not saved for", () => {
+    expect(
+      preflightFor({
+        targets: [
+          {
+            hostId: "claude",
+            modelId: "openai/gpt-5",
+            modelSelection: { ...orgGpt5, modelId: "openai/gpt-5-mini" },
+          },
+        ],
+      }).orgKeyProblems?.join("\n"),
+    ).toMatch(MCPJAM_PROVIDED);
+  });
+
+  it("reads the client's selection from an environment that inherits its model", () => {
+    expect(
+      readEnvironmentResolutions({
+        env: {
+          servers: [],
+          hostId: "claude",
+          modelSource: "host",
+          effectiveModelId: "openai/gpt-5",
+          effectiveModelSelection: orgGpt5,
+        },
+        "env-own": {
+          servers: [],
+          hostId: "codex",
+          modelSource: "environment",
+          effectiveModelId: "openai/gpt-5",
+          effectiveModelSelection: orgGpt5,
+        },
+      }).hostModelSelections,
+    ).toEqual({ claude: orgGpt5 });
   });
 });
 
