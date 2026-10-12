@@ -58,6 +58,10 @@ const mockState = vi.hoisted(() => ({
   countTextTokens: vi.fn(async () => null),
   convexAuth: { isAuthenticated: true, isLoading: false },
   workOsUser: null as { id: string } | null,
+  currentUser: { isAnonymous: true } as
+    | { isAnonymous: boolean }
+    | null
+    | undefined,
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
     availableModels: [],
@@ -159,8 +163,14 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", async () =>
   (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => mockState.convexAuth,
-  useQuery: () => undefined,
+  useQuery: (name: string, args: unknown) =>
+    name === "users:getCurrentUser" && args !== "skip"
+      ? mockState.currentUser
+      : undefined,
   useConvex: () => ({ mutation: mockState.convexMutation }),
+}));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 vi.mock("@ai-sdk/react", () => ({
   useChat: vi.fn((options: {
@@ -323,6 +333,7 @@ describe("useChatSession — local Claude Code transmission", () => {
     mockState.idCounter = 0;
     mockState.messages = [];
     mockState.workOsUser = null;
+    mockState.currentUser = { isAnonymous: true };
   });
 
   it("applies guest model locks even with a valid Convex guest session", async () => {
@@ -332,8 +343,25 @@ describe("useChatSession — local Claude Code transmission", () => {
     );
   });
 
-  it("allows signed-in users through the guest model locks", async () => {
+  it.each([
+    ["guest", { isAnonymous: true }],
+    ["unresolved", undefined],
+    ["without a readable user row", null],
+  ] as const)(
+    "keeps frontier locked with a WorkOS user and a %s Convex actor",
+    async (_name, currentUser) => {
+      mockState.workOsUser = { id: "workos-user-1" };
+      mockState.currentUser = currentUser;
+      await renderWithHarness(grantedController());
+      expect(composeAvailableModels).toHaveBeenCalledWith(
+        expect.objectContaining({ isAuthenticated: false }),
+      );
+    },
+  );
+
+  it("allows confirmed member actors through the guest model locks", async () => {
     mockState.workOsUser = { id: "workos-user-1" };
+    mockState.currentUser = { isAnonymous: false };
     await renderWithHarness(grantedController());
     expect(composeAvailableModels).toHaveBeenCalledWith(
       expect.objectContaining({ isAuthenticated: true }),

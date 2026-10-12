@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import type { ModelDefinition } from "@/shared/types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
@@ -79,9 +79,7 @@ export function useAvailableModels(options?: {
     scopedProject?.sharedProjectId ?? options?.projectId ?? null;
   const organizationId = scopedProject?.organizationId ?? null;
 
-  const { user } = useAuth();
-  // Convex authenticates guests too; frontier access requires a WorkOS user.
-  const isSignedIn = Boolean(user);
+  const isMemberActor = useIsMemberActor();
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
     organizationId,
@@ -115,7 +113,7 @@ export function useAvailableModels(options?: {
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated: isSignedIn,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -129,7 +127,7 @@ export function useAvailableModels(options?: {
       }),
     [
       hostedOrgModelConfig,
-      isSignedIn,
+      isMemberActor,
       isOllamaRunning,
       ollamaModels,
       hasToken,

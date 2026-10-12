@@ -79,6 +79,7 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
@@ -2112,6 +2113,7 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   // Elicitation answers go straight to Convex — the blocked replica isn't
   // addressable from here (see `elicitation-api.ts`).
   const convexClient = useConvex();
@@ -2962,9 +2964,7 @@ export function useChatSession(
     [savedModelIdsSignature],
   );
 
-  // Build available models — the same composition every picker surface
-  // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (scenario embeds resolve a host-provided project context).
+  // Shared picker composition; scenario embeds use a host-provided org context.
   const outOfCreditsReason = useOutOfCreditsReason();
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
@@ -2973,7 +2973,7 @@ export function useChatSession(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated: Boolean(workOsUser),
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -2991,7 +2991,7 @@ export function useChatSession(
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
-      workOsUser,
+      isMemberActor,
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
