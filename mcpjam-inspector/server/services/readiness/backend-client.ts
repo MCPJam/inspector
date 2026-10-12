@@ -1,3 +1,4 @@
+import { DIRECTORY_OBSERVATION_STATUSES } from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
@@ -43,12 +44,10 @@ const OBSERVATIONS_PATH = "/internal/v1/claude-readiness/observations";
  * A closed check rather than `typeof === "string"`, because the value lands on
  * the run row and a surface branches on it.
  */
-const BROKER_STATUSES: ObservationBrokerAnswer["status"][] = [
-  "completed",
-  "billing-blocked",
-  "provider-failed",
-  "invalid-output",
-];
+const BROKER_STATUSES = DIRECTORY_OBSERVATION_STATUSES.filter(
+  (status): status is ObservationBrokerAnswer["status"] =>
+    status !== "not-requested" && status !== "pending",
+);
 
 /** Per-call budget. Generous for the report, tight for the heartbeat. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
@@ -193,8 +192,9 @@ export async function requestManagedObservations(
         isOrgKeyPolicyRefusalCode(body.code)
       ) {
         return {
-          status: "provider-failed",
+          status: "ai-unavailable",
           reason: "ai_unavailable",
+          refusalCode: body.code.trim().toLowerCase(),
           detail: `the organization's AI configuration could not run the observation pass (${body.code.trim().toLowerCase()}): ${detail}`,
         };
       }
@@ -208,7 +208,7 @@ export async function requestManagedObservations(
     const body = (await response.json().catch(() => null)) as
       | (ObservationBrokerAnswer & { ok?: boolean })
       | null;
-    // CONSTRAINED TO THE FOUR STATUSES THIS BUILD KNOWS, not merely to
+    // Constrained to the statuses this build knows, not merely to
     // "a string". The value is copied onto the run row as
     // `llmObservationStatus`, so a backend deployed ahead of this build could
     // otherwise persist a status the SDK never defined — the exact drift the
@@ -225,6 +225,7 @@ export async function requestManagedObservations(
       status: body.status,
       reason: body.reason,
       detail: body.detail,
+      refusalCode: body.refusalCode,
       envelope: body.envelope,
     };
   } finally {

@@ -314,8 +314,8 @@ export function RouteRow({
                   </div>
                 </div>
                 <ToolCalledWithFields
-                  paper={!readOnly}
-                  compact={readOnly}
+                  paper={paper && !readOnly}
+                  compact={!(paper && !readOnly)}
                   predicate={
                     toolPredicate ?? {
                       type: "toolCalledWith",

@@ -12,7 +12,7 @@ const FORMAT = {
     items: {
       type: "array",
       minItems: 1,
-      maxItems: 1,
+      // Claude does not support maxItems; reviewBody enforces one result.
       items: {
         type: "object",
         properties: { body: { type: "string" } },
