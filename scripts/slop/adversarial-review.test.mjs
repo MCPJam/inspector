@@ -33,7 +33,7 @@ test("oversized context fails rather than silently truncating the review", () =>
 
 test("review validation rejects missing, multiple, empty and oversized results", () => {
   for (const items of [undefined, [], [{ body: "" }], [{ body: 1 }],
-    [{ body: "unlabeled finding" }], [{ body: "a" }, { body: "b" }],
+    [{ body: "unlabeled finding" }], [{ body: "[do] First" }, { body: "[try] Second" }],
     [{ body: "[do] " + "x".repeat(25_001) }]]) {
     assert.throws(() => reviewBody(items, "abc"), /invalid review/);
   }
@@ -80,6 +80,7 @@ test("posts a COMMENT on the reviewed SHA and refuses stale or failed model resu
     };
     const call = async (input) => {
       assert.equal(input.model.id, "claude-sonnet-5-5");
+      assert.equal(Object.hasOwn(input.format.properties.items, "maxItems"), false);
       assert.match(input.system, /engineering-writing/);
       if (scenario === "model-failure") throw new Error("API unavailable");
       return { items: [{ body: "[try] Verify caller assumptions." }] };
