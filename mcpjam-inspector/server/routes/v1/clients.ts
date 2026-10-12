@@ -43,7 +43,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
+import { createConvexClient } from "./convex-client.js";
+import { repairEmptyClientList } from "./client-list-repair.js";
 import {
   bundledHostCompatCatalog,
   fetchHostCompatCatalog,
@@ -273,20 +274,6 @@ async function resolveHostTemplateInput(
     input.hostContext = { ...hostContext, theme };
   }
   return input;
-}
-
-function createConvexClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
 }
 
 /**
@@ -785,10 +772,19 @@ type Surface = { legacy: boolean };
 
 async function listHandler(c: Context, { legacy }: Surface) {
   const projectId = pathParam(c, "projectId");
-  const rows = await listHostRows(
-    await getConvexBearerForRequest(c),
-    projectId,
-  );
+  const token = await getConvexBearerForRequest(c);
+  let rows = await listHostRows(token, projectId);
+  const visibleCount = rows.filter((row) => !isPrivateBacking(row)).length;
+  if (
+    await repairEmptyClientList(
+      token,
+      projectId,
+      visibleCount,
+      translateConvexWriteError,
+    )
+  ) {
+    rows = await listHostRows(token, projectId);
+  }
   if (legacy) {
     markDeprecated(c);
     return v1PageJson(c, rows.map(toLegacyHostDto));

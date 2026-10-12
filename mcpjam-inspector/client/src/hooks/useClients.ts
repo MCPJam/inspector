@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import type { ThemeMode } from "@/types/preferences/theme";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -182,6 +184,35 @@ export function useHost({
   };
 }
 
+export type ProjectClientComparison = {
+  state: "pending" | "complete" | "skipped";
+  /** Live comparison clients, lead first. */
+  hostIds: string[];
+  /** True only on the call that created the lineup. */
+  created: boolean;
+};
+
+export type EnsureProjectClientResult = {
+  hostId: string;
+  created: boolean;
+  /** Null unless `initializeComparison` was requested. */
+  comparison: ProjectClientComparison | null;
+};
+
+/**
+ * Open to every project role: gives an empty project its default client.
+ * `initializeComparison` (admins only) also settles the first-run lineup.
+ */
+const ensureProjectClientMutation = makeFunctionReference<
+  "mutation",
+  {
+    projectId: string;
+    themeMode?: ThemeMode;
+    initializeComparison?: boolean;
+  },
+  EnsureProjectClientResult
+>("projectClients:ensureProjectClient");
+
 export function useHostMutations() {
   const createHost = useMutation("hosts:createHost" as any) as unknown as (args: {
     projectId: string;
@@ -241,11 +272,14 @@ export function useHostMutations() {
     name?: string;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
+  const ensureProjectClient = useMutation(ensureProjectClientMutation);
+
   return {
     createHost,
     updateHost,
     updateHostServers,
     deleteHost,
     duplicateHost,
+    ensureProjectClient,
   };
 }

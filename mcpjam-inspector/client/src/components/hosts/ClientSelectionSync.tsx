@@ -1,77 +1,38 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useConvexAuth } from "convex/react";
-import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
-import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useProjectClientInitialization } from "@/hooks/use-project-client-initialization";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+
+const DEFAULT_CLIENT_NAME = "MCPJam";
 
 /** Preserve project initialization independently of the client selector UI. */
 export function ClientSelectionSync({ projectId }: { projectId: string }) {
   const { isAuthenticated } = useConvexAuth();
+  // `isLoading` holds until the user row is ready and the list has loaded.
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { createHost } = useHostMutations();
-  // Only project admins may create clients; a member or guest opening an
-  // empty project gets no default client rather than a refused create.
-  const { canManage, isLoading: roleLoading } = useCanManageProjectClients({
-    isAuthenticated,
-    projectId,
-  });
-  const catalogState = useHostCatalog();
+  const { ensureProjectClient } = useHostMutations();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
-  const seededProjects = useRef(new Set<string>());
-  const defaultName =
-    catalogState.status === "live"
-      ? getCatalogHost(catalogState.catalog, "mcpjam")?.label ?? "MCPJam"
-      : "MCPJam";
 
-  useEffect(() => {
-    if (
-      !isAuthenticated ||
-      isLoading ||
-      roleLoading ||
-      !canManage ||
-      hosts.length ||
-      seededProjects.current.has(projectId) ||
-      catalogState.status !== "live"
-    )
-      return;
-    const template = getCatalogTemplate(catalogState.catalog, "mcpjam");
-    if (!template) return;
-    seededProjects.current.add(projectId);
-    createHost({
-      projectId,
-      name: defaultName,
-      // First-run guests can try the client before signing up to share.
-      scenarioMode: "project_members",
-      input: cloneHostTemplateInput(template, { themeMode }),
-    }).catch(() => {
-      seededProjects.current.delete(projectId);
-    });
-  }, [
-    isAuthenticated,
-    isLoading,
-    roleLoading,
-    canManage,
-    hosts.length,
+  // Every role: the client belongs to the project, and a member who opens an
+  // empty one has no other way to get it. The state is shown by the client
+  // selector through `useProjectClientInitStatus`.
+  useProjectClientInitialization({
     projectId,
-    catalogState,
-    createHost,
-    defaultName,
-    themeMode,
-  ]);
+    intent: "default",
+    needed: isAuthenticated && !isLoading && hosts.length === 0,
+    run: () => ensureProjectClient({ projectId, themeMode }),
+  });
 
   useEffect(() => {
     if (isLoading || hosts.some((h) => h.hostId === previewedHostId)) return;
     const fallback =
-      hosts.find((h) => h.name === defaultName) ??
-      hosts.find((h) => h.name === "MCPJam") ??
+      hosts.find((h) => h.name === DEFAULT_CLIENT_NAME) ??
       [...hosts].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) setPreviewedHostId(fallback.hostId);
-  }, [hosts, isLoading, previewedHostId, defaultName, setPreviewedHostId]);
+  }, [hosts, isLoading, previewedHostId, setPreviewedHostId]);
 
   return null;
 }
