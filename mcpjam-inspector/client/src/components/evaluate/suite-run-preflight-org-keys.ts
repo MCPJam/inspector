@@ -68,9 +68,7 @@ function orgKeyModelProblem(
   const source = model.selection?.source;
   if (source === "org") {
     const id = model.selection?.connectionRef?.id;
-    return eligibleConnection(orgConfig, (provider) =>
-      id ? provider.id === id : provider.providerKey === model.provider,
-    )
+    return id && eligibleConnection(orgConfig, (provider) => provider.id === id)
       ? null
       : `${label} uses an organization provider connection that can't run it while the organization requires its own keys. ${ORG_KEYS_MODEL_REASON}`;
   }
