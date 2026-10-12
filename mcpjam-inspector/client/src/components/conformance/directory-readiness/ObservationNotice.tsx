@@ -15,6 +15,14 @@
 
 import { Info, Sparkles } from "lucide-react";
 
+/**
+ * The organization's AI configuration, never its credits, kept the
+ * observations from running. Names no fix: until background AI runs on
+ * organization keys, there is none an admin can make.
+ */
+export const AI_UNAVAILABLE_OBSERVATIONS =
+  "AI observations are unavailable while this organization requires its own provider keys. The grade below is complete without them.";
+
 export interface ObservationState {
   status:
     | "not-requested"
@@ -22,7 +30,10 @@ export interface ObservationState {
     | "completed"
     | "billing-blocked"
     | "provider-failed"
-    | "invalid-output";
+    | "invalid-output"
+    // The organization's AI key policy kept the model from running: it
+    // requires its own provider keys, and they can't run this pass.
+    | "ai-unavailable";
   reason?: string;
   detail?: string;
 }
@@ -38,6 +49,15 @@ function describe(observations: ObservationState): {
   tone: "muted" | "info";
   text: string;
 } | null {
+  // Keyed off the machine-readable reason too: an older status union may not
+  // carry `ai-unavailable`, but the reason says the same thing. Never a
+  // billing sentence — credits are not what stopped it.
+  if (
+    observations.status === "ai-unavailable" ||
+    observations.reason === "ai_unavailable"
+  ) {
+    return { tone: "info", text: AI_UNAVAILABLE_OBSERVATIONS };
+  }
   switch (observations.status) {
     case "not-requested":
       // The default. Saying "you did not ask for the paid thing" on every run
