@@ -2063,7 +2063,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {
         "form": {},
-        "url": {},
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -2225,16 +2224,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "name": "codex-mcp-client",
-          "title": "Codex",
-          "version": "0.158.0-alpha.2.1",
+          "name": "openai-mcp (Codex)",
+          "version": "1.0.0",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -2242,7 +2242,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
-      "paginationTraversal": "firstPageOnly",
+      "mcpProtocolVersion": "auto",
+      "paginationTraversal": "full",
       "profileVersion": 1,
       "toolListChanged": {
         "listens": true,
@@ -2266,7 +2267,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "clientCapabilities": {
       "elicitation": {
         "form": {},
-        "url": {},
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -2428,16 +2428,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "name": "codex-mcp-client",
-          "title": "Codex",
-          "version": "0.158.0-alpha.2.1",
+          "name": "openai-mcp (Codex)",
+          "version": "1.0.0",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -2445,7 +2446,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
-      "paginationTraversal": "firstPageOnly",
+      "mcpProtocolVersion": "auto",
+      "paginationTraversal": "full",
       "profileVersion": 1,
       "toolListChanged": {
         "listens": true,
@@ -2487,10 +2489,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "harness": undefined,
     "hostCapabilitiesOverride": {
+      "downloadFile": {},
+      "logging": {},
       "message": {
         "text": {},
       },
       "openLinks": {},
+      "serverResources": {},
       "serverTools": {},
       "updateModelContext": {
         "text": {},
@@ -2543,28 +2548,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "sandbox": {
           "csp": {
             "mode": "declared",
-            "restrictTo": {
-              "frameDomains": [],
-            },
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
         },
         "uiInitialize": {
           "hostInfo": {
-            "name": "Copilot",
-            "version": "1.0.1",
+            "name": "M365Copilot",
+            "version": "1.0.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "agentAuthenticationMode": "Integrated",
-          "channelId": "pva-studio",
-          "lcat": "M365_COPILOT_USER",
-          "name": "mcs",
+          "name": "Sydney",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
@@ -2574,6 +2575,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "mcpProtocolVersion": "auto",
       "paginationTraversal": "full",
       "profileVersion": 1,
       "toolListChanged": {
@@ -2615,10 +2617,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "harness": undefined,
     "hostCapabilitiesOverride": {
+      "downloadFile": {},
+      "logging": {},
       "message": {
         "text": {},
       },
       "openLinks": {},
+      "serverResources": {},
       "serverTools": {},
       "updateModelContext": {
         "text": {},
@@ -2671,28 +2676,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "sandbox": {
           "csp": {
             "mode": "declared",
-            "restrictTo": {
-              "frameDomains": [],
-            },
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
         },
         "uiInitialize": {
           "hostInfo": {
-            "name": "Copilot",
-            "version": "1.0.1",
+            "name": "M365Copilot",
+            "version": "1.0.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
-          "agentAuthenticationMode": "Integrated",
-          "channelId": "pva-studio",
-          "lcat": "M365_COPILOT_USER",
-          "name": "mcs",
+          "name": "Sydney",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
@@ -2702,6 +2703,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "mcpProtocolVersion": "auto",
       "paginationTraversal": "full",
       "profileVersion": 1,
       "toolListChanged": {
