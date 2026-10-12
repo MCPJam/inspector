@@ -59,15 +59,16 @@ A row's **role** says what a miss does: **Required** fails the trial, **Advisory
 
 Because a failing required assertion halts the run, an assertion written as a step can leave later assertions unrun. The trial column marks those **Skipped**.
 
-**The route question**
+**Route assertions**
 
-The answer here is what marks a case negative — never an inference from its steps:
+Two route assertions are available from the **Add** drawer when authoring a case manually:
 
-- **A named tool** — the case must take that route.
-- **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the form says so.
-- **Any route** — the case names no route and is graded by its scorers. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+- **No tools should be called** — adds a required assertion that passes only if the model made no tool calls. Adding this removes any existing tool-call checks, because they would contradict it. Removing it restores those checks.
+- **Tools must be called in this exact order** — adds a required assertion that the listed tools were called in the specified sequence with no extra calls. You can reorder the expected tools by dragging their handles, and edit each tool name inline.
 
-A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without an assertion, a goal sentence, or a named tool, it would pass vacuously.
+Both assertions appear in the **After run checks** section of the case spine. They are not available in the Add drawer for step-level (inline) authoring — only for whole-case authoring.
+
+A brand-new case that asserts nothing at all must add at least one assertion, set a goal sentence, or name an expected tool before it can be saved or run: without any of these, it would pass vacuously.
 
 **Judge · Goal completion**
 
