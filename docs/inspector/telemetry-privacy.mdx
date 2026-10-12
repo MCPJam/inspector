@@ -67,8 +67,10 @@ This holds at every privacy level. Recording stops before the app navigates onto
 
 ### Secrets leave the address bar early
 
-- A callback's code and state are removed from the address bar before telemetry starts.
-- When opening a share link fails, or a handoff link is refused, the token is removed from the address bar.
+- An MCP OAuth callback's code and state are moved into an in-memory inbox before telemetry starts. The address bar shows only `?oauth_pending=1` while the callback is being processed; the code is never written to storage.
+- The GitHub App install callback captures its `code` and `state` on mount and removes them from the address bar immediately, before auth has settled or either leg of the flow has run.
+- When opening a share link fails for a definitive reason (expired, refused, not found), the token is replaced in the address bar with a placeholder so the error screen does not expose it to telemetry or `Referer` headers. A transient failure (server error, network drop) keeps the token so a reload can retry.
+- When a handoff link claim is refused or definitively fails, the token is removed from the address bar. The page holds the link in memory so sign-in and account-switch recoveries can return to it.
 - Pages on a credential link are served with `Referrer-Policy: no-referrer`, so the link is not passed to other sites as a referrer.
 
 ### Fail closed
