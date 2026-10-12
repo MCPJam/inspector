@@ -1,7 +1,7 @@
 import { spendRefusalOf } from "../admission-retry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ModelDefinition } from "@/shared/types";
+import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 
 /**
  * PR 3a: `drainAssistantTurn` is now a thin wrapper over `resolveTurnRuntime`
@@ -303,6 +303,33 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     const opts = calls[0] as any;
     expect(opts.endpointPath).toBe("/stream/org");
     expect(opts.modelDefinition.id).toBe("gpt-5.6-luna");
+  });
+
+  it("hands a harness host the same canonical id it would derive itself", async () => {
+    // `runHarnessTurn` canonicalizes the id it receives; an id that already is
+    // canonical comes out unchanged, so the harness runs the model it did before.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        harness: "claude-code",
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.harness).toBe("claude-code");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(
+      getCanonicalModelId(opts.modelDefinition.id, opts.modelDefinition.provider),
+    ).toBe(opts.modelDefinition.id);
   });
 
   it("carries a swarm turn's effort to the harness checks on a harness host (refused, not dropped)", async () => {
@@ -1154,6 +1181,31 @@ describe("drainAssistantTurn — sponsored swarm claim", () => {
       hostId: "host-1",
       targetId: "target-1",
       sessionIdx: 2,
+    });
+  });
+
+  it("sends a sponsored step's bare pin to /stream under its canonical id, claim intact", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      sponsoredArgs({
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }),
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(opts.extraBodyFields).toMatchObject({
+      billingFeature: "swarm_starter",
+      targetId: "target-1",
     });
   });
 

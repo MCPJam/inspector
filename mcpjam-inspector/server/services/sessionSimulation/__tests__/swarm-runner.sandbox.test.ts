@@ -449,6 +449,23 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     },
   );
 
+  it("records the pinned id on the session row while /stream runs the canonical one", async () => {
+    // The split is deliberate: the row says what the target pinned, the wire
+    // says what the hosted catalog serves. A change to either side should
+    // change this test, not drift silently.
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ modelId: "gpt-5-nano" }));
+
+    expect(turnOptions().modelDefinition).toMatchObject({
+      id: "openai/gpt-5-nano",
+    });
+    const persistedModelIds = persistChatSessionToConvexMock.mock.calls.map(
+      ([args]) => (args as { modelId?: string }).modelId,
+    );
+    expect(persistedModelIds.length).toBeGreaterThan(0);
+    expect(new Set(persistedModelIds)).toEqual(new Set(["gpt-5-nano"]));
+  });
+
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
 
