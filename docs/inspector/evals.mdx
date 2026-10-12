@@ -37,12 +37,13 @@ The case editor is a two-pane workspace. The left column is where you write the 
 
 **Left column — the case form**
 
-Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It has four sections:
+Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It has these sections:
 
-- **User asks** — the prompt the model receives.
+- **User asks** — the prompt the model receives. In the manual case editor, each prompt card owns the actions and checks that follow it, so the case reads in the same order it runs.
 - **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
 - **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Checks by stage** section uses.
-- **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
+- **Expected outcome** — the goal sentence the judge grades against. This section is always present; it cannot be added or removed from the Add drawer.
+- **Judge · Goal completion** — which model grades this case, against what threshold, and whether the judge runs automatically or on request.
 
 **Scorers**
 
