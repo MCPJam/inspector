@@ -3802,6 +3802,77 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    // The organization's config, with its AI-key policy. A turn on its own
+    // key reaches nothing else on the backend.
+    const answerOrgConfig = (aiKeyPolicy: Record<string, unknown>) =>
+      fetchMock.mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith("/org-model-config/resolve")) {
+          return Response.json({ ok: true, providers: [], aiKeyPolicy });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+    it("a local selection on a strict organization's project is refused before any provider call", async () => {
+      // The organization requires its own keys. A key on this machine is no
+      // exemption: the turn reads the policy and is refused server-side, so
+      // the picker is not the only guard.
+      answerOrgConfig({ requireOrgKeys: true, revision: 2 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-strict",
+        modelSelection: {
+          modelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      const { status, data } = await expectJson<{
+        code: string;
+        details: Record<string, unknown>;
+      }>(res);
+      expect(status).toBe(403);
+      expect(data.code).toBe("FORBIDDEN");
+      expect(data.details).toMatchObject({ code: "org_keys_required" });
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).endsWith("/org-model-config/resolve"),
+        ),
+      ).toBe(true);
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
+    it("a local selection runs as before when the organization does not require its own keys", async () => {
+      answerOrgConfig({ requireOrgKeys: false, revision: 1 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-open",
+        modelSelection: {
+          modelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "llama3" }),
+        "local",
+        expect.anything(),
+        undefined,
+      );
+    });
+
     it("a selection for a DIFFERENT model than the turn's is ignored (today's path for this model)", async () => {
       hostWith({ source: "legacy", modelId: "openai/some-other-model" });
       const res = await turn();

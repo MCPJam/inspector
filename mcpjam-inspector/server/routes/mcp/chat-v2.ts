@@ -101,6 +101,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import { ownKeyTurnRefusal } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -2885,6 +2886,22 @@ chatV2.post("/", async (c) => {
         },
         401,
       );
+    }
+    // A key on this machine still answers to the organization's AI-key policy.
+    const ownKeyRefusal = await ownKeyTurnRefusal({
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      selection: routingSelection,
+      provider: modelDefinition.provider,
+      hasRequestKey: Boolean(apiKey),
+      auth: {
+        authHeader: requestAuthHeader,
+        scenarioId: bodyScenarioId,
+        accessVersion: bodyAccessVersion,
+        serverIds: hostConfigServerIds,
+      },
+    });
+    if (ownKeyRefusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
     }
 
     // User-provided models: direct streamText

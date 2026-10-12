@@ -24,8 +24,9 @@ import {
  * retryable `ai_key_policy_unavailable` rather than spending the request's keys
  * on data whose policy is unknown.
  *
- * Shared by suite runs, single-case runs (`routes/shared/evals.ts`) and
- * replays (`replay-suite-run.ts`), so it lives apart from the route module.
+ * Shared by suite runs, single-case runs (`routes/shared/evals.ts`),
+ * replays (`replay-suite-run.ts`) and chat turns on their own keys
+ * (`utils/own-key-turn-policy.ts`), so it lives apart from the route module.
  */
 export async function orgPolicyConfigForClientKeys(
   target: ResolveOrgModelConfigTarget,
