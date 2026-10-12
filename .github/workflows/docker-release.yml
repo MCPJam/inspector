@@ -61,26 +61,11 @@ jobs:
         id: version
         run: echo "version=$(jq -r .version mcpjam-inspector/package.json)" >> "$GITHUB_OUTPUT"
 
-      # Between a version PR merging and its release publishing, `main`
-      # already carries the next version; a dispatch in that window must not
-      # publish it. Retried because release.yml calls this seconds after
-      # `npm publish`, before the registry may answer for the new version.
-      - name: Require the version on npm
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          for attempt in 1 2 3 4 5 6; do
-            if npm view "@mcpjam/inspector@$VERSION" version | grep -qx "$VERSION"; then
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::@mcpjam/inspector@$VERSION is not on npm. Only released versions go to Docker Hub." >&2
-          exit 1
-
       # The image must hold the code npm got for this version. A release
       # passes the commit it published from. A dispatch builds the commit the
-      # `v<version>` tag names, not whatever `main` has merged since.
+      # `v<version>` tag names, not whatever `main` has merged since; the tag
+      # exists only once that version is on npm, so a dispatch between a
+      # version PR merging and its release finishing stops here.
       - name: Resolve the release commit
         id: commit
         env:
@@ -120,6 +105,9 @@ jobs:
           # keep the token out of .git/config.
           persist-credentials: false
 
+      - name: Stamp the build time
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -136,6 +124,9 @@ jobs:
           file: ./mcpjam-inspector/Dockerfile
           platforms: linux/${{ matrix.arch }}
           push: true
+          # A public repository defaults to mode=max, which records build-arg
+          # values in an attestation published next to the image.
+          provenance: mode=min
           tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -162,14 +153,16 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          tags=(--tag "$DOCKER_REPOSITORY:v$VERSION")
+          tags=("$DOCKER_REPOSITORY:v$VERSION")
           npm_latest="$(npm view @mcpjam/inspector dist-tags.latest)"
           if [ "$npm_latest" = "$VERSION" ]; then
-            tags+=(--tag "$DOCKER_REPOSITORY:latest")
+            tags+=("$DOCKER_REPOSITORY:latest")
           else
             echo "::notice::npm latest is $npm_latest, so latest stays where it is."
           fi
-          docker buildx imagetools create "${tags[@]}" \
+          tag_flags=()
+          for tag in "${tags[@]}"; do tag_flags+=(--tag "$tag"); done
+          docker buildx imagetools create "${tag_flags[@]}" \
             "$DOCKER_REPOSITORY:v$VERSION-amd64" \
             "$DOCKER_REPOSITORY:v$VERSION-arm64"
           echo "Published ${tags[*]} (linux/amd64, linux/arm64)." >> "$GITHUB_STEP_SUMMARY"
