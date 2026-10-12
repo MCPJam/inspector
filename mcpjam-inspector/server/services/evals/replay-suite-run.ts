@@ -25,7 +25,7 @@ import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
-import { orgPolicyConfigForClientKeys } from "./org-policy-client-keys.js";
+import { prepareClientKeyRun } from "./org-policy-client-keys.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -103,9 +103,6 @@ export async function prepareSuiteReplayFromRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   const replayServerIds = replayConfig.servers.map((server) => server.serverId);
-  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
-  let resolvedOrgModelConfig = orgModelConfig;
   const replayProjectId =
     typeof replayMetadata.projectId === "string"
       ? replayMetadata.projectId
@@ -113,15 +110,13 @@ export async function prepareSuiteReplayFromRun(
   const replayOrgConfigTarget = replayProjectId
     ? { projectId: replayProjectId }
     : undefined;
-  if (resolvedModelApiKeys && !resolvedOrgModelConfig && replayOrgConfigTarget) {
-    // The request's own keys: still bound by the organization's policy, as a
-    // suite run's are. Read before the replay run is created, so an
-    // unreadable policy refuses the replay with nothing to undo.
-    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
-      replayOrgConfigTarget,
-      { bearerToken: convexAuthToken, serverIds: replayServerIds },
-    );
-  }
+  const clientKeyRun = await prepareClientKeyRun(
+    { modelApiKeys, orgModelConfig, convexAuthToken },
+    replayProjectId,
+    replayServerIds,
+  );
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
+  let resolvedOrgModelConfig = clientKeyRun.orgModelConfig;
 
   const replayManager = buildReplayManager(replayConfig);
   try {

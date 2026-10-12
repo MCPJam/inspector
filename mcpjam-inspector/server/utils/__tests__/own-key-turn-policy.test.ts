@@ -1,3 +1,4 @@
+import { MockLanguageModelV3 } from "ai/test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveOrgModelConfig = vi.hoisted(() => vi.fn());
@@ -6,7 +7,11 @@ vi.mock("../org-model-config", async (importOriginal) => ({
   resolveOrgModelConfig,
 }));
 
-import { ownKeyTurnRefusal, type OwnKeyTurn } from "../own-key-turn-policy";
+import {
+  ownKeyTurnRefusal,
+  withOwnKeyTurnPolicy,
+  type OwnKeyTurn,
+} from "../own-key-turn-policy";
 
 const none = { provider: "none", model: "none" } as const;
 
@@ -91,4 +96,47 @@ describe("ownKeyTurnRefusal", () => {
       details: { code: "ai_key_policy_unavailable", isRetryable: true },
     });
   });
+  it.each(["doGenerate", "doStream"] as const)(
+    "rechecks policy before a later %s attempt",
+    async (method) => {
+      resolveOrgModelConfig.mockResolvedValue({
+        aiKeyPolicy: { requireOrgKeys: false },
+        providers: [],
+      });
+      const dispatch = vi.fn(() =>
+        resolveOrgModelConfig.mockResolvedValue(strict),
+      );
+      const model = new MockLanguageModelV3({
+        doGenerate: async () => {
+          dispatch();
+          return {
+            content: [],
+            finishReason: { unified: "stop", raw: undefined },
+            usage: {
+              inputTokens: {
+                total: 0,
+                noCache: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 0, text: 0, reasoning: 0 },
+            },
+            warnings: [],
+          };
+        },
+        doStream: async () => {
+          dispatch();
+          return { stream: new ReadableStream() };
+        },
+      });
+      const guarded = withOwnKeyTurnPolicy(model, turn());
+      await guarded[method]({ prompt: [] });
+      await expect(guarded[method]({ prompt: [] })).rejects.toMatchObject({
+        status: 403,
+        details: { code: "org_keys_required" },
+      });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+    },
+  );
 });

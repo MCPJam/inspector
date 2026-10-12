@@ -144,6 +144,25 @@ describe("requestManagedObservations", () => {
     },
   );
 
+  it("preserves a stored policy refusal returned with HTTP 200", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          status: "ai-unavailable",
+          reason: "ai_unavailable",
+          refusalCode: "org_runtime_unsupported",
+          detail: "Unavailable on organization keys.",
+        }),
+      ),
+    );
+    expect(await requestManagedObservations(LEASE, "evidence")).toMatchObject({
+      status: "ai-unavailable",
+      reason: "ai_unavailable",
+      refusalCode: "org_runtime_unsupported",
+    });
+  });
+
   it("reads the organization's AI-key policy refusal as ai_unavailable, not a provider failure", async () => {
     vi.stubGlobal(
       "fetch",
@@ -161,8 +180,9 @@ describe("requestManagedObservations", () => {
       ),
     );
     const answer = await requestManagedObservations(LEASE, "evidence");
-    expect(answer.status).toBe("provider-failed");
+    expect(answer.status).toBe("ai-unavailable");
     expect(answer.reason).toBe("ai_unavailable");
+    expect(answer.refusalCode).toBe("org_model_unconfigured");
     expect(answer.detail).toContain("org_model_unconfigured");
     expect(answer.envelope).toBeUndefined();
   });
