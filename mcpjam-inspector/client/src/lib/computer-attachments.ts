@@ -52,7 +52,9 @@ export function isComputerAttachmentUploadActive(args: {
   /**
    * The previewed host runs a harness (Claude Code / Codex / Cursor). It runs on
    * a throwaway per-conversation box, never on the personal computer this
-   * upload targets, so attachments stay inline-only.
+   * upload targets, so attachments go as ordinary inline file parts and the
+   * server writes them onto the box the turn runs on
+   * (`server/utils/harness/harness-attachments.ts`).
    */
   hostHasHarness?: boolean;
 }): boolean {

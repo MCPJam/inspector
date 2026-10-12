@@ -441,6 +441,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://js.stripe.com",
       "https://*.js.stripe.com",
       "https://maps.googleapis.com",
+      "https://snippet.meticulous.ai",
+      "https://browser.sentry-cdn.com",
     ]);
     expect(policy.get("style-src")).toEqual([
       "'self'",
@@ -462,6 +464,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
         "https://api.stripe.com",
         "https://maps.googleapis.com",
         "https://r.stripe.com",
+        "https://cognito-identity.us-west-2.amazonaws.com",
+        "https://user-events-v3.s3-accelerate.amazonaws.com",
       ]),
     );
     expect(policy.get("frame-src")).toEqual([
@@ -473,6 +477,7 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://hooks.stripe.com",
       "https://m.stripe.network",
       "https://www.youtube.com",
+      "https://snippet.meticulous.ai",
     ]);
     expect(policy.get("img-src")).toEqual([
       "'self'",
