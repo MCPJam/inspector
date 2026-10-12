@@ -1,0 +1,5 @@
+---
+"@mcpjam/inspector": minor
+---
+
+Organization admins on Enterprise plans can turn on "Use your keys for all AI features" under Organization → AI providers. While it is on, every AI feature runs only on the organization's own providers, and the card lists each feature's coverage: Ready, Unavailable with the actual fix (add a direct cloud provider, or choose a judge model for each suite), or "Not supported yet" for features that can't run on organization providers yet. Claude Code and Codex run on the organization's own Anthropic and OpenAI providers; SDK model leases, a custom base URL and a local runtime aren't supported. On other plans the setting is greyed out with "Available on Enterprise plans" and Contact us; an organization that leaves Enterprise keeps a working switch so an admin can turn it off, and turning it off asks for confirmation first. Members see the setting read-only. The BYOK billing page and the error-code docs explain how the setting is billed and what it covers.

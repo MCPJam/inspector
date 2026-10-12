@@ -689,6 +689,7 @@ not.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+- If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
 
 **Swarm and Eval runs**
 
@@ -776,6 +777,40 @@ The MCP server answered the request with an HTTP error status. The message names
 
 ---
 
+## Organization AI key policy
+
+**Use your keys for all AI features** is an organization setting under
+**Organization → AI providers**. It is available on Enterprise plans.
+
+When it is on, every AI request on the organization's data must run on one of
+the organization's own providers. MCPJam-provided models, personal keys and
+local models are disabled for it, and nothing falls back to them: a feature
+without a compatible provider is unavailable instead. Only direct cloud
+providers count; OpenRouter and local-runtime connections do not.
+
+- **Model pickers** list only the organization's eligible models. A suite's
+  judge must be chosen from an organization provider; there is no default
+  judge, and a suite without one can't run.
+- **Harness runtimes** run on the organization's own key for their vendor:
+  Claude Code on an Anthropic provider, Codex on an OpenAI provider. Not
+  supported while the setting is on: SDK model leases (`sdk-direct`), a
+  provider with a custom base URL, and a local-runtime connection.
+- **Feature coverage** on the settings page shows which features are ready.
+  Features that can't run on organization providers yet show
+  **Not supported yet** and are unavailable while the setting is on. Today
+  that includes Swarm, User Testing, insights and findings, generation, the
+  session map, transcription and Ask MCPJam.
+- **Billing.** Model tokens are billed by the organization's providers.
+  MCPJam's fixed product fees and usage limits still apply.
+
+Only organization owners and admins can change the setting. Any of them can
+turn it off at any time, including after the organization leaves Enterprise;
+leaving Enterprise never turns it off. Turning it off is recorded in the audit
+log, and the organization's owners get an email.
+
+When a request is refused under the setting, it fails with one of the codes
+below.
+
 ## Organization provider refusals
 
 These codes mean an AI request was refused because it could not run on one of
@@ -839,6 +874,7 @@ harnesses.
 **Next steps**
 - Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
 - For a harness run, choose Claude Code with an organization Anthropic connection or Codex with an organization OpenAI connection. A feature without an organization-key path remains unavailable under this policy.
+- Organization admins can turn off **Use your keys for all AI features** to run this feature on MCPJam-provided models again.
 
 ### Organization scope unresolved
 
