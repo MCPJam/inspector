@@ -44,6 +44,7 @@
  */
 import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
 
 const HOSTED_PREFIX = "mcpjam/";
 
@@ -69,6 +70,39 @@ export function canonicalJudgeModelIdForSelection(
 ): string {
   if (selection && selection.source !== "hosted") return model.trim();
   return canonicalJudgeModelId(model);
+}
+
+/**
+ * A re-grade request's judge override fields: `judgeModel`, normalized beside
+ * the selection it was sent with ({@link canonicalJudgeModelIdForSelection}),
+ * and `judgeSelection`. Each is present only when the caller sent it. A
+ * selection that names a different model than `model` is refused (400).
+ */
+export function judgeRunOverride<
+  S extends { source?: unknown; modelId: string },
+>(
+  model: string | undefined,
+  selection: S | undefined,
+): { judgeModel?: string; judgeSelection?: S } {
+  const judgeModel =
+    model === undefined
+      ? undefined
+      : canonicalJudgeModelIdForSelection(model, selection);
+  if (
+    selection !== undefined &&
+    judgeModel !== undefined &&
+    judgeModel !== selection.modelId
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `modelSelection.modelId (${selection.modelId}) does not match model (${judgeModel}).`,
+    );
+  }
+  return {
+    ...(judgeModel !== undefined ? { judgeModel } : {}),
+    ...(selection !== undefined ? { judgeSelection: selection } : {}),
+  };
 }
 
 /**
