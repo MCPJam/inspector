@@ -788,6 +788,18 @@ temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
 organization's AI settings) and `org/provider_unavailable` (the provider is
 rate-limiting or failing). Try those again in a moment.
 
+**Chat and playground banner** — when one of these refusals occurs in chat or
+the single-model playground, the error appears as an organization banner rather
+than a generic error message. The banner's actions depend on your role:
+
+- **Organization admins** see a **Manage AI providers** button that opens
+  **Organization → AI providers** directly.
+- **Members** see a note to ask an organization admin, and a **Reset chat**
+  button.
+- The two temporary refusals (`org/key_policy_unavailable` and
+  `org/provider_unavailable`) also show a **Retry** button, because they lift
+  on their own without a configuration change.
+
 ### Organization provider required
 
 `org/keys_required`
