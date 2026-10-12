@@ -8,6 +8,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AiFeatureGroupReadiness,
+  AiOperationReadiness,
   OrgAiConfig,
 } from "@/hooks/useOrgAiConfig";
 import { OrganizationOrgKeysPolicyCard } from "../OrganizationOrgKeysPolicyCard";
@@ -121,6 +122,7 @@ function makeConfig(
   overrides: {
     requireOrgKeys?: boolean;
     features?: AiFeatureGroupReadiness[];
+    operations?: AiOperationReadiness[];
     eligibleConnectionIds?: string[];
     canEnable?: boolean;
     canManage?: boolean;
@@ -142,7 +144,7 @@ function makeConfig(
               blockedBy: [],
               degradedBy: [],
             }))),
-      operations: [
+      operations: overrides.operations ?? [
         { operation: "chat", status: "ready" },
         { operation: "judge", status: "ready" },
         {
@@ -450,6 +452,117 @@ describe("OrganizationOrgKeysPolicyCard", () => {
       ),
     ).toBeInTheDocument();
     expect(within(harness).queryByText(/Blocked by/)).not.toBeInTheDocument();
+  });
+
+  describe("the organization's default AI model", () => {
+    // After background AI runs on the default model: what the backend
+    // reports while none is chosen.
+    const WAITING_FEATURES: AiFeatureGroupReadiness[] = [
+      {
+        id: "evals",
+        label: "Evals",
+        status: "ready",
+        blockedBy: [],
+        degradedBy: ["text_analysis"],
+      },
+      {
+        id: "insights",
+        label: "Insights",
+        status: "unconfigured",
+        blockedBy: ["text_analysis"],
+        degradedBy: [],
+      },
+    ];
+    const UNSET: AiOperationReadiness = {
+      operation: "text_analysis",
+      status: "unconfigured",
+      code: "org_model_unconfigured",
+      modelKind: "default",
+    };
+
+    it("says a feature waits for it, and where to choose it", () => {
+      hookState.config = makeConfig({
+        requireOrgKeys: true,
+        features: WAITING_FEATURES,
+        operations: [UNSET],
+      });
+      render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+
+      expect(
+        screen.getByTestId("org-ai-feature-status-insights"),
+      ).toHaveTextContent("Unavailable");
+      const insights = screen.getByTestId("org-ai-feature-insights");
+      expect(
+        within(insights).getByText(
+          "The organization's default AI model isn't set. Choose it below.",
+        ),
+      ).toBeInTheDocument();
+      // Not a provider problem: one exists.
+      expect(within(insights).queryByText(/Add a direct/)).toBeNull();
+
+      expect(
+        within(screen.getByTestId("org-ai-feature-evals")).getByText(
+          "Automatic findings unavailable until the organization's default AI model is set; runs and grading still complete",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("sends members to an admin", () => {
+      hookState.config = makeConfig({
+        requireOrgKeys: true,
+        canManage: false,
+        features: WAITING_FEATURES,
+        operations: [UNSET],
+      });
+      render(
+        <OrganizationOrgKeysPolicyCard
+          organizationId="org-1"
+          isAdmin={false}
+        />,
+      );
+
+      expect(
+        within(screen.getByTestId("org-ai-feature-insights")).getByText(
+          "The organization's default AI model isn't set. Ask an organization admin to choose it.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("says a saved model can't run, without calling it unset", () => {
+      hookState.config = makeConfig({
+        requireOrgKeys: true,
+        features: WAITING_FEATURES,
+        operations: [{ ...UNSET, code: "credential_missing" }],
+      });
+      render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+
+      expect(
+        within(screen.getByTestId("org-ai-feature-insights")).getByText(
+          "The organization's default AI model can't run. Choose another below.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId("org-ai-feature-evals")).getByText(
+          "Automatic findings unavailable; runs and grading still complete",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("asks for a provider first when there is none", () => {
+      hookState.config = makeConfig({
+        requireOrgKeys: true,
+        eligibleConnectionIds: [],
+        features: WAITING_FEATURES,
+        operations: [UNSET],
+      });
+      render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+
+      expect(
+        within(screen.getByTestId("org-ai-feature-insights")).getByText(
+          "Add a direct cloud provider below. Then choose the organization's default AI model.",
+        ),
+      ).toBeInTheDocument();
+    });
   });
 
   it("names the actual fix when there is no provider", () => {
