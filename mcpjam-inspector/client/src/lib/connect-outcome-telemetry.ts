@@ -47,7 +47,7 @@ function transportOf(config: MCPServerConfig | undefined): "http" | "stdio" {
 /** How a failed attempt ended, from what the failure action carries. */
 export function classifyConnectFailure(
   action: Extract<AppAction, { type: "CONNECT_FAILURE" }>,
-  slug = action.normalized?.slug,
+  slug: string | undefined,
 ): Exclude<ConnectOutcome, "success"> {
   const error = action.error ?? "";
   if (
@@ -87,7 +87,6 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
         const normalized = isSuccess
           ? undefined
           : resolveNormalized(action.error, action.normalized);
-        const rawCode = normalized?.rawCode;
         track("server_connect_outcome", {
           outcome: isSuccess
             ? "success"
@@ -98,7 +97,9 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
             ? transportOf(action.config)
             : (attempt?.transport ?? null),
           ...(normalized?.slug ? { error_slug: normalized.slug } : {}),
-          ...(typeof rawCode === "number" ? { http_status: rawCode } : {}),
+          ...(typeof normalized?.rawCode === "number"
+            ? { http_status: normalized.rawCode }
+            : {}),
           ...(attempt ? { duration_ms: now() - attempt.startedAt } : {}),
         });
         return;

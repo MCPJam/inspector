@@ -4,6 +4,7 @@ import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
+import type { ServerWithName } from "@/state/app-types";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -55,8 +56,9 @@ const recycleBatchByProject = new Map<string, { toastId: string | number }>();
 
 /**
  * Failures that only the user can clear, by signing in. Auto-connect never
- * opens the sign-in window, so an automatic retry ends in the same failure.
- * The server card offers the sign-in instead.
+ * opens the sign-in window, and a client switch clears the attempt log, so an
+ * automatic retry would only fail the same way again. Reconnect on the server
+ * card runs the sign-in.
  */
 const NEEDS_SIGN_IN_SLUGS = new Set([
   "auth/consent_required",
@@ -64,6 +66,13 @@ const NEEDS_SIGN_IN_SLUGS = new Set([
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
 ]);
+
+function needsSignIn(server: ServerWithName | undefined): boolean {
+  return (
+    server?.connectionStatus === "failed" &&
+    NEEDS_SIGN_IN_SLUGS.has(server.lastNormalizedError?.slug ?? "")
+  );
+}
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -233,11 +242,9 @@ export function useAutoConnectProjectServers({
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
-  // be interrupted; connected has nothing to do. Also skip a server whose
-  // last failure needs the user to sign in: a client switch clears the
-  // attempt log, and retrying it would only fail again. This is the
-  // "connect the catalog" path; reconnecting the ALREADY-connected set on a
-  // client switch is handled separately below.
+  // be interrupted; connected has nothing to do. A server that needs sign-in
+  // is skipped too. This is the "connect the catalog" path; reconnecting the
+  // ALREADY-connected set on a client switch is handled separately below.
   const candidateNamesKey = useMemo(() => {
     if (
       !enabled ||
@@ -254,10 +261,7 @@ export function useAutoConnectProjectServers({
         status !== "connected" &&
         status !== "connecting" &&
         status !== "oauth-flow" &&
-        !(
-          status === "failed" &&
-          NEEDS_SIGN_IN_SLUGS.has(server?.lastNormalizedError?.slug ?? "")
-        )
+        !needsSignIn(server)
       );
     });
     if (candidates.length === 0) return null;
