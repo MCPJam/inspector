@@ -869,13 +869,15 @@ Work nobody picks a model for, such as insights, findings, generation and
 the simulated user, runs on that model while the organization uses its own
 keys for all AI features.
 
-The feature coverage card on **Organization → AI providers** names the fix:
+The feature coverage card on **Organization → AI providers** also explains related
+configuration failures:
 
 - **Default model not set** — admins see "The organization's default AI model
   isn't set. Choose it below." Members are asked to contact an admin.
 - **Saved model can't run** — the model was saved but its connection was
   removed or it can no longer serve the feature. Admins see "The
   organization's default AI model can't run. Choose another below."
+  A removed provider connection reports `credential_missing`.
 - **No eligible provider yet** — when no direct cloud provider exists, the
   card asks for a provider first, then the model.
 
