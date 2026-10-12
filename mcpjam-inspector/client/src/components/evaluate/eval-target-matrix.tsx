@@ -7,12 +7,7 @@ import {
   OrgKeysDisallowedTriggerLabel,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
-import {
-  isOrgKeysDisallowedRow,
-  orgKeysDisallowedRow,
-  savedModelRow,
-} from "@/components/chat-v2/shared/available-models";
-import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -25,7 +20,6 @@ import {
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -38,7 +32,10 @@ import {
   type ModelTarget,
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
-import { pickedModelTarget } from "@/lib/org-keys-model-target";
+import {
+  pickedModelTarget,
+  resolveEvalModelChoice,
+} from "@/lib/org-keys-model-target";
 import { modelTargetLabel } from "@/lib/environment-label";
 import {
   reasoningEffortOptions,
@@ -508,23 +505,10 @@ export function EvalModelChoices({
     saved = true,
     selection?: SavedModelSelection,
   ): ModelDefinition =>
-    (selection
-      ? findModelForStoredChoice(
-          { modelId: id, selection },
-          availableModels,
-          undefined,
-          { exactSelection: requireOrgKeys },
-        )
-      : requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
-        ? undefined
-        : availableModels.find((model) => String(model.id) === id)) ??
-    (requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
-      ? orgKeysDisallowedRow(savedModelRow(id, availableModels))
-      : {
-          id,
-          name: compactModelLabel(id),
-          provider: "unknown",
-        });
+    resolveEvalModelChoice(id, availableModels, requireOrgKeys, {
+      saved,
+      selection,
+    });
   const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
