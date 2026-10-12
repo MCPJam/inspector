@@ -107,9 +107,9 @@ import {
 } from "../local-org-attempt-admission";
 import {
   resolveOrgProviderRuntimeForTarget,
-  type LocalOrgAttemptRequest,
   type OrgProviderRuntimeLocal,
 } from "../org-model-config";
+import type { LocalOrgAttemptRequest } from "../org-runtime-admission";
 import { ModelResolutionRefusalError } from "../model-resolution-local";
 
 /** The backend's current answer to `/stream/org/resolve`. */

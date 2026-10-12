@@ -52,7 +52,7 @@ import {
   admitEachLocalOrgAttempt,
   localOrgAttemptRefusal,
 } from "./local-org-attempt-admission.js";
-import type { LocalOrgAttemptRequest } from "./org-model-config.js";
+import type { LocalOrgAttemptRequest } from "./org-runtime-admission.js";
 import type { LocalExecutionRecord } from "./local-execution-record.js";
 import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
 import {

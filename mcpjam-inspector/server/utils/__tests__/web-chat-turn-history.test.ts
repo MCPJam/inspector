@@ -70,7 +70,10 @@ vi.mock("../org-model-config.js", async (importOriginal) => ({
     provider: { providerKey: "openai", provider: "openai", runtime: "local" },
     admission: { target: { projectId: "p" }, providerKey: "openai", model: "m" },
   })),
-  // Each provider attempt asks again; the backend keeps saying yes here.
+}));
+// Each provider attempt asks again; the backend keeps saying yes here.
+vi.mock("../org-runtime-admission.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   admitLocalOrgAttempt: vi.fn(async () => ({
     providerKey: "openai",
     provider: "openai",

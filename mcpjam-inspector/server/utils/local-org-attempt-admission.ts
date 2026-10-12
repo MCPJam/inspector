@@ -24,7 +24,7 @@ import { recognizedAiRefusalCode } from "../../shared/ai-execution-refusal.js";
 import {
   admitLocalOrgAttempt,
   type LocalOrgAttemptRequest,
-} from "./org-model-config.js";
+} from "./org-runtime-admission.js";
 
 type AttemptModel = ReturnType<typeof wrapLanguageModel>;
 

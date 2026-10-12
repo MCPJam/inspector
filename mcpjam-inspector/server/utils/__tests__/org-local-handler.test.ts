@@ -51,7 +51,7 @@ import {
   buildOrgModelFromResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
-import type { LocalOrgAttemptRequest } from "../org-model-config";
+import type { LocalOrgAttemptRequest } from "../org-runtime-admission";
 
 function buildResolvedProvider(): OrgProviderResolvedConfig {
   // Cast — the handler only reads `providerKey` off the resolved config;
