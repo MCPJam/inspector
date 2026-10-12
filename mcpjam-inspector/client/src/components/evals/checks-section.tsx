@@ -1,3 +1,4 @@
+import { PAPER_FIELD_STYLES } from "./paper-field-styles";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 /**
  * Authoring UI for the deterministic predicate gate ("Checks" in user-facing
@@ -41,9 +42,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@mcpjam/design-system/popover";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Trash2, Plus, X } from "lucide-react";
 import { Combobox } from "@/components/ui/combobox";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ArgLeafPicker } from "./arg-leaf-picker";
 import type {
   Predicate,
@@ -170,13 +177,45 @@ const InvalidDraftRegistry = createContext<
   ((editorId: string, invalid: boolean) => void) | null
 >(null);
 
-function useInvalidDraftRegistration(invalid: boolean): void {
+export function useInvalidDraftRegistration(invalid: boolean): void {
   const report = useContext(InvalidDraftRegistry);
   const editorId = useId();
   useEffect(() => {
     report?.(editorId, invalid);
     return () => report?.(editorId, false);
   }, [report, editorId, invalid]);
+}
+
+/** Invalid local text must block Save even though it has not replaced the last valid value. */
+export function CheckDraftBoundary({
+  children,
+  onValidityChange,
+}: {
+  children: ReactNode;
+  onValidityChange?: (invalid: boolean) => void;
+}) {
+  const [invalidIds, setInvalidIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const report = useCallback((id: string, invalid: boolean) => {
+    setInvalidIds((previous) => {
+      if (previous.has(id) === invalid) return previous;
+      const next = new Set(previous);
+      if (invalid) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const invalid = invalidIds.size > 0;
+  useEffect(() => {
+    onValidityChange?.(invalid);
+  }, [invalid, onValidityChange]);
+  useEffect(() => () => onValidityChange?.(false), [onValidityChange]);
+  return (
+    <InvalidDraftRegistry.Provider value={report}>
+      {children}
+    </InvalidDraftRegistry.Provider>
+  );
 }
 
 /**
@@ -464,7 +503,11 @@ export interface CheckRowProps {
   noun?: string;
   /** Reveal issues on untouched fields too — the Save-attempt case. */
   showAllErrors?: boolean;
+  /** Paper manual-case field layout; other authoring surfaces keep their layout. */
+  paper?: boolean;
 }
+
+const PaperFieldsContext = createContext<Predicate["type"] | null>(null);
 
 export function CheckRow({
   predicate,
@@ -480,6 +523,7 @@ export function CheckRow({
   globalGate = false,
   noun = "check",
   showAllErrors = false,
+  paper = false,
 }: CheckRowProps) {
   // Zod-validate the current row. Callers gate Save on the same schema via
   // `areAllChecksValid`; this copy of the verdict is what the fields show,
@@ -542,7 +586,10 @@ export function CheckRow({
     <div
       className={cn(
         embedded
-          ? "min-w-0 space-y-3"
+          ? cn(
+              "min-w-0 space-y-3",
+              paper && PAPER_FIELD_STYLES,
+            )
           : cn(
               "rounded-md border p-3",
               anyErrorShown
@@ -569,16 +616,18 @@ export function CheckRow({
           ) : null}
 
           <FieldValidationContext.Provider value={fieldValidation}>
-            <CheckFields
-              predicate={predicate}
-              onChange={onChange}
-              availableTools={availableTools}
-              widgetToolNames={widgetToolNames}
-              toolArgSchemas={toolArgSchemas}
-              toolOutputSchemas={toolOutputSchemas}
-              readOnly={readOnly}
-              compactGlobalGate={globalGate}
-            />
+            <PaperFieldsContext.Provider value={paper ? predicate.type : null}>
+              <CheckFields
+                predicate={predicate}
+                onChange={onChange}
+                availableTools={availableTools}
+                widgetToolNames={widgetToolNames}
+                toolArgSchemas={toolArgSchemas}
+                toolOutputSchemas={toolOutputSchemas}
+                readOnly={readOnly}
+                compactGlobalGate={globalGate}
+              />
+            </PaperFieldsContext.Provider>
           </FieldValidationContext.Provider>
 
           {showRowLevelError ? (
@@ -630,6 +679,8 @@ function OnlyToolsField({
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [toolName, setToolName] = useState("");
   const options = (availableTools ?? []).filter(
     (tool) => !value.includes(tool),
@@ -641,6 +692,101 @@ function OnlyToolsField({
       setToolName("");
     }
   };
+  if (paper)
+    return (
+      <div className="space-y-2">
+        {value.length ? (
+          <ul className="flex flex-wrap gap-1">
+            {value.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  disabled={readOnly}
+                  aria-label={`Remove ${name}`}
+                  onClick={() =>
+                    onChange(value.filter((tool) => tool !== name))
+                  }
+                  className="rounded-full border border-border px-2 py-0.5 text-[11px]"
+                >
+                  {name}
+                  {readOnly ? null : (
+                    <X aria-hidden className="ml-1 inline size-3" />
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            No tool should be called.
+          </p>
+        )}
+        {!readOnly ? (
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs">
+                Add a tool
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-1">
+              <Input
+                aria-label="Find or enter a tool"
+                value={toolName}
+                onChange={(event) => setToolName(event.target.value)}
+                placeholder="Tool name"
+                className="h-8 text-xs"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !availableTools?.length) {
+                    event.preventDefault();
+                    addTool();
+                    setPickerOpen(false);
+                  }
+                }}
+              />
+              {availableTools?.length ? (
+                <div className="max-h-48 overflow-auto">
+                  {options
+                    .filter((name) =>
+                      name.toLowerCase().includes(toolName.toLowerCase()),
+                    )
+                    .map((name) => (
+                      <Button
+                        key={name}
+                        variant="ghost"
+                        className="h-8 w-full justify-start text-xs"
+                        onClick={() => {
+                          onChange([...value, name]);
+                          setToolName("");
+                          setPickerOpen(false);
+                        }}
+                      >
+                        {name}
+                      </Button>
+                    ))}
+                  {options.length === 0 ? (
+                    <p className="p-2 text-xs text-muted-foreground">
+                      All tools have been added.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  disabled={!toolName.trim() || value.includes(toolName.trim())}
+                  onClick={() => {
+                    addTool();
+                    setPickerOpen(false);
+                  }}
+                >
+                  Add a tool
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+    );
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] text-muted-foreground">
@@ -714,6 +860,18 @@ function OnlyToolsField({
   );
 }
 
+const PAPER_CHECK_SENTENCES: Partial<Record<Predicate["type"], string>> = {
+  toolNamesUnique: "Passes when tool names are unique within each server.",
+  noDeprecatedToolExposed:
+    "Warns when a tool description marks itself deprecated.",
+  toolInputSchemasWellFormed:
+    "Passes when input schemas have an object root and documented parameters.",
+  toolOutputSchemasPresent: "Passes when every tool declares an output schema.",
+  finalAssistantMessageNonEmpty: "Passes when the final reply contains text.",
+  noDeprecatedToolCalled: "Warns when a tool marked deprecated is called.",
+  noDestructiveToolCalled: "Passes when no tool marked destructive is called.",
+};
+
 function CheckFields({
   predicate,
   onChange,
@@ -734,8 +892,54 @@ function CheckFields({
   compactGlobalGate?: boolean;
 }) {
   const widgetTools = widgetToolNames ?? availableTools;
+  const paper = useContext(PaperFieldsContext);
+  const sentence = PAPER_CHECK_SENTENCES[predicate.type];
+  if (paper && sentence)
+    return (
+      <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+        {sentence}
+      </p>
+    );
+  if (
+    paper &&
+    (predicate.type === "tokenBudgetUnder" ||
+      predicate.type === "turnCountUnder")
+  ) {
+    const field = predicate.type === "tokenBudgetUnder" ? "tokens" : "turns";
+    return (
+      <PaperNumberField
+        value={
+          predicate.type === "tokenBudgetUnder"
+            ? predicate.tokens
+            : predicate.turns
+        }
+        unit={field === "tokens" ? "tokens" : "user turns"}
+        readOnly={readOnly}
+        onChange={(number) =>
+          onChange({ ...predicate, [field]: number } as Predicate)
+        }
+      />
+    );
+  }
   switch (predicate.type) {
     case "toolDescriptionsPresent":
+      if (paper)
+        return (
+          <div className="space-y-1">
+            <div className="text-sm font-medium leading-[18px]">
+              Minimum description length
+            </div>
+            <PaperNumberField
+              value={predicate.minLength ?? 20}
+              ariaLabel="Minimum description length"
+              unit="characters"
+              readOnly={readOnly}
+              onChange={(minLength) => {
+                if (minLength > 0) onChange({ ...predicate, minLength });
+              }}
+            />
+          </div>
+        );
       return (
         <label className="text-xs">
           Minimum description length
@@ -753,10 +957,10 @@ function CheckFields({
           />
         </label>
       );
-    case "toolAnnotationsPresent":
-      return (
+    case "toolAnnotationsPresent": {
+      const fields = (
         <div className="space-y-2 text-xs">
-          Require boolean annotations (leave both off to check presence only):
+          Each tool must declare:
           {(["readOnlyHint", "destructiveHint"] as const).map((key) => (
             <label key={key} className="flex items-center gap-2">
               <Checkbox
@@ -783,6 +987,20 @@ function CheckFields({
           ))}
         </div>
       );
+      return paper ? (
+        <div className="space-y-2">
+          <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+            Passes when every tool declares annotations.
+          </p>
+          <details className="text-xs text-foreground">
+            <summary className="cursor-pointer">Annotation settings</summary>
+            <div className="pt-2">{fields}</div>
+          </details>
+        </div>
+      ) : (
+        fields
+      );
+    }
     case "toolNamesUnique":
     case "noDeprecatedToolExposed":
     case "toolInputSchemasWellFormed":
@@ -911,10 +1129,16 @@ function CheckFields({
     case "noEndingQuestion":
       return (
         <div className="text-xs text-muted-foreground">
-          Notices answers whose last non-empty line ends with a question mark.
-          It cannot tell an offer ("Would you like a breakdown?") from a request
-          for something missing, so it reports what it saw and never fails an
-          iteration.
+          {paper ? (
+            "Passes when the reply does not end in a question."
+          ) : (
+            <>
+              Notices answers whose last non-empty line ends with a question
+              mark. It cannot tell an offer ("Would you like a breakdown?") from
+              a request for something missing, so it reports what it saw and
+              never fails an iteration.
+            </>
+          )}
         </div>
       );
     case "tokenBudgetUnder":
@@ -1006,7 +1230,6 @@ function CheckFields({
       return (
         <ObservationFields
           predicate={predicate}
-          copy="Notices a tool error whose message names none of that tool's input keys and none of the values the call sent. It does not measure recovery quality — \u201cRate limited. Retry in 30 seconds.\u201d is a good message that names nothing."
           onChange={onChange}
           availableTools={availableTools}
           readOnly={readOnly}
@@ -1016,7 +1239,6 @@ function CheckFields({
       return (
         <ObservationFields
           predicate={predicate}
-          copy="Notices a page whose length equals the limit it asked for and that carries no cursor, hasMore or similar. A full page is not proof that more results exist, so this reports rather than fails."
           onChange={onChange}
           availableTools={availableTools}
           readOnly={readOnly}
@@ -1130,6 +1352,12 @@ function ToolNameField({
   path?: "toolName" | "beforeToolName";
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
+  const inline =
+    paper &&
+    ["toolCalledAtLeastOnce", "toolNeverCalled", "firstToolWas"].includes(
+      paper,
+    );
   const errorId = `${id}-error`;
   // When a suite has attached servers and we know the tool list, prefer a
   // dropdown to prevent typos. Fall back to free text otherwise (legacy
@@ -1151,9 +1379,11 @@ function ToolNameField({
   return (
     <div
       className={
-        compact
-          ? "grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 pr-7"
-          : "space-y-1"
+        inline
+          ? "flex flex-wrap items-center gap-2"
+          : compact
+            ? "grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 pr-7"
+            : "space-y-1"
       }
     >
       <Label htmlFor={id} className="text-[11px]">
@@ -1174,9 +1404,13 @@ function ToolNameField({
           <SelectTrigger
             id={id}
             className={
-              compact
-                ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
-                : "h-8 text-xs"
+              inline
+                ? "h-7 w-auto min-w-24 text-xs"
+                : paper
+                  ? "h-9 w-full text-sm"
+                  : compact
+                    ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
+                    : "h-8 text-xs"
             }
             aria-label={label}
             aria-invalid={error ? true : undefined}
@@ -1209,8 +1443,10 @@ function ToolNameField({
             onChange(e.target.value);
           }}
           onBlur={markTouched}
-          placeholder="e.g. search"
-          className="h-8 text-xs"
+          placeholder="Tool name"
+          className={
+            inline ? "h-7 w-40 text-xs" : paper ? "h-9 text-sm" : "h-8 text-xs"
+          }
           disabled={readOnly}
         />
       )}
@@ -1263,6 +1499,7 @@ export function ToolCalledWithFields({
   toolArgSchemas,
   readOnly,
   compact = false,
+  paper = false,
 }: {
   predicate: Extract<Predicate, { type: "toolCalledWith" }>;
   onChange: (next: Predicate) => void;
@@ -1270,12 +1507,79 @@ export function ToolCalledWithFields({
   toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
   compact?: boolean;
+  paper?: boolean;
 }) {
   const minCountId = useId();
   // Schema properties for the currently-selected tool, if known. Drives the
   // argument-name dropdown + value type hints below; empty/undefined falls
   // back to free-text keys.
   const argProperties = toolArgSchemas?.[predicate.toolName];
+  const contextPaper = useContext(PaperFieldsContext);
+  const minimumMatchingCalls = (
+    <div className="space-y-1">
+      <Label htmlFor={minCountId} className="text-[11px]">
+        Minimum matching calls (optional)
+      </Label>
+      <Input
+        id={minCountId}
+        type="number"
+        min={1}
+        step={1}
+        value={predicate.minCount ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            const next = { ...predicate };
+            delete next.minCount;
+            onChange(next);
+            return;
+          }
+          const n = Number(raw);
+          if (!Number.isFinite(n)) return;
+          onChange({ ...predicate, minCount: Math.floor(n) });
+        }}
+        placeholder="1"
+        className="h-8 w-32 text-xs"
+        disabled={readOnly}
+      />
+    </div>
+  );
+  if (paper || contextPaper)
+    return (
+      <PaperFieldsContext.Provider value="toolCalledWith">
+        <div className="space-y-2">
+          <ToolNameField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange({ ...predicate, toolName })}
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+          <ArgMatcherSubform
+            key={predicate.toolName}
+            paper
+            value={predicate.args}
+            argProperties={argProperties}
+            readOnly={readOnly}
+            onChange={(args) => onChange({ ...predicate, args })}
+          />
+          <PaperNumberField
+            id={minCountId}
+            ariaLabel="Minimum matching calls (optional)"
+            prefix="Called at least"
+            value={predicate.minCount}
+            placeholder="1"
+            unit="times"
+            readOnly={readOnly}
+            onChange={(minCount) => onChange({ ...predicate, minCount })}
+            onClear={() => {
+              const next = { ...predicate };
+              delete next.minCount;
+              onChange(next);
+            }}
+          />
+        </div>
+      </PaperFieldsContext.Provider>
+    );
   return (
     <div className={compact ? "space-y-1" : "space-y-3"}>
       <ToolNameField
@@ -1302,33 +1606,7 @@ export function ToolCalledWithFields({
         open={predicate.minCount != null}
         label={`Call count${predicate.minCount != null ? ` · ${predicate.minCount}` : ""}`}
       >
-        <div className="space-y-1">
-          <Label htmlFor={minCountId} className="text-[11px]">
-            Minimum matching calls (optional)
-          </Label>
-          <Input
-            id={minCountId}
-            type="number"
-            min={1}
-            step={1}
-            value={predicate.minCount ?? ""}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === "") {
-                const next = { ...predicate };
-                delete next.minCount;
-                onChange(next);
-                return;
-              }
-              const n = Number(raw);
-              if (!Number.isFinite(n)) return;
-              onChange({ ...predicate, minCount: Math.floor(n) });
-            }}
-            placeholder="1"
-            className="h-8 w-32 text-xs"
-            disabled={readOnly}
-          />
-        </div>
+        {minimumMatchingCalls}
       </CompactFieldDetails>
     </div>
   );
@@ -1356,6 +1634,62 @@ function argsAreFlat(args: Record<string, unknown>): boolean {
   return true;
 }
 
+const ARG_MATCH_COPY: Record<ArgMatchMode, { label: string; help: string }> = {
+  partial: {
+    label: "Partial",
+    help: "Match what you set. Allow extra arguments.",
+  },
+  exact: { label: "Exact", help: "Match what you set. No extra arguments." },
+  ignore: { label: "Ignore", help: "Check only that the tool was called." },
+};
+
+function ArgumentMatchingField({
+  value,
+  onChange,
+  readOnly,
+  inline = false,
+}: {
+  value: ArgMatchMode;
+  onChange: (next: ArgMatchMode) => void;
+  readOnly: boolean;
+  /** Control only, no visible label — sits on the "Arguments" row. */
+  inline?: boolean;
+}) {
+  const modeId = useId();
+  const paper = useContext(PaperFieldsContext);
+  const control = (
+    <SegmentedControl<ArgMatchMode>
+      value={value}
+      onChange={onChange}
+      disabled={readOnly}
+      options={(["partial", "exact", "ignore"] as const).map((mode) => ({
+        value: mode,
+        label: ARG_MATCH_COPY[mode].label,
+        title: ARG_MATCH_COPY[mode].help,
+      }))}
+    />
+  );
+  if (inline)
+    return (
+      <div role="group" aria-label="Argument matching">
+        {control}
+      </div>
+    );
+  return (
+    <div className="space-y-1">
+      <Label
+        id={modeId}
+        className={paper ? "text-xs font-normal leading-4" : "text-[11px]"}
+      >
+        Argument matching
+      </Label>
+      <div role="group" aria-labelledby={modeId}>
+        {control}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Sub-form for the `toolCalledWith.args` shape. Phase 3:
  *
@@ -1377,6 +1711,7 @@ function ArgMatcherSubform({
   onChange,
   argProperties,
   readOnly,
+  paper = false,
 }: {
   value: { args: Record<string, unknown>; argumentMatching?: ArgMatchMode };
   onChange: (next: {
@@ -1385,6 +1720,7 @@ function ArgMatcherSubform({
   }) => void;
   argProperties?: Record<string, any>;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   const modeId = useId();
   const mode: ArgMatchMode = value.argumentMatching ?? "partial";
@@ -1399,74 +1735,121 @@ function ArgMatcherSubform({
   return (
     <div className="space-y-2">
       <div className="space-y-2">
-        <div className="space-y-1">
-          <Label htmlFor={modeId} className="text-[11px]">
-            Argument matching
-          </Label>
-          <Select
+        {!paper && (
+          <ArgumentMatchingField
             value={mode}
-            onValueChange={(next) =>
-              onChange({ ...value, argumentMatching: next as ArgMatchMode })
+            onChange={(argumentMatching) =>
+              onChange({ ...value, argumentMatching })
             }
-            disabled={readOnly}
-          >
-            <SelectTrigger id={modeId} className="h-8 w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="partial" className="text-xs">
-                Partial (extras ok)
-              </SelectItem>
-              <SelectItem value="exact" className="text-xs">
-                Exact (deep equal)
-              </SelectItem>
-              <SelectItem value="ignore" className="text-xs">
-                Ignore (only tool name matters)
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+            readOnly={readOnly}
+          />
+        )}
         {/* Per-row "Raw JSON" toggle so power users can author nested
             shapes the structured editor can't express. Disabled in
             ignore mode (args aren't compared anyway). */}
-        <div className="flex items-center justify-end gap-2">
-          <Switch
-            id={`${modeId}-raw`}
-            checked={useRaw}
-            onCheckedChange={(checked) => setUseRaw(checked)}
-            disabled={readOnly || mode === "ignore"}
-            aria-label="Use raw JSON editor"
-          />
-          <Label
-            htmlFor={`${modeId}-raw`}
-            className="text-[11px] text-muted-foreground"
-          >
-            Raw JSON
-          </Label>
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            paper ? "flex-wrap justify-between gap-y-2" : "justify-end",
+          )}
+        >
+          {paper ? (
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-2">
+              {!useRaw ? <span className="text-xs">Arguments</span> : null}
+              <ArgumentMatchingField
+                inline
+                value={mode}
+                onChange={(argumentMatching) =>
+                  onChange({ ...value, argumentMatching })
+                }
+                readOnly={readOnly}
+              />
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${modeId}-raw`}
+              checked={useRaw}
+              onCheckedChange={(checked) => setUseRaw(checked)}
+              disabled={readOnly || mode === "ignore"}
+              aria-label="Use raw JSON editor"
+            />
+            <Label
+              htmlFor={`${modeId}-raw`}
+              className="text-[11px] text-muted-foreground"
+            >
+              Raw JSON
+            </Label>
+          </div>
         </div>
+        {paper ? (
+          <p className="text-xs text-muted-foreground">
+            {ARG_MATCH_COPY[mode].help}
+          </p>
+        ) : null}
       </div>
-      {mode === "ignore" ? (
-        <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] italic text-muted-foreground">
-          Arguments not compared in ignore mode.
-        </div>
-      ) : useRaw ? (
-        <RawArgsJsonEditor
-          value={value.args ?? {}}
-          onChange={(args) => onChange({ ...value, args })}
-          mode={mode}
-          readOnly={readOnly}
-        />
-      ) : (
-        <StructuredArgsEditor
-          value={value.args ?? {}}
-          onChange={(args) => onChange({ ...value, args })}
-          mode={mode}
-          argProperties={argProperties}
-          readOnly={readOnly}
-        />
-      )}
+      <div className={cn(paper && "border-l-2 border-border pl-3.5")}>
+        {mode === "ignore" ? (
+          paper ? (
+            // Adding an argument only makes sense if it gets checked, so
+            // this also switches back to partial matching.
+            !readOnly ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() =>
+                  onChange({
+                    argumentMatching: "partial",
+                    args: {
+                      ...value.args,
+                      [freshArgKey(value.args ?? {})]: "",
+                    },
+                  })
+                }
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add argument
+              </Button>
+            ) : null
+          ) : (
+            <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] italic text-muted-foreground">
+              Arguments not compared in ignore mode.
+            </div>
+          )
+        ) : useRaw ? (
+          <RawArgsJsonEditor
+            paper={paper}
+            value={value.args ?? {}}
+            onChange={(args) => onChange({ ...value, args })}
+            mode={mode}
+            readOnly={readOnly}
+          />
+        ) : (
+          <StructuredArgsEditor
+            paper={paper}
+            value={value.args ?? {}}
+            onChange={(args) => onChange({ ...value, args })}
+            mode={mode}
+            argProperties={argProperties}
+            readOnly={readOnly}
+          />
+        )}
+      </div>
     </div>
   );
+}
+
+/** Pick a fresh unique key. Don't collide with existing keys; numeric
+ *  suffixes are an ergonomic default familiar from ExpectedToolsEditor. */
+function freshArgKey(args: Record<string, unknown>): string {
+  let candidate = "arg";
+  let i = 1;
+  while (Object.hasOwn(args, candidate)) {
+    candidate = `arg${i++}`;
+  }
+  return candidate;
 }
 
 /**
@@ -1481,12 +1864,14 @@ function StructuredArgsEditor({
   mode,
   argProperties,
   readOnly,
+  paper = false,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   mode: ArgMatchMode;
   argProperties?: Record<string, any>;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   // Stable ordering for the row list: insertion order via Object.entries.
   const entries = Object.entries(value);
@@ -1506,22 +1891,17 @@ function StructuredArgsEditor({
     onChange(next);
   };
   const addEmpty = () => {
-    // Pick a fresh unique key. Don't collide with existing keys; numeric
-    // suffixes are an ergonomic default familiar from ExpectedToolsEditor.
-    let candidate = "arg";
-    let i = 1;
-    while (Object.hasOwn(value, candidate)) {
-      candidate = `arg${i++}`;
-    }
-    onChange({ ...value, [candidate]: "" });
+    onChange({ ...value, [freshArgKey(value)]: "" });
   };
 
   return (
     <div className="space-y-2">
       {entries.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
-          No expected arguments. Use Add argument below.
-        </div>
+        paper ? null : (
+          <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
+            No expected arguments. Use Add argument below.
+          </div>
+        )
       ) : (
         <ul className="space-y-1.5">
           {entries.map(([key, val]) => (
@@ -1530,6 +1910,7 @@ function StructuredArgsEditor({
               // current persisted key. The row keeps its own draft of
               // edits so intermediate collisions don't lose user input.
               key={key}
+              paper={paper}
               persistedKey={key}
               value={val}
               mode={mode}
@@ -1550,7 +1931,11 @@ function StructuredArgsEditor({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          className={
+            paper
+              ? "h-7 font-sans text-xs text-foreground"
+              : "h-7 text-xs text-muted-foreground hover:text-foreground"
+          }
           onClick={addEmpty}
         >
           <Plus className="mr-1 h-3 w-3" />
@@ -1580,6 +1965,7 @@ function StructuredArgsRow({
   onCommitKey,
   onChangeValue,
   onRemove,
+  paper = false,
 }: {
   persistedKey: string;
   value: unknown;
@@ -1590,6 +1976,7 @@ function StructuredArgsRow({
   onCommitKey: (next: string) => void;
   onChangeValue: (next: unknown) => void;
   onRemove: () => void;
+  paper?: boolean;
 }) {
   const [draftKey, setDraftKey] = useState(persistedKey);
 
@@ -1609,8 +1996,7 @@ function StructuredArgsRow({
   const argKeys = argProperties ? Object.keys(argProperties) : [];
   const useKeyDropdown = argKeys.length > 0;
   const argSchema = argProperties?.[persistedKey] as
-    | { type?: string; description?: string }
-    | undefined;
+    { type?: string; description?: string } | undefined;
   // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
   // schema property — show the placeholder so the user is prompted to pick.
   const isPlaceholderKey =
@@ -1621,8 +2007,7 @@ function StructuredArgsRow({
     .filter((k) => k === persistedKey || !isKeyTaken(k))
     .map((k) => {
       const schema = argProperties![k] as
-        | { type?: string; description?: string }
-        | undefined;
+        { type?: string; description?: string } | undefined;
       let description = schema?.description || "";
       if (schema?.type) {
         description += description
@@ -1633,10 +2018,29 @@ function StructuredArgsRow({
     });
 
   return (
-    <li className="space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2.5">
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-[10px] text-muted-foreground">Argument</Label>
+    <li
+      className={
+        paper
+          ? "grid gap-2 sm:grid-cols-3"
+          : "space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2.5"
+      }
+    >
+      <div className="min-w-0 space-y-1">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-2",
+            paper && "h-7",
+          )}
+        >
+          <Label
+            className={
+              paper
+                ? "font-sans text-[11px] text-foreground"
+                : "text-[10px] text-muted-foreground"
+            }
+          >
+            Argument
+          </Label>
           {!readOnly ? (
             <Button
               type="button"
@@ -1650,7 +2054,39 @@ function StructuredArgsRow({
             </Button>
           ) : null}
         </div>
-        {useKeyDropdown ? (
+        {useKeyDropdown && paper ? (
+          <Select
+            value={isPlaceholderKey ? "" : persistedKey}
+            onValueChange={onCommitKey}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              className="h-9 w-full font-sans text-sm text-foreground data-[placeholder]:text-foreground"
+              aria-label={`Argument name for ${persistedKey}`}
+            >
+              <SelectValue placeholder="Select argument…">
+                {isPlaceholderKey ? undefined : persistedKey}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {keyItems.map((item) => (
+                <SelectItem
+                  key={item.value}
+                  value={item.value}
+                  textValue={item.label}
+                >
+                  <span>{item.label}</span>
+                  {item.description ? (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {" "}
+                      {item.description}
+                    </span>
+                  ) : null}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : useKeyDropdown ? (
           <Combobox
             items={keyItems}
             value={isPlaceholderKey ? "" : persistedKey}
@@ -1674,7 +2110,9 @@ function StructuredArgsRow({
               }}
               placeholder="key"
               className={cn(
-                "h-8 w-full font-mono text-xs",
+                paper
+                  ? "h-9 w-full font-sans text-sm text-foreground placeholder:text-foreground"
+                  : "h-8 w-full font-mono text-xs",
                 (collides || isEmpty) &&
                   "border-destructive focus-visible:ring-destructive",
               )}
@@ -1697,11 +2135,19 @@ function StructuredArgsRow({
           </>
         )}
       </div>
-      <div className="min-w-0 space-y-1">
-        <Label className="text-[10px] text-muted-foreground">
+      <div className={cn("min-w-0 space-y-1", paper && "sm:col-span-2")}>
+        <Label
+          className={
+            paper
+              ? "h-7 font-sans text-[11px] text-foreground"
+              : "text-[10px] text-muted-foreground"
+          }
+        >
           Expected value
         </Label>
         <ArgLeafPicker
+          compact={paper}
+          ariaLabel={paper ? `Expected value for ${persistedKey}` : undefined}
           value={value}
           onChange={(next) => onChangeValue(next)}
           argumentMatching={mode}
@@ -1747,16 +2193,18 @@ function RawArgsJsonEditor({
   onChange,
   mode,
   readOnly,
+  paper = false,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   mode: ArgMatchMode;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   const argsId = useId();
   const formatValue = (v: unknown): string => {
     try {
-      return JSON.stringify(v ?? {}, null, 2);
+      return paper ? JSON.stringify(v ?? {}) : JSON.stringify(v ?? {}, null, 2);
     } catch {
       return "{}";
     }
@@ -1785,19 +2233,25 @@ function RawArgsJsonEditor({
   return (
     <div className="space-y-1">
       <Label htmlFor={argsId} className="text-[11px]">
-        Expected args (JSON)
-        {mode === "partial" ? (
+        {paper ? "Arguments" : "Expected args (JSON)"}
+        {!paper && mode === "partial" ? (
           <span className="ml-2 text-muted-foreground font-normal">
             Placeholders allowed: "string", "number", "boolean", "object",
             "array", "null", "any"
           </span>
         ) : null}
       </Label>
-      <textarea
+      <Textarea
         id={argsId}
-        className={`min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-          jsonError ? "border-destructive/60" : "border-border/60"
-        }`}
+        rows={paper ? 1 : undefined}
+        aria-invalid={jsonError ? true : undefined}
+        className={
+          paper
+            ? "min-h-9 h-9 resize-y border-input px-3 py-2 font-sans text-sm md:text-sm"
+            : `min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
+                jsonError ? "border-destructive/60" : "border-border/60"
+              }`
+        }
         value={draftJson}
         onChange={(e) => {
           const next = e.target.value;
@@ -1830,6 +2284,7 @@ function ResponseContainsFields({
   onChange: (next: Predicate) => void;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const needleId = useId();
   const csId = useId();
   const { error, markTouched } = useFieldValidation(
@@ -1840,7 +2295,7 @@ function ResponseContainsFields({
     <div className="space-y-2">
       <div className="space-y-1">
         <Label htmlFor={needleId} className="text-[11px]">
-          Needle
+          {paper ? "Text" : "Needle"}
         </Label>
         <Input
           id={needleId}
@@ -1853,7 +2308,7 @@ function ResponseContainsFields({
           }}
           onBlur={markTouched}
           placeholder="e.g. refund issued"
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
         {error ? (
@@ -1862,19 +2317,21 @@ function ResponseContainsFields({
           </p>
         ) : null}
       </div>
-      <div className="flex items-center gap-2">
-        <Switch
-          id={csId}
-          checked={predicate.caseSensitive ?? false}
-          onCheckedChange={(checked) =>
-            onChange({ ...predicate, caseSensitive: checked })
-          }
-          disabled={readOnly}
-        />
-        <Label htmlFor={csId} className="text-[11px]">
-          Case sensitive
-        </Label>
-      </div>
+      {paper ? null : (
+        <div className="flex items-center gap-2">
+          <Switch
+            id={csId}
+            checked={predicate.caseSensitive ?? false}
+            onCheckedChange={(checked) =>
+              onChange({ ...predicate, caseSensitive: checked })
+            }
+            disabled={readOnly}
+          />
+          <Label htmlFor={csId} className="text-[11px]">
+            Case sensitive
+          </Label>
+        </div>
+      )}
     </div>
   );
 }
@@ -1889,6 +2346,7 @@ function ResponseMatchesFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   // Live-validate the regex on input. An invalid pattern shows inline as soon
   // as it is typed — the user wrote it, so it is not an untouched-field
   // message. The empty case goes through the touched rule like every other
@@ -1910,7 +2368,7 @@ function ResponseMatchesFields({
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Regex pattern (no surrounding slashes)
+        {paper ? "Pattern" : "Regex pattern (no surrounding slashes)"}
       </Label>
       <Input
         id={id}
@@ -1923,7 +2381,7 @@ function ResponseMatchesFields({
         }}
         onBlur={markTouched}
         placeholder="e.g. ^Order #\\d{4} confirmed$"
-        className="h-8 font-mono text-xs"
+        className={paper ? "h-9 text-sm" : "h-8 font-mono text-xs"}
         disabled={readOnly}
       />
       {error ? (
@@ -1968,20 +2426,17 @@ const PATTERN_MATCH_COPY: Record<
     whole: string;
     placeholders: readonly [string, string];
     /** What `0/0` does NOT mean, after "not that". */
-    notZero: string;
   }
 > = {
   call: {
-    pathLabel: "Argument",
+    pathLabel: "Only search this argument",
     whole: "Whole input",
     placeholders: ["e.g. Idea", "e.g. Build|Ship"],
-    notZero: "the tool was never called",
   },
   result: {
-    pathLabel: "Field",
+    pathLabel: "Only search this output key",
     whole: "Whole output",
     placeholders: ["e.g. ISS-\\d+", "e.g. open|closed"],
-    notZero: "the tool returned nothing",
   },
 };
 
@@ -2173,6 +2628,7 @@ export function PatternMatchFields({
   pathSchemas?: ToolArgSchemas;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const patternsLabelId = useId();
   const patternRowId = useId();
   const ignoreCaseId = useId();
@@ -2192,6 +2648,7 @@ export function PatternMatchFields({
     () =>
       letters.has("m") ||
       letters.has("s") ||
+      (paper && predicate.path !== undefined) ||
       predicate.min !== undefined ||
       predicate.max !== undefined,
   );
@@ -2286,22 +2743,26 @@ export function PatternMatchFields({
           readOnly={readOnly}
         />
       )}
-      <MatchPathField
-        path={predicate.path}
-        onChange={(path) => update({ path })}
-        keys={pathKeys}
-        label={copy.pathLabel}
-        wholeLabel={copy.whole}
-        readOnly={readOnly}
-      />
+      {!paper ? (
+        <MatchPathField
+          path={predicate.path}
+          onChange={(path) => update({ path })}
+          keys={pathKeys}
+          label={copy.pathLabel}
+          wholeLabel={copy.whole}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1.5">
         <Label id={patternsLabelId} className="text-[11px]">
-          Patterns
+          Regex
         </Label>
-        <p className="text-[11px] text-muted-foreground">
-          A {unit} passes only if it matches every pattern. Use{" "}
-          <code className="font-mono">A|B</code> for either.
-        </p>
+        {!paper ? (
+          <p className="text-[11px] text-muted-foreground">
+            A {unit} passes only if it matches every pattern. Use{" "}
+            <code className="font-mono">A|B</code> for either.
+          </p>
+        ) : null}
         <ul aria-labelledby={patternsLabelId} className="space-y-1.5">
           {patterns.map((pattern, index) => {
             const rowId = `${patternRowId}-${index}`;
@@ -2329,7 +2790,7 @@ export function PatternMatchFields({
                     }}
                     onBlur={markTouched}
                     placeholder={copy.placeholders[index === 0 ? 0 : 1]}
-                    className="h-8 font-mono text-xs"
+                    className={paper ? "h-9 text-sm" : "h-8 font-mono text-xs"}
                     disabled={readOnly}
                   />
                   {readOnly ? null : (
@@ -2377,30 +2838,59 @@ export function PatternMatchFields({
             disabled={patterns.length >= MAX_MATCH_PATTERNS}
           >
             <Plus className="h-3.5 w-3.5" />
-            Add pattern
+            Add regex
           </Button>
         )}
       </div>
-      <div className="flex items-center gap-2">
-        <Switch
-          id={ignoreCaseId}
-          checked={letters.has("i")}
-          onCheckedChange={(on) => setFlag("i", on)}
-          disabled={readOnly}
-        />
-        <Label htmlFor={ignoreCaseId} className="text-[11px]">
-          Ignore case
-        </Label>
-      </div>
+      {!paper ? (
+        <div className="flex items-center gap-2">
+          <Switch
+            id={ignoreCaseId}
+            checked={letters.has("i")}
+            onCheckedChange={(on) => setFlag("i", on)}
+            disabled={readOnly}
+          />
+          <Label htmlFor={ignoreCaseId} className="text-[11px]">
+            Ignore capitals (A = a)
+          </Label>
+        </div>
+      ) : null}
       <details
         open={moreOpen}
         onToggle={(event) =>
           setMoreOpen((event.currentTarget as HTMLDetailsElement).open)
         }
-        className="text-[11px] text-muted-foreground"
+        className={
+          paper
+            ? "text-[11px] text-foreground"
+            : "text-[11px] text-muted-foreground"
+        }
       >
         <summary className="cursor-pointer py-1">More options</summary>
         <div className="mt-2 space-y-3">
+          {paper ? (
+            <>
+              <MatchPathField
+                path={predicate.path}
+                onChange={(path) => update({ path })}
+                keys={pathKeys}
+                label={copy.pathLabel}
+                wholeLabel={copy.whole}
+                readOnly={readOnly}
+              />
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={ignoreCaseId}
+                  checked={letters.has("i")}
+                  onCheckedChange={(on) => setFlag("i", on)}
+                  disabled={readOnly}
+                />
+                <Label htmlFor={ignoreCaseId} className="text-[11px]">
+                  Ignore capitals (A = a)
+                </Label>
+              </div>
+            </>
+          ) : null}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Switch
@@ -2410,8 +2900,8 @@ export function PatternMatchFields({
                 disabled={readOnly}
               />
               <Label htmlFor={multilineId} className="text-[11px]">
-                <code className="font-mono">^</code> and{" "}
-                <code className="font-mono">$</code> match at line breaks
+                Check <code className="font-mono">^</code> and{" "}
+                <code className="font-mono">$</code> on every line
               </Label>
             </div>
             <div className="flex items-center gap-2">
@@ -2422,7 +2912,7 @@ export function PatternMatchFields({
                 disabled={readOnly}
               />
               <Label htmlFor={dotAllId} className="text-[11px]">
-                <code className="font-mono">.</code> matches line breaks
+                Let <code className="font-mono">.</code> match across lines
               </Label>
             </div>
           </div>
@@ -2430,43 +2920,63 @@ export function PatternMatchFields({
             <legend className="text-[11px] font-medium text-foreground">
               Matching {unit}s
             </legend>
-            <div className="flex flex-wrap items-center gap-2">
-              <Label htmlFor={minId} className="text-[11px]">
-                At least
-              </Label>
-              <Input
-                id={minId}
-                type="number"
-                min={0}
-                step={1}
-                value={predicate.min ?? ""}
-                aria-invalid={countError ? true : undefined}
-                onChange={(e) => setCount("min", e.target.value)}
-                placeholder="1"
-                className="h-8 w-20 text-xs"
-                disabled={readOnly}
-              />
-              <Label htmlFor={maxId} className="text-[11px]">
-                At most
-              </Label>
-              <Input
-                id={maxId}
-                type="number"
-                min={0}
-                step={1}
-                value={predicate.max ?? ""}
-                aria-invalid={countError ? true : undefined}
-                onChange={(e) => setCount("max", e.target.value)}
-                placeholder="No limit"
-                className="h-8 w-24 text-xs"
-                disabled={readOnly}
-              />
-            </div>
-            <p>
-              Counts only {unit}s that match every pattern, not all {unit}s. At
-              least 0 and at most 0 means no {unit} matches. It does not mean{" "}
-              {copy.notZero}.
-            </p>
+            {paper ? (
+              <div className="flex flex-wrap items-center gap-4">
+                <PaperNumberField
+                  id={minId}
+                  ariaLabel="At least"
+                  prefix="At least"
+                  value={predicate.min}
+                  placeholder="1"
+                  readOnly={readOnly}
+                  onChange={(n) => setCount("min", String(n))}
+                  onClear={() => setCount("min", "")}
+                />
+                <PaperNumberField
+                  id={maxId}
+                  ariaLabel="At most"
+                  prefix="At most"
+                  value={predicate.max}
+                  placeholder="∞"
+                  readOnly={readOnly}
+                  onChange={(n) => setCount("max", String(n))}
+                  onClear={() => setCount("max", "")}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor={minId} className="text-[11px]">
+                  At least
+                </Label>
+                <Input
+                  id={minId}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={predicate.min ?? ""}
+                  aria-invalid={countError ? true : undefined}
+                  onChange={(e) => setCount("min", e.target.value)}
+                  placeholder="1"
+                  className="h-8 w-20 text-xs"
+                  disabled={readOnly}
+                />
+                <Label htmlFor={maxId} className="text-[11px]">
+                  At most
+                </Label>
+                <Input
+                  id={maxId}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={predicate.max ?? ""}
+                  aria-invalid={countError ? true : undefined}
+                  onChange={(e) => setCount("max", e.target.value)}
+                  placeholder="No limit"
+                  className="h-8 w-24 text-xs"
+                  disabled={readOnly}
+                />
+              </div>
+            )}
             {countError ? (
               <p role="alert" className="text-destructive">
                 {countError}
@@ -2496,19 +3006,23 @@ function WidgetToolFilterField({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   const ALL = "__all__";
   const useDropdown = availableTools && availableTools.length > 0;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Limit to tool (optional)
+        {paper ? "View" : "Limit to tool (optional)"}
       </Label>
       {useDropdown && !readOnly ? (
         <Select
           value={value ?? ALL}
           onValueChange={(next) => onChange(next === ALL ? undefined : next)}
         >
-          <SelectTrigger id={id} className="h-8 text-xs">
+          <SelectTrigger
+            id={id}
+            className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -2530,7 +3044,7 @@ function WidgetToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder="All widgets"
-          className="h-8 text-xs"
+          className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -2550,6 +3064,27 @@ function WidgetLatencyFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
+  if (paper)
+    return (
+      <div className="space-y-2">
+        <PaperNumberField
+          value={predicate.ms}
+          unit="ms"
+          readOnly={readOnly}
+          onChange={(ms) => onChange({ ...predicate, ms })}
+        />
+        <details className="text-xs text-foreground">
+          <summary className="cursor-pointer">View filter</summary>
+          <WidgetToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+        </details>
+      </div>
+    );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2614,6 +3149,7 @@ function ResultToolFilterField({
   /** The no-filter choice, e.g. "Any tool" where one matching result is enough. */
   anyLabel?: string;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const id = useId();
   // The all-tools option and a real tool name live in ONE value space, so the
   // sentinel must be unreachable by any tool name rather than merely unlikely:
@@ -2624,25 +3160,36 @@ function ResultToolFilterField({
   const encode = (toolName: string) => `tool:${toolName}`;
   const decode = (option: string) =>
     option === ALL ? undefined : option.slice("tool:".length);
-  const useDropdown = availableTools && availableTools.length > 0;
+  const tools = availableTools ?? [];
+  const useDropdown = paper || tools.length > 0;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
         {label}
       </Label>
-      {useDropdown && !readOnly ? (
+      {useDropdown && (paper || !readOnly) ? (
         <Select
           value={value === undefined ? ALL : encode(value)}
-          onValueChange={(next) => onChange(decode(next))}
+          disabled={readOnly}
+          onValueChange={(next) => {
+            if (!readOnly) onChange(decode(next));
+          }}
         >
-          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
+          <SelectTrigger
+            id={id}
+            className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
+            aria-label={label}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL} className="text-xs">
               {anyLabel}
             </SelectItem>
-            {availableTools!.map((t) => (
+            {value && !tools.includes(value) ? (
+              <SelectItem value={encode(value)}>{value}</SelectItem>
+            ) : null}
+            {tools.map((t) => (
               <SelectItem key={t} value={encode(t)} className="text-xs">
                 {t}
               </SelectItem>
@@ -2658,7 +3205,7 @@ function ResultToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder={anyLabel}
-          className="h-8 text-xs"
+          className={paper ? "h-9 w-full text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -2686,20 +3233,52 @@ function ObservationFields<
   readOnly,
 }: {
   predicate: P;
-  copy: string;
+  copy?: string;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
+  const filter = (
+    <ResultToolFilterField
+      value={predicate.toolName}
+      onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+      availableTools={availableTools}
+      readOnly={readOnly}
+    />
+  );
+  if (paper) {
+    const sentences = {
+      argumentsMatchToolSchema:
+        "Passes when tool arguments match their declared schema.",
+      noRepeatedIdenticalCall:
+        "Warns when the same tool is called twice in a row with identical arguments.",
+      toolErrorNamesInput:
+        "Warns when a tool error names none of its input keys or values.",
+      fullPageHasContinuation:
+        "Warns when a tool returns a full page with no way to get the next page.",
+    };
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+          {sentences[predicate.type]}
+        </p>
+        <details className="text-xs text-foreground">
+          <summary className="cursor-pointer">Tool filter</summary>
+          <div className="space-y-2 pt-2">
+            {filter}
+            {copy ? <p>{copy}</p> : null}
+          </div>
+        </details>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
-      <div className="text-xs text-muted-foreground">{copy}</div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
+      {copy ? (
+        <div className="text-xs text-muted-foreground">{copy}</div>
+      ) : null}
+      {filter}
     </div>
   );
 }
@@ -2716,17 +3295,18 @@ function ToolOrderFields({
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   return (
     <div className="space-y-2">
       <ToolNameField
-        label="Must be called first"
+        label={paper ? "First tool" : "Must be called first"}
         value={predicate.toolName}
         onChange={(toolName) => onChange({ ...predicate, toolName })}
         availableTools={availableTools}
         readOnly={readOnly}
       />
       <ToolNameField
-        label="Before this tool"
+        label={paper ? "Second tool" : "Before this tool"}
         path="beforeToolName"
         value={predicate.beforeToolName}
         onChange={(beforeToolName) =>
@@ -2777,8 +3357,52 @@ function ToolResultNumberFields<
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const id = useId();
   const value = (predicate as Record<string, unknown>)[field] as number;
+  if (paper)
+    return (
+      <div className="space-y-2">
+        {field !== "count" ? (
+          <ResultToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+            availableTools={availableTools}
+            readOnly={readOnly}
+            label="Tool"
+          />
+        ) : null}
+        <PaperNumberField
+          value={value}
+          prefix={field === "count" ? undefined : "Under"}
+          unit={
+            field === "ms"
+              ? "ms"
+              : field === "maxBytes"
+                ? "bytes"
+                : "tool calls"
+          }
+          readOnly={readOnly}
+          onChange={(number) =>
+            onChange({ ...predicate, [field]: number } as Predicate)
+          }
+        />
+        {field === "count" ? (
+          <details className="text-xs text-foreground">
+            <summary className="cursor-pointer">Tool filter</summary>
+            <ResultToolFilterField
+              value={predicate.toolName}
+              onChange={(toolName) =>
+                onChange(withToolName(predicate, toolName))
+              }
+              availableTools={availableTools}
+              readOnly={readOnly}
+              label="Only count this tool"
+            />
+          </details>
+        ) : null}
+      </div>
+    );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2808,6 +3432,7 @@ function ToolResultNumberFields<
         onChange={(toolName) => onChange(withToolName(predicate, toolName))}
         availableTools={availableTools}
         readOnly={readOnly}
+        label={field === "count" ? "Only count this tool" : undefined}
       />
     </div>
   );
@@ -2825,15 +3450,25 @@ function ToolResultContainsFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   const { error, markTouched } = useFieldValidation(
     "needle",
     "Enter the text the result must contain",
   );
   return (
     <div className="space-y-2">
+      {paper ? (
+        <ResultToolFilterField
+          label="Tool"
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          Text the result must contain
+          Text or JSON the result must contain
         </Label>
         <Input
           id={id}
@@ -2846,7 +3481,7 @@ function ToolResultContainsFields({
           }}
           onBlur={markTouched}
           placeholder="ISS-4412"
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
         {error ? (
@@ -2855,12 +3490,14 @@ function ToolResultContainsFields({
           </p>
         ) : null}
       </div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
+      {!paper ? (
+        <ResultToolFilterField
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2906,6 +3543,7 @@ function ToolResultSchemaFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
   // for, and is re-derived in render when the schema arrives from outside.
   // The identity comes from ONE function in all three places (initial state,
@@ -2918,7 +3556,7 @@ function ToolResultSchemaFields({
   const formatSchema = () =>
     predicate.schema === undefined
       ? "{}"
-      : JSON.stringify(predicate.schema, null, 2);
+      : JSON.stringify(predicate.schema, null, paper ? undefined : 2);
   const [draftState, setDraftState] = useState(() => ({
     text: formatSchema(),
     forSchema: schemaKey,
@@ -2933,15 +3571,24 @@ function ToolResultSchemaFields({
   useInvalidDraftRegistration(error !== null);
   return (
     <div className="space-y-2">
+      {paper ? (
+        <ResultToolFilterField
+          label="Tool"
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          JSON Schema the result must match
+          {paper ? "Schema" : "JSON Schema the result must match"}
         </Label>
         <Textarea
           id={id}
           value={draft}
           spellCheck={false}
-          rows={6}
+          rows={paper ? 1 : 6}
           onChange={(e) => {
             const next = e.target.value;
             const { parsed, ok } = parseSchemaDraft(next);
@@ -2957,7 +3604,11 @@ function ToolResultSchemaFields({
             // keep Save closed until it parses again.
             if (ok) onChange({ ...predicate, schema: parsed });
           }}
-          className="font-mono text-xs"
+          className={
+            paper
+              ? "h-9 min-h-9 resize-y font-sans text-sm md:text-sm"
+              : "font-mono text-xs"
+          }
           disabled={readOnly}
         />
         {error ? (
@@ -2965,20 +3616,89 @@ function ToolResultSchemaFields({
             Not valid JSON: {error}. Saving now keeps the last schema that
             parsed, not what is in the box.
           </p>
-        ) : (
+        ) : !paper ? (
           <p className="text-[11px] text-muted-foreground">
             Validated against the tool's structured content, then its JSON
             output, then text that parses as JSON. Any JSON root — an array is
             legal under protocol 2026-07-28.
           </p>
-        )}
+        ) : null}
       </div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
+      {!paper ? (
+        <ResultToolFilterField
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PaperNumberField({
+  value,
+  onChange,
+  onClear,
+  unit,
+  prefix,
+  readOnly,
+  id: fieldId,
+  ariaLabel,
+  placeholder,
+}: {
+  value: number | undefined;
+  onChange: (next: number) => void;
+  onClear?: () => void;
+  unit?: string;
+  prefix?: string;
+  readOnly: boolean;
+  id?: string;
+  ariaLabel?: string;
+  placeholder?: string;
+}) {
+  const generatedId = useId();
+  const id = fieldId ?? generatedId;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm font-normal leading-[18px] text-card-foreground">
+      {prefix ? (
+        <Label htmlFor={id} className="text-[13px] font-medium">
+          {prefix}
+        </Label>
+      ) : null}
+      <Input
+        id={id}
+        aria-label={ariaLabel ?? `Strictly under (${unit})`}
+        type="number"
+        min={1}
+        step={1}
+        value={value ?? ""}
+        placeholder={placeholder}
+        onChange={(event) => {
+          if (event.target.value === "" && onClear) {
+            onClear();
+            return;
+          }
+          const number = Number(event.target.value);
+          if (Number.isFinite(number)) onChange(Math.floor(number));
+        }}
+        disabled={readOnly}
+        className={cn(
+          "h-6 min-w-9 shrink-0 appearance-none rounded-md px-2 py-1 text-sm font-normal leading-4 text-card-foreground shadow-none focus-visible:ring-[3px] md:text-sm [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+          value == null ? "border-input" : "border-border",
+        )}
+        style={{
+          width: Math.max(
+            prefix ? 48 : 40,
+            String(value ?? placeholder ?? "").length * 8 + 16,
+          ),
+        }}
       />
+      {unit ? (
+        <label htmlFor={id} data-paper-unit className="text-sm font-normal leading-[18px] text-card-foreground">
+          {unit}
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -3386,24 +4106,17 @@ function ResponseCloseToFields({
   onChange: (next: Predicate) => void;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const referenceId = useId();
   const distanceId = useId();
   const caseId = useId();
   const whitespaceId = useId();
-  return (
+  const settings = (
     <div className="space-y-2">
-      <Label htmlFor={referenceId}>Reference response</Label>
-      <Input
-        id={referenceId}
-        value={predicate.reference}
-        disabled={readOnly}
-        onChange={(event) =>
-          onChange({ ...predicate, reference: event.target.value })
-        }
-      />
       <Label htmlFor={distanceId}>Maximum text distance (0–1)</Label>
       <Input
         id={distanceId}
+        className={paper ? "h-6 w-16 px-2 text-xs" : undefined}
         type="number"
         min={0}
         max={1}
@@ -3436,12 +4149,37 @@ function ResponseCloseToFields({
         />
         <Label htmlFor={whitespaceId}>Normalize whitespace</Label>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Compares characters, not meaning. Zero requires an exact match after
-        normalization. Inputs are limited to 100,000 characters. Unequal text
-        that needs more than 4 million edit-distance cells is ungradable, not a
-        failed assertion; equal prefixes and suffixes do not consume that budget.
-      </p>
+    </div>
+  );
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={referenceId}>Reference response</Label>
+      <Input
+        id={referenceId}
+        className={paper ? "h-9 text-sm" : undefined}
+        value={predicate.reference}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, reference: event.target.value })
+        }
+      />
+      {paper ? (
+        <details className="text-xs text-foreground">
+          <summary className="cursor-pointer">Response settings</summary>
+          <div className="pt-2">{settings}</div>
+        </details>
+      ) : (
+        settings
+      )}
+      {!paper ? (
+        <p className="text-xs text-muted-foreground">
+          Compares characters, not meaning. Zero requires an exact match after
+          normalization. Inputs are limited to 100,000 characters. Unequal text
+          that needs more than 4 million edit-distance cells is ungradable, not
+          a failed assertion; equal prefixes and suffixes do not consume that
+          budget.
+        </p>
+      ) : null}
     </div>
   );
 }

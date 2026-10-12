@@ -9,6 +9,10 @@ name: Slop Ratchet
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Judges the PR's diff and labels, which the queue's merge commit lacks. The
+  # verdict on the PR stands; in the queue the job is skipped, which satisfies
+  # the required check.
+  merge_group:
 
 permissions:
   contents: read
@@ -20,6 +24,7 @@ concurrency:
 jobs:
   ratchet:
     name: Slop Ratchet
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
