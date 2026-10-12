@@ -25,6 +25,27 @@ describe("ObservationNotice — organization AI-key policy", () => {
     expect(screen.getByText(AI_UNAVAILABLE_OBSERVATIONS)).toBeInTheDocument();
   });
 
+  it.each([
+    "Experience observations needs a default organization AI model. Ask an organization admin to choose one in AI providers.",
+    "Experience observations could not read the organization's AI settings. Try again.",
+  ])("preserves the backend's remediation: %s", (detail) => {
+    render(
+      <ObservationNotice
+        observations={{
+          status: "ai-unavailable",
+          reason: "ai_unavailable",
+          detail,
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        `${detail} The grade below is complete without AI observations.`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(AI_UNAVAILABLE_OBSERVATIONS)).toBeNull();
+  });
+
   it("keeps the billing copy for a billing refusal", () => {
     render(
       <ObservationNotice

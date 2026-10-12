@@ -16,12 +16,12 @@
 import { Info, Sparkles } from "lucide-react";
 
 /**
- * The organization's AI configuration, never its credits, kept the
- * observations from running. Names no fix: until background AI runs on
- * organization keys, there is none an admin can make.
+ * Older responses may omit the specific refusal detail. Point at the
+ * organization's AI configuration without claiming credits stopped the pass
+ * or that observations are unavailable whenever the policy is on.
  */
 export const AI_UNAVAILABLE_OBSERVATIONS =
-  "AI observations are unavailable while this organization requires its own provider keys. The grade below is complete without them.";
+  "AI observations did not run on this organization's providers. Ask an organization admin to check its AI providers. The grade below is complete without them.";
 
 export interface ObservationState {
   status:
@@ -56,7 +56,13 @@ function describe(observations: ObservationState): {
     observations.status === "ai-unavailable" ||
     observations.reason === "ai_unavailable"
   ) {
-    return { tone: "info", text: AI_UNAVAILABLE_OBSERVATIONS };
+    const detail = observations.detail?.trim();
+    return {
+      tone: "info",
+      text: detail
+        ? `${detail} The grade below is complete without AI observations.`
+        : AI_UNAVAILABLE_OBSERVATIONS,
+    };
   }
   switch (observations.status) {
     case "not-requested":
