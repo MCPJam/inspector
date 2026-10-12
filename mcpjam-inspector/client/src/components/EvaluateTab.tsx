@@ -51,7 +51,6 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -195,7 +194,6 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -345,6 +343,10 @@ function EvaluateTabContent({
   const handleRerunWithQuota = useCallback(
     async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
+        if (args[1]?.throwOnFailure)
+          throw new Error(
+            evalRunsDisabledReason ?? "Eval iteration limit reached.",
+          );
         return;
       }
       const launch = await handlers.handleRerun(...args);
@@ -359,7 +361,7 @@ function EvaluateTabContent({
       }
       return launch;
     },
-    [guardEvalIterationQuota, handlers],
+    [guardEvalIterationQuota, handlers, evalRunsDisabledReason],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -1586,7 +1588,6 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
-          evaluateObserveFirst={observeFirstEnabled}
           onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}

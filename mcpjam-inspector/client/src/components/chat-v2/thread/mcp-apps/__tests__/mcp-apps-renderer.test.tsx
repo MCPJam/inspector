@@ -1429,6 +1429,37 @@ describe("MCPAppsRenderer tool input streaming", () => {
       const { state } = mountChat("thread");
       await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
     });
+
+    it("opens an entrypoint whose App declares only inline, in the fullscreen the host chose", async () => {
+      const owned = handle as unknown as { widgetContent: unknown };
+      const original = owned.widgetContent;
+      owned.widgetContent = {
+        html: "<html><body>inline-only fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "inline",
+          availableDisplayModes: ["inline"],
+        },
+      };
+      try {
+        const { state } = mountChat("global");
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue({
+          availableDisplayModes: ["inline"],
+        });
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(
+          screen.queryByText(/This App has no supported display mode/),
+        ).toBeNull();
+      } finally {
+        owned.widgetContent = original;
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      }
+    });
   });
 
   it("applies resource preference before the first bridge and narrows after init without remounting", async () => {
@@ -1752,6 +1783,79 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // Absent must stay absent all the way to the proxy — an empty object
     // would arm the guard machinery for a host nobody probed.
     expect(sandboxedIframePropsRef.current.browserStorage).toBeUndefined();
+  });
+
+  it("mounts inline and modal views opaque when the client's app iframe is not same-origin", async () => {
+    mcpAppsModalPropsRef.current = null;
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // srcdoc without allow-same-origin. A widget moved to the
+    // modal must not regain the origin the inline frame lacks.
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+    expect(mcpAppsModalPropsRef.current?.widgetMountMode).toBe("opaque");
+  });
+
+  it("mounts an app that declares ui.domain opaque too", async () => {
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          permissive: true,
+          mimeTypeValid: true,
+          declaredDomain: "abc123.claudemcpcontent.com",
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toContain("live-widget");
+    });
+    // No client with an opaque app iframe has been seen to honor ui.domain.
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+  });
+
+  it("mounts a cached replay opaque when the client's app iframe is not same-origin", async () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+  });
+
+  it("uses the default mount when the profile never mentions it", async () => {
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    expect(sandboxedIframePropsRef.current.mountMode).not.toBe("opaque");
   });
 
   it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
@@ -3270,6 +3374,71 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }),
         undefined,
         null,
+      );
+    });
+  });
+
+  it("counts an opaque mount as a healthy view with no origin", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "opaque",
+          url: "about:srcdoc",
+        },
+      } as MessageEvent);
+    });
+
+    // No URL by design (the client models an opaque host), not a degraded mount.
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "ok" }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "opaque",
+          assignedOrigin: undefined,
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
+  it("shows a closed channel when an opaque view reloads itself", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-channel-closed",
+          reason: "view navigated or reloaded itself",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          kind: "view-channel-closed",
+          status: "error",
+          message: "view navigated or reloaded itself",
+        }),
       );
     });
   });

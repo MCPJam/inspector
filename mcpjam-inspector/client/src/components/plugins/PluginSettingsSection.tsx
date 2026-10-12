@@ -14,7 +14,10 @@ import {
   usePluginVersion,
   useProjectPlugin,
 } from "@/hooks/usePluginImportApi";
-import { useProjectMembers, useServerMutations } from "@/hooks/useProjects";
+import {
+  useCanManageProjectClients,
+  useServerMutations,
+} from "@/hooks/useProjects";
 import { useActivePlugins } from "@/hooks/useActivePlugins";
 import {
   PluginServerSetupEditor,
@@ -63,12 +66,14 @@ export function PluginSettingsSection({
   const { plugins: activeRows } = useActivePlugins(projectId);
   const row = activeRows.find((plugin) => plugin.pluginId === pluginId);
   const { isAuthenticated } = useConvexAuth();
-  const { canManageMembers, isLoading: membersLoading } = useProjectMembers({
-    isAuthenticated,
-    projectId,
-  });
-  // Fails closed while membership loads; the reason only shows once known.
-  const canManage = canManageMembers === true;
+  // The backend's plugin admin bar is `canManageProjectMembers`, which this
+  // mirrors for anonymous owners too (the members list answers false for
+  // them). Fails closed while it loads; the reason only shows once known.
+  const { canManage, isLoading: permissionLoading } =
+    useCanManageProjectClients({
+      isAuthenticated,
+      projectId,
+    });
   const management = usePluginManagementActions();
   // Plugin server rows are structurally read-only, but the credential-only
   // write path accepts env/header values for them.
@@ -428,7 +433,7 @@ export function PluginSettingsSection({
             Uninstall plugin…
           </Button>
         </div>
-        {!canManage && !membersLoading ? (
+        {!canManage && !permissionLoading ? (
           <p
             className="text-[11px] text-muted-foreground"
             data-testid="plugin-admin-only-reason"

@@ -1,3 +1,4 @@
+import { guestTabRecovery } from "./auth/guest-tab-recovery";
 /**
  * Guest Session Manager
  *
@@ -578,7 +579,10 @@ export function clearGuestSession(): void {
  * a fresh `lookup_or_create` call.
  */
 export async function revokeGuestSessionAndCookie(): Promise<boolean> {
+  const guestId = cachedSession?.guestId;
+  const finishTransition = guestId ? guestTabRecovery.begin(guestId) : undefined;
   let revoked = false;
+  let succeeded = false;
   try {
     const response = await fetch("/api/web/guest-session/revoke", {
       method: "POST",
@@ -586,6 +590,7 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
     });
     if (response.ok) {
+      succeeded = true;
       try {
         const body = (await response.json()) as { revoked?: unknown };
         revoked = body?.revoked === true;
@@ -597,6 +602,7 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
     console.error("Failed to revoke guest session:", error);
   } finally {
     clearGuestSession();
+    finishTransition?.(succeeded);
   }
   return revoked;
 }

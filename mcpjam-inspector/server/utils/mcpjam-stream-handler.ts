@@ -25,13 +25,18 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
+import {
+  isAiPolicyRecognizedDenialCode,
+  orgPolicyRefusalSlug,
+  type BackendStreamFailureContext,
+} from "./org-policy-stream-refusal.js";
 import {
   describeAsSlug,
   describeError,
@@ -90,6 +95,10 @@ import {
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
+import {
+  DEFAULT_TURN_MAX_STEPS,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -354,7 +363,7 @@ import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 import { serviceCredentialHeaders } from "../services/service-credential.js";
 
-const DEFAULT_MAX_STEPS = 30;
+const DEFAULT_MAX_STEPS = DEFAULT_TURN_MAX_STEPS;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
@@ -691,10 +700,16 @@ export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // The organization's AI-key policy refused the request. Before every status
+  // rule below: see {@link orgPolicyRefusalSlug}.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   // Before the status branches: a body that names MCPJam settles ownership no
   // matter which upstream status was mirrored onto it. The slug still comes
@@ -760,10 +775,17 @@ export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // A mid-stream policy refusal (the org's provider rejecting its key, or
+  // throttling) carries the UPSTREAM status, which read alone would blame the
+  // user's key or page us. Its code settles it.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   if (code === "platform_free_budget_exhausted")
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
@@ -896,6 +918,13 @@ export interface MCPJamHandlerOptions {
    * selection's saved effort.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved model selection, typed. Read by `runHarnessTurn`: a
+   * `source: 'org'` selection runs the harness on the organization's own
+   * provider key (its canonical id is the turn's model, its connection is
+   * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
+   */
+  modelSelection?: ModelSelection;
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -2318,6 +2347,9 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The backend path this stream came from, so an error chunk's code can be
+  // read per route (`credential_missing` on `/stream/org`).
+  dispatchPath?: string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2673,6 +2705,7 @@ async function processStream(
             parsed.statusCode,
             errorText,
             parsed.code,
+            dispatchPath !== undefined ? { endpointPath: dispatchPath } : undefined,
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -3930,6 +3963,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       res.status,
       errorText,
       parsed.code,
+      { endpointPath: dispatchPath },
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3939,8 +3973,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     // happen to carry a code would silence exactly the failures worth paging
     // on. Only the codes below are user-owned refusals from a backend that is
     // working correctly, so only they skip the boundary.
+    //
+    // The organization AI-key policy's refusals are recognized at any status
+    // (they arrive as 403/422/503): the org's own configuration, or its own
+    // provider, said no (see `org-policy-stream-refusal.ts`).
     const isRecognizedDenial =
-      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+      (isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "")) ||
+      isAiPolicyRecognizedDenialCode(parsed.code);
     // Through the reporter, not a bare capture call: reportRouteFailure runs
     // the same maybeCaptureOriginError decision (source becomes the identical
     // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
@@ -4047,6 +4086,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onLiveTextDelta,
     abortSignal,
     onToolCall,
+    dispatchPath,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -5158,6 +5198,41 @@ export async function runChatEngineLoop(
 
       if (aborted) {
         // Already aborted before we even started — bail silently.
+        return;
+      }
+
+      // A resumed request whose user message has already spent its step
+      // budget can run no model call — the loop below would not enter. It
+      // used to end in a SUCCESSFUL finish (`length`, from `hitStepCap`) that
+      // changed nothing in the browser's last step, which therefore still
+      // looked resumable, so the browser posted it again every few seconds
+      // for as long as the tab stayed open, each time persisting an empty
+      // turn. An error ends that: the browser never auto-resends after one.
+      //
+      // Only for browser-sent history, where the browser drives the loop. An
+      // explicit MRTR / scope step-up continuation is exempt: it answers a
+      // suspended call the user acted on, not an automatic resume. So is an
+      // answered approval: `handlePendingApprovals` runs the approved call
+      // without a model call, even on the step budget's last step. The hosted
+      // routes refuse this case before connecting anything
+      // (`agent-loop-guard.ts`); this is the engine's backstop for any caller
+      // that reaches it anyway.
+      if (
+        options.clientSuppliedHistory === true &&
+        !(scopeStepUpResume ?? mrtrResume) &&
+        !hasUnresolvedApprovalResponses(messageHistory) &&
+        hitStepCap()
+      ) {
+        logger.warn(
+          "[mcpjam-stream-handler] continuation refused: step budget already spent",
+          {
+            effectiveSteps: effectiveSteps(),
+            maxSteps: resolvedMaxSteps,
+            modelId,
+            turnId: traceTurn.turnId,
+          },
+        );
+        emitError(safeWriter, STEP_LIMIT_REFUSAL_MESSAGE);
         return;
       }
 

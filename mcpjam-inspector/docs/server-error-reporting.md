@@ -18,6 +18,25 @@
 If you find yourself importing `@sentry/node` in a route, you are adding a
 double-capture. Use the logger.
 
+## What an event carries
+
+`sendDefaultPii: false` governs what the SDK collects about the USER (IP,
+cookies); it does not stop the http integration from attaching the incoming
+request body, and it does not touch exception text. So:
+
+- `logger.ts` scrubs every `extra` it attaches with `scrubLogPayload`
+  (`shared/log-scrubber.ts`) — the same pass as the Axiom row.
+- `beforeSend` (`scrubServerSentryEvent`) replaces `request.data` with a shape
+  summary, drops query values, cookies and non-allowlisted header values, and
+  redacts and caps exception and message text. Stack frames are untouched, so
+  grouping is unchanged.
+- `beforeBreadcrumb` (`scrubServerSentryBreadcrumb`) cuts outgoing-request
+  breadcrumbs to the host and reduces console breadcrumbs to their label.
+- User identity is an id and an actor kind. No email, no name — on any surface.
+
+Electron main installs the same two hooks: the embedded server reports through
+that client.
+
 ## Process-level handlers
 
 | Signal              | Capture                                           | Log                                     |

@@ -433,20 +433,6 @@ export type CompareCaseModelEntry = {
   selection?: RequestedModelSelection | null;
 };
 
-/**
- * The full identity of a saved selection, settings included (so an
- * effort-only edit is a change). A stored legacy selection has no settings.
- */
-function selectionIdentity(selection: RequestedModelSelection): string {
-  return selection.source === "legacy"
-    ? JSON.stringify({
-        modelId: selection.modelId,
-        source: selection.source,
-        provider: selection.provider ?? null,
-      })
-    : selectionConfigKey(selection);
-}
-
 function sameCaseModelEntry(
   a: CompareCaseModelEntry,
   b: CompareCaseModelEntry,
@@ -455,7 +441,8 @@ function sameCaseModelEntry(
   const aSelection = a.selection ?? undefined;
   const bSelection = b.selection ?? undefined;
   if (aSelection && bSelection) {
-    return selectionIdentity(aSelection) === selectionIdentity(bSelection);
+    // Settings included, so an effort-only edit is a change.
+    return selectionConfigKey(aSelection) === selectionConfigKey(bSelection);
   }
   // An entry with no saved selection runs as its bare id: only a DEFAULT
   // selection (its `comparisonKey` is that id) is the same entry.

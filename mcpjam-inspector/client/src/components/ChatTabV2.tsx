@@ -110,6 +110,7 @@ import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-sessio
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
 import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -489,6 +490,7 @@ export function ChatTabV2({
     elicitationResponding,
     urlElicitationRequired,
     dismissUrlElicitationRequired,
+    autoResumeNotice,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     // A scenario / share-link turn runs the host's own config; the visitor's
@@ -2003,8 +2005,15 @@ export function ChatTabV2({
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
   // that flag on failures a blind resend cannot help with.
+  //
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // they get the same resend. Every other policy refusal needs a
+  // configuration change first and offers no Retry.
   const canRetryLastMessage =
-    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+    isConcurrencyThrottle ||
+    errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+    isRetryableOrgKeysRefusal(errorMessage?.code);
   const errorRetryHandler = canRetryLastMessage
     ? handleRetryLastMessage
     : undefined;
@@ -2581,6 +2590,7 @@ export function ChatTabV2({
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2603,6 +2613,10 @@ export function ChatTabV2({
                             onResetChat={handleResetAllChats}
                           />
                         </div>
+                      ) : autoResumeNotice ? (
+                        <p className="max-w-4xl mx-auto px-4 pt-4 text-xs text-muted-foreground">
+                          {autoResumeNotice}
+                        </p>
                       ) : null
                     }
                     chatInputSlot={
@@ -2864,6 +2878,7 @@ export function ChatTabV2({
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
                             <TopupGatedErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -2886,6 +2901,11 @@ export function ChatTabV2({
                               onResetChat={baseResetChat}
                             />
                           </div>
+                        )}
+                        {!errorMessage && autoResumeNotice && (
+                          <p className="max-w-4xl mx-auto px-4 pt-4 text-xs text-muted-foreground">
+                            {autoResumeNotice}
+                          </p>
                         )}
                         <div className="max-w-4xl mx-auto p-4">
                           <ChatInput
@@ -3012,6 +3032,7 @@ export function ChatTabV2({
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -3034,6 +3055,11 @@ export function ChatTabV2({
                             onResetChat={baseResetChat}
                           />
                         </div>
+                      )}
+                      {!errorMessage && autoResumeNotice && (
+                        <p className="max-w-4xl mx-auto px-4 pt-4 text-xs text-muted-foreground">
+                          {autoResumeNotice}
+                        </p>
                       )}
                       <div className="max-w-4xl mx-auto p-4">
                         <ChatInput {...sharedChatInputProps} hasMessages />

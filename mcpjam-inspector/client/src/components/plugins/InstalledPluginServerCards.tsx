@@ -46,10 +46,29 @@ export function pluginCardServers(
 }
 
 /**
+ * How many skills an installed plugin lists on the Skills tab, read the way
+ * that tab reads them; `undefined` until either source answers.
+ */
+function pluginSkillCount(
+  plugin: Pick<PluginSummary, "activeVersionId">,
+  version: ReturnType<typeof usePluginVersion>,
+  row: ActivePluginRow | undefined,
+): number | undefined {
+  if (row) return row.skills.length;
+  if (version && version.pluginVersionId === plugin.activeVersionId) {
+    return version.skills.filter((component) => component.materializedSkillId)
+      .length;
+  }
+  return undefined;
+}
+
+/**
  * One installed plugin on the Servers tab: a card per server it adds. A
- * plugin with no active version ("Install only") has no servers or skills to
- * show anywhere, so it gets one card of its own instead, which opens the
- * Settings where a version is activated or the plugin uninstalled.
+ * plugin that shows nowhere else gets one card of its own instead, which
+ * opens the Settings where a version is activated, the plugin disabled or
+ * uninstalled: one with no active version ("Install only"), or an active
+ * version with no servers or skills (an apps- or assets-only bundle, or one
+ * whose entries were all skipped).
  */
 export function InstalledPluginServerCards({
   plugin,
@@ -68,7 +87,10 @@ export function InstalledPluginServerCards({
   const setupStatus = usePluginSetupStatus(activeVersionId);
   const cards = pluginCardServers(plugin, version, row);
   const pluginLabel = plugin.displayName || plugin.name;
-  if (!activeVersionId) {
+  const showsNowhere =
+    !activeVersionId ||
+    (cards.length === 0 && pluginSkillCount(plugin, version, row) === 0);
+  if (showsNowhere) {
     return (
       <PluginServerCard
         plugin={plugin}

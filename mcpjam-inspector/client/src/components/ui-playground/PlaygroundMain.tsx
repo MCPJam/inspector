@@ -261,6 +261,7 @@ import {
   isComputerStartLimitError,
 } from "@/lib/billing-entitlements";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
@@ -363,6 +364,7 @@ import {
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { artifactStableKey } from "@/lib/artifact-urls";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -1235,11 +1237,14 @@ export function PlaygroundMain({
   // previewed host actually attaches a computer (honesty rule — no computer, no
   // sandbox upload; attachments stay inline-only exactly as before) AND the
   // resolved engine is cloud — the upload targets the CLOUD box, so on "This
-  // machine" it would wake a sandbox the local bash tool can't see.
+  // machine" it would wake a sandbox the local bash tool can't see. Never for a
+  // harness host: its files ride inline and the server lands them on the box
+  // the turn actually runs on.
   const computerAttachmentsActive = isComputerAttachmentUploadActive({
     computersEnabled: computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
+    hostHasHarness: !!previewedHost?.config?.harness,
     engine: playgroundComputerEngine.engine,
   });
 
@@ -1389,6 +1394,7 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
     hiddenEnvironmentOffReason,
+    outOfCreditsReason,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -1576,6 +1582,13 @@ export function PlaygroundMain({
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  const liveChatSessionIdRef = useRef(chatSessionId);
+  liveChatSessionIdRef.current = chatSessionId;
+  const [readyEvalChatHandoffId, setReadyEvalChatHandoffId] = useState<
+    string | null
+  >(null);
+  const isEvalChatHandoffPending =
+    !!evalChatHandoff && readyEvalChatHandoffId !== evalChatHandoff.id;
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
@@ -3171,6 +3184,15 @@ export function PlaygroundMain({
     (localHarness.phase === "installing" ||
       localHarness.phase === "authorizing" ||
       localHarness.phase === "unavailable");
+  // Out of credits, a send on a locked MCPJam model could only be refused, so
+  // every send path (composer, starter prompts, fullscreen, edits) is off and
+  // Send says why. A compare grid drops locked models itself.
+  const sendOutOfCreditsReason =
+    !isCompareMode &&
+    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null;
+
   // Ongoing App admission excludes only this action's own connection preparation.
   // Read-only, target, history and streaming denials remain live across awaits.
   const pluginActionInteractivity = getChatComposerInteractivity({
@@ -3183,7 +3205,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
@@ -3200,7 +3223,8 @@ export function PlaygroundMain({
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
       restoringTarget !== null ||
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -3301,7 +3325,7 @@ export function PlaygroundMain({
       collapseCompareSelectionsTo(selectedModel);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const handoffHydration = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof handoffExec.systemPrompt === "string") {
@@ -3321,7 +3345,31 @@ export function PlaygroundMain({
     if (evalChatHandoff.messages.length > 0) {
       composer.setInput("");
     }
-    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+    // Session hydration resets the transcript asynchronously. Sending before
+    // it finishes can erase the recording prompt and leave an empty chat.
+    // Publish readiness through state so auto-run uses the hydrated session
+    // and the case settings from a fresh render.
+    const handoffId = evalChatHandoff.id;
+    void Promise.resolve(handoffHydration).then(
+      (hydratedSessionId) => {
+        if (
+          appliedEvalChatHandoffIdRef.current !== handoffId ||
+          hydratedSessionId !== liveChatSessionIdRef.current
+        ) {
+          return;
+        }
+        setReadyEvalChatHandoffId(handoffId);
+        onEvalChatHandoffConsumed?.(handoffId);
+      },
+      (error) => {
+        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+        appliedEvalChatHandoffIdRef.current = null;
+        console.error("[PlaygroundMain] Failed to load eval chat", error);
+        toast.error(
+          "Couldn't start the recording chat. Close it and try again.",
+        );
+      },
+    );
   }, [
     availableModels,
     collapseCompareSelectionsTo,
@@ -4154,9 +4202,7 @@ export function PlaygroundMain({
       isStreaming,
       projectId: convexProjectId,
       isMultiModelLayoutMode,
-      isEvalHandoffPending:
-        !!evalChatHandoff &&
-        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      isEvalHandoffPending: isEvalChatHandoffPending,
       activeHistorySessionId,
       restoreConversation: restoreConversationFromUrl,
     });
@@ -4864,9 +4910,6 @@ export function PlaygroundMain({
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldAutoRunPreview({
         autoRunInput,
@@ -4874,7 +4917,7 @@ export function PlaygroundMain({
         isSessionBootstrapComplete,
         isThreadEmpty,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -4902,6 +4945,7 @@ export function PlaygroundMain({
     autoRunInput,
     composer,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
@@ -5812,16 +5856,13 @@ export function PlaygroundMain({
   const lastRunPreviewRequestRef = useRef(0);
   const [quickRunPending, setQuickRunPending] = useState(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldRunPreview({
         runPreviewRequest,
         alreadyHandledRequest: lastRunPreviewRequestRef.current,
         isSessionBootstrapComplete,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -5832,6 +5873,7 @@ export function PlaygroundMain({
   }, [
     runPreviewRequest,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isStreaming,
     handleResetAllChats,
@@ -5851,6 +5893,43 @@ export function PlaygroundMain({
   ]);
 
   const errorMessage = formatErrorMessage(error);
+
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // the banner offers Retry, which resends the last user message's text, as
+  // the chat tab's banner does. Every other policy refusal needs a
+  // configuration change first and offers no Retry. Single-model only: a
+  // compare card's turn is not the root chat's to resend. The resend goes
+  // through `handleSendFollowUp`, so it takes the same server readiness,
+  // resumed-thread and local-execution gates as every other send; that
+  // helper does not track, so the one `trackSendMessage` here is the only
+  // analytics event.
+  const lastUserMessageText = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === "user") {
+        return extractUserMessageText(message).trim();
+      }
+    }
+    return "";
+  }, [messages]);
+  const handleRetryLastMessage = useCallback(() => {
+    if (
+      !lastUserMessageText ||
+      sendBlocked ||
+      conversationSendBlockedRef.current
+    ) {
+      return;
+    }
+    trackSendMessage({ single_model_send: true });
+    handleSendFollowUp(lastUserMessageText);
+  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+  const errorRetryHandler =
+    !isCompareMode &&
+    lastUserMessageText &&
+    isRetryableOrgKeysRefusal(errorMessage?.code)
+      ? handleRetryLastMessage
+      : undefined;
 
   // Starter chips render in both empty states (compare grid and single-model
   // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
@@ -6242,7 +6321,11 @@ export function PlaygroundMain({
       // refused by this flag before `onSubmit` runs, so disabling for those
       // would make first-send setup unreachable. The composer notice above
       // carries the explanation for each state that does disable.
-      localHarnessBlocksSend,
+      localHarnessBlocksSend ||
+      sendOutOfCreditsReason !== null,
+    ...(sendOutOfCreditsReason
+      ? { submitDisabledReason: sendOutOfCreditsReason }
+      : {}),
     notice: composerNotice,
     ...(executionTargetChip ? { executionTarget: executionTargetChip } : {}),
     tokenUsage,
@@ -6508,6 +6591,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6516,6 +6600,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6578,6 +6663,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6586,6 +6672,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6748,12 +6835,14 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                      onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
                       code={errorMessage.code}
                       statusCode={errorMessage.statusCode}
                       isRetryable={errorMessage.isRetryable}
                       isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                      onRetry={errorRetryHandler}
                       onResetChat={resetChat}
                     />
                   </div>
@@ -7030,6 +7119,7 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                          onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
                           code={errorMessage.code}
@@ -7417,6 +7507,7 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                                  onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}
                                   code={errorMessage.code}
@@ -7425,6 +7516,7 @@ export function PlaygroundMain({
                                   isMCPJamPlatformError={
                                     errorMessage.isMCPJamPlatformError
                                   }
+                                  onRetry={errorRetryHandler}
                                   onResetChat={resetChat}
                                 />
                               </div>

@@ -16,6 +16,7 @@ beforeEach(() => {
   window.isElectron = false;
   document.body.innerHTML = '<div id="root"></div>';
   resetDesktopReturnAttemptsForTests();
+  sessionStorage.clear();
 });
 it("renders only the desktop return page without loading the application providers", async () => {
   window.history.replaceState(
@@ -41,6 +42,56 @@ it("renders only the desktop return page without loading the application provide
   );
   expect(redirect).toHaveBeenCalledTimes(1);
   expect(bootstrap).not.toHaveBeenCalled();
+  // The desktop app still gets the whole answer, from the inbox, while the
+  // browser tab's own address bar no longer carries the code.
+  const href = screen.getByRole("link").getAttribute("href") ?? "";
+  expect(new URL(href).searchParams.get("code")).toBe("test");
+  expect(new URL(href).searchParams.get("state")).toBe("electron_mcp:one");
+  expect(location.pathname).toBe("/oauth/callback");
+  expect(location.search).toBe("?oauth_pending=1");
+});
+
+it("moves an MCP OAuth callback's answer out of the URL before importing the app bootstrap", async () => {
+  window.history.replaceState(
+    { idx: 4 },
+    "",
+    "/oauth/callback?code=one-time-code&state=browser-state",
+  );
+  bootstrap.mockImplementation(() => {
+    // Sentry and PostHog start inside app-bootstrap; the code is gone first.
+    expect(location.pathname).toBe("/oauth/callback");
+    expect(location.search).toBe("?oauth_pending=1");
+    expect(location.href).not.toContain("one-time-code");
+  });
+  await act(async () => {
+    await import("../main");
+  });
+  expect(bootstrap).toHaveBeenCalledOnce();
+  expect(history.state).toEqual({ idx: 4 });
+  // Same module instance main used (the registry was reset before it ran).
+  const inbox = await import("../lib/oauth-callback-inbox");
+  expect(inbox.readOAuthCallbackParams()?.get("code")).toBe("one-time-code");
+  expect(inbox.readOAuthCallbackParams()?.get("state")).toBe("browser-state");
+});
+
+it("keeps the access link when a callback URL also carries one", async () => {
+  const token = "main-bootstrap-access-credential";
+  window.history.replaceState(
+    {},
+    "",
+    `/oauth/callback?code=one-time-code&state=s#token=${token}&tab=tools`,
+  );
+  bootstrap.mockImplementation(() => {
+    expect(location.href).not.toContain(token);
+    expect(location.href).not.toContain("one-time-code");
+    expect(location.hash).toBe("#tools");
+  });
+  await act(async () => {
+    await import("../main");
+  });
+  expect(bootstrap).toHaveBeenCalledOnce();
+  const accessLink = await import("../lib/access-link");
+  expect(accessLink.readAccessToken()).toBe(token);
 });
 it("keeps regular browser and WorkOS callbacks in the app bootstrap", async () => {
   window.history.replaceState({}, "", "/callback?code=test&state=workos");
@@ -48,6 +99,8 @@ it("keeps regular browser and WorkOS callbacks in the app bootstrap", async () =
     await import("../main");
   });
   expect(bootstrap).toHaveBeenCalledOnce();
+  // authkit-js consumes the WorkOS code itself, so it must still be there.
+  expect(location.search).toBe("?code=test&state=workos");
   expect(screen.getByRole("img", { name: "MCPJam" })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
 });

@@ -39,9 +39,11 @@ const turn = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("playgroundHarnessBoxReason", () => {
-  it("leaves a plain cloud harness turn on the personal computer", () => {
-    expect(playgroundHarnessBoxReason(turn())).toBeNull();
-    expect(playgroundHarnessBoxReason(turn({ harnessId: "codex" }))).toBeNull();
+  it("gives a plain cloud harness turn the conversation's box", () => {
+    expect(playgroundHarnessBoxReason(turn())).toBe("conversation");
+    expect(playgroundHarnessBoxReason(turn({ harnessId: "codex" }))).toBe(
+      "conversation",
+    );
   });
 
   it("sends a harness that signs in with the member's own account to a box", () => {
@@ -368,6 +370,26 @@ describe("acquirePlaygroundHarnessBox", () => {
       refusal: { status: 429, error: "limit", code: "user_terminal_cap" },
     });
     expect(touchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the control plane's retry hint on a refusal", async () => {
+    provisionMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      error: "at capacity",
+      code: "at_capacity",
+      retryAfterMs: 2_500,
+    });
+    const result = await acquirePlaygroundHarnessBox(args);
+    expect(result).toEqual({
+      ok: false,
+      refusal: {
+        status: 503,
+        error: "at capacity",
+        code: "at_capacity",
+        retryAfterMs: 2_500,
+      },
+    });
   });
 
   it("turns a throw into a 502 refusal instead of failing the turn's setup", async () => {

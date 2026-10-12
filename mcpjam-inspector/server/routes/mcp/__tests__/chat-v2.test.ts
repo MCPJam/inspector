@@ -2657,6 +2657,77 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("answers a key-policy refusal from /stream/org/resolve as the refusal, not an internal 500", async () => {
+      // The organization requires its own provider keys and this connection
+      // runs on a local runtime, so the backend refuses before handing back
+      // any key. That is the organization's configuration, not an MCPJam
+      // fault: the answer keeps the refusal's status, code and copy, is not
+      // reported as an internal failure (which pages), and never falls back
+      // to another rail.
+      const { logger } = await import("../../../utils/logger");
+      const errorSpy = vi.spyOn(logger, "error");
+      const refusalSentence =
+        "This organization runs AI only on its own provider keys.";
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org/resolve") {
+          return Response.json(
+            { ok: false, code: "org_keys_required", error: refusalSentence },
+            { status: 403 },
+          );
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+        });
+        const { status, data } = await expectJson<{
+          code: string;
+          message: string;
+          error?: string;
+          details: Record<string, unknown>;
+          origin?: string;
+        }>(res);
+
+        expect(status).toBe(403);
+        expect(data.code).toBe("FORBIDDEN");
+        expect(data.details).toMatchObject({
+          code: "org_keys_required",
+          remediation: "choose_org_model",
+        });
+        expect(data.message).toContain(refusalSentence);
+        expect(data.error).toBeUndefined();
+        expect(data.origin).toBe("user_config");
+        expect(res.headers.get("x-mcpjam-error-origin")).toBe("user_config");
+        expect(
+          errorSpy.mock.calls.some(
+            ([, , context]) =>
+              (context as { hop?: unknown } | undefined)?.hop ===
+              "mcpjam_internal",
+          ),
+        ).toBe(false);
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+        errorSpy.mockRestore();
+      }
+    });
+
     it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
       // A `custom:` provider is local-runtime-eligible, so without the flag this
       // chat resolves + runs the model locally (see the test above). When a
