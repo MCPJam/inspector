@@ -19,6 +19,8 @@ export type PreflightModel = {
   provider: string;
   /** The saved selection beside a case model, when it has one. */
   selection?: PreflightSelection | null;
+  /** False only for an inherited client selection the browser cannot resolve. */
+  selectionKnown?: boolean;
 };
 
 export type PreflightSelection = {
@@ -26,6 +28,30 @@ export type PreflightSelection = {
   source?: string;
   connectionRef?: { kind?: string; id?: string } | null;
 };
+
+export type PreflightHost = {
+  hostId: string;
+  modelId?: string | null;
+  modelSelection?: PreflightSelection | null;
+  selectionKnown?: boolean;
+};
+
+/** Unknown client selections are left to the backend's launch checks. */
+export function hostsForPreflight(
+  hosts: readonly PreflightHost[],
+  resolvedSelections?: Readonly<Record<string, PreflightSelection>>,
+): PreflightHost[] {
+  return hosts.map((host) => {
+    const selection = resolvedSelections?.[host.hostId] ?? host.modelSelection;
+    const selectionKnown =
+      Boolean(host.modelId) && selection?.modelId === host.modelId;
+    return {
+      ...host,
+      ...(selectionKnown ? { modelSelection: selection } : {}),
+      selectionKnown,
+    };
+  });
+}
 
 export type PreflightOrgConfig = {
   providers: Array<
@@ -65,6 +91,7 @@ function orgKeyModelProblem(
   model: PreflightModel,
   label: string,
 ): string | null {
+  if (model.selectionKnown === false) return null;
   const source = model.selection?.source;
   if (source === "org") {
     const id = model.selection?.connectionRef?.id;
@@ -79,11 +106,12 @@ function orgKeyModelProblem(
     return `${label} is an MCPJam-provided model, which this organization doesn't allow. ${ORG_KEYS_MODEL_REASON}`;
   }
   if (
-    !source &&
-    eligibleConnection(
-      orgConfig,
-      (provider) => provider.providerKey === model.provider,
-    )
+    source === "legacy" ||
+    (!source &&
+      eligibleConnection(
+        orgConfig,
+        (provider) => provider.providerKey === model.provider,
+      ))
   ) {
     return `${label} isn't saved with an organization provider connection, which this organization requires. ${ORG_KEYS_MODEL_REASON}`;
   }

@@ -17,6 +17,8 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
   orgKeyProblemsOf,
+  hostsForPreflight,
+  type PreflightHost,
   type PreflightModel,
   type PreflightOrgConfig,
   type PreflightSelection,
@@ -195,11 +197,7 @@ export function preflightTargets({
   cases: readonly EvalCase[];
   environments: readonly PreflightEnvironment[];
   /** A client's model, and its saved selection when the browser knows it. */
-  hosts: readonly {
-    hostId: string;
-    modelId?: string | null;
-    modelSelection?: PreflightSelection | null;
-  }[];
+  hosts: readonly PreflightHost[];
   environmentServerRefs: readonly string[];
   /** The client/model cells the run will launch; else the attached ones. */
   targets?: readonly PreflightTarget[];
@@ -253,6 +251,7 @@ export function preflightTargets({
         model,
         provider: provider.provider,
         ...(selection ? { selection } : {}),
+        ...(host?.selectionKnown === false ? { selectionKnown: false } : {}),
       },
     ];
   });
@@ -349,11 +348,14 @@ export function readEnvironmentResolutions(
       resolution?.modelSource === "host" &&
       typeof resolution.hostId === "string" &&
       typeof resolution.effectiveModelId === "string" &&
-      selection &&
-      typeof selection === "object" &&
-      selection.modelId === resolution.effectiveModelId
+      Object.hasOwn(resolution, "effectiveModelSelection")
     )
-      hostModelSelections[resolution.hostId] = selection;
+      hostModelSelections[resolution.hostId] =
+        selection &&
+        typeof selection === "object" &&
+        selection.modelId === resolution.effectiveModelId
+          ? selection
+          : { modelId: resolution.effectiveModelId, source: "legacy" };
   }
   return {
     serverRefs,
@@ -442,17 +444,12 @@ export function useSuiteRunPreflight({
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
     planned?.templateOnlyIds,
   );
-  const hostModelSelections = environment.hostModelSelections;
   // Each client with the saved selection its environments resolved, so an
   // organization model and MCPJam's model of the same id are told apart.
-  const hostsWithSelections = hostModelSelections
-    ? hosts.map((host) => {
-        const selection = hostModelSelections[host.hostId];
-        return selection && selection.modelId === host.modelId
-          ? { ...host, modelSelection: selection }
-          : host;
-      })
-    : hosts;
+  const hostsWithSelections = hostsForPreflight(
+    hosts,
+    environment.hostModelSelections,
+  );
   const targets = preflightTargets({
     suite,
     cases,
