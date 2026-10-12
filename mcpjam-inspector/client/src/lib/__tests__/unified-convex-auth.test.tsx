@@ -31,6 +31,7 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: mockState.forceRefreshGuestSessionOrThrow,
   markGuestActivated: mockState.markGuestActivated,
   getGuestSessionRefusal: mockState.getGuestSessionRefusal,
+  subscribeGuestSessionChanges: () => () => {},
 }));
 
 describe("useUnifiedConvexAuth", () => {
