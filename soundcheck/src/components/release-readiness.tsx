@@ -6,9 +6,9 @@
  * exact SHA — these replaced the old in-preflight `npm run verify`), "Require
  * green staging smoke for candidate SHA", and "Compute release plan" (the
  * versions main carries that npm does not have). release-trigger.yml starts
- * Release by itself once the first three are green on a commit carrying such
- * versions; the version PR and pending-changeset rows say how far the release
- * is from that point.
+ * Release by itself, inside the release window, once the first three are
+ * green on a commit carrying such versions; the version PR and
+ * pending-changeset rows say how far the release is from that point.
  *
  * Referenced by step name rather than line number on purpose — the previous
  * line-number citations here went stale the first time preflight was edited.
@@ -32,6 +32,7 @@ import {
 import { fetchPendingChangesets } from "@/lib/changesets";
 import {
   fetchUnpublishedVersions,
+  RELEASE_WINDOW,
   releaseLabel,
   VERSION_PR_BRANCH
 } from "@/lib/release-state";
@@ -201,7 +202,7 @@ export async function ReleaseReadiness() {
           tone: "running",
           label: `${releaseLabel(unpublished)} is on main, not yet on npm`,
           detail:
-            "The version PR merged. Release starts by itself once the gates above are green on the tip of main."
+            `The version PR merged. Release starts by itself once the gates above are green on the tip of main, in the release window (${RELEASE_WINDOW.label}).`
         });
       }
     } catch (err) {
@@ -222,7 +223,7 @@ export async function ReleaseReadiness() {
         rows.push({
           tone: "info",
           label: `Version PR #${pr.number} is open`,
-          detail: `${pr.title}. Approve and merge it to release; updated ${formatRelativeTime(pr.updatedAt)}.`,
+          detail: `${pr.title}. Approve and merge it before 5 PM Pacific to release today; updated ${formatRelativeTime(pr.updatedAt)}.`,
           href: pr.url
         });
       }

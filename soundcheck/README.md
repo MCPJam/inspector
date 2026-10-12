@@ -66,23 +66,29 @@ Note for anyone editing `release.yml`: `src/components/release-progress.tsx`
 hardcodes the job list, and `release-readiness.tsx` / `release-verdict.tsx`
 mirror preflight's gates. `src/lib/release-state.ts` mirrors the version PR
 branch and run naming in `.github/scripts/release-pr.mjs` and
-`release-trigger.mjs`. All of these are hand-synced and will silently drift.
+`release-trigger.mjs`, including `RELEASE_WINDOW`. All of these are
+hand-synced and will silently drift.
 
 ## How a release runs
 
-1. **Start release** dispatches `prepare-release.yml`. It runs
-   `changeset version` on `main` and opens the version PR
-   (`release/version-packages`), with the deploy flags as checkboxes.
+1. Around 1 PM Pacific, Sunday to Friday, `daily-release.yml` dispatches
+   `prepare-release.yml` with both production deploys ticked; **Start
+   release** does the same on demand. It runs `changeset version` on `main`
+   and opens the version PR (`release/version-packages`), with the deploy
+   flags as checkboxes.
 2. Someone approves and merges the version PR. That is the release.
 3. `release-trigger.yml` watches Tests, Build and Test and Deploy Staging
-   finish on `main` and dispatches `release.yml` at the first commit that is
-   green on all three and still carries versions npm does not have.
+   finish on `main`, and wakes every half hour through the release window
+   (5 PM to 9 PM Pacific, Sunday to Friday). Inside the window it dispatches
+   `release.yml` at the first commit that is green on all three and still
+   carries versions npm does not have.
 4. `release.yml` publishes those versions, deploys what the PR ticked, tags
    the commit and publishes the GitHub release. It never writes to `main`.
 
 **Run release now** (action `publish`) dispatches `release.yml` by hand. It is
-the retry path: the trigger does not retry an automatic run that failed or was
-cancelled.
+the retry path, since the trigger does not retry an automatic run that failed
+or was cancelled, and the way to ship outside the window. `release-alerts.yml`
+opens an issue when a cut, Prepare release or Release run fails.
 
 ## Secrets & rotation
 

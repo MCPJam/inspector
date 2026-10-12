@@ -19,6 +19,13 @@ name: Release trigger
 # Nearly every run here ends in a skip. That is expected: the run that sees
 # everything line up is the one that does something. The reasoning lives in
 # .github/scripts/release-trigger.mjs.
+#
+# Release starts only inside the release window (`RELEASE_WINDOW` in that
+# script: 5 PM to 9 PM Pacific, Sunday to Friday). A commit that went green
+# before 5 PM leaves no workflow to finish once the window opens, so the
+# schedule below wakes this every half hour through the window. When the tip
+# is not green yet, the next workflow to finish on it dispatches instead, so a
+# late or dropped scheduled run costs minutes, not the day.
 
 on:
   workflow_run:
@@ -31,6 +38,10 @@ on:
     branches: [main]
     paths:
       - "*/package.json"
+  # Off the top of the hour, which is when GitHub delays scheduled runs most.
+  schedule:
+    - cron: "7,37 17-20 * * 0-5"
+      timezone: America/Los_Angeles
 
 permissions:
   # Dispatching release.yml. A workflow_dispatch made with GITHUB_TOKEN does
@@ -51,9 +62,10 @@ jobs:
     # This job holds a write token and runs scripts from the commit it checks
     # out, and workflow_run also fires for runs on fork PRs. Only a push to
     # this repo's `main` is trusted code, so both workflow_run conditions are
-    # load-bearing. The push trigger is `main`-only by its branch filter.
+    # load-bearing. The push trigger is `main`-only by its branch filter, and
+    # a scheduled run always uses `main`'s latest commit.
     if: >-
-      github.event_name == 'push' || (
+      github.event_name == 'push' || github.event_name == 'schedule' || (
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_repository.full_name == github.repository
@@ -72,7 +84,7 @@ jobs:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
-            const { decideRelease, REQUIRED_CHECKS, releaseLabel, releaseRunName } =
+            const { decideRelease, REQUIRED_CHECKS, releaseLabel, releaseRunName, releaseWindowOpen } =
               await import(`${workspace}/.github/scripts/release-trigger.mjs`);
             const { parseReleaseOptions, VERSION_PR_BRANCH } =
               await import(`${workspace}/.github/scripts/release-pr.mjs`);
@@ -154,6 +166,7 @@ jobs:
               unpublished,
               releaseRuns,
               skipVerify: options.skip_verify,
+              inWindow: releaseWindowOpen(new Date()),
             });
             core.info(decision.reason);
             if (!decision.dispatch) return;

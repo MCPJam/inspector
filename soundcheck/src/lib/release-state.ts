@@ -8,7 +8,8 @@
  *   2. The version PR is open. Merging it is the release.
  *   3. `main` carries versions npm does not have yet. release-trigger.yml
  *      dispatches release.yml at the first commit where Tests, Build and Test
- *      and Deploy Staging are all green, and release.yml publishes them.
+ *      and Deploy Staging are all green, inside the release window, and
+ *      release.yml publishes them.
  *
  * Hand-synced with .github/scripts (release-pr.mjs, release-trigger.mjs,
  * unpublished-versions.mjs): Soundcheck only sees the GitHub API, never the
@@ -63,6 +64,38 @@ export function releaseLabel(unpublished: UnpublishedVersion[]): string {
   return inspector
     ? inspector.newVersion
     : unpublished.map((r) => `${r.name} ${r.newVersion}`).join(", ");
+}
+
+/** release-trigger.mjs `RELEASE_WINDOW`. */
+export const RELEASE_WINDOW = {
+  timeZone: "America/Los_Angeles",
+  // Sunday to Friday, as getDay() numbers them.
+  days: [0, 1, 2, 3, 4, 5],
+  startHour: 17,
+  endHour: 21,
+  label: "5 PM to 9 PM Pacific, Sunday to Friday"
+};
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** release-trigger.mjs `releaseWindowOpen`. */
+export function releaseWindowOpen(date: Date): boolean {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: RELEASE_WINDOW.timeZone,
+      weekday: "short",
+      hour: "numeric",
+      hourCycle: "h23"
+    })
+      .formatToParts(date)
+      .map(({ type, value }) => [type, value])
+  );
+  const hour = Number(parts.hour);
+  return (
+    RELEASE_WINDOW.days.includes(WEEKDAYS.indexOf(parts.weekday)) &&
+    hour >= RELEASE_WINDOW.startHour &&
+    hour < RELEASE_WINDOW.endHour
+  );
 }
 
 /**
