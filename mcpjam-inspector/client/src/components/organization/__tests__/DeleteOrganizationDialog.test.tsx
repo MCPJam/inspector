@@ -55,4 +55,10 @@ it("explains the enterprise cancellation window", () => {
   expect(
     screen.queryByText(/This action cannot be undone/),
   ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Delete organization" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Permanently/ }),
+  ).not.toBeInTheDocument();
 });

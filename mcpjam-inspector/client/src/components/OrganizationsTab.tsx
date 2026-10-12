@@ -1306,8 +1306,19 @@ function OrganizationPage({
     setIsDeleting(true);
     beginOrganizationDeletion(organization._id);
     try {
-      await deleteOrganization({ organizationId: organization._id });
-      toast.success("Organization deletion requested");
+      const result = (await deleteOrganization({
+        organizationId: organization._id,
+      })) as { purgeAfter?: number } | undefined;
+      // The window check keeps a slow client clock from offering a cancel
+      // the backend never granted.
+      const purgeAfter = result?.purgeAfter;
+      toast.success(
+        (organization.deletionCancellationWindowHours ?? 0) > 0 &&
+          typeof purgeAfter === "number" &&
+          purgeAfter > Date.now()
+          ? `Deletion scheduled. You can cancel until ${new Date(purgeAfter).toLocaleString()}.`
+          : "Organization deleted",
+      );
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
@@ -2227,7 +2238,8 @@ function OrganizationPage({
                       </h3>
                       <p className="text-sm text-foreground">
                         {isOwner
-                          ? (organization.deletionCancellationWindowHours ?? 0) > 0
+                          ? (organization.deletionCancellationWindowHours ??
+                              0) > 0
                             ? `Delete this organization and its data. You can cancel within ${organization.deletionCancellationWindowHours} hours.`
                             : "Permanently delete this organization and its data."
                           : "You’ll lose access to this organization and its projects."}

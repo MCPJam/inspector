@@ -108,7 +108,11 @@ export function DeleteOrganizationDialog({
             ) : (
               <Trash2 aria-hidden="true" className="size-4" />
             )}
-            {pending ? "Deleting..." : "Permanently delete organization"}
+            {pending
+              ? "Deleting..."
+              : cancellationWindowHours > 0
+                ? "Delete organization"
+                : "Permanently delete organization"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
