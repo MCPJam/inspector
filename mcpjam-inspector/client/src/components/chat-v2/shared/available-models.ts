@@ -537,6 +537,17 @@ type ComposeAvailableModelsParams = {
   savedModelIds?: readonly (string | null | undefined)[];
 };
 
+function lockEveryRow(
+  models: ModelDefinition[],
+  reason: string,
+): ModelDefinition[] {
+  return models.map((model) => ({
+    ...model,
+    disabled: true,
+    disabledReason: reason,
+  }));
+}
+
 /**
  * Keep each saved id the offered list no longer contains, as an
  * {@link orgKeysDisallowedRow}. The row is the one the unrestricted list has
@@ -579,7 +590,9 @@ export function withSavedSelectionLocks(
  *    (`policyEligibility`) are offered — no hosted rows (and no hosted
  *    floor), no personal keys, no locally detected Ollama. The list may be
  *    EMPTY; the picker then offers "Add a provider" / "Ask an organization
- *    admin".
+ *    admin";
+ *  - while the config is loading (`pending`) every row is locked, so nothing
+ *    hosted becomes a usable default before the policy is known.
  *
  * A project no organization owns (`unresolved`) carries no policy, so it
  * composes as today: the backend runs it unless an organization that
@@ -590,14 +603,10 @@ export function composeAvailableModels(
 ): ModelDefinition[] {
   const { orgConfig, hostedCatalog, savedModelIds } = params;
 
-
   if (orgConfig?.pending) {
-    return composeUnrestrictedModels({ ...params, orgConfig: undefined }).map(
-      (model) => ({
-        ...model,
-        disabled: true,
-        disabledReason: ORG_POLICY_LOADING_REASON,
-      }),
+    return lockEveryRow(
+      composeUnrestrictedModels({ ...params, orgConfig: undefined }),
+      ORG_POLICY_LOADING_REASON,
     );
   }
 

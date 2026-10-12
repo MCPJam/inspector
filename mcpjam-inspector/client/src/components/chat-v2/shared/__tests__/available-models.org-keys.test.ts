@@ -392,6 +392,17 @@ describe("composeAvailableModels under the policy", () => {
     expect(models.every((model) => !model.disabled)).toBe(true);
   });
 
+  it("locks every row while the organization's settings load", () => {
+    const models = compose({ providers: [], pending: true });
+    expect(models.length).toBeGreaterThan(0);
+    expect(
+      models.every(
+        (model) =>
+          model.disabled && model.disabledReason === ORG_POLICY_LOADING_REASON,
+      ),
+    ).toBe(true);
+  });
+
   it("composes a project no organization owns as today", () => {
     // No organization's policy applies to it, so nothing is locked: the
     // backend runs it unless an organization that requires its own keys is
