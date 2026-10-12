@@ -2722,6 +2722,25 @@ export async function prepareEvalRun(
     }
   }
 
+  // The request's own keys are still bound by the organization's policy. It
+  // is read here, before the suite is saved and before the run is created and
+  // reserves its iterations, so an unreadable policy refuses the launch with
+  // nothing to undo. `venueProjectId` is the project the run belongs to: the
+  // request's, or its suite's.
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const clientKeysPolicyConfig =
+    hasClientKeys && !orgModelConfig && venueProjectId
+      ? await orgPolicyConfigForClientKeys(
+          { projectId: String(venueProjectId) },
+          {
+            bearerToken: convexAuthToken,
+            scenarioId,
+            accessVersion,
+            serverIds: resolvedServerIds,
+          },
+        )
+      : undefined;
+
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
   // the recorder below. `resolvedSuiteId`/`committedCases`/`failedCases` keep
@@ -3117,7 +3136,6 @@ export async function prepareEvalRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig =
     githubCredentialPolicy === "no_customer_credentials"
@@ -3135,25 +3153,9 @@ export async function prepareEvalRun(
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
   if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgConfigTarget) {
-    // The request's own keys: still bound by the organization's policy. An
-    // unreadable policy refuses the run, which is already created here, so
-    // its pending iterations are failed before the refusal goes out.
-    try {
-      resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
-        orgConfigTarget,
-        {
-          bearerToken: convexAuthToken,
-          scenarioId,
-          accessVersion,
-          serverIds: resolvedServerIds,
-        },
-      );
-    } catch (error) {
-      await failRunBeforeExecution(convexClient, recorder, runId, {
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
+    // The request's own keys: still bound by the organization's policy, read
+    // before the run was created (`clientKeysPolicyConfig`).
+    resolvedOrgModelConfig = clientKeysPolicyConfig;
   }
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {

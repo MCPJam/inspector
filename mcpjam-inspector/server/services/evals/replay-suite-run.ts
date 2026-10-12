@@ -101,10 +101,31 @@ export async function prepareSuiteReplayFromRun(
     });
   }
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  const replayServerIds = replayConfig.servers.map((server) => server.serverId);
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  let resolvedOrgModelConfig = orgModelConfig;
+  const replayProjectId =
+    typeof replayMetadata.projectId === "string"
+      ? replayMetadata.projectId
+      : undefined;
+  const replayOrgConfigTarget = replayProjectId
+    ? { projectId: replayProjectId }
+    : undefined;
+  if (resolvedModelApiKeys && !resolvedOrgModelConfig && replayOrgConfigTarget) {
+    // The request's own keys: still bound by the organization's policy, as a
+    // suite run's are. Read before the replay run is created, so an
+    // unreadable policy refuses the replay with nothing to undo.
+    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
+      replayOrgConfigTarget,
+      { bearerToken: convexAuthToken, serverIds: replayServerIds },
+    );
+  }
+
   const replayManager = buildReplayManager(replayConfig);
   try {
     await connectReplayManagerServers(replayManager, replayConfig);
-    const replayServerIds = replayConfig.servers.map((server) => server.serverId);
     const { toolSnapshot, toolSnapshotDebug } =
       await captureToolSnapshotForEvalAuthoring(replayManager, replayServerIds, {
         logPrefix: "evals.replay",
@@ -182,34 +203,7 @@ export async function prepareSuiteReplayFromRun(
       }
     }
 
-    // Resolve org model config: prefer client-sent keys, fall back to org config.
-    const hasClientKeys =
-      !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-    const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
-    let resolvedOrgModelConfig = orgModelConfig;
-    const replayProjectId =
-      typeof replayMetadata.projectId === "string"
-        ? replayMetadata.projectId
-        : undefined;
-    const replayOrgConfigTarget = replayProjectId
-      ? { projectId: replayProjectId }
-      : undefined;
-    if (resolvedModelApiKeys && !resolvedOrgModelConfig && replayOrgConfigTarget) {
-      // The request's own keys: still bound by the organization's policy, as
-      // a suite run's are. An unreadable policy refuses the replay, which is
-      // already created here, so it is failed before the refusal goes out.
-      try {
-        resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
-          replayOrgConfigTarget,
-          { bearerToken: convexAuthToken, serverIds: replayServerIds },
-        );
-      } catch (error) {
-        await failRunBeforeExecution(convexClient, recorder, runId, {
-          reason: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    }
+    // No client-sent keys: fall back to the organization's config.
     if (
       !resolvedModelApiKeys &&
       !resolvedOrgModelConfig &&

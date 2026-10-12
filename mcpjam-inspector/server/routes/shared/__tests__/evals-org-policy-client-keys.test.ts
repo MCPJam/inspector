@@ -6,7 +6,30 @@ vi.mock("../../../utils/org-model-config", async (importOriginal) => ({
   resolveOrgModelConfig,
 }));
 
-import { orgPolicyConfigForClientKeys } from "../evals";
+const convex = vi.hoisted(() => ({
+  query: vi.fn(),
+  mutation: vi.fn(),
+  action: vi.fn(),
+}));
+vi.mock("convex/browser", () => ({
+  ConvexHttpClient: class {
+    setAuth() {}
+    query = convex.query;
+    mutation = convex.mutation;
+    action = convex.action;
+  },
+}));
+vi.mock("../../../services/evals/route-helpers.js", async (original) => ({
+  ...(await original<
+    typeof import("../../../services/evals/route-helpers.js")
+  >()),
+  captureToolSnapshotForEvalAuthoring: async () => ({
+    toolSnapshot: { servers: [] },
+    toolSnapshotDebug: {},
+  }),
+}));
+
+import { orgPolicyConfigForClientKeys, prepareEvalRun } from "../evals";
 import { resolveEvalSelectionRoute } from "../../../services/evals-runner";
 import { ModelResolutionRefusalError } from "../../../utils/model-resolution-local";
 import { WebRouteError } from "../../web/errors.js";
@@ -112,5 +135,60 @@ describe("orgPolicyConfigForClientKeys", () => {
         "org_keys_required",
       );
     }
+  });
+});
+
+describe("prepareEvalRun on the request's own keys", () => {
+  beforeEach(() => {
+    resolveOrgModelConfig.mockReset();
+    convex.query.mockReset();
+    convex.mutation.mockReset();
+    convex.action.mockReset();
+    vi.stubEnv("CONVEX_URL", "https://test.convex.cloud");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+    convex.query.mockImplementation(async (name: string) => {
+      if (name === "testSuites:listTestCases") return [];
+      if (name === "testSuites:getTestSuite") {
+        return { projectId: target.projectId, environment: { servers: ["s1"] } };
+      }
+      return null;
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses an unreadable policy before the suite is saved or the run is created", async () => {
+    resolveOrgModelConfig.mockRejectedValue(new Error("boom"));
+    const clientManager = {
+      listServers: () => ["s1"],
+      hasServer: () => true,
+      getConnectionStatus: () => "connected",
+      listTools: async () => ({ tools: [] }),
+    };
+
+    const failure = await prepareEvalRun(clientManager as never, {
+      suiteId: "suite-1",
+      suiteRerun: true,
+      serverIds: ["s1"],
+      serverNames: ["Linear"],
+      tests: [],
+      convexAuthToken: "tok",
+      modelApiKeys: { openai: "sk-personal" },
+    } as never).catch((caught: unknown) => caught);
+
+    // Same refusal as before the read moved.
+    expect(failure).toBeInstanceOf(WebRouteError);
+    expect(failure).toMatchObject({
+      status: 503,
+      details: { code: "ai_key_policy_unavailable", isRetryable: true },
+    });
+    expect(resolveOrgModelConfig).toHaveBeenCalledWith(
+      target,
+      expect.objectContaining({ bearerToken: "tok" }),
+    );
+    // No suite write, no run start, no reserved iteration to fail.
+    expect(convex.mutation).not.toHaveBeenCalled();
+    expect(convex.action).not.toHaveBeenCalled();
   });
 });

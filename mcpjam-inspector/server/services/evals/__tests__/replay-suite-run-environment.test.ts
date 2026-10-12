@@ -174,8 +174,9 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
     );
   });
 
-  it("fails the created run when the policy can't be read, before any model runs", async () => {
+  it("refuses before the replay run is created when the policy can't be read", async () => {
     admission.failed.mockClear();
+    startSuiteRunWithRecorderMock.mockClear();
     orgPolicyConfigForClientKeysMock.mockRejectedValueOnce(
       new Error("The organization's AI key policy could not be read"),
     );
@@ -187,7 +188,9 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
         modelApiKeys: { openai: "sk-personal" },
       }),
     ).rejects.toThrow(/policy could not be read/);
-    expect(admission.failed).toHaveBeenCalledOnce();
+    // Nothing was created or reserved, so there is no run to fail.
+    expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    expect(admission.failed).not.toHaveBeenCalled();
     expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
   });
 });
