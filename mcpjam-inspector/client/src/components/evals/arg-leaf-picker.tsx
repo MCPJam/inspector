@@ -19,7 +19,7 @@
  *   - {@link ArgMatcherSubform} (`toolCalledWith` predicate `args.args`)
  */
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import {
   Select,
@@ -216,12 +216,18 @@ export function ArgLeafPicker({
   // partial is the default if undefined — the matcher's own default.
   const allowPlaceholders = !isExact && !isIgnore;
 
-  const valueIsPlaceholder = allowPlaceholders && isPlaceholder(value);
+  // Typing a literal that spells a placeholder keyword ("any" on the way to
+  // "anyone") must not flip the row into that check mid-word. Only the mode
+  // dropdown switches to a placeholder.
+  const [typingLiteral, setTypingLiteral] = useState(false);
+  const valueIsPlaceholder =
+    allowPlaceholders && isPlaceholder(value) && !typingLiteral;
   const currentMode: Mode = valueIsPlaceholder
     ? (value as Placeholder)
     : LITERAL_MODE;
 
   const setMode = (nextMode: Mode) => {
+    setTypingLiteral(false);
     if (nextMode === LITERAL_MODE) {
       // Placeholder → literal: drop a type-appropriate default rather than
       // preserve the placeholder string. If the user wanted to write
@@ -304,7 +310,10 @@ export function ArgLeafPicker({
               ariaLabel={ariaLabel}
               id={inputId}
               value={value}
-              onChange={onChange}
+              onChange={(next) => {
+                setTypingLiteral(true);
+                onChange(next);
+              }}
               inferredType={inferredType}
               placeholder={inputPlaceholder ?? "Value"}
               disabled={disabled}
@@ -363,7 +372,7 @@ function LiteralValueEditor({
       value={literalToString(value)}
       onChange={(e) =>
         onChange(
-          compact && inferredType === "string"
+          inferredType === "string"
             ? e.target.value
             : stringToLiteral(e.target.value),
         )

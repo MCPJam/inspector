@@ -9,6 +9,10 @@ import {
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import {
+  aiLaunchProblemsOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
 import { ConvexError, type Value } from "convex/values";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/steps";
@@ -391,6 +395,13 @@ async function postEvalRequest<TResponse>(
     const error = new Error(message);
     if (typeof errorBody?.code === "string") {
       (error as Error & { code?: string }).code = errorBody.code;
+    }
+    // A launch the organization's AI key policy refused lists every
+    // dependency that can't run on its providers; keep the list so the run
+    // sheet can show all of them, not only the summary sentence.
+    const problems = aiLaunchProblemsOf(body);
+    if (problems.length > 0) {
+      (error as Error & { problems?: AiLaunchProblem[] }).problems = problems;
     }
     throw error;
   }

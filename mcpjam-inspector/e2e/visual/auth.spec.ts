@@ -5,6 +5,13 @@ import {
   SYNTHETIC_ROLE,
 } from "./staging-network";
 
+// Stop new browser traffic before removing guards, then let intercepted
+// fetches finish while the context and their responses are still alive.
+test.afterEach(async ({ context }) => {
+  await context.setOffline(true);
+  await context.unrouteAll({ behavior: "wait" });
+});
+
 test("staging synthetic user logs in and refreshes through the same-origin proxy", async ({
   page,
   context,

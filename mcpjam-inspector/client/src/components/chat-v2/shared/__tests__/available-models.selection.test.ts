@@ -552,6 +552,48 @@ describe("stored choices", () => {
     });
     expect(findModelForStoredChoice(stored, models, orgConfig)).toBe(bare);
   });
+
+  it("resolve only their own source and connection with exactSelection", () => {
+    // While the organization requires its own keys the list holds only org
+    // rows, and its OpenRouter connection lists the hosted catalog's id.
+    const orgRows = buildAvailableModelsFromOrgConfig(orgConfig, [
+      hostedHaiku,
+    ]).filter((m) => m.orgProvider);
+    const byok = orgRows.find(
+      (m) => String(m.id) === "anthropic/claude-haiku-4.5",
+    )!;
+    const hosted = storedModelChoice(hostedHaiku, undefined, "evalTarget");
+    expect(hosted.selection?.source).toBe("hosted");
+    // The id fallback alone would call the saved hosted model the org row.
+    expect(findModelForStoredChoice(hosted, orgRows, orgConfig)).toBe(byok);
+    expect(
+      findModelForStoredChoice(hosted, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBeUndefined();
+    const org = storedModelChoice(byok, orgConfig, "evalTarget");
+    expect(
+      findModelForStoredChoice(org, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBe(byok);
+    // A strict choice without a selection cannot borrow an org row by id.
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+        { exactSelection: true },
+      ),
+    ).toBeUndefined();
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+      ),
+    ).toBe(byok);
+  });
 });
 
 describe("case model chips", () => {

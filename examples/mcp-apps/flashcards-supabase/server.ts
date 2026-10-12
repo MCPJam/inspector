@@ -45,7 +45,7 @@ export function createServer(): McpServer {
     server,
     resourceUri,
     resourceUri,
-    { mimeType: RESOURCE_MIME_TYPE },
+    {},
     async (): Promise<ReadResourceResult> => {
       const html = await fs.readFile(
         path.join(DIST_DIR, "flashcards-app.html"),

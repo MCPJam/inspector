@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
+import type { PolicyEligibility } from "@/shared/org-ai-key-policy";
 
 export interface OrgModelProvider {
   /**
@@ -16,6 +17,19 @@ export interface OrgModelProvider {
   displayName?: string;
   selectedModels?: string[];
   hasSecret: boolean;
+  /**
+   * Where the connection runs (`cloud`: MCPJam calls the provider; `local`:
+   * an Inspector does), as the backend reports it. Display only: whether the
+   * connection may serve AI requests is `policyEligibility`.
+   */
+  runtimeLocation?: "cloud" | "local";
+  /**
+   * The backend's verdict on whether AI requests may run on this connection
+   * while the organization requires its own keys. Read it only through
+   * `connectionPolicyEligibility` (`@/shared/org-ai-key-policy`), which fails
+   * closed when an older backend sent none.
+   */
+  policyEligibility?: PolicyEligibility;
 }
 
 export interface OrgModelConfigResult {

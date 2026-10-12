@@ -107,8 +107,8 @@ describe("CaseRunTimeline", () => {
     expect(
       screen.getByTestId("case-run-table"),
     ).toHaveClass("bg-background", "text-foreground");
-    expect(screen.getByTestId("case-run-table")).not.toHaveClass("overflow-x-auto");
-    expect(screen.getByTestId("case-run-table").firstElementChild).toHaveClass("min-w-0", "w-full");
+    expect(screen.getByTestId("case-run-table")).toHaveClass("overflow-x-auto");
+    expect(screen.getByTestId("case-run-table").firstElementChild).toHaveClass("w-full");
     expect(screen.getByText("Iteration").parentElement).toHaveClass("bg-muted");
     await chooseFilter("Client", "ChatGPT");
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
@@ -234,17 +234,25 @@ describe("CaseRunTimeline", () => {
     </CaseRunTimeline>);
     expect(screen.getByText("Run", { exact: true })).toBeVisible();
     expect(screen.getByText("Date", { exact: true })).toBeVisible();
-    expect(screen.getByText("Date", { exact: true }).parentElement?.lastElementChild).toBe(screen.getByText("Date", { exact: true }));
+    expect(screen.getByText("Time", { exact: true })).toBeVisible();
+    expect(screen.getByText("Date", { exact: true }).nextElementSibling).toBe(
+      screen.getByText("Time", { exact: true }),
+    );
     for (const [index, row] of screen.getAllByTestId("case-run-row").entries()) {
       expect(within(row).getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
       expect(within(row).getByText("#1", { exact: true })).toBeVisible();
       const date = within(row).getByTestId("case-run-date");
-      expect(row.lastElementChild).toBe(date);
+      const time = within(row).getByTestId("case-run-time");
+      expect(date.nextElementSibling).toBe(time);
+      expect(row.lastElementChild).toBe(time);
       const timestamp = new Date(trials[index].createdAt);
       expect(date).toHaveAttribute("title", timestamp.toLocaleString());
-      expect(within(date).getByText(timestamp.toLocaleDateString())).toHaveClass("block");
-      expect(within(date).getByText(timestamp.toLocaleTimeString())).toHaveClass("block");
+      expect(date).toHaveTextContent(timestamp.toLocaleDateString());
+      expect(time).toHaveTextContent(timestamp.toLocaleTimeString());
+      expect(date).not.toHaveTextContent(timestamp.toLocaleTimeString());
+      expect(time).not.toHaveTextContent(timestamp.toLocaleDateString());
       expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
+      expect(time.querySelector("time")).toHaveAttribute("datetime", timestamp.toISOString());
     }
     await chooseFilter("Client", "ChatGPT");
     expect(screen.getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
@@ -601,6 +609,9 @@ it("shows an opening live run as a row and replaces it with its recorded iterati
   ).toBeNull();
   const row = screen.getByTestId("case-run-row");
   expect(row).toHaveTextContent("Running");
+  expect(within(row).getByTestId("case-run-date")).toHaveTextContent("just now");
+  expect(within(row).getByTestId("case-run-time")).toHaveTextContent("—");
+  expect(within(row).getByTestId("case-run-time").querySelector("time")).toBeNull();
   expect(row).toHaveTextContent("nova");
   expect(row).toHaveTextContent("SDK");
   await userEvent.setup().click(row);

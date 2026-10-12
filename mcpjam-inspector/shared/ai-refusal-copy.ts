@@ -37,11 +37,11 @@ const COPY_BY_CODE: Readonly<Record<AiRefusalCode, AudienceCopy>> = {
       "This organization requires its own provider keys for AI features. Choose a model from an organization provider, or ask an organization admin to add one.",
   },
   org_model_unconfigured: {
-    title: "Unavailable: no organization model set",
+    title: "Unavailable: no default AI model set",
     admin:
-      "This feature needs a default organization model and none is set. Choose one in Organization → AI providers.",
+      "This feature needs a default AI model and none is set. Choose one in Organization → AI providers.",
     member:
-      "This feature needs a default organization model and none is set. Ask an organization admin to configure one.",
+      "This feature needs a default AI model and none is set. Ask an organization admin to configure one.",
   },
   org_runtime_unsupported: {
     title: "Unavailable with organization keys",
@@ -109,29 +109,31 @@ const COPY_BY_CODE: Readonly<Record<AiRefusalCode, AudienceCopy>> = {
 };
 
 /**
- * The model codes' copy for role-backed work: the model is the organization's
- * default for the feature's role, so the fix is a different model for that
- * role, not a different pick.
+ * The model codes' copy for background work: the model is the organization's
+ * default model, so the fix is a different default model, not a different
+ * pick.
  */
-const ROLE_COPY_BY_CODE: Readonly<Record<ModelRefusalCode, AudienceCopy>> = {
+const BACKGROUND_COPY_BY_CODE: Readonly<
+  Record<ModelRefusalCode, AudienceCopy>
+> = {
   capability_missing: {
     title: "Model can't do this",
     admin:
-      "The organization model set for this feature does not support what it needs. Choose a different model for its role in Organization → AI providers.",
+      "The organization model set for this feature does not support what it needs. Choose a different default model in Organization → AI providers.",
     member:
       "The organization model set for this feature does not support what it needs. Ask an organization admin to choose a different one.",
   },
   capability_unknown: {
     title: "Model support unknown",
     admin:
-      "MCPJam can't confirm the organization model set for this feature supports it. Choose a different model for its role in Organization → AI providers.",
+      "MCPJam can't confirm the organization model set for this feature supports it. Choose a different default model in Organization → AI providers.",
     member:
       "MCPJam can't confirm the organization model set for this feature supports it. Ask an organization admin to choose a different one.",
   },
   invalid_model: {
     title: "Model unavailable",
     admin:
-      "The organization model set for this feature is not available. Choose a different model for its role in Organization → AI providers.",
+      "The organization model set for this feature is not available. Choose a different default model in Organization → AI providers.",
     member:
       "The organization model set for this feature is not available. Ask an organization admin to choose a different one.",
   },
@@ -174,8 +176,8 @@ export function describeAiRefusal(
   const key = recognizedAiRefusalCode(code);
   const copy = !key
     ? FALLBACK_COPY
-    : selection === "role" && isModelRefusalCode(key)
-      ? ROLE_COPY_BY_CODE[key]
+    : selection === "background" && isModelRefusalCode(key)
+      ? BACKGROUND_COPY_BY_CODE[key]
       : COPY_BY_CODE[key];
   return {
     title: copy.title,

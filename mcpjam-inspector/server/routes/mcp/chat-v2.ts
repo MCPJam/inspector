@@ -64,6 +64,8 @@ import {
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
+import { mapRuntimeError, webErrorFromRoute } from "../web/errors.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -99,6 +101,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import { ownKeyTurnRefusal, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -2777,6 +2780,7 @@ chatV2.post("/", async (c) => {
         if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
+          admission: runtime.admission,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
@@ -2865,11 +2869,8 @@ chatV2.post("/", async (c) => {
     // still carries a client apiKey for a CLOUD provider is a personal-BYOK
     // attempt we don't support; reject it regardless of the caller's identity.
     //
-    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
-    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
-    // self-hosted, not a shared cloud account, and the org surface doesn't
-    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
-    // hook is the only enforcement on `npx`.
+    // Ollama and custom endpoints use the local path. Their organization
+    // policy is checked below and again before every provider attempt.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -2883,16 +2884,31 @@ chatV2.post("/", async (c) => {
         401,
       );
     }
+    // A key on this machine still answers to the organization's AI-key policy.
+    const ownKeyTurn: OwnKeyTurn = {
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      selection: routingSelection,
+      provider: modelDefinition.provider,
+      hasRequestKey: Boolean(apiKey),
+      auth: {
+        authHeader: requestAuthHeader,
+        scenarioId: bodyScenarioId,
+        accessVersion: bodyAccessVersion,
+        serverIds: hostConfigServerIds,
+      },
+    };
+    const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
+    if (ownKeyRefusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
+    }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      {
+    const llmModel = withOwnKeyTurnPolicy(
+      createLlmModel(modelDefinition, apiKey ?? "", {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
-      },
-      body.customProviders,
+      }, body.customProviders),
+      ownKeyTurn,
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
@@ -3027,6 +3043,17 @@ chatV2.post("/", async (c) => {
     });
   } catch (error) {
     // (The box, if one was acquired, is released in `finally` below.)
+    // A refusal by the organization's AI-key policy (from
+    // `/stream/org/resolve`: a local-runtime connection when the org requires
+    // its own keys, a connection that is gone, …) is the organization's
+    // configuration working as designed, not an MCPJam fault. Answer it the
+    // way the hosted web route does — the refusal's own status, its code in
+    // `details.code` — and keep it out of the internal-fault report below,
+    // which would page and answer an opaque 500. Only failures before the
+    // response starts reach here; once the turn is streaming, a failure is an
+    // error chunk in the stream, as before.
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) return webErrorFromRoute(c, mapRuntimeError(aiRefusal));
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary
