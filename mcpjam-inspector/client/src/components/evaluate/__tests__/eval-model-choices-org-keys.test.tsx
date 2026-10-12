@@ -111,4 +111,109 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("choices")).toHaveTextContent("acme/retired");
   });
+
+  // The org Anthropic row's id is bare. Saved as that bare id, it would run as
+  // a legacy id, which the policy refuses.
+  const orgSonnet = {
+    modelId: "anthropic/claude-sonnet-4.5",
+    selection: {
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "conn_1" },
+      nativeModelId: "claude-sonnet-4-5",
+      fallback: { provider: "none" as const, model: "none" as const },
+    },
+  };
+
+  it("saves a bare-id org row picked in place of a target with its org selection", async () => {
+    const onChange = vi.fn();
+    render(
+      <EvalModelChoices
+        value={{
+          includeClientDefaults: false,
+          explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
+        }}
+        onChange={onChange}
+        disabled={false}
+        testId="choices"
+        availableModels={ORG_MODELS}
+        requireOrgKeys
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      within(screen.getByTestId("choices")).getAllByRole("button")[0]!,
+    );
+    await user.click(
+      screen.getByRole("option", { name: /Claude Sonnet 4\.5/ }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [orgSonnet],
+    });
+  });
+
+  it("saves a bare-id org row from Add model with its org selection", async () => {
+    const onChange = vi.fn();
+    render(
+      <EvalModelChoices
+        value={{ includeClientDefaults: false, explicitTargets: [] }}
+        onChange={onChange}
+        disabled={false}
+        testId="choices"
+        availableModels={ORG_MODELS}
+        requireOrgKeys
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Add model/ }));
+    await user.click(
+      screen.getByRole("option", { name: /Claude Sonnet 4\.5/ }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [orgSonnet],
+    });
+  });
+
+  it("reads that saved target back as the org row, without a warning", () => {
+    render(
+      <EvalModelChoices
+        value={{ includeClientDefaults: false, explicitTargets: [orgSonnet] }}
+        onChange={vi.fn()}
+        disabled={false}
+        testId="choices"
+        availableModels={ORG_MODELS}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.queryByTestId("model-trigger-org-keys-warning"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("choices")).toHaveTextContent(
+      "Claude Sonnet 4.5",
+    );
+  });
+
+  it("keeps the bare id of a picked org row when the policy is off", async () => {
+    const onChange = vi.fn();
+    render(
+      <EvalModelChoices
+        value={{ includeClientDefaults: false, explicitTargets: [] }}
+        onChange={onChange}
+        disabled={false}
+        testId="choices"
+        availableModels={ORG_MODELS}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Add model/ }));
+    await user.click(
+      screen.getByRole("option", { name: /Claude Sonnet 4\.5/ }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "claude-sonnet-4-5" }],
+    });
+  });
 });

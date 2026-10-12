@@ -12,6 +12,11 @@ import {
   orgKeysDisallowedRow,
   savedModelRow,
 } from "@/components/chat-v2/shared/available-models";
+import {
+  findModelForStoredChoice,
+  selectionBesideLegacyId,
+  storedModelChoice,
+} from "@/components/chat-v2/shared/model-selection";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -494,8 +499,21 @@ export function EvalModelChoices({
     [catalogModels, harness, requireOrgKeys],
   );
   const selectionsSupported = useModelSelectionsSupported();
-  const resolveModel = (id: string, saved = true): ModelDefinition =>
-    availableModels.find((model) => String(model.id) === id) ??
+  // A target saved with a selection reads back as the row it names: an
+  // organization row picked under the policy is saved under its canonical id,
+  // not the row's own (see `pickedTarget`).
+  const resolveModel = (
+    id: string,
+    saved = true,
+    selection?: SavedModelSelection,
+  ): ModelDefinition =>
+    (selection
+      ? findModelForStoredChoice(
+          { modelId: id, selection },
+          availableModels,
+          undefined,
+        )
+      : availableModels.find((model) => String(model.id) === id)) ??
     (requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
       ? orgKeysDisallowedRow(savedModelRow(id, availableModels))
       : {
@@ -520,11 +538,26 @@ export function EvalModelChoices({
       : []),
     ...targets.map((target) => ({
       key: modelTargetKey(target),
-      model: resolveModel(target.modelId),
+      model: resolveModel(target.modelId, true, target.selection),
       inherited: false,
       target: target as ModelTarget | undefined,
     })),
   ];
+  // The target a picked row saves. Under the organization's key policy, an
+  // organization row whose id is bare (`gpt-5` on an org OpenAI connection)
+  // is saved under its canonical id with its org selection: the bare id
+  // alone runs as a legacy id, which the policy refuses (`org_keys_required`).
+  // Every other row keeps its own id, and `syncExplicitTargets` adds the
+  // selection it can carry beside it.
+  const pickedTarget = (model: ModelDefinition): ModelTarget => {
+    if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
+      const choice = storedModelChoice(model, undefined, "evalTarget");
+      if (choice.selection?.source === "org") {
+        return modelTarget(choice.modelId, choice.selection);
+      }
+    }
+    return { modelId: String(model.id) };
+  };
   const emit = (next: ModelSelection, picked?: ModelDefinition) =>
     onChange(
       syncExplicitTargets(next, {
@@ -546,7 +579,7 @@ export function EvalModelChoices({
       {
         includeClientDefaults: inherited ? false : value.includeClientDefaults,
         explicitTargets: model
-          ? [...remaining, { modelId: String(model.id) }]
+          ? [...remaining, pickedTarget(model)]
           : remaining,
       },
       model,
@@ -749,7 +782,7 @@ export function EvalModelChoices({
           emit(
             {
               ...value,
-              explicitTargets: [...targets, { modelId: String(model.id) }],
+              explicitTargets: [...targets, pickedTarget(model)],
             },
             model,
           )
