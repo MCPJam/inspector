@@ -793,20 +793,26 @@ rate-limiting or failing). Try those again in a moment.
 `org/keys_required`
 
 This organization requires its own provider keys for AI features, so the
-request was refused before it reached a model. The selection was one of:
+request was refused before it reached a model. A required dependency could
+not run on an eligible organization connection:
 
 - An MCPJam-provided (hosted) model.
 - A personal or local key model.
 - A model saved without an organization provider connection (a legacy bare model ID).
-- A model on an organization connection that is not eligible to run it.
+- A model on an organization connection that is missing or not eligible to run it.
+- The suite requires a judge, but none was chosen or its model is not on an eligible organization connection.
+- A harness uses the wrong provider: Claude Code needs an organization Anthropic provider, and Codex needs an organization OpenAI provider.
 
-The Setup Run sheet catches these cases before launch and shows a blocking
-notice with a **Manage AI providers** button. If the sheet shows the notice,
-the run cannot start until you choose an eligible model.
+The **Setup Run** sheet lists these problems and blocks Start until every
+required dependency can run. Organization admins can use **Manage AI
+providers** to configure connections. **Configure suite evaluators** opens
+the suite's judge settings; choosing an existing eligible judge does not
+require organization admin rights.
 
 **Next steps**
-- Choose a model from an organization provider connection that is enabled and eligible.
-- Organization admins can add or configure a provider under **Organization → AI providers**.
+- Choose a model from an organization provider connection that is enabled and eligible, and save its connection.
+- Choose the required judge under **Configure suite evaluators**.
+- Organization admins can add, configure or reconnect a provider under **Organization → AI providers**.
 
 ### Organization model not configured
 
@@ -822,12 +828,17 @@ The feature needs a default organization model, and none is set.
 
 `org/runtime_unsupported`
 
-The feature, or the selected provider, cannot run on organization credentials
-yet. Only direct cloud connections are eligible: OpenRouter (a shared gateway)
-and local-runtime connections are not.
+The feature, runtime, or selected provider cannot run on organization
+credentials yet. Only direct cloud connections are eligible: OpenRouter (a
+shared gateway) and local-runtime connections are not. Cursor has no
+organization-key execution path and is unavailable while this policy is on.
+Claude Code supports an organization Anthropic provider, and Codex supports
+an organization OpenAI provider; custom base URLs are not supported for these
+harnesses.
 
 **Next steps**
 - Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
+- For a harness run, choose Claude Code with an organization Anthropic connection or Codex with an organization OpenAI connection. A feature without an organization-key path remains unavailable under this policy.
 
 ### Organization scope unresolved
 

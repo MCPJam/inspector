@@ -16,9 +16,12 @@ import {
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
+  CHOOSE_ORG_JUDGE_MODEL,
   orgKeyProblemsOf,
   hostsForPreflight,
   type PreflightHost,
+  preflightJudgeOf,
+  type PreflightJudge,
   type PreflightModel,
   type PreflightOrgConfig,
   type PreflightSelection,
@@ -57,8 +60,10 @@ export type RunPreflight = {
   /**
    * While the organization requires its own provider keys: each required AI
    * dependency that cannot run on its providers (an MCPJam-provided or
-   * personal target model, or an organization connection that can't run it).
-   * The run cannot start; the backend refuses the same launch.
+   * personal target model, a hosted judge, a judge nobody chose, a harness
+   * client's model that is not an organization model on the harness's own
+   * vendor, a Cursor client). The run cannot start; the backend refuses the
+   * same launch.
    * Absent when there are none.
    */
   orgKeyProblems?: string[];
@@ -71,10 +76,19 @@ export type RunPreflightState = RunPreflight & {
   outOfCreditsReasonForEnvironments?: (
     environmentIds: readonly string[],
   ) => string | null;
+  /** Organization-key problems for only the environments picked in the sheet. */
+  orgKeyProblemsForEnvironments?: (
+    environmentIds: readonly string[],
+  ) => string[];
   serverName: (ref: string) => string;
   connect?: (ref: string) => Promise<string | null>;
   manageModels?: () => void;
 };
+
+// The policy's checks live in `./suite-run-preflight-org-keys`; these stay
+// importable from here.
+export { CHOOSE_ORG_JUDGE_MODEL, preflightJudgeOf };
+export type { PreflightJudge };
 
 /** What a run would fail on, judged only from what the browser already knows. */
 export function runPreflight(input: {
@@ -86,6 +100,8 @@ export function runPreflight(input: {
   availableModelIds?: readonly string[];
   /** Absent while loading: no provider reads as disabled. */
   orgConfig?: PreflightOrgConfig;
+  /** The suite's judge, when grading is required for this launch. */
+  judge?: PreflightJudge;
   refused?: readonly string[];
   refusalByEnvironment?: Readonly<Record<string, string>>;
   /**
@@ -114,7 +130,7 @@ export function runPreflight(input: {
   if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
     // Under the policy the organization's own connections are the only
     // source; "is the provider enabled" is subsumed by these problems.
-    const problems = orgKeyProblemsOf(orgConfig, input.models);
+    const problems = orgKeyProblemsOf(orgConfig, input.models, input.judge);
     return {
       disconnected,
       removed,
@@ -196,7 +212,7 @@ export function preflightTargets({
   suite: EvalSuite;
   cases: readonly EvalCase[];
   environments: readonly PreflightEnvironment[];
-  /** A client's model, and its saved selection when the browser knows it. */
+  /** A client's model, resolved selection and harness. */
   hosts: readonly PreflightHost[];
   environmentServerRefs: readonly string[];
   /** The client/model cells the run will launch; else the attached ones. */
@@ -252,6 +268,7 @@ export function preflightTargets({
         provider: provider.provider,
         ...(selection ? { selection } : {}),
         ...(host?.selectionKnown === false ? { selectionKnown: false } : {}),
+        ...(client?.harness ? { harness: client.harness } : {}),
       },
     ];
   });
@@ -459,6 +476,7 @@ export function useSuiteRunPreflight({
     targets: planned?.targets,
     serverRefs: planned?.serverRefs,
   });
+  const visibleOrgConfig = loadedOrgModelConfig(orgConfig);
   const preflight = runPreflight({
     ...targets,
     refused: environment.refusals,
@@ -468,13 +486,22 @@ export function useSuiteRunPreflight({
     knownOnly: Boolean(planned ?? suite.environmentIds?.length),
     availableModelIds: availableModels.map((model) => String(model.id)),
     // Pending reads as loading: nothing is judged before the policy is known.
-    orgConfig: loadedOrgModelConfig(orgConfig),
+    orgConfig: visibleOrgConfig,
+    judge: preflightJudgeOf(suite),
   });
   // The models are locked in `availableModels` only while the org is out.
   const creditsReasonFor = (models: typeof targets.models) =>
     allModelsOutOfCredits(models, availableModels)
       ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
       : null;
+  const modelsForEnvironments = (environmentIds: readonly string[]) =>
+    preflightTargets({
+      suite: { ...suite, environmentIds: [...environmentIds] },
+      cases,
+      environments,
+      hosts: hostsWithSelections,
+      environmentServerRefs: [],
+    }).models;
   return {
     ...preflight,
     outOfCreditsReason: creditsReasonFor(targets.models),
@@ -484,15 +511,15 @@ export function useSuiteRunPreflight({
       ? {}
       : {
           outOfCreditsReasonForEnvironments: (environmentIds) =>
-            creditsReasonFor(
-              preflightTargets({
-                suite: { ...suite, environmentIds: [...environmentIds] },
-                cases,
-                environments,
-                hosts: hostsWithSelections,
-                environmentServerRefs: [],
-              }).models,
-            ),
+            creditsReasonFor(modelsForEnvironments(environmentIds)),
+          orgKeyProblemsForEnvironments: (environmentIds) =>
+            visibleOrgConfig && orgRequiresOwnKeys(visibleOrgConfig)
+              ? orgKeyProblemsOf(
+                  visibleOrgConfig,
+                  modelsForEnvironments(environmentIds),
+                  preflightJudgeOf(suite),
+                )
+              : [],
         }),
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
@@ -514,12 +541,15 @@ export function useSuiteRunPreflight({
 }
 
 /**
- * An environment suite's refusals and credits gate, kept only for the
+ * An environment suite's refusals, organization-key checks and credits gate, kept only for the
  * environments selected.
  */
 export function scopePreflightToEnvironments<
   T extends RunPreflight &
-    Pick<RunPreflightState, "outOfCreditsReasonForEnvironments">,
+    Pick<
+      RunPreflightState,
+      "outOfCreditsReasonForEnvironments" | "orgKeyProblemsForEnvironments"
+    >,
 >(preflight: T, selectedEnvironmentIds: readonly string[]): T {
   const credits = preflight.outOfCreditsReasonForEnvironments
     ? {
@@ -528,11 +558,19 @@ export function scopePreflightToEnvironments<
         ),
       }
     : {};
+  const orgKeyProblems = preflight.orgKeyProblemsForEnvironments
+    ? {
+        orgKeyProblems: preflight.orgKeyProblemsForEnvironments(
+          selectedEnvironmentIds,
+        ),
+      }
+    : {};
   const byEnvironment = preflight.refusalByEnvironment;
-  if (!byEnvironment) return { ...preflight, ...credits };
+  if (!byEnvironment) return { ...preflight, ...credits, ...orgKeyProblems };
   return {
     ...preflight,
     ...credits,
+    ...orgKeyProblems,
     refused: [
       ...new Set(
         selectedEnvironmentIds.flatMap((id) =>
