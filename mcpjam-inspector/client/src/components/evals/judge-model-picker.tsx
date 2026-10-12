@@ -17,6 +17,7 @@
 import { useMemo } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import {
   ModelSelector,
   OrgKeysDisallowedTriggerLabel,
@@ -59,6 +60,7 @@ export function JudgeModelPicker({
   inModal = false,
   requireOrgKeys = false,
   onManageOrgProviders,
+  variant = "outline",
 }: {
   /** The trigger's id, for the caller's `<Label htmlFor>`. */
   id: string;
@@ -84,6 +86,8 @@ export function JudgeModelPicker({
   disabled?: boolean;
   className?: string;
   inModal?: boolean;
+  /** "pill" is the rounded chip with the provider logo, as in chat. */
+  variant?: "outline" | "pill";
 }) {
   const { models, currentIneligible, current } = useMemo(
     () =>
@@ -122,15 +126,22 @@ export function JudgeModelPicker({
       trigger={
         <Button
           type="button"
-          variant="outline"
+          variant={variant === "pill" ? "secondary" : "outline"}
           id={id}
           disabled={disabled}
           data-testid={`${id}-trigger`}
           className={cn(
             "h-8 justify-between gap-2 px-3 text-sm font-normal",
+            variant === "pill" && "rounded-full",
             className,
           )}
         >
+          {variant === "pill" && !isOrgKeysDisallowedRow(currentModel) && currentModel !== NO_JUDGE_MODEL ? (
+            <ProviderLogo
+              provider={currentModel.provider}
+              customProviderName={currentModel.customProviderName}
+            />
+          ) : null}
           {isOrgKeysDisallowedRow(currentModel) ? (
             <OrgKeysDisallowedTriggerLabel model={currentModel} />
           ) : currentModel === NO_JUDGE_MODEL ? (

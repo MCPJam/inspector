@@ -1,7 +1,7 @@
 const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 // Replays use the frozen client and environment; old backends fail closed
 // when they cannot identify the environment whose secrets would be delivered.
@@ -57,15 +57,10 @@ vi.mock("../grading-mode.js", () => ({
   resolveFrozenRunGradingMode: vi.fn(() => undefined),
 }));
 
-vi.mock("../../../utils/org-model-config.js", () => ({
-  resolveOrgModelConfig: vi.fn(async () => undefined),
-}));
-
-const orgPolicyConfigForClientKeysMock = vi.hoisted(() =>
-  vi.fn(async (): Promise<unknown> => undefined),
-);
-vi.mock("../org-policy-client-keys.js", () => ({
-  orgPolicyConfigForClientKeys: orgPolicyConfigForClientKeysMock,
+const resolveOrgModelConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/org-model-config.js")>(),
+  resolveOrgModelConfig: resolveOrgModelConfigMock,
 }));
 
 import { prepareSuiteReplayFromRun } from "../replay-suite-run.js";
@@ -84,7 +79,13 @@ function convexClient() {
 
 beforeEach(() => {
   runEvalSuiteWithAiSdkMock.mockClear();
+  resolveOrgModelConfigMock.mockReset().mockResolvedValue({
+    aiKeyPolicy: { requireOrgKeys: false }, providers: [],
+  });
+  vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
   it("hands the runner a REASON instead of silence, and never an invented id", async () => {
@@ -152,7 +153,7 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
       aiKeyPolicy: { requireOrgKeys: true },
       providers: [{ providerKey: "openai", exportDenied: true }],
     };
-    orgPolicyConfigForClientKeysMock.mockResolvedValueOnce(strict);
+    resolveOrgModelConfigMock.mockResolvedValueOnce(strict);
     const prepared = await prepareSuiteReplayFromRun({
       convexClient: convexClient(),
       convexAuthToken: "token",
@@ -161,7 +162,7 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
     });
     await prepared.execute();
 
-    expect(orgPolicyConfigForClientKeysMock).toHaveBeenCalledWith(
+    expect(resolveOrgModelConfigMock).toHaveBeenCalledWith(
       { projectId: "project-1" },
       expect.objectContaining({ bearerToken: "token" }),
     );
@@ -177,7 +178,7 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
   it("refuses before the replay run is created when the policy can't be read", async () => {
     admission.failed.mockClear();
     startSuiteRunWithRecorderMock.mockClear();
-    orgPolicyConfigForClientKeysMock.mockRejectedValueOnce(
+    resolveOrgModelConfigMock.mockRejectedValueOnce(
       new Error("The organization's AI key policy could not be read"),
     );
     await expect(

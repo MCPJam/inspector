@@ -36,6 +36,7 @@ import {
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
   type DirectoryObservationState,
+  type DirectoryObservationStatus,
   type MuseReadinessResult,
   type OpenAIReadinessResult,
   type OpenAISubmissionMode,
@@ -65,13 +66,10 @@ export type ObservationRequester = (input: {
 
 /** What the broker answers with, mirrored from the backend's own shape. */
 export interface ObservationBrokerAnswer {
-  status:
-    | "completed"
-    | "billing-blocked"
-    | "provider-failed"
-    | "invalid-output";
+  status: Exclude<DirectoryObservationStatus, "not-requested" | "pending">;
   reason?: string;
   detail?: string;
+  refusalCode?: string;
   /** Raw, and deliberately so — this module validates it before use. */
   envelope?: unknown;
 }
@@ -298,6 +296,7 @@ async function resolveObservations<Kind extends string, Id extends string>(
       // the SDK never defined, into the one field readers switch on.
       reason: knownObservationReason(answer.reason),
       detail: answer.detail,
+      refusalCode: answer.refusalCode,
     };
   }
 

@@ -19,6 +19,7 @@
  * A policy read that fails refuses the turn as retryable
  * `ai_key_policy_unavailable`.
  */
+import { wrapLanguageModel, type LanguageModel } from "ai";
 import { isLegacySelection, type RequestedModelSelection } from "@mcpjam/sdk";
 import { WebRouteError } from "../routes/web/errors.js";
 import { orgPolicyConfigForClientKeys } from "../services/evals/org-policy-client-keys.js";
@@ -97,4 +98,21 @@ function ownKeyRefusals(
       evidence: { rail: "direct", provider: turn.provider },
     },
   ];
+}
+
+/** Re-read the policy before every retry and tool-loop provider request. */
+export function withOwnKeyTurnPolicy(model: LanguageModel, turn: OwnKeyTurn) {
+  if (typeof model === "string") {
+    throw new Error("A local model must be an explicit provider model.");
+  }
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      transformParams: async ({ params }) => {
+        const refusal = await ownKeyTurnRefusal(turn);
+        if (refusal) throw refusal;
+        return params;
+      },
+    },
+  });
 }

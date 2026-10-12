@@ -87,7 +87,7 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
-import { orgPolicyConfigForClientKeys } from "../../services/evals/org-policy-client-keys.js";
+import { prepareClientKeyRun } from "../../services/evals/org-policy-client-keys.js";
 import {
   flattenServerToolSnapshotTools,
   type ServerToolSnapshot,
@@ -2397,21 +2397,6 @@ export async function fetchRunPinnedSkillsWithRetry(
 }
 
 /**
- * Titles of the run's cases that assert `widgetRendered`.
- *
- * Only relevant to a harness run, where the inspector's widget manager never
- * sees the tool call — the harness reaches MCP through the signed proxy — so
- * the assertion has nothing to observe. Collected here rather than inside the
- * gate because the gate is deliberately shape-agnostic about cases; this is the
- * one place that already knows the run's own step model.
- */
-
-// The organization's AI-key policy for a request that brings its own keys.
-// Shared with replays, so it lives in `services/evals`; re-exported here,
-// where suite and single-case runs read it.
-export { orgPolicyConfigForClientKeys };
-
-/**
  * Whether a keyed launch that failed the server preflight was already started
  * by an earlier attempt with the same key.
  *
@@ -2722,24 +2707,11 @@ export async function prepareEvalRun(
     }
   }
 
-  // The request's own keys are still bound by the organization's policy. It
-  // is read here, before the suite is saved and before the run is created and
-  // reserves its iterations, so an unreadable policy refuses the launch with
-  // nothing to undo. `venueProjectId` is the project the run belongs to: the
-  // request's, or its suite's.
-  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const clientKeysPolicyConfig =
-    hasClientKeys && !orgModelConfig && venueProjectId
-      ? await orgPolicyConfigForClientKeys(
-          { projectId: String(venueProjectId) },
-          {
-            bearerToken: convexAuthToken,
-            scenarioId,
-            accessVersion,
-            serverIds: resolvedServerIds,
-          },
-        )
-      : undefined;
+  const clientKeyRun = await prepareClientKeyRun(
+    request,
+    venueProjectId ? String(venueProjectId) : undefined,
+    resolvedServerIds,
+  );
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
@@ -3136,11 +3108,11 @@ export async function prepareEvalRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
   let resolvedOrgModelConfig =
     githubCredentialPolicy === "no_customer_credentials"
       ? { providers: [] }
-      : orgModelConfig;
+      : clientKeyRun.orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
   // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
   // the harness gate needs it to refuse an org-level suite before a box is
@@ -3152,11 +3124,6 @@ export async function prepareEvalRun(
       : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
-  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgConfigTarget) {
-    // The request's own keys: still bound by the organization's policy, read
-    // before the run was created (`clientKeysPolicyConfig`).
-    resolvedOrgModelConfig = clientKeysPolicyConfig;
-  }
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {
       try {
@@ -3576,8 +3543,6 @@ export async function prepareSingleCaseExecution(
     serverIds,
     scenarioId,
     accessVersion,
-    modelApiKeys,
-    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
@@ -3798,29 +3763,15 @@ export async function prepareSingleCaseExecution(
     }
   }
 
-  // Resolve org model config: prefer client-sent keys, fall back to org config.
-  // Treat an empty client-provided map as "no keys".
-  const hasClientKeysForCase =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
-  let resolvedOrgModelConfig = orgModelConfig;
-  const testCaseProjectId =
-    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const orgModelConfigTarget = testCaseProjectId
-    ? { projectId: testCaseProjectId }
-    : undefined;
-  if (resolvedModelApiKeys && !resolvedOrgModelConfig && orgModelConfigTarget) {
-    // The request's own keys: still bound by the organization's policy.
-    resolvedOrgModelConfig = await orgPolicyConfigForClientKeys(
-      orgModelConfigTarget,
-      {
-        bearerToken: convexAuthToken,
-        scenarioId,
-        accessVersion,
-        serverIds: resolvedServerIds,
-      },
-    );
-  }
+  const orgModelConfigTarget =
+    typeof testCase.projectId === "string"
+      ? { projectId: testCase.projectId }
+      : undefined;
+  const clientKeyRun = await prepareClientKeyRun(
+    request, orgModelConfigTarget?.projectId, resolvedServerIds,
+  );
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
+  let resolvedOrgModelConfig = clientKeyRun.orgModelConfig;
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&
