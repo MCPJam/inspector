@@ -114,6 +114,7 @@ export const DIRECTORY_OBSERVATION_STATUSES = [
   "billing-blocked",
   "provider-failed",
   "invalid-output",
+  "ai-unavailable",
 ] as const;
 
 export type DirectoryObservationStatus =
@@ -214,6 +215,7 @@ export interface DirectoryObservationState<
   reason?: DirectoryObservationReason;
   /** A sentence for a human. Never parsed — branch on `reason`. */
   detail?: string;
+  refusalCode?: string;
   /** Present only when `status` is `completed`. */
   envelope?: DirectoryObservationEnvelope<Kind, Id>;
 }
@@ -628,7 +630,9 @@ export function observationFailure(
   detail: string,
 ): DirectoryObservationState {
   const reason: DirectoryObservationReason =
-    status === "billing-blocked"
+    status === "ai-unavailable"
+      ? "ai_unavailable"
+      : status === "billing-blocked"
       ? "billing_limit_reached"
       : status === "invalid-output"
       ? "schema_invalid"

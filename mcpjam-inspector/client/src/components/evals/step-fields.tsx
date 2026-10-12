@@ -229,7 +229,13 @@ export function InteractActionFields({
       </div>
     ) : null;
   return (
-    <div className={paper ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5` : "flex flex-col gap-1.5"}>
+    <div
+      className={
+        paper
+          ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5`
+          : "flex flex-col gap-1.5"
+      }
+    >
       {paper ? (
         <Label htmlFor={`${id}-kind`} className={labelClass}>
           Action
@@ -476,6 +482,7 @@ export function WidgetAssertionFields({
     <div className="space-y-1">
       <Label className="text-[11px]">Assertion</Label>
       <Select
+        disabled={readOnly}
         value={value.kind}
         onValueChange={(next) =>
           onChange(
@@ -500,7 +507,13 @@ export function WidgetAssertionFields({
     </div>
   );
   return (
-    <div className={paper ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5` : "flex flex-col gap-2"}>
+    <div
+      className={
+        paper
+          ? `${PAPER_FIELD_STYLES} flex flex-col gap-1.5`
+          : "flex flex-col gap-2"
+      }
+    >
       <div className={paper ? "space-y-2" : "grid gap-2 sm:grid-cols-2"}>
         <div className="space-y-1">
           <Label className={paper ? "text-sm font-medium" : "text-xs"}>
@@ -508,6 +521,7 @@ export function WidgetAssertionFields({
           </Label>
           {viewTools.length > 0 ? (
             <Select
+              disabled={readOnly}
               value={value.toolName || undefined}
               onValueChange={(next) => onChange({ ...value, toolName: next })}
             >
@@ -536,6 +550,7 @@ export function WidgetAssertionFields({
               value={value.toolName}
               onChange={(e) => onChange({ ...value, toolName: e.target.value })}
               placeholder="view tool name…"
+              readOnly={readOnly}
               className={fieldClass}
             />
           )}
@@ -550,6 +565,7 @@ export function WidgetAssertionFields({
             value={value.text}
             onChange={(e) => onChange({ ...value, text: e.target.value })}
             placeholder="Visible text…"
+            readOnly={readOnly}
             className={fieldClass}
           />
         </div>
@@ -564,6 +580,7 @@ export function WidgetAssertionFields({
               onChange({ ...value, calledToolName: e.target.value })
             }
             placeholder="Called tool name…"
+            readOnly={readOnly}
             className={fieldClass}
           />
         </div>
@@ -596,6 +613,7 @@ export function WidgetAssertionFields({
             value={value.equals}
             onChange={(e) => onChange({ ...value, equals: e.target.value })}
             placeholder="Equals…"
+            readOnly={readOnly}
             className={fieldClass}
           />
         </div>

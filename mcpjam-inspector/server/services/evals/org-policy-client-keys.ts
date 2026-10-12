@@ -1,6 +1,5 @@
 import { logger } from "../../utils/logger.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { isServiceCredentialUnavailableError } from "../service-credential.js";
 import {
   orgRequiresOwnKeys,
   resolveOrgModelConfig,
@@ -18,15 +17,14 @@ import {
  * running them on the request's keys. Off the policy the request's keys run
  * exactly as before, with no org config.
  *
- * A build that cannot reach the organization's config at all (no backend URL,
- * no credential or bearer, a backend without the route) has no policy to read
- * and runs as before. A read that FAILS fails closed: the run is refused as
+ * A build without a backend URL has no policy to read and runs as before.
+ * A configured backend
+ * with missing credentials or a failed read refuses the run as
  * retryable `ai_key_policy_unavailable` rather than spending the request's keys
  * on data whose policy is unknown.
  *
- * Shared by suite runs, single-case runs (`routes/shared/evals.ts`),
- * replays (`replay-suite-run.ts`) and chat turns on their own keys
- * (`utils/own-key-turn-policy.ts`), so it lives apart from the route module.
+ * Shared by suite runs, single-case runs (`routes/shared/evals.ts`) and
+ * replays (`replay-suite-run.ts`) and chat turns (`utils/own-key-turn-policy.ts`).
  */
 export async function orgPolicyConfigForClientKeys(
   target: ResolveOrgModelConfigTarget,
@@ -37,7 +35,6 @@ export async function orgPolicyConfigForClientKeys(
     const config = await resolveOrgModelConfig(target, auth);
     return orgRequiresOwnKeys(config) ? config : undefined;
   } catch (error) {
-    if (isServiceCredentialUnavailableError(error)) return undefined;
     logger.warn("[evals] Failed to read the org AI-key policy", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -48,4 +45,34 @@ export async function orgPolicyConfigForClientKeys(
       { code: "ai_key_policy_unavailable", isRetryable: true },
     );
   }
+}
+
+/** Resolve request-supplied credentials before a launch reserves any work. */
+export async function prepareClientKeyRun(
+  request: Pick<ResolveOrgModelConfigAuth, "scenarioId" | "accessVersion"> & {
+    modelApiKeys?: Record<string, string>;
+    orgModelConfig?: ResolvedOrgModelConfig;
+    convexAuthToken?: string;
+  },
+  projectId: string | undefined,
+  serverIds: string[],
+) {
+  const { modelApiKeys, orgModelConfig } = request;
+  const keys =
+    modelApiKeys && Object.keys(modelApiKeys).length > 0
+      ? modelApiKeys
+      : undefined;
+  const config =
+    keys && !orgModelConfig && projectId
+      ? await orgPolicyConfigForClientKeys(
+          { projectId },
+          {
+            bearerToken: request.convexAuthToken,
+            scenarioId: request.scenarioId,
+            accessVersion: request.accessVersion,
+            serverIds,
+          },
+        )
+      : orgModelConfig;
+  return { modelApiKeys: keys, orgModelConfig: config };
 }

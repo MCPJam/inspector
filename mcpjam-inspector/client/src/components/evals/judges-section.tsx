@@ -144,7 +144,11 @@ export function judgeModelPatch(
     ? undefined
     : typeof next !== "string"
       ? next
-      : findModelForStoredChoice({ modelId: nextId }, availableModels, undefined);
+      : findModelForStoredChoice(
+          { modelId: nextId },
+          availableModels,
+          undefined,
+        );
   const base = row ? selectionBesideLegacyId(row, "judge") : undefined;
   const keepsEffort =
     row !== undefined &&
@@ -158,6 +162,56 @@ export function judgeModelPatch(
     judgeSelection:
       base && keepsEffort ? withReasoningEffort(base, previousEffort) : base,
   };
+}
+
+/**
+ * The judge-model picker alone, writing the same goal-completion patch as
+ * `JudgesSection`. The suite settings page shows only this for now; the
+ * judge's other settings keep their stored values and stay editable through
+ * the API.
+ */
+export function JudgeModelControl({
+  id,
+  value,
+  onChange,
+  availableModels,
+  saveModelSelections,
+}: {
+  id: string;
+  value: EvalJudgeConfig | undefined;
+  onChange: (next: EvalJudgeConfig | undefined) => void;
+  availableModels: ModelDefinition[];
+  saveModelSelections?: boolean;
+}) {
+  const deploymentStoresSelections = useModelSelectionsSupported();
+  const saveSelections = saveModelSelections ?? deploymentStoresSelections;
+  const gc = value?.goalCompletion;
+  return (
+    <JudgeModelPicker
+      id={id}
+      variant="pill"
+      className="w-fit max-w-full"
+      value={gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL}
+      availableModels={availableModels}
+      managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+      onChange={(row) =>
+        onChange(
+          pruneEmpty({
+            ...value,
+            goalCompletion: {
+              ...(gc ?? {}),
+              ...judgeModelPatch(
+                row,
+                availableModels,
+                saveSelections,
+                selectionReasoningEffort(gc?.judgeSelection),
+              ),
+            },
+          }),
+        )
+      }
+    />
+  );
 }
 
 export function JudgesSection({
