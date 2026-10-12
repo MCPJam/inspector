@@ -28,7 +28,9 @@ export async function guardStagingNetwork(
           request.method() === "POST" &&
           (url.pathname === "/user_management/authenticate" ||
             url.pathname === "/api/web/guest-session" ||
-            url.pathname.startsWith("/cdn-cgi/challenge-platform/"))
+            url.pathname.startsWith("/cdn-cgi/challenge-platform/") ||
+            (url.pathname === "/api/web/swarm/funding-preview" &&
+              isSponsorshipAllowanceRead(request.postData())))
         )
       ) {
         rejected.push(url.pathname);
@@ -57,8 +59,11 @@ export async function guardStagingNetwork(
     }
     const server = socket.connectToServer();
     socket.onMessage((raw) => {
-      if (!permitsConvexFrame(raw.toString())) {
-        rejected.push(`Convex ${describeConvexFrame(raw.toString())}`);
+      const frame = raw.toString();
+      const refusal = refuseWithheldWrite(frame);
+      if (refusal) socket.send(refusal);
+      else if (!permitsConvexFrame(frame)) {
+        rejected.push(`Convex ${describeConvexFrame(frame)}`);
         socket.close();
       } else server.send(raw);
     });
@@ -66,6 +71,93 @@ export async function guardStagingNetwork(
 }
 
 export const SYNTHETIC_ROLE = "Automated visual regression testing";
+
+/**
+ * The sidebar credits row reads the user's sponsored swarm allowance on every
+ * signed-in load (hooks/use-swarm-sponsorship-allowance.ts) as a funding
+ * preview with no runs. The backend resolves the caller (the same idempotent
+ * user upsert as users:ensureUser) and answers with one query: it spends and
+ * reserves nothing. Only that exact empty body passes; a preview that names
+ * runs comes from the swarm wizard, which this check never opens.
+ */
+export function isSponsorshipAllowanceRead(body: string | null): boolean {
+  try {
+    const parsed: unknown = JSON.parse(body ?? "");
+    return (
+      !!parsed &&
+      typeof parsed === "object" &&
+      Object.keys(parsed).sort().join() === "projectId,runs" &&
+      "projectId" in parsed &&
+      typeof parsed.projectId === "string" &&
+      "runs" in parsed &&
+      Array.isArray(parsed.runs) &&
+      parsed.runs.length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+// The synthetic user is a bot, so it declines analytics the way posthog-js
+// stores a declined consent. The app honors that for PostHog and for its own
+// launch beacon (lib/launch-analytics.ts), which otherwise POSTs
+// /tlm/launch-engagement when the launch card renders. The token is the public
+// project key in client/src/lib/PosthogUtils.ts.
+export const ANALYTICS_CONSENT_KEY =
+  "__ph_opt_in_out_phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+
+export async function declineStagingAnalytics(context: BrowserContext) {
+  await context.addInitScript(
+    ({ origin, key }) => {
+      if (window.location.origin !== origin) return;
+      try {
+        window.localStorage.setItem(key, "0");
+      } catch {
+        // Storage can be unavailable; the network guard still blocks the beacon.
+      }
+    },
+    { origin: "https://staging.mcpjam.com", key: ANALYTICS_CONSENT_KEY },
+  );
+}
+
+/**
+ * The home page's "What's new" row stamps when the user first saw it
+ * (productUpdates:initializeIfNeeded, components/home/ProductUpdatesRow.tsx) on
+ * every signed-in mount. That is a write, so the policy never allows it. The
+ * guard withholds it instead: it answers the page with a failed mutation and
+ * never forwards the frame, so staging is not written and no write is left in
+ * flight to hold up the reload. The app already treats that failure as
+ * non-fatal. Only the exact no-argument call is withheld.
+ */
+export function refuseWithheldWrite(raw: string): string | null {
+  let message: unknown;
+  try {
+    message = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !message ||
+    typeof message !== "object" ||
+    !("type" in message) ||
+    message.type !== "Mutation" ||
+    !("udfPath" in message) ||
+    message.udfPath !== "productUpdates:initializeIfNeeded" ||
+    !("requestId" in message) ||
+    typeof message.requestId !== "number" ||
+    !("args" in message) ||
+    JSON.stringify(message.args) !== "[{}]" ||
+    "componentPath" in message
+  )
+    return null;
+  return JSON.stringify({
+    type: "MutationResponse",
+    requestId: message.requestId,
+    success: false,
+    result: "Withheld by the staging visual check",
+    logLines: [],
+  });
+}
 
 export function permitsConvexFrame(raw: string): boolean {
   let message: unknown;
