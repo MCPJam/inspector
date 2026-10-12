@@ -1,11 +1,11 @@
 name: Dependency Audit
 
 on:
+  # Run on every PR regardless of its base branch, like lint.yml and test.yml.
+  # `branches` filters on the PR's BASE, so a stacked PR never matched `main`
+  # and was never audited; once it was retargeted to `main`, nothing re-ran it
+  # and the required check never reported.
   pull_request:
-    # See the note in lint.yml: `branches` filters on the PR's BASE, so a
-    # stacked PR never matches `main` and is never audited.
-    branches:
-      - main
   # The merge queue tests the merged result before it lands on main; without
   # this trigger the queue's required checks never report and entries time out.
   merge_group:
