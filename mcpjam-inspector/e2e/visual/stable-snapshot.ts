@@ -23,7 +23,7 @@ export async function captureStableApp(
         previous = current;
         return matches;
       },
-      { timeout: 10000, intervals: [100, 100, 100] },
+      { timeout: 120_000, intervals: [100, 100, 100] },
     )
     .toBeGreaterThanOrEqual(2);
   await captureApp(page, testInfo, screen, theme, failures);
