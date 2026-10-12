@@ -151,7 +151,7 @@ If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you c
 
 Click **Start recording** in the case spine. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
 
-Recorded interact steps and widget assertions appear in the **In the app** section in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
+Recorded interact steps appear in the spine in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
