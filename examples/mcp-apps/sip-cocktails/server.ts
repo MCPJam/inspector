@@ -89,7 +89,6 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
     cocktailRecipeWidgetResourceUri,
     cocktailRecipeWidgetResourceUri,
     {
-      mimeType: RESOURCE_MIME_TYPE,
       _meta: sharedResourceMeta,
     },
     async (): Promise<ReadResourceResult> => {
@@ -104,7 +103,6 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
     likedCocktailsWidgetResourceUri,
     likedCocktailsWidgetResourceUri,
     {
-      mimeType: RESOURCE_MIME_TYPE,
       _meta: sharedResourceMeta,
     },
     async (): Promise<ReadResourceResult> => {
