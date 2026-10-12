@@ -58,6 +58,15 @@ afterEach(() => {
 });
 
 describe("artifact link anatomy", () => {
+  it("renews snapshot links by content hash while keeping other artifact kinds separate", () => {
+    const stale = artifactUrl("snapshot-hash", T0, "snapshot");
+    const fresh = artifactUrl("snapshot-hash", T0 + 3600, "snapshot");
+    expect(artifactStableKey(stale)).toBe(artifactStableKey(fresh));
+    expect(artifactStableKey(stale)).not.toBe(artifactStableKey(artifactUrl("snapshot-hash", T0, "json")));
+    registerArtifactUrls({ snapshotUrl: stale });
+    registerArtifactUrls({ snapshotUrl: fresh });
+    expect(freshestArtifactUrl(stale)).toBe(fresh);
+  });
   it("recognizes signed artifact links and nothing else", () => {
     expect(isSignedArtifactUrl(artifactUrl("kg1", T0))).toBe(true);
     expect(

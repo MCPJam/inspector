@@ -60,7 +60,7 @@ vi.mock("convex/browser", () => ({
       setAuth: vi.fn(),
       query: convexQueryMock,
       mutation: convexMutationMock,
-      action: vi.fn(),
+      action: convexMutationMock,
     };
   }),
 }));
@@ -189,10 +189,10 @@ function mockConvex(
     if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
       return handlers[fn]!(args);
     }
-    if (fn === "descriptionExperiments:proposeDescriptionRewrite") {
+    if (fn === "serverToolSnapshotDescriptionActions:proposeDescriptionRewrite") {
       return { ...EXPERIMENT_DOC, status: "proposing" };
     }
-    if (fn === "descriptionExperiments:markLaunching") {
+    if (fn === "serverToolSnapshotDescriptionActions:markLaunching") {
       return { ...EXPERIMENT_DOC, status: "launching" };
     }
     if (fn === "descriptionExperiments:recordArms") {
@@ -267,7 +267,7 @@ describe("eval description experiments", () => {
       expect(body.id).toBe(EXPERIMENT_ID);
       expect(body.status).toBe("proposing");
       expect(convexMutationMock).toHaveBeenCalledWith(
-        "descriptionExperiments:proposeDescriptionRewrite",
+        "serverToolSnapshotDescriptionActions:proposeDescriptionRewrite",
         expect.objectContaining({
           sourceRunId: RUN_ID,
           toolName: "search",
@@ -310,7 +310,7 @@ describe("eval description experiments", () => {
         details: { reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS" },
       });
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:proposeDescriptionRewrite",
+        "serverToolSnapshotDescriptionActions:proposeDescriptionRewrite",
         expect.anything(),
       );
     });
@@ -347,7 +347,7 @@ describe("eval description experiments", () => {
       );
       expect(body.message).toContain("s_beta");
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:proposeDescriptionRewrite",
+        "serverToolSnapshotDescriptionActions:proposeDescriptionRewrite",
         expect.anything(),
       );
     });
@@ -400,7 +400,7 @@ describe("eval description experiments", () => {
   describe("POST …/eval-description-experiments/:e/start", () => {
     it("refuses a non-proposed experiment via markLaunching", async () => {
       convexMutationMock.mockImplementation(async (fn: string) => {
-        if (fn === "descriptionExperiments:markLaunching") {
+        if (fn === "serverToolSnapshotDescriptionActions:markLaunching") {
           throw Object.assign(new Error("not proposed"), {
             data: { code: "VALIDATION", message: "not proposed" },
           });
@@ -466,7 +466,7 @@ describe("eval description experiments", () => {
       // A rate limit is a retry, not a dead experiment: the slot is taken
       // before the experiment leaves `proposed`, so nothing was marked.
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:markLaunching",
+        "serverToolSnapshotDescriptionActions:markLaunching",
         expect.anything(),
       );
       expect(convexMutationMock).not.toHaveBeenCalledWith(
@@ -498,7 +498,7 @@ describe("eval description experiments", () => {
       });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:markLaunching",
+        "serverToolSnapshotDescriptionActions:markLaunching",
         expect.anything(),
       );
     });
@@ -526,7 +526,7 @@ describe("eval description experiments", () => {
       });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:markLaunching",
+        "serverToolSnapshotDescriptionActions:markLaunching",
         expect.anything(),
       );
     });
@@ -549,7 +549,7 @@ describe("eval description experiments", () => {
       });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
       expect(convexMutationMock).not.toHaveBeenCalledWith(
-        "descriptionExperiments:markLaunching",
+        "serverToolSnapshotDescriptionActions:markLaunching",
         expect.anything(),
       );
     });

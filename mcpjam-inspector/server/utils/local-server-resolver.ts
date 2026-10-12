@@ -1,3 +1,4 @@
+import { prepareToolSnapshotTransport } from "./tool-snapshot-upload.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   localServerCheckQueue,
@@ -2143,7 +2144,7 @@ async function executeLocalServerConnectAttempt(
     { logPrefix: "connect-inspection" }
   );
   signal.throwIfAborted();
-  void persistConnectInspection({
+  await persistConnectInspection({
     convexBearer: bearer,
     projectId,
     snapshot: inspectionSnapshot,
@@ -2160,9 +2161,7 @@ async function executeLocalServerConnectAttempt(
 }
 
 /**
- * Convex client for the plugin-runtime reads the materializer needs (origin
- * attribution). Same bearer the authorize call used — plugin reads are
- * project-scoped and re-authorized backend-side on every query.
+ * Plugin-runtime reads recheck project access with the caller's bearer.
  */
 export function createPluginRuntimeConvexClient(
   bearerToken: string
@@ -2185,17 +2184,17 @@ async function persistConnectInspection(args: {
   projectId: string;
   snapshot: Awaited<ReturnType<typeof exportSingleServerForInspection>>;
 }): Promise<void> {
-  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
-  // derived from it (suffix swap) by the runtime config helper so that
-  // production env (which sets only CONVEX_HTTP_URL) works.
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl || !args.convexBearer) {
     return;
   }
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(args.convexBearer);
-  await client.mutation("serverInspections:recordFromConnect" as any, {
-    projectId: args.projectId,
-    snapshot: args.snapshot,
+  const transport = await prepareToolSnapshotTransport({
+    snapshot: args.snapshot, bearerToken: args.convexBearer,
+    scope: { purpose: "tool-snapshot", projectId: args.projectId },
+  });
+  await client.action("serverToolSnapshotActions:recordFromConnect" as any, {
+    projectId: args.projectId, ...(transport.toolSnapshot ? { snapshot: transport.toolSnapshot } : transport),
   });
 }

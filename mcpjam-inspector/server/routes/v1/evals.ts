@@ -5752,7 +5752,7 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   // the run but not its insights — omits the field rather than failing the
   // read: the run itself is the resource here.
   const insights = await loadInsightsEnvelope("v1.evals", () =>
-    convex.query("serverQuality:getEvalRunInsightsEnvelope" as any, {
+    convex.action("serverToolSnapshotReaderActions:getEvalRunInsightsEnvelope" as any, {
       suiteRunId: runId,
     }),
   );
@@ -7636,7 +7636,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
     scopeVerified = true;
     const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
     runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
-    document = await convex.query("testSuites:getEvalRunServerFacts" as any, {
+    document = await convex.action("serverToolSnapshotReaderActions:getEvalRunServerFacts" as any, {
       runId,
     });
   } catch (error) {
@@ -8097,8 +8097,8 @@ evals.post(
     const { convexClient } = createConvexClients(token);
     let experiment: Record<string, unknown>;
     try {
-      experiment = await convexClient.mutation(
-        "descriptionExperiments:proposeDescriptionRewrite" as any,
+      experiment = await convexClient.action(
+        "serverToolSnapshotDescriptionActions:proposeDescriptionRewrite" as any,
         {
           sourceRunId: runId,
           toolName: body.toolName,
@@ -8226,8 +8226,8 @@ evals.post(
 
     let launching: Record<string, unknown>;
     try {
-      launching = await convexClient.mutation(
-        "descriptionExperiments:markLaunching" as any,
+      launching = await convexClient.action(
+        "serverToolSnapshotDescriptionActions:markLaunching" as any,
         {
           experimentId,
           ...(body.caseScope !== undefined

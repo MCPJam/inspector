@@ -146,6 +146,7 @@ export async function prepareSuiteReplayFromRun(
       environmentRef,
     } = await startSuiteRunWithRecorder({
       convexClient,
+      convexAuthToken,
       suiteId: replayMetadata.suiteId,
       notes,
       passCriteria,

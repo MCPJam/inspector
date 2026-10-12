@@ -24,7 +24,7 @@
  * never allowed to affect the attempt it graded.
  */
 import { extractTranscriptEvidence } from "../evals/transcript-evidence.js";
-import { swarmCheckInventory } from "./swarm-check-evidence.js";
+import { loadSwarmCheckInventory } from "./swarm-check-evidence.js";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -179,7 +179,7 @@ export async function runSwarmChecks(
   try {
     const transcript = buildIterationTranscript({
       ...extractTranscriptEvidence(claim.envelope),
-      toolInventory: swarmCheckInventory(claim.envelope),
+      toolInventory: await loadSwarmCheckInventory(claim.envelope),
       trace: {
         messages,
         ...(claim.envelope?.spans

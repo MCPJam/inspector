@@ -1,3 +1,4 @@
+import { isToolSnapshotUnavailable } from "@/shared/recorded-tool-snapshots";
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
  *
@@ -311,13 +312,16 @@ export function TraceRawView({
       data-testid="trace-raw-request-error"
     >
       {envelope.requestPayloadsError}; showing saved session evidence.
+      {isToolSnapshotUnavailable(envelope.recordedContext) && " Tool definitions are unavailable for this session."}
     </p>
   ) : envelope?.recordedContext && !envelope.requestPayloadsPending ? (
     <p
       className="px-3 py-2 text-xs text-muted-foreground"
       data-testid="trace-raw-recorded-context"
     >
-      Saved session evidence; exact model requests are unavailable.
+      {isToolSnapshotUnavailable(envelope.recordedContext)
+        ? "Tool definitions are unavailable for this session. Saved messages are still available."
+        : "Saved session evidence; exact model requests are unavailable."}
     </p>
   ) : null;
 

@@ -1,3 +1,4 @@
+import { useEvalInsightsEnvelope } from "./use-eval-insights-envelope";
 /**
  * One subscription helper for the common insights envelope, across all three
  * surfaces.
@@ -10,7 +11,7 @@
  */
 import { useQuery } from "convex/react";
 import {
-  INSIGHTS_ENVELOPE_QUERIES,
+  INSIGHTS_ENVELOPE_READS,
   type InsightsEnvelope,
 } from "@/lib/insights-envelope-api";
 
@@ -30,12 +31,12 @@ function queryFor(surface: InsightsEnvelopeSurface): {
   switch (surface.kind) {
     case "eval_run":
       return {
-        name: INSIGHTS_ENVELOPE_QUERIES.evalRun,
+        name: INSIGHTS_ENVELOPE_READS.evalRun,
         args: surface.suiteRunId ? { suiteRunId: surface.suiteRunId } : "skip",
       };
     case "journey_run":
       return {
-        name: INSIGHTS_ENVELOPE_QUERIES.journeyRun,
+        name: INSIGHTS_ENVELOPE_READS.journeyRun,
         args:
           surface.projectId && surface.runId
             ? { projectId: surface.projectId, runId: surface.runId }
@@ -43,7 +44,7 @@ function queryFor(surface: InsightsEnvelopeSurface): {
       };
     case "scenario":
       return {
-        name: INSIGHTS_ENVELOPE_QUERIES.scenario,
+        name: INSIGHTS_ENVELOPE_READS.scenario,
         args: surface.scenarioId ? { scenarioId: surface.scenarioId } : "skip",
       };
   }
@@ -59,8 +60,7 @@ export function useInsightsEnvelope(
   surface: InsightsEnvelopeSurface,
 ): InsightsEnvelope | null | undefined {
   const { name, args } = queryFor(surface);
-  return useQuery(name as never, args as never) as
-    | InsightsEnvelope
-    | null
-    | undefined;
+  const query = useQuery(name as never, (surface.kind === "eval_run" ? "skip" : args) as never) as InsightsEnvelope | null | undefined;
+  const action = useEvalInsightsEnvelope(surface.kind === "eval_run" ? surface.suiteRunId : null);
+  return surface.kind === "eval_run" ? action : query;
 }

@@ -1,3 +1,4 @@
+import { useRecordedToolSnapshots } from "./use-recorded-tool-snapshots";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import { useQuery } from "convex/react";
 import { useArtifactQuery } from "@/lib/artifact-urls";
@@ -326,7 +327,7 @@ export function useSharedChatThread({
       : "skip",
   );
 
-  return { thread };
+  return { thread: useRecordedToolSnapshots(thread) };
 }
 
 export function useSharedChatWidgetSnapshots({

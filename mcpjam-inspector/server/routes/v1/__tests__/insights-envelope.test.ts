@@ -67,6 +67,7 @@ function answerQueries(answers: Record<string, unknown>) {
     }
     return Promise.reject(new Error(`unexpected query ${String(name)}`));
   });
+  actionMock.mockImplementation((name: string, args: unknown) => queryMock(name, args));
 }
 
 const RUN_ROW = {

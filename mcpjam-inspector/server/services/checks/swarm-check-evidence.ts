@@ -1,3 +1,6 @@
+import { hydrateRecordedToolSnapshots } from "@/shared/recorded-tool-snapshots";
+import { fetchJsonBlob } from "../../routes/v1/blob-read.js";
+import { logger } from "../../utils/logger.js";
 import { toTranscriptToolInventory } from "../evals/transcript-evidence.js";
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -42,4 +45,16 @@ export function swarmCheckInventory(envelope: unknown) {
     }
   }
   return toTranscriptToolInventory(tools);
+}
+
+export async function loadSwarmCheckInventory(envelope: unknown) {
+  if (!record(envelope) || !record(envelope.recordedContext)) return undefined;
+  const recordedContext = await hydrateRecordedToolSnapshots(
+    envelope.recordedContext,
+    (url) => fetchJsonBlob(url, { timeoutMs: 10_000, maxBytes: 19 * 1024 * 1024 }),
+    (error) => logger.debug("Swarm check tool snapshot unavailable", {
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  return swarmCheckInventory({ ...envelope, recordedContext });
 }

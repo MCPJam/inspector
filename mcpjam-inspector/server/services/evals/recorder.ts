@@ -1,3 +1,4 @@
+import { prepareToolSnapshotTransport, toolSnapshotDiagnostics } from "../../utils/tool-snapshot-upload.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -585,6 +586,7 @@ export type EvalRunProvenance =
 
 export const startSuiteRunWithRecorder = async ({
   convexClient,
+  convexAuthToken,
   suiteId,
   notes,
   passCriteria,
@@ -620,6 +622,7 @@ export const startSuiteRunWithRecorder = async ({
   ciMetadata,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
+  convexAuthToken?: string;
   suiteId: string;
   notes?: string;
   passCriteria?: {
@@ -793,6 +796,11 @@ export const startSuiteRunWithRecorder = async ({
 }) => {
   let response: any;
   try {
+    const snapshotTransport = await prepareToolSnapshotTransport({
+      snapshot: toolSnapshot,
+      bearerToken: convexAuthToken,
+      scope: { purpose: "tool-snapshot", suiteId },
+    });
     const mutationArgs = {
       suiteId,
       notes,
@@ -803,8 +811,9 @@ export const startSuiteRunWithRecorder = async ({
       ...(rerunScope ? { rerunScope } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
-      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      ...snapshotTransport,
+      ...(snapshotTransport.toolSnapshot ? { toolSnapshot: sanitizeForConvexTransport(snapshotTransport.toolSnapshot) } : {}),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDiagnostics(toolSnapshotDebug)),
       iterationOverride,
       ...(caseIds && caseIds.length ? { caseIds } : {}),
       matchOptionsOverride,
@@ -822,10 +831,6 @@ export const startSuiteRunWithRecorder = async ({
         ? { expectedEnvironmentServerIds }
         : {}),
       ...(source ? { source } : {}),
-      // The capability behind a hidden source. `startTestSuiteRun` refuses
-      // `source: 'benchmark'` without it, so dropping it here would fail
-      // every benchmark child at the mutation — after the claim was already
-      // leased and the MCP session already opened.
       ...(benchmarkRunId ? { benchmarkRunId } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
       ...(sourceHash ? { sourceHash } : {}),
@@ -833,11 +838,6 @@ export const startSuiteRunWithRecorder = async ({
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
       ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
-      // Forwarded only when present. An older backend's `startTestSuiteRun`
-      // validator does not know these args and rejects the whole call for an
-      // unknown field, so sending `launcher: undefined` would break every
-      // launch against a deployment that predates run provenance — including
-      // self-hosted ones this Inspector talks to.
       ...(launcher ? { launcher } : {}),
       ...(ciMetadata ? { ciMetadata } : {}),
       runnerCapabilities: [
@@ -846,8 +846,8 @@ export const startSuiteRunWithRecorder = async ({
       ],
     };
     response = await retrySuiteStartOnConflict(() =>
-      convexClient.mutation(
-        "testSuites:startTestSuiteRun" as any,
+      convexClient.action(
+        "serverToolSnapshotActions:startTestSuiteRun" as any,
         mutationArgs,
       ),
     );

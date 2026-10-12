@@ -2774,6 +2774,7 @@ export async function prepareEvalRun(
     toolDescriptionOverride: runToolDescriptionOverride,
   } = await startSuiteRunWithRecorder({
     convexClient,
+    convexAuthToken,
     suiteId: resolvedSuiteId,
     notes,
     passCriteria,
@@ -2787,13 +2788,8 @@ export async function prepareEvalRun(
     runGroupId,
     environmentId,
     ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
-    // All three preconditions come from the SAME resolution the tool snapshot
-    // was captured against. The revision alone is not enough: an environment
-    // pins a `hostId` and optionally an attachment, both dereferenced live, so
-    // a host-config rotation or a server-group edit changes what the
-    // environment resolves to at an unchanged revision. Echoing all three lets
-    // the mutation reject that drift instead of starting a run whose tool
-    // snapshot describes a different configuration than it executes.
+    // Recheck the capture's environment, host config and server set together:
+    // a host-config rotation can change the catalog at an unchanged revision.
     runtimeVenue: launchVenue,
     ...(launchLocalHarness ? { localHarnessIds: [launchLocalHarness] } : {}),
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,

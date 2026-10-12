@@ -70,6 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.CONVEX_URL = "https://test.convex.cloud";
   process.env.CONVEX_HTTP_URL = "https://test.convex.site";
+  mocks.mutation.mockResolvedValue(null);
   mocks.query.mockImplementation(async (name: string) => {
     if (name === "testSuites:listTestCases") return [];
     if (name === "testSuites:getTestSuite") {
@@ -111,8 +112,8 @@ describe("eval launch server preflight", () => {
     // Nothing answers the setup queries, so any setup gate that ran would
     // refuse and finalize the run as failed.
     const answerStart = (deduped: boolean) =>
-      mocks.mutation.mockImplementation(async (name: string) =>
-        name === "testSuites:startTestSuiteRun"
+      mocks.action.mockImplementation(async (name: string) =>
+        name === "serverToolSnapshotActions:startTestSuiteRun"
           ? { runId: "run-1", testCases: [], deduped, status: "running" }
           : null,
       );
@@ -129,8 +130,8 @@ describe("eval launch server preflight", () => {
         "testSuites:findSuiteRunByIdempotencyKey",
         { idempotencyKey: "trigger-1", suiteId: "suite-1" },
       );
-      expect(mocks.mutation).toHaveBeenCalledWith(
-        "testSuites:startTestSuiteRun",
+      expect(mocks.action).toHaveBeenCalledWith(
+        "serverToolSnapshotActions:startTestSuiteRun",
         expect.objectContaining({
           suiteId: "suite-1",
           idempotencyKey: "trigger-1",
@@ -143,8 +144,9 @@ describe("eval launch server preflight", () => {
         serverUnreachable: true,
       });
       expect(shouldSkipExecution(prepared)).toBe(true);
-      expect(mocks.mutation.mock.calls.map(([name]) => name)).toEqual([
-        "testSuites:startTestSuiteRun",
+      expect(mocks.action.mock.calls.map(([name]) => name)).toEqual([
+        "serverToolSnapshotActions:startTestSuiteRun",
+        "testSuites:startSuiteRunIterations",
       ]);
     });
 
@@ -224,8 +226,8 @@ describe("eval launch server preflight", () => {
       benchmarkRunId: "bench-1",
     }).catch(() => undefined);
 
-    expect(mocks.mutation).toHaveBeenCalledWith(
-      "testSuites:startTestSuiteRun",
+    expect(mocks.action).toHaveBeenCalledWith(
+      "serverToolSnapshotActions:startTestSuiteRun",
       expect.objectContaining({ suiteId: "suite-1" }),
     );
   });

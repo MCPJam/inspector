@@ -25,7 +25,7 @@ describe("suite launch conflict recovery", () => {
       .mockResolvedValue({ runId: "run-1", testCases: [] });
     const action = vi.fn().mockResolvedValue({ iterationIds: [] });
     const result = startSuiteRunWithRecorder({
-      convexClient: { mutation, action } as any,
+      convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
       suiteId: "suite-1",
       idempotencyKey: "stable-key",
       iterationOverride: 10,
@@ -39,7 +39,7 @@ describe("suite launch conflict recovery", () => {
     await result;
     expect(mutation).toHaveBeenCalledTimes(3);
     for (const [name, args] of mutation.mock.calls) {
-      expect(name).toBe("testSuites:startTestSuiteRun");
+      expect(name).toBe("serverToolSnapshotActions:startTestSuiteRun");
       expect(args).toBe(mutation.mock.calls[0][1]);
       expect(args).toMatchObject({
         idempotencyKey: "stable-key",
@@ -57,7 +57,7 @@ describe("suite launch conflict recovery", () => {
     const mutation = vi.fn().mockRejectedValue(error);
     const action = vi.fn();
     const result = startSuiteRunWithRecorder({
-      convexClient: { mutation, action } as any,
+      convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
       suiteId: "suite-1",
     });
     const rejected = expect(result).rejects.toBe(error);
@@ -83,7 +83,7 @@ describe("suite launch conflict recovery", () => {
     const action = vi.fn();
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation, action } as any,
+        convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
         suiteId: "suite-1",
       }),
     ).rejects.toBeDefined();
@@ -110,7 +110,7 @@ describe("suite launch conflict recovery", () => {
     const runs = Promise.all(
       Array.from({ length: 5 }, (_, i) =>
         startSuiteRunWithRecorder({
-          convexClient: { mutation, action } as any,
+          convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
           suiteId: "suite-1",
           idempotencyKey: `client-${i}`,
           iterationOverride: 10,

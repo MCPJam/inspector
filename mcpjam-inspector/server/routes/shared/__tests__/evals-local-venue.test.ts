@@ -56,8 +56,8 @@ beforeEach(() => {
     if (name === "testSuites:resolveRunPluginServersForExecution") return { servers: [], unavailable: [], droppedSnapshotServerIds: [] };
     return null;
   });
-  mocks.mutation.mockImplementation(async (name: string, args: any) => {
-    if (name === "testSuites:startTestSuiteRun") return {
+  mocks.action.mockImplementation(async (name: string, args: any) => {
+    if (name === "serverToolSnapshotActions:startTestSuiteRun") return {
       runId: "run-1", testCases: [], status: "running", deduped: false,
       hostConfig: { harness: "claude-code", serverIds: ["s1"] },
       configSnapshot: { executionVenue: args.runtimeVenue, environment: { servers: ["s1"] } },
@@ -84,9 +84,9 @@ describe("suite venue agreement", () => {
     expect(mocks.available).toHaveBeenCalledTimes(1);
     // Evals run with nobody to approve anything: the unattended scope.
     expect(mocks.available).toHaveBeenCalledWith("claude-code", "token", "project-1", { scope: "unattended" });
-    expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: expected }));
+    expect(mocks.action).toHaveBeenCalledWith("serverToolSnapshotActions:startTestSuiteRun", expect.objectContaining({ runtimeVenue: expected }));
     // A local launch declares the one harness it runs here; a hosted one, none.
-    const startArgs = mocks.mutation.mock.calls.find(([name]) => name === "testSuites:startTestSuiteRun")![1];
+    const startArgs = mocks.action.mock.calls.find(([name]) => name === "serverToolSnapshotActions:startTestSuiteRun")![1];
     const declared = (startArgs.runnerCapabilities ?? []).filter((c: string) => c.startsWith("local-harness:"));
     expect(declared).toEqual(available ? ["local-harness:claude-code"] : []);
     expect(mocks.admission).toHaveBeenCalledWith(expect.objectContaining({ localExecution: available }));
@@ -119,7 +119,7 @@ it.each(["harness:codex", "emulated"])("replays select venue from frozen %s engi
     convexAuthToken: "token", sourceRunId: "source-1", orgModelConfig: { providers: [] },
   });
   expect(mocks.available).toHaveBeenCalledWith(executionEngine === "emulated" ? undefined : "codex", "token", "project-1", { scope: "unattended" });
-  expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
+  expect(mocks.action).toHaveBeenCalledWith("serverToolSnapshotActions:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
   await prepared.cleanup();
 });
 
@@ -133,7 +133,7 @@ it("a Codex replay on a machine eligible for Codex runs locally and declares onl
     convexClient: { query: mocks.query, mutation: mocks.mutation, action: mocks.action } as any,
     convexAuthToken: "token", sourceRunId: "source-1", orgModelConfig: { providers: [] },
   });
-  const startArgs = mocks.mutation.mock.calls.find(([name]) => name === "testSuites:startTestSuiteRun")![1];
+  const startArgs = mocks.action.mock.calls.find(([name]) => name === "serverToolSnapshotActions:startTestSuiteRun")![1];
   expect(startArgs.runtimeVenue).toBe("local");
   expect((startArgs.runnerCapabilities ?? []).filter((c: string) => c.startsWith("local-harness:")))
     .toEqual(["local-harness:codex"]);
@@ -150,7 +150,7 @@ it("current-config replays select the current suite harness instead of the sourc
     convexAuthToken: "token", sourceRunId: "source-1", useCurrentSuiteConfig: true, orgModelConfig: { providers: [] },
   });
   expect(mocks.available).toHaveBeenCalledWith("codex", "token", "project-1", { scope: "unattended" });
-  expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
+  expect(mocks.action).toHaveBeenCalledWith("serverToolSnapshotActions:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
   await prepared.cleanup();
 });
 

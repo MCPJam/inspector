@@ -1,3 +1,4 @@
+import { prepareToolSnapshotTransport } from "../../utils/tool-snapshot-upload.js";
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
@@ -112,7 +113,7 @@ export async function validateServerCore(
     body.serverId,
     { logPrefix: "hosted-connect-inspection" }
   );
-  void persistHostedConnectInspection(c, {
+  await persistHostedConnectInspection(c, {
     projectId: body.projectId,
     snapshot,
   }).catch((error) => {
@@ -137,18 +138,20 @@ async function persistHostedConnectInspection(
   c: any,
   args: { projectId: string; snapshot: ServerToolSnapshot },
 ): Promise<void> {
-  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
-  // derived from it (suffix swap) by the runtime config helper so that
-  // production env (which sets only CONVEX_HTTP_URL) works.
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) return;
   const bearer = c.req.header("authorization");
   if (!bearer) return;
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
-  await client.mutation("serverInspections:recordFromConnect" as any, {
-    projectId: args.projectId,
+  const transport = await prepareToolSnapshotTransport({
     snapshot: args.snapshot,
+    bearerToken: bearer.replace(/^Bearer\s+/i, ""),
+    scope: { purpose: "tool-snapshot", projectId: args.projectId },
+  });
+  await client.action("serverToolSnapshotActions:recordFromConnect" as any, {
+    projectId: args.projectId,
+    ...(transport.toolSnapshot ? { snapshot: transport.toolSnapshot } : transport),
   });
 }
 

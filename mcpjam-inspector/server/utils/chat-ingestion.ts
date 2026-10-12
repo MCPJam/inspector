@@ -1,3 +1,4 @@
+import { prepareChatToolSnapshot } from "./chat-tool-snapshot.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
@@ -323,7 +324,7 @@ export type ChatOrigin =
   // mirror must exist before anything emits `"api"`.
   | "api";
 
-interface PersistChatSessionOptions {
+export interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   /**
@@ -429,6 +430,8 @@ interface PersistChatSessionOptions {
    * for this session/turn.
    */
   toolSnapshot?: unknown;
+  toolSnapshotBlobId?: string;
+  toolSnapshotUnavailable?: boolean;
   /**
    * Synthetic-session tagging propagated from
    * `server/services/sessionSimulation/runner.ts` into the Convex
@@ -594,11 +597,7 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
       : {}),
     ...(options.surface ? { surface: options.surface } : {}),
     ...(options.scenarioId ? { scenarioId: options.scenarioId } : {}),
-    // `accessVersion` is deliberately NOT sent: the backend's ingest
-    // query never reads it, and ingestion is deliberately NOT version
-    // enforced — it persists a turn that ALREADY ran, so a rebind
-    // landing mid-turn must not cost the transcript. Auth here stays the
-    // grant check (resolveHostedSessionAccess by scenarioId).
+    // The scenario grant authorizes ingestion of a turn that already ran.
     ...(options.serverId ? { serverId: options.serverId } : {}),
     ...(options.visitorDisplayName
       ? { visitorDisplayName: options.visitorDisplayName }
@@ -624,10 +623,7 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     ...(options.expectedVersion !== undefined
       ? { expectedVersion: options.expectedVersion }
       : {}),
-    // Turn identity, so the backend dedupes on WHICH turn this is instead of
-    // guessing from transcript length. Every live rail already threads a
-    // turnTrace, so no call site changes; traceless callers (headless replays)
-    // stay on the legacy path.
+    // Turn identity deduplicates retries without guessing from transcript length.
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
@@ -639,6 +635,8 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
       : {}),
     ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
     ...(options.toolSnapshot ? { toolSnapshot: options.toolSnapshot } : {}),
+    ...(options.toolSnapshotBlobId ? { toolSnapshotBlobId: options.toolSnapshotBlobId } : {}),
+    ...(options.toolSnapshotUnavailable ? { toolSnapshotUnavailable: true } : {}),
     ...(options.synthetic ? { synthetic: true } : {}),
     ...(options.personaId ? { personaId: options.personaId } : {}),
     ...(options.personaLabel ? { personaLabel: options.personaLabel } : {}),
@@ -870,7 +868,7 @@ export async function persistChatSessionToConvex(
     authorization: options.authHeader,
     ...options.forwardHeaders,
   };
-  const body = buildIngestBody(options);
+  const body = buildIngestBody(await prepareChatToolSnapshot(options));
 
   const logFailure = (detail: {
     failureKind: PersistChatFailureKind | "version_conflict";

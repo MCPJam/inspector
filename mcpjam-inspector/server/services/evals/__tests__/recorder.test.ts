@@ -16,7 +16,7 @@ describe("startSuiteRunWithRecorder", () => {
     ];
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation, action } as any,
+      convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
       suiteId: "suite-1",
       source: "github_check",
       githubCheckServerOverride,
@@ -29,7 +29,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     mutation.mockClear();
     await startSuiteRunWithRecorder({
-      convexClient: { mutation, action } as any,
+      convexClient: { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any,
       suiteId: "suite-1",
     });
     expect(mutation.mock.calls[0][1]).not.toHaveProperty(
@@ -46,7 +46,7 @@ describe("startSuiteRunWithRecorder", () => {
     const mutation = vi
       .fn()
       .mockResolvedValue({ runId: "run-1", testCases: [] });
-    const convexClient = { mutation, action } as any;
+    const convexClient = { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any;
     const importApprovals = [
       { testCaseId: "tc-1", reason: "Reviewed against the upstream rubric." },
     ];
@@ -80,7 +80,7 @@ describe("startSuiteRunWithRecorder", () => {
     const mutation = vi
       .fn()
       .mockResolvedValue({ runId: "run-1", testCases: [] });
-    const convexClient = { mutation, action } as any;
+    const convexClient = { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any;
 
     await startSuiteRunWithRecorder({
       convexClient,
@@ -141,7 +141,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     const convexClient = {
       mutation: mutationMock,
-      action: actionMock,
+      action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args),
     } as any;
 
     const toolSnapshot = {
@@ -209,7 +209,6 @@ describe("startSuiteRunWithRecorder", () => {
       promptSectionTruncated: false,
       promptSectionMaxChars: 30000,
       fallbackReason: null,
-      fullSnapshot: sanitizedToolSnapshot,
     };
 
     const result = await startSuiteRunWithRecorder({
@@ -222,7 +221,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     expect(mutationMock).toHaveBeenNthCalledWith(
       1,
-      "testSuites:startTestSuiteRun",
+      "serverToolSnapshotActions:startTestSuiteRun",
       expect.objectContaining({
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
@@ -276,10 +275,10 @@ describe("startSuiteRunWithRecorder", () => {
   it.each(["local", "hosted"] as const)("uses the backend's frozen %s venue for fresh and deduped runs", async (venue) => {
     for (const deduped of [false, true]) {
       const result = await startSuiteRunWithRecorder({
-        convexClient: { mutation: vi.fn().mockResolvedValue({
+        convexClient: { action: vi.fn().mockResolvedValue({
           runId: "run-1", testCases: [], deduped, status: "running",
           configSnapshot: { environment: { servers: [] }, executionVenue: venue },
-        }), action: vi.fn() } as any,
+        }), mutation: vi.fn() } as any,
         suiteId: "suite-1", serverIds: [], runtimeVenue: venue === "local" ? "hosted" : "local",
       });
       expect(result.harnessRuntimeVenue).toBe(venue);
@@ -319,7 +318,7 @@ describe("startSuiteRunWithRecorder", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
       suiteId: "suite-1",
       serverIds: ["request-server"],
     });
@@ -340,7 +339,7 @@ describe("startSuiteRunWithRecorder", () => {
       .mockResolvedValueOnce(undefined);
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
       suiteId: "suite-1",
       serverIds: ["ps_1", "ps_plugin"],
       environmentId: "env-1",
@@ -351,7 +350,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     expect(mutationMock).toHaveBeenNthCalledWith(
       1,
-      "testSuites:startTestSuiteRun",
+      "serverToolSnapshotActions:startTestSuiteRun",
       expect.objectContaining({
         environmentId: "env-1",
         expectedEnvironmentRevision: 4,
@@ -369,7 +368,7 @@ describe("startSuiteRunWithRecorder", () => {
       .mockResolvedValueOnce(undefined);
 
     await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
       suiteId: "suite-1",
       serverIds: ["alpha"],
     });
@@ -390,7 +389,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock, action: actionMock } as any,
+        convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
@@ -418,7 +417,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock, action: actionMock } as any,
+        convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
@@ -445,7 +444,7 @@ describe("startSuiteRunWithRecorder", () => {
 
     await expect(
       startSuiteRunWithRecorder({
-        convexClient: { mutation: mutationMock, action: actionMock } as any,
+        convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
@@ -468,7 +467,7 @@ describe("startSuiteRunWithRecorder", () => {
     const mutation = vi
       .fn()
       .mockResolvedValue({ runId: "run-1", testCases: [] });
-    const convexClient = { mutation, action } as any;
+    const convexClient = { mutation, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutation(name, args) : action(name, args) } as any;
 
     await startSuiteRunWithRecorder({
       convexClient,
@@ -509,7 +508,7 @@ describe("startSuiteRunWithRecorder", () => {
         );
       await expect(
         startSuiteRunWithRecorder({
-          convexClient: { mutation, action: vi.fn() } as any,
+          convexClient: { mutation: vi.fn(), action: mutation } as any,
           suiteId: "suite-1",
           replayedFromRunId: "source-run",
           rerunOfRunId: "source-run",
@@ -547,7 +546,7 @@ describe("startSuiteRunWithRecorder", () => {
       .mockResolvedValueOnce(undefined);
 
     const failure = await startSuiteRunWithRecorder({
-      convexClient: { mutation: mutationMock, action: actionMock } as any,
+      convexClient: { mutation: mutationMock, action: (name: string, args: unknown) => name === "serverToolSnapshotActions:startTestSuiteRun" ? mutationMock(name, args) : actionMock(name, args) } as any,
       suiteId: "suite-1",
       serverIds: ["alpha"],
     }).catch((error: unknown) => error);

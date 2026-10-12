@@ -74,6 +74,11 @@ describe("TraceRawView scroll-edge fade", () => {
 });
 
 describe("TraceRawView", () => {
+  it("shows unavailable tool capture while preserving saved chat evidence", () => {
+    renderWithProviders(<TraceRawView trace={{ traceVersion: 1, messages: [], recordedContext: { toolSnapshotCaptureStatus: "unavailable", toolSnapshots: [] } }} />);
+    expect(screen.getByTestId("trace-raw-recorded-context")).toHaveTextContent("Tool definitions are unavailable for this session. Saved messages are still available.");
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("unavailable");
+  });
   it("labels saved context and preserves the recorded evidence", () => {
     renderWithProviders(
       <TraceRawView trace={{ traceVersion: 1, messages: [], recordedContext: { modelId: "z-ai/glm-4.5" } } as never} />,

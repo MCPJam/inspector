@@ -11,7 +11,7 @@
  * anyone remembering to re-type it. The names below are unchanged, so no call
  * site moved.
  *
- * Query names live here for the same reason they do in `swarm-api.ts` — a
+ * Read endpoint names live here for the same reason they do in `swarm-api.ts` — a
  * backend rename is chased through one file, not every component.
  *
  * The distinction the whole surface exists to preserve: a finding is only a
@@ -59,9 +59,9 @@ export type InsightsObservationCoverage = PlatformInsightsObservationCoverage;
 export type InsightsFindingProvenance = PlatformInsightsFindingProvenance;
 export type UnifiedFindings = PlatformUnifiedFindings;
 
-export const INSIGHTS_ENVELOPE_QUERIES = {
+export const INSIGHTS_ENVELOPE_READS = {
   /** Eval run → serverQuality projected into the common envelope. */
-  evalRun: "serverQuality:getEvalRunInsightsEnvelope",
+  evalRun: "serverToolSnapshotReaderActions:getEvalRunInsightsEnvelope",
   /** Journey run → resolved through its wave; carries `runHealth`. */
   journeyRun: "swarmWaveInsights:getJourneyRunInsightsEnvelope",
   /** Scenario → its latest frozen window. Workspace MEMBERS only. */

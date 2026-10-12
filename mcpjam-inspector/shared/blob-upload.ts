@@ -22,6 +22,8 @@ export type BlobUploadScope =
       scenarioId?: string;
       accessVersion?: number;
     }
+  | { purpose: "tool-snapshot"; projectId: string }
+  | { purpose: "tool-snapshot"; suiteId: string }
   | { purpose: "mcp-app-view" }
   | { purpose: "eval-attachment"; suiteId: string }
   | { purpose: "skill-file"; projectId: string; skillId: string };
@@ -107,6 +109,10 @@ export function blobUploadUrl(siteUrl: string, scope: BlobUploadScope): string {
           url.searchParams.set("accessVersion", String(scope.accessVersion));
         }
       }
+      break;
+    case "tool-snapshot":
+      if ("projectId" in scope) url.searchParams.set("projectId", scope.projectId);
+      else url.searchParams.set("suiteId", scope.suiteId);
       break;
     case "eval-attachment":
       url.searchParams.set("suiteId", scope.suiteId);
