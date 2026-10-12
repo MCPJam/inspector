@@ -15,6 +15,7 @@
 import type { Dispatch } from "react";
 import type { AppAction } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { resolveNormalized } from "@/state/app-reducer";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
@@ -46,6 +47,7 @@ function transportOf(config: MCPServerConfig | undefined): "http" | "stdio" {
 /** How a failed attempt ended, from what the failure action carries. */
 export function classifyConnectFailure(
   action: Extract<AppAction, { type: "CONNECT_FAILURE" }>,
+  slug = action.normalized?.slug,
 ): Exclude<ConnectOutcome, "success"> {
   const error = action.error ?? "";
   if (
@@ -54,7 +56,7 @@ export function classifyConnectFailure(
   )
     return "cancelled";
   if (
-    (action.normalized?.slug && TIMEOUT_SLUGS.has(action.normalized.slug)) ||
+    (slug && TIMEOUT_SLUGS.has(slug)) ||
     CLIENT_TIMEOUT.test(error)
   )
     return "timeout";
@@ -79,17 +81,23 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
         const attempt = pending.get(action.name);
         pending.delete(action.name);
         const isSuccess = action.type === "CONNECT_SUCCESS";
-        const rawCode = isSuccess ? undefined : action.normalized?.rawCode;
+        // Most failure dispatches carry only the error text. Derive the slug
+        // the same way the reducer does, so the event and the server card
+        // name the same cause.
+        const normalized = isSuccess
+          ? undefined
+          : resolveNormalized(action.error, action.normalized);
+        const rawCode = normalized?.rawCode;
         track("server_connect_outcome", {
-          outcome: isSuccess ? "success" : classifyConnectFailure(action),
+          outcome: isSuccess
+            ? "success"
+            : classifyConnectFailure(action, normalized?.slug),
           flow: attempt?.flow ?? "background",
           hosted: HOSTED_MODE,
           transport: isSuccess
             ? transportOf(action.config)
             : (attempt?.transport ?? null),
-          ...(!isSuccess && action.normalized?.slug
-            ? { error_slug: action.normalized.slug }
-            : {}),
+          ...(normalized?.slug ? { error_slug: normalized.slug } : {}),
           ...(typeof rawCode === "number" ? { http_status: rawCode } : {}),
           ...(attempt ? { duration_ms: now() - attempt.startedAt } : {}),
         });

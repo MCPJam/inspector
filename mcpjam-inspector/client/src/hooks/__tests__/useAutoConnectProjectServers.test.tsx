@@ -776,6 +776,51 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledTimes(3);
   });
 
+  it("does not retry a server that needs sign-in, even after a host transition", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: ["beta"],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const appState = {
+      servers: {
+        alpha: {
+          name: "alpha",
+          connectionStatus: "failed",
+          lastNormalizedError: { slug: "auth/consent_required" },
+        },
+        beta: {
+          name: "beta",
+          connectionStatus: "failed",
+          lastNormalizedError: { slug: "transport/econnrefused" },
+        },
+      },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-sign-in",
+          hostScopeKey,
+          serverNames: ["alpha", "beta"],
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a" },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState }),
+      },
+    );
+
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+
+    expect(ensureServersReady).toHaveBeenCalledTimes(2);
+    expect(ensureServersReady).toHaveBeenNthCalledWith(1, ["beta"]);
+    expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["beta"]);
+  });
+
   it("does NOT reconnect a server the user manually connects after the scope's recycle pass already ran", async () => {
     // When the user adds a new server from the Servers tab while sitting on a
     // host, it connected fresh under the CURRENT client — so the recycle must

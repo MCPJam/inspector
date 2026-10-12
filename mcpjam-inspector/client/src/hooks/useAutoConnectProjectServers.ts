@@ -53,6 +53,18 @@ const pendingRecycleScopeByProject = new Map<string, string>();
  */
 const recycleBatchByProject = new Map<string, { toastId: string | number }>();
 
+/**
+ * Failures that only the user can clear, by signing in. Auto-connect never
+ * opens the sign-in window, so an automatic retry ends in the same failure.
+ * The server card offers the sign-in instead.
+ */
+const NEEDS_SIGN_IN_SLUGS = new Set([
+  "auth/consent_required",
+  "auth/http_401",
+  "auth/missing_bearer",
+  "auth/oauth_refresh_failed",
+]);
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -221,9 +233,11 @@ export function useAutoConnectProjectServers({
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
-  // be interrupted; connected has nothing to do. This is the "connect the
-  // catalog" path; reconnecting the ALREADY-connected set on a client switch
-  // is handled separately below.
+  // be interrupted; connected has nothing to do. Also skip a server whose
+  // last failure needs the user to sign in: a client switch clears the
+  // attempt log, and retrying it would only fail again. This is the
+  // "connect the catalog" path; reconnecting the ALREADY-connected set on a
+  // client switch is handled separately below.
   const candidateNamesKey = useMemo(() => {
     if (
       !enabled ||
@@ -234,11 +248,16 @@ export function useAutoConnectProjectServers({
       return null;
     }
     const candidates = catalogNames.filter((name) => {
-      const status = sharedAppState.servers[name]?.connectionStatus;
+      const server = sharedAppState.servers[name];
+      const status = server?.connectionStatus;
       return (
         status !== "connected" &&
         status !== "connecting" &&
-        status !== "oauth-flow"
+        status !== "oauth-flow" &&
+        !(
+          status === "failed" &&
+          NEEDS_SIGN_IN_SLUGS.has(server?.lastNormalizedError?.slug ?? "")
+        )
       );
     });
     if (candidates.length === 0) return null;
