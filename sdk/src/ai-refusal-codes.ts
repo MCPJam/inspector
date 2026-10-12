@@ -4,7 +4,7 @@
  * whether each one lifts on its own.
  *
  * This is the one copy the SDK, the CLI and the inspector read. The SDK's
- * error describer, `mcpjam eval run`'s exit codes and the inspector's
+ * error describer, `mcpjam cloud eval run`'s exit codes and the inspector's
  * `shared/ai-execution-refusal.ts` all derive from it.
  *
  * The backend's `convex/lib/aiKeyPolicy.ts` is the source. The code list and
