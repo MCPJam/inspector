@@ -38,6 +38,7 @@ import {
   findModelForStoredChoice,
   modelRowKey,
   selectionBesideLegacyId,
+  storedModelChoice,
 } from "@/components/chat-v2/shared/model-selection";
 import {
   modelTargetKey,
@@ -195,6 +196,22 @@ export function ModelsPill({
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
+  // The target a picked row adds. Under the organization's key policy, an
+  // organization row whose id is bare (`gpt-5` on an org OpenAI connection)
+  // is saved under its canonical id with its org selection: the bare id
+  // alone runs as a legacy id, which the policy refuses (`org_keys_required`).
+  // Every other row keeps its own id, and `syncExplicitTargets` adds the
+  // selection it can carry beside it.
+  const pickedTarget = (model: ModelDefinition): ModelTarget => {
+    if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
+      const choice = storedModelChoice(model, undefined, "evalTarget");
+      if (choice.selection?.source === "org") {
+        return modelTarget(choice.modelId, choice.selection);
+      }
+    }
+    return { modelId: String(model.id) };
+  };
+
   // Every edit fills in the saved selection of a target that has none; the
   // row just picked decides the selection of its new target.
   const emit = (next: ModelSelection, picked?: ModelDefinition) =>
@@ -224,8 +241,8 @@ export function ModelsPill({
     });
 
   const addModel = (model: ModelDefinition) => {
-    const modelId = String(model.id);
-    const added: ModelTarget = { modelId };
+    const added = pickedTarget(model);
+    const modelId = added.modelId;
     if (mode === "single") {
       emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
       return;
@@ -234,7 +251,8 @@ export function ModelsPill({
       // Another row with this id was picked: this one takes its place. Every
       // target of the id moves onto the picked row's selection and keeps its
       // own settings, so Sonnet·Low + Sonnet·High stay two targets.
-      const base = selectionBesideLegacyId(model, "evalTarget");
+      const base =
+        added.selection ?? selectionBesideLegacyId(model, "evalTarget");
       const moved = targets
         .filter((target) => target.modelId === modelId)
         .map((target) => {
@@ -263,6 +281,16 @@ export function ModelsPill({
     emit({ ...value, explicitTargets: [...targets, added] }, model);
   };
 
+  // The id a selected row's targets were saved under. An organization row
+  // picked under the policy is saved under its canonical id, not its own.
+  const savedIdOf = (row: ModelDefinition): string => {
+    const key = modelRowKey(row);
+    const saved = pickedRows.find(
+      (picked) => picked.row && modelRowKey(picked.row) === key,
+    );
+    return saved?.id ?? String(row.id);
+  };
+
   // The selector reports the whole next list; one row was added or removed.
   const handleSelectedModelsChange = (next: ModelDefinition[]) => {
     const before = new Set(selectedModels.map(modelRowKey));
@@ -275,7 +303,7 @@ export function ModelsPill({
     const removed = selectedModels.find(
       (model) => !after.has(modelRowKey(model)),
     );
-    if (removed) removeModelId(String(removed.id));
+    if (removed) removeModelId(savedIdOf(removed));
   };
 
   const wouldAddChoice = wouldExceedBudget(budget, { extraChoices: 1 });
@@ -298,7 +326,7 @@ export function ModelsPill({
     mode === "multiple" &&
     !state.selected &&
     // Swapping in another row for a picked id adds no choice.
-    !explicit.includes(String(model.id)) &&
+    !explicit.includes(pickedTarget(model).modelId) &&
     wouldAddChoice &&
     !replaceSoleChoice
       ? capReason

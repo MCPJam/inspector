@@ -796,7 +796,11 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("keeps a saved hosted model selected, locked, once the org requires its own keys", async () => {
+  /**
+   * A chat whose saved model is hosted Claude Haiku, in an organization that
+   * now requires its own keys and offers only its OpenAI connection.
+   */
+  async function renderStrictOrgChatOnSavedHostedModel() {
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     // The real builder drops hosted rows under the policy; this mock stands
     // in for it (the unrestricted lookup still sees the hosted rows).
@@ -815,7 +819,7 @@ describe("useChatSession hosted mode", () => {
       );
     });
 
-    const { result, unmount } = renderHook(() =>
+    const rendered = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedOrgModelConfig: {
@@ -838,10 +842,15 @@ describe("useChatSession hosted mode", () => {
     );
 
     await waitFor(() => {
-      expect(String(result.current.selectedModel.id)).toBe(
+      expect(String(rendered.result.current.selectedModel.id)).toBe(
         "anthropic/claude-haiku-4.5",
       );
     });
+    return rendered;
+  }
+
+  it("keeps a saved hosted model selected, locked, once the org requires its own keys", async () => {
+    const { result, unmount } = await renderStrictOrgChatOnSavedHostedModel();
     expect(result.current.selectedModel).toMatchObject({
       disabled: true,
       disabledReason: "Choose a model from an organization provider.",
@@ -853,6 +862,31 @@ describe("useChatSession hosted mode", () => {
     ).toBe(false);
     // It never sends: a personal key in local mode has no server-side check.
     expect(result.current.submitBlocked).toBe(true);
+    unmount();
+  });
+
+  it("refuses to send on a disallowed saved model outside the composer too", async () => {
+    const { result, unmount } = await renderStrictOrgChatOnSavedHostedModel();
+    const toastError = vi
+      .spyOn(toast, "error")
+      .mockImplementation(() => "toast-id");
+    onTestFinished(() => toastError.mockRestore());
+    mockState.authFetch.mockClear();
+
+    // Retry, the eval handoff and widget follow-ups call `sendMessage`
+    // directly, never through `submitBlocked`.
+    let dispatched: boolean | undefined;
+    await act(async () => {
+      dispatched = await result.current.sendMessage({ text: "try again" });
+    });
+
+    expect(dispatched).toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "isn't allowed here. Choose an organization model.",
+      ),
+    );
     unmount();
   });
 
