@@ -140,7 +140,7 @@ function SelectionSummary({
     <>
       {provider
         ? `${orgProviderLabel(provider)} · ${model}`
-        : id
+        : id && providers !== undefined
           ? `${id} · ${model}`
           : model}
     </>

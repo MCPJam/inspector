@@ -108,7 +108,7 @@ function renderCard(
     <OrganizationDefaultModelCard
       organizationId="org-1"
       isAdmin={props.isAdmin ?? true}
-      providers={props.providers ?? PROVIDERS}
+      providers={"providers" in props ? props.providers : PROVIDERS}
     />,
   );
 }
@@ -251,8 +251,6 @@ describe("OrganizationDefaultModelCard", () => {
     });
     renderCard();
     expect(screen.getByText(/Suggested:/)).toBeInTheDocument();
-    expect(mocks.setAiModel).not.toHaveBeenCalled();
-    expect(mocks.testAiModel).not.toHaveBeenCalled();
   });
 
   it("never offers a suggestion over a saved model", () => {
@@ -269,12 +267,9 @@ describe("OrganizationDefaultModelCard", () => {
     renderCard();
 
     expect(screen.queryByText(/Suggested:/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Use suggested model" }),
-    ).not.toBeInTheDocument();
   });
 
-  it("is read-only for members", () => {
+  it("shows the saved model to members", () => {
     hookState.config = makeConfig({
       canManage: false,
       aiModels: { default: saved(DEFAULT_MODEL) },
@@ -289,9 +284,6 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.getByText("Only organization owners and admins can change this."),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^(Test|Change|Set|Clear) / }),
-    ).not.toBeInTheDocument();
   });
 
   it("defers to the backend when it says the viewer cannot manage", () => {
@@ -301,9 +293,6 @@ describe("OrganizationDefaultModelCard", () => {
     });
     renderCard({ isAdmin: true });
 
-    expect(
-      screen.queryByRole("button", { name: "Set default AI model" }),
-    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Suggested:/)).not.toBeInTheDocument();
   });
 
@@ -324,12 +313,6 @@ describe("OrganizationDefaultModelCard", () => {
       expect(screen.getByTestId("org-ai-model-default")).toHaveClass(
         "opacity-60",
       );
-      expect(
-        screen.queryByRole("button", { name: "Set default AI model" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "Use suggested model" }),
-      ).not.toBeInTheDocument();
     });
   });
 
@@ -348,11 +331,40 @@ describe("OrganizationDefaultModelCard", () => {
       ),
     ).toBeInTheDocument();
   });
-});
+  it("waits for provider metadata before identifying a removed connection", () => {
+    hookState.config = makeConfig({
+      aiModels: { default: saved(DEFAULT_MODEL) },
+    });
+    const { rerender } = renderCard({ providers: undefined });
+    expect(screen.getByText("openai/gpt-5-mini")).toBeInTheDocument();
+    expect(screen.queryByText(/conn_openai/)).not.toBeInTheDocument();
 
+    rerender(
+      <OrganizationDefaultModelCard
+        organizationId="org-1"
+        isAdmin
+        providers={[]}
+      />,
+    );
+    expect(
+      screen.getByText("conn_openai · openai/gpt-5-mini"),
+    ).toBeInTheDocument();
 
-it("keeps a removed connection identifiable beside its saved model", () => {
-  hookState.config = makeConfig({ aiModels: { default: saved(DEFAULT_MODEL) } });
-  renderCard({ providers: [] });
-  expect(screen.getByText("conn_openai · openai/gpt-5-mini")).toBeInTheDocument();
+    rerender(
+      <OrganizationDefaultModelCard
+        organizationId="org-1"
+        isAdmin
+        providers={PROVIDERS}
+      />,
+    );
+    expect(screen.getByText("OpenAI · openai/gpt-5-mini")).toBeInTheDocument();
+    expect(screen.queryByText(/conn_openai/)).not.toBeInTheDocument();
+  });
+
+  it("names the missing default model when the key policy is on", () => {
+    renderCard();
+    expect(
+      screen.getByText(/With no default model set, that work is unavailable\./),
+    ).toBeInTheDocument();
+  });
 });

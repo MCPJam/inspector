@@ -29,10 +29,10 @@ export function DefaultModelCardHeader({
         </div>
         <p className="text-xs text-muted-foreground">
           Background AI work that nobody picks a model for runs on the
-          organization's default AI model while &ldquo;{TOGGLE_LABEL}&rdquo;
+          organization&apos;s default AI model while &ldquo;{TOGGLE_LABEL}&rdquo;
           is on.{" "}
           {requireOrgKeys
-            ? "Without it, that work is unavailable."
+            ? "With no default model set, that work is unavailable."
             : "Until then, MCPJam-provided models run it."}{" "}
           Model pickers never use it, and each suite still chooses its own
           judge.
