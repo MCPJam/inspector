@@ -86,6 +86,38 @@ You will lose access to the organization immediately and be redirected to the Se
 <Note>
 Owners cannot leave an organization — transfer ownership or delete the organization instead.
 </Note>
+
+## Deleting an organization
+
+Only organization owners can delete an organization. The option is in **Settings › Organization › Danger Zone**.
+
+### Cancellation window
+
+Whether deletion is immediate or scheduled depends on your plan:
+
+- **Without a cancellation window** — the dialog reads "Permanently delete this organization and its data." Confirming removes the organization immediately and cannot be undone.
+- **With a cancellation window** (available on some plans) — the dialog reads "Delete this organization and its data. You can cancel within _N_ hours." Confirming schedules deletion rather than executing it immediately.
+
+The confirmation dialog always requires you to type the organization name and check an acknowledgement before the delete button becomes active.
+
+### Pending deletion banner
+
+After scheduling a deletion, a banner appears at the top of the app for every owner. The banner shows:
+
+- The organization name and the deadline by which you can cancel.
+- A **Cancel deletion** button, active until the deadline passes.
+- Once the deadline passes, the button is disabled and the banner reads "Deletion is in progress."
+
+Members cannot access the organization while deletion is pending.
+
+### Cancelling a deletion
+
+Click **Cancel deletion** in the banner before the deadline. A successful cancellation removes the banner and restores normal access to the organization. If the cancellation fails (for example, the window has just closed), an error message appears and you can try again.
+
+<Warning>
+Once the cancellation window closes, deletion cannot be stopped.
+</Warning>
+
 ## Sharing Projects
 
 Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
