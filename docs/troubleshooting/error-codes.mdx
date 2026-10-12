@@ -791,6 +791,14 @@ providers count; OpenRouter and local-runtime connections do not.
 - **Model pickers** list only the organization's eligible models. A suite's
   judge must be chosen from an organization provider; there is no default
   judge, and a suite without one can't run.
+- **Default AI model** — a separate card under the AI keys card on
+  **Organization → AI providers** shows the organization's default model for
+  background AI work (insights and findings, generation, typed decisions, and
+  simulated users). It is Enterprise-only and read-only for members. When the
+  policy is on and no default model is set, that background work is
+  unavailable. When the policy is off, MCPJam-provided models run it instead.
+  Each row shows the saved model and its provider, the last test result and
+  time, any reason the model can't run, and a suggested model when none is set.
 - **Harness runtimes** run on the organization's own key for their vendor:
   Claude Code on an Anthropic provider, Codex on an OpenAI provider. Not
   supported while the setting is on: SDK model leases (`sdk-direct`), a
