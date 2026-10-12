@@ -753,6 +753,30 @@ describe("useChatSession hosted mode", () => {
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
   });
 
+  it.each(["anthropic/claude-haiku-4.5", ""])(
+    "keeps the saved selection unresolved while policy loads (%s)",
+    async (savedId) => {
+      mockState.selectedModelId = savedId;
+      const { result, rerender, unmount } = renderHook(
+        ({ pending }) =>
+          useChatSession({
+            selectedServers: ["server-1"],
+            hostedOrgModelConfig: { providers: [], pending },
+          }),
+        { initialProps: { pending: true } },
+      );
+      await waitFor(() => {
+        expect(result.current.availableModels.length).toBeGreaterThan(0);
+      });
+      expect(result.current.availableModels.every((row) => row.disabled)).toBe(true);
+      expect(result.current.isSelectedModelResolved).toBe(false);
+      expect(mockState.setSelectedModelId).not.toHaveBeenCalled();
+      rerender({ pending: false });
+      expect(result.current.isSelectedModelResolved).toBe(true);
+      unmount();
+    },
+  );
+
   it("uses organization provider config to expose BYOK hosted models", async () => {
     mockState.selectedModelId = "gpt-4o-mini";
 
