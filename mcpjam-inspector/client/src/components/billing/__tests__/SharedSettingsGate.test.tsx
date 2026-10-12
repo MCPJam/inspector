@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   user: "viewer",
   fail: false,
   projectsMissing: false,
+  canManageBilling: true as boolean | undefined,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -18,7 +19,11 @@ vi.mock("convex/react", () => ({
       ? state.projectsMissing
         ? []
         : [{ _id: "project", organizationId: "org" }]
-      : { effectivePlan: state.plan, pricingVersion: state.pricingVersion };
+      : {
+          effectivePlan: state.plan,
+          pricingVersion: state.pricingVersion,
+          canManageBilling: state.canManageBilling,
+        };
   },
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -34,6 +39,7 @@ beforeEach(() => {
   state.plan = "free";
   state.pricingVersion = "v2";
   state.user = "viewer";
+  state.canManageBilling = true;
 });
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
 describe("shared settings access", () => {
@@ -104,7 +110,7 @@ describe("shared settings access", () => {
     },
   );
 
-  it.each(["free", "pro"])("offers Team for non-creators on %s", (plan) => {
+  it.each(["free", "pro"])("offers Team plans to billing owners on %s", (plan) => {
     state.plan = plan;
     render(
       <SharedSettingsGate
@@ -124,6 +130,43 @@ describe("shared settings access", () => {
     expect(
       screen.getByRole("button", { name: "Save settings" }),
     ).toBeDisabled();
+  });
+  it.each(["free", "pro"])(
+    "directs non-billing collaborators to their organization owner on %s",
+    (plan) => {
+      state.plan = plan;
+      state.canManageBilling = false;
+      render(
+        <SharedSettingsGate
+          projectId="project"
+          creatorId="creator"
+          resource="eval suite"
+        >
+          <button>Save settings</button>
+        </SharedSettingsGate>,
+      );
+      expect(
+        screen.getByText("Ask your organization owner to upgrade to Team."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Save settings" }),
+      ).toBeDisabled();
+    },
+  );
+  it("does not offer plans until billing permission is confirmed", () => {
+    state.canManageBilling = undefined;
+    render(
+      <SharedSettingsGate
+        projectId="project"
+        creatorId="creator"
+        resource="study"
+      >
+        <button>Save settings</button>
+      </SharedSettingsGate>,
+    );
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
   });
   it.each(["team", "enterprise"])(
     "retains existing editing UI on %s",

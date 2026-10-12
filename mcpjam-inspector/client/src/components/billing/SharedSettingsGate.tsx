@@ -92,15 +92,21 @@ function SharedSettingsAccess({
             <p className="text-xs text-muted-foreground">
               Your project role still determines what you can edit.
             </p>
-            <Button asChild variant="outline" size="sm">
-              <a
-                href={`/organizations/${encodeURIComponent(
-                  organizationId,
-                )}/plans`}
-              >
-                View Team plans
-              </a>
-            </Button>
+            {billing?.canManageBilling === true ? (
+              <Button asChild variant="outline" size="sm">
+                <a
+                  href={`/organizations/${encodeURIComponent(
+                    organizationId,
+                  )}/plans`}
+                >
+                  View Team plans
+                </a>
+              </Button>
+            ) : (
+              <p className="text-sm text-foreground">
+                Ask your organization owner to upgrade to Team.
+              </p>
+            )}
           </>
         )}
       </section>
