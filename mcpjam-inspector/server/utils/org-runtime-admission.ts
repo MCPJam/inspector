@@ -94,7 +94,8 @@ export function buildRuntimeCacheKey(
         authorization: normalizeAuthHeader(auth) ?? "",
         scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
-          auth?.scenarioId && auth.scenarioId.trim() &&
+          auth?.scenarioId &&
+          auth.scenarioId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
@@ -123,7 +124,10 @@ export function orgSelectionOnly(
   return selection?.source === "org" ? selection : undefined;
 }
 
-export function cacheRuntimeAnswer(cacheKey: string, result: OrgProviderRuntime): void {
+export function cacheRuntimeAnswer(
+  cacheKey: string,
+  result: OrgProviderRuntime,
+): void {
   const writeNow = Date.now();
   pruneRuntimeResolveCache(writeNow);
   if (!githubExecutionPolicy()) {

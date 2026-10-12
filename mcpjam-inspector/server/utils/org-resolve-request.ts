@@ -5,9 +5,7 @@
  */
 import dns from "node:dns/promises";
 import { logger } from "./logger.js";
-import {
-  isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
-} from "@/shared/local-only-mcp";
+import { isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral } from "@/shared/local-only-mcp";
 import type {
   ResolveOrgModelConfigAuth,
   ResolveOrgModelConfigTarget,
@@ -76,7 +74,9 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
  * performed for hostnames, accepting a small TOCTOU window that would require
  * an attacker to control both the DNS record and its TTL.
  */
-export async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
+export async function assertSafeHostedOutboundUrl(
+  rawUrl: string,
+): Promise<void> {
   if (isUnsafeHostedOutboundUrl(rawUrl)) {
     throw new Error(
       `Provider base URL is blocked: points to a private or internal address`,
@@ -91,7 +91,7 @@ export async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void>
   const resolvedIps: string[] = [];
   for (const resolve of [dns.resolve4, dns.resolve6]) {
     try {
-      resolvedIps.push(...await resolve(host));
+      resolvedIps.push(...(await resolve(host)));
     } catch (error) {
       // One address family may be absent; the empty-address guard fails closed.
       logger.debug("Provider DNS lookup failed", {

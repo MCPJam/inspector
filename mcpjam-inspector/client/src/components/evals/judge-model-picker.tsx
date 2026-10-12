@@ -100,7 +100,14 @@ export function JudgeModelPicker({
         requireOrgKeys,
         selectionsSupported,
       }),
-    [availableModels, value, managedDefaultModelId, selection, requireOrgKeys, selectionsSupported],
+    [
+      availableModels,
+      value,
+      managedDefaultModelId,
+      selection,
+      requireOrgKeys,
+      selectionsSupported,
+    ],
   );
   // Under the policy nothing stands in for an unset judge: one must be chosen.
   const currentModel =
@@ -139,7 +146,9 @@ export function JudgeModelPicker({
             className,
           )}
         >
-          {variant === "pill" && !isOrgKeysDisallowedRow(currentModel) && currentModel !== NO_JUDGE_MODEL ? (
+          {variant === "pill" &&
+          !isOrgKeysDisallowedRow(currentModel) &&
+          currentModel !== NO_JUDGE_MODEL ? (
             <ProviderLogo
               provider={currentModel.provider}
               customProviderName={currentModel.customProviderName}
