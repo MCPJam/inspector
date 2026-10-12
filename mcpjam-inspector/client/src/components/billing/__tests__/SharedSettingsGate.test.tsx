@@ -154,7 +154,7 @@ describe("shared settings access", () => {
       ).toBeDisabled();
     },
   );
-  it("does not offer plans until billing permission is confirmed", () => {
+  it("falls back to owner guidance when billing permission is missing", () => {
     state.canManageBilling = undefined;
     render(
       <SharedSettingsGate
@@ -166,6 +166,9 @@ describe("shared settings access", () => {
       </SharedSettingsGate>,
     );
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Ask your organization owner to upgrade to Team."),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
   });
   it.each(["team", "enterprise"])(
