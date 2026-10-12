@@ -1527,12 +1527,33 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },

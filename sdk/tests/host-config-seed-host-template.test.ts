@@ -239,8 +239,16 @@ describe("seedHostTemplate", () => {
       },
     });
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
-      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "connect-src": [
+        "https://cdn.jsdelivr.net",
+        "https://unpkg.com",
+        "https://esm.sh",
+      ],
+      "script-src": [
+        "https://cdn.jsdelivr.net",
+        "https://unpkg.com",
+        "https://esm.sh",
+      ],
       "frame-src": ["'self'", "data:", "blob:"],
     });
   });
