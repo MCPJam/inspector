@@ -78,7 +78,8 @@ const CANONICAL_PROVIDER_PREFIX: Readonly<Record<string, string>> = {
   alibaba: "qwen",
 };
 
-function canonicalPrefix(prefix: string): string {
+/** The canonical vendor prefix for a provider key (`xai` → `x-ai`). */
+export function canonicalPrefix(prefix: string): string {
   return CANONICAL_PROVIDER_PREFIX[prefix] ?? prefix;
 }
 

@@ -13,7 +13,10 @@
  *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
  *   vendor and what doesn't count.
  */
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  validateModelSelection,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   AiFeatureGroupId,
   AiFeatureGroupReadiness,
@@ -23,6 +26,11 @@ import type {
   OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import {
+  canonicalPrefix,
+  canonicalSelectionModelId,
+} from "@/components/chat-v2/shared/model-selection";
+import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
 // Feature coverage
@@ -329,6 +337,23 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
+/**
+ * Whether a model id a connection lists fits a kind, by its name. Only
+ * filters the editor's suggestions; any model can still be typed, and the
+ * backend decides.
+ */
+export function listedModelFitsKind(
+  modelId: string,
+  kind: OrgAiModelKind,
+): boolean {
+  const id = modelId.toLowerCase();
+  const embedding = id.includes("embed");
+  const speech = /transcri|whisper/.test(id);
+  if (kind === "embedding") return embedding;
+  if (kind === "transcription") return speech;
+  return !embedding && !speech;
+}
+
 /** How the last test of a saved model reads. */
 export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
   label: string;
@@ -378,6 +403,84 @@ export function orgProviderLabel(provider: OrgModelProvider): string {
     return provider.providerKey.slice("custom:".length);
   }
   return provider.providerKey;
+}
+
+/** Model ids an admin listed on the connection, for the editor's suggestions. */
+export function listedModelIds(provider: OrgModelProvider): string[] {
+  const seen = new Set<string>();
+  for (const raw of [
+    ...(provider.modelIds ?? []),
+    ...(provider.selectedModels ?? []),
+  ]) {
+    const id = raw.trim();
+    if (id) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * The canonical `provider/model` id and the provider's own id for a model an
+ * admin typed against a connection. A pasted `provider/` prefix is dropped
+ * from the native id, which is what the provider API is called with (for
+ * Azure: the deployment name).
+ *
+ * The canonical id is the one a model picker saves for this connection's row
+ * of the model (`canonicalSelectionModelId`), so this card and every picker
+ * save the same id for the same connection. A model the pickers can't place
+ * (one newer than the catalog, an Azure deployment name) keeps the
+ * provider's canonical prefix, spelled as the pickers spell it.
+ */
+export function orgModelIds(
+  providerKey: string,
+  typed: string,
+): { modelId: string; nativeModelId: string } | null {
+  const raw = typed.trim();
+  if (!raw) return null;
+  const key = providerKey.trim().toLowerCase();
+  if (!key) return null;
+  const prefix = canonicalPrefix(key);
+
+  let native = raw;
+  for (const candidate of new Set([prefix, key])) {
+    if (native.toLowerCase().startsWith(`${candidate}/`)) {
+      native = native.slice(candidate.length + 1);
+      break;
+    }
+  }
+  if (!native) return null;
+
+  const row: ModelDefinition = {
+    id: native.includes("/") ? `${prefix}/${native}` : native,
+    name: native,
+    provider: key,
+    hosted: false,
+  };
+  const modelId = canonicalSelectionModelId(row) ?? `${prefix}/${native}`;
+  return { modelId, nativeModelId: native };
+}
+
+/**
+ * The selection to save for an organization AI model: always `source:
+ * "org"`, always naming the connection and the provider's native id, never
+ * falling back to another model. `null` when the typed model cannot form a
+ * valid selection.
+ */
+export function buildOrgModelSelection(
+  provider: Pick<OrgModelProvider, "id" | "providerKey">,
+  typedModel: string,
+): ModelSelection | null {
+  const connectionId = provider.id?.trim();
+  if (!connectionId) return null;
+  const ids = orgModelIds(provider.providerKey, typedModel);
+  if (!ids) return null;
+  const result = validateModelSelection({
+    modelId: ids.modelId,
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: connectionId },
+    nativeModelId: ids.nativeModelId,
+    fallback: { provider: "none", model: "none" },
+  });
+  return result.ok ? result.selection : null;
 }
 
 /** The model a saved selection runs, as the admin would recognise it. */
