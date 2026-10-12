@@ -55,12 +55,23 @@ function PendingDeletionBanner() {
   const cancel = useMutation(cancelRef);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
+  const [deadlineTick, setDeadlineTick] = useState(0);
+  // Re-read the clock whenever the list changes or a deadline passes: a
+  // deletion requested late in the session must not be timed from page load.
   useEffect(() => {
-    const next = pending?.map((item) => item.purgeAfter).filter((deadline) => deadline > now).sort((a, b) => a - b)[0];
+    const current = Date.now();
+    setNow(current);
+    const next = pending
+      ?.map((item) => item.purgeAfter)
+      .filter((deadline) => deadline > current)
+      .sort((a, b) => a - b)[0];
     if (next === undefined) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(next - now + 1, 2_147_483_647));
+    const timer = setTimeout(
+      () => setDeadlineTick((value) => value + 1),
+      Math.min(next - current + 1, 2_147_483_647),
+    );
     return () => clearTimeout(timer);
-  }, [pending, now]);
+  }, [pending, deadlineTick]);
   const cancelDeletion = async (organizationId: string) => {
     setCancelling(organizationId);
     try {
@@ -84,7 +95,9 @@ function PendingDeletionBanner() {
           <AlertTitle>Deletion scheduled for {item.name}</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             <span>
-              {now >= item.purgeAfter ? "Deletion is in progress." : `You can cancel until ${new Date(item.purgeAfter).toLocaleString()}.`}
+              {now >= item.purgeAfter
+                ? "Deletion is in progress."
+                : `You can cancel until ${new Date(item.purgeAfter).toLocaleString()}.`}{" "}
               Members cannot access this organization while deletion is pending.
             </span>
             <Button

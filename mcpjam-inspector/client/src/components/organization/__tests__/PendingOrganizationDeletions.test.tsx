@@ -93,3 +93,27 @@ it("does not schedule deadline timers with no pending deletion", () => {
   render(<PendingOrganizationDeletions />);
   expect(vi.getTimerCount()).toBe(0);
 });
+it("separates the deadline from the access sentence", () => {
+  render(<PendingOrganizationDeletions />);
+  expect(
+    screen.getByText(/^You can cancel until .+\. Members cannot access/),
+  ).toBeInTheDocument();
+});
+it("times a deletion requested later in the session from the current clock", () => {
+  vi.useFakeTimers();
+  mocks.pending = [];
+  const { rerender } = render(<PendingOrganizationDeletions />);
+  act(() => vi.advanceTimersByTime(10 * 60_000));
+  mocks.pending = [
+    { organizationId: "org", name: "Example", purgeAfter: Date.now() + 1000 },
+  ];
+  rerender(<PendingOrganizationDeletions />);
+  expect(screen.getByRole("button", { name: "Cancel deletion" })).toBeEnabled();
+  act(() => vi.advanceTimersByTime(1001));
+  expect(
+    screen.getByRole("button", { name: "Cancel deletion" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByText(/^Deletion is in progress\. Members cannot/),
+  ).toBeInTheDocument();
+});
