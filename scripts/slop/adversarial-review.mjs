@@ -29,13 +29,20 @@ function git(args) {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
 }
 
-/** Read blobs, never working-tree files or symlink targets supplied by a PR. */
+/** The PR cannot be reviewed within the budget. The run skips; nothing is wrong with the PR. */
+export class ReviewBudgetError extends Error {}
+
+const jsonBytes = (value) => Buffer.byteLength(JSON.stringify(value));
+
+/**
+ * Read blobs, never working-tree files or symlink targets supplied by a PR.
+ * Every file's diff is always sent. Whole files are added smallest first while
+ * they fit; a file left out is marked `diffOnly`, and the review names it.
+ */
 export function collectContext(base, head, runGit = git) {
   const paths = runGit(["diff", "--name-only", "--no-renames", "-z", base, head, "--"])
     .split("\0").filter(Boolean);
-  const files = [];
-  let bytes = 0;
-  for (const path of paths) {
+  const full = paths.map((path) => {
     const versions = [base, head].map((ref) => {
       const entry = runGit(["ls-tree", ref, "--", `:(literal)${path}`]);
       if (!entry) return null;
@@ -44,20 +51,32 @@ export function collectContext(base, head, runGit = git) {
       return content.includes("\0") ? "[binary file omitted]" : content;
     });
     const diff = runGit(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", base, head, "--", `:(literal)${path}`]);
-    const file = { path, before: versions[0], after: versions[1], diff };
-    bytes += Buffer.byteLength(JSON.stringify(file));
-    if (bytes > MAX_CONTEXT_BYTES) throw new Error("PR exceeds the 500 KB review budget; split the PR or review manually. No review posted.");
-    files.push(file);
+    return { path, before: versions[0], after: versions[1], diff };
+  });
+  const omitted = (version) => version === null ? null : "[full file omitted to fit the review budget]";
+  const files = full.map((file) => ({ ...file, before: omitted(file.before), after: omitted(file.after), diffOnly: true }));
+  let bytes = files.reduce((total, file) => total + jsonBytes(file), 0);
+  if (bytes > MAX_CONTEXT_BYTES) {
+    throw new ReviewBudgetError("The diff alone is over the 500 KB review budget, so no review was posted. Split the PR or review it manually.");
+  }
+  const bySize = full.map((file, index) => ({ index, extra: jsonBytes(file) - jsonBytes(files[index]) }))
+    .sort((a, b) => a.extra - b.extra);
+  for (const { index, extra } of bySize) {
+    if (bytes + extra > MAX_CONTEXT_BYTES) break;
+    files[index] = full[index];
+    bytes += extra;
   }
   return files;
 }
 
-export function reviewBody(items, sha) {
+export function reviewBody(items, sha, diffOnly = []) {
   if (!Array.isArray(items) || items.length !== 1 || typeof items[0]?.body !== "string" ||
       !/\[(do|try|nit)\]/.test(items[0].body) || items[0].body.length > 25_000) {
     throw new Error("Claude returned an invalid review body.");
   }
-  return `${items[0].body}\n\nReviewed commit: ${sha}\n\n<!-- adversarial-review:${sha} -->`;
+  const note = diffOnly.length === 0 ? "" :
+    `\n\nReviewed from the diff only, because the whole file did not fit the review budget: ${diffOnly.map((path) => `\`${path}\``).join(", ")}`;
+  return `${items[0].body}${note}\n\nReviewed commit: ${sha}\n\n<!-- adversarial-review:${sha} -->`;
 }
 
 async function github(path, method = "GET", body) {
@@ -93,15 +112,28 @@ export async function main(call = callClaude, request = github, collect = collec
   if (await alreadyReviewed(pr, sha, request)) return;
   const current = await request(`pulls/${pr}`);
   if (current.state !== "open" || current.head.sha !== sha) throw new Error("PR changed before review; rerun on the latest commit.");
-  const files = collect("HEAD^1", sha);
+  let files;
+  try {
+    files = collect("HEAD^1", sha);
+  } catch (error) {
+    if (!(error instanceof ReviewBudgetError)) throw error;
+    console.log(`::notice::${error.message}`);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${error.message}\n`);
+    return;
+  }
+  const diffOnly = files.filter((file) => file.diffOnly).map((file) => file.path);
   const { items } = await call({
     model: MODELS.rewrite,
     effort: "high",
     system: rubric(PROMPT),
-    user: JSON.stringify({ files, limitations: "Only changed files are supplied; binary and non-regular blobs are marked as omitted." }),
+    user: JSON.stringify({
+      files,
+      limitations: "Only changed files are supplied; binary and non-regular blobs are marked as omitted. " +
+        "Files marked diffOnly carry only their diff, because their whole contents did not fit the review budget.",
+    }),
     format: FORMAT,
   });
-  const body = reviewBody(items, sha);
+  const body = reviewBody(items, sha, diffOnly);
   const latest = await request(`pulls/${pr}`);
   if (latest.state !== "open" || latest.head.sha !== sha) throw new Error("PR changed during review; no stale review posted.");
   await request(`pulls/${pr}/reviews`, "POST", { commit_id: sha, event: "COMMENT", body });
