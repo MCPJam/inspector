@@ -149,15 +149,15 @@ describe("SuitePassOrFailSection", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("mounts the judge's gate panel and rubric editor under user value", () => {
-    // The LAST link of the chain is the one a judge measures, so its readiness
-    // and its criteria belong beside it rather than in a row of their own.
+  it("mounts the judge's gate panel and rubric editor in the Judge section", () => {
+    // The judge has its own section below the stages, always shown, so its
+    // readiness and its criteria sit together rather than in a fold.
     const { container } = renderSection({
       judgeAccessory: <div data-testid="gate-panel" />,
       rubricEditor: <div data-testid="rubric-editor" />,
     });
     const group = container.querySelector(
-      '[data-stage-group="userValue"]',
+      '[data-setting-key="judge"]',
     ) as HTMLElement;
     expect(within(group).getByTestId("gate-panel")).toBeTruthy();
     expect(within(group).getByTestId("rubric-editor")).toBeTruthy();

@@ -10,6 +10,7 @@
  */
 
 import { useId } from "react";
+import { JudgeSlotRow } from "./judge-slot-row";
 import { Button } from "@mcpjam/design-system/button";
 import { Plus, Trash2 } from "lucide-react";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
@@ -71,30 +72,29 @@ export function RubricChecksJudgeCard({
     commit(questions.map((question, at) => (at === index ? next : question)));
 
   return (
-    <section
-      className="space-y-3 rounded-md border border-border/50 bg-muted/10 px-3 py-3"
+    <JudgeSlotRow
+      name="Rubric checks"
       data-testid="suite-judge-card-rubricChecks"
       data-judge-slot="rubricChecks"
       data-setting-key="judgeRubricChecks"
+      meta={
+        <>
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="suite-judge-template-rubricChecks"
+          >
+            {template ? `Template v${template.version}` : "No template yet"}
+          </p>
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="suite-judge-agreement-rubricChecks"
+          >
+            Calibration unavailable
+          </p>
+        </>
+      }
     >
-      <div>
-        <h4 className="text-sm font-semibold text-foreground">Rubric checks</h4>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {RUBRIC_CHECKS_CARD_COPY}
-        </p>
-      </div>
-      <p
-        className="text-[11px] text-muted-foreground"
-        data-testid="suite-judge-template-rubricChecks"
-      >
-        {template ? `Template v${template.version}` : "No template yet"}
-      </p>
-      <p
-        className="text-[11px] text-muted-foreground"
-        data-testid="suite-judge-agreement-rubricChecks"
-      >
-        Calibration unavailable
-      </p>
+      <p className="text-sm text-muted-foreground">{RUBRIC_CHECKS_CARD_COPY}</p>
       {goalJudgeOff ? (
         <p
           className="text-xs text-muted-foreground"
@@ -213,7 +213,7 @@ export function RubricChecksJudgeCard({
           </p>
         ) : null}
       </div>
-    </section>
+    </JudgeSlotRow>
   );
 }
 

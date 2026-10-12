@@ -13,6 +13,7 @@
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { JudgesSection } from "./judges-section";
 import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
+import { JudgeSlotRow } from "./judge-slot-row";
 import type { JudgeSlot } from "./suite-scorer-table-model";
 import type {
   EvalJudgeConfig,
@@ -102,16 +103,18 @@ function GoalCompletionJudgeCard({
 }) {
   const template = judgesCapabilities?.goalCompletion.template;
   return (
-    <section
-      className="space-y-4"
+    <JudgeSlotRow
+      name="Goal completion"
       data-testid="suite-judge-card-goalCompletion"
       data-judge-slot="goalCompletion"
+      meta={
+        <TemplateLine
+          slot="goalCompletion"
+          template={template ?? null}
+          capabilityPresent={judgesCapabilities?.goalCompletion != null}
+        />
+      }
     >
-      <TemplateLine
-        slot="goalCompletion"
-        template={template ?? null}
-        capabilityPresent={judgesCapabilities?.goalCompletion != null}
-      />
       <JudgesSection
         policy={judgesCapabilities?.goalCompletion.policy}
         chrome="bare"
@@ -133,7 +136,7 @@ function GoalCompletionJudgeCard({
           {rubricEditor}
         </div>
       ) : null}
-    </section>
+    </JudgeSlotRow>
   );
 }
 
@@ -150,28 +153,29 @@ function GroundednessJudgeCard({
   const template = hasC1 ? judgesCapabilities.groundedness.template : null;
 
   return (
-    <section
-      className="space-y-3 rounded-md border border-border/50 bg-muted/10 px-3 py-3"
+    <JudgeSlotRow
+      name="Groundedness"
       data-testid="suite-judge-card-groundedness"
       data-judge-slot="groundedness"
       data-setting-key="judgeGroundedness"
+      meta={
+        <>
+          <TemplateLine
+            slot="groundedness"
+            template={template}
+            capabilityPresent={hasC1}
+          />
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="suite-judge-agreement-groundedness"
+          >
+            Calibration unavailable
+          </p>
+        </>
+      }
     >
-      <div>
-        <h4 className="text-sm font-semibold text-foreground">Groundedness</h4>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {GROUNDEDNESS_UNAVAILABLE_COPY}
-        </p>
-      </div>
-      <TemplateLine
-        slot="groundedness"
-        template={template}
-        capabilityPresent={hasC1}
-      />
-      <p
-        className="text-[11px] text-muted-foreground"
-        data-testid="suite-judge-agreement-groundedness"
-      >
-        Calibration unavailable
+      <p className="text-sm text-muted-foreground">
+        {GROUNDEDNESS_UNAVAILABLE_COPY}
       </p>
       {pending ? (
         <p className="text-xs text-muted-foreground">
@@ -202,7 +206,7 @@ function GroundednessJudgeCard({
           Not run yet
         </p>
       )}
-    </section>
+    </JudgeSlotRow>
   );
 }
 
@@ -218,8 +222,8 @@ function TemplateLine({
   const label = !capabilityPresent
     ? "Template unavailable on this deployment"
     : template
-    ? `Template v${template.version}`
-    : "No template yet";
+      ? `Template v${template.version}`
+      : "No template yet";
   return (
     <p
       className="text-[11px] text-muted-foreground"

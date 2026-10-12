@@ -210,7 +210,6 @@ export function SuiteScorerTable({
   );
   const [editMode, setEditMode] = useState(false);
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
-  const [judgeEditorOpen, setJudgeEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
@@ -366,23 +365,17 @@ export function SuiteScorerTable({
   const editableRowIds = table.groups.flatMap((group) =>
     group.rows.filter(rowOpensEditor).map((row) => row.id),
   );
-  const showEditEvaluators =
-    editableRowIds.length > 0 || hasMatchEditor || hasJudgeEditor;
+  const showEditEvaluators = editableRowIds.length > 0 || hasMatchEditor;
   const allEditorsOpen =
-    showEditEvaluators &&
-    editMode &&
-    (!hasMatchEditor || matchEditorOpen) &&
-    (!hasJudgeEditor || judgeEditorOpen);
+    showEditEvaluators && editMode && (!hasMatchEditor || matchEditorOpen);
   const openAllEditors = () => {
     setEditMode(true);
     if (hasMatchEditor) setMatchEditorOpen(true);
-    if (hasJudgeEditor) setJudgeEditorOpen(true);
   };
   const toggleAllEditors = () => {
     if (allEditorsOpen) {
       setEditMode(false);
       setMatchEditorOpen(false);
-      setJudgeEditorOpen(false);
       return;
     }
     openAllEditors();
@@ -557,65 +550,63 @@ export function SuiteScorerTable({
                     </div>
                   </details>
                 ) : null}
-                {scope.kind === "suite" &&
-                onJudgeConfigChange &&
-                group.stage === "userValue" ? (
-                  <details
-                    className="space-y-5 pt-2"
-                    data-setting-key="judge"
-                    data-subsection-id="judge"
-                    open={judgeEditorOpen}
-                    onToggle={(event) =>
-                      setJudgeEditorOpen(
-                        (event.currentTarget as HTMLDetailsElement).open,
-                      )
-                    }
-                  >
-                    <summary className="cursor-pointer text-xs font-medium">
-                      Judge — model, criteria and gate
-                    </summary>
-                    <div>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {judgeHint}
-                      </p>
-                    </div>
-                    <SuiteJudgeCard
-                      slot="goalCompletion"
-                      judgeConfig={judgeConfig}
-                      onJudgeConfigChange={onJudgeConfigChange}
-                      availableModels={availableModels}
-                      judgesCapabilities={capabilities?.judges}
-                      judgeAccessory={judgeAccessory}
-                      rubricEditor={rubricEditor}
-                    />
-                    <SuiteJudgeCard
-                      slot="groundedness"
-                      judgeConfig={judgeConfig}
-                      onJudgeConfigChange={onJudgeConfigChange}
-                      availableModels={availableModels}
-                      judgesCapabilities={capabilities?.judges}
-                      groundednessEvidence={groundednessEvidence}
-                    />
-                    {rubricChecks ? (
-                      <SuiteJudgeCard
-                        slot="rubricChecks"
-                        judgeConfig={judgeConfig}
-                        onJudgeConfigChange={onJudgeConfigChange}
-                        availableModels={availableModels}
-                        judgesCapabilities={capabilities?.judges}
-                        criteria={judgeRubric?.criteria ?? []}
-                        goalJudgeOff={
-                          judgeMode(judgeConfig, goalPolicy) === "off"
-                        }
-                      />
-                    ) : null}
-                  </details>
-                ) : null}
               </div>
             </section>
           ))}
         </div>
       </div>
+      {hasJudgeEditor && onJudgeConfigChange ? (
+        // Its own section, not a disclosure under User value: the judge has
+        // more settings than every other evaluator together, and a fold made
+        // them easy to miss. Same two columns as the stages above — judge
+        // name on the left, its settings on the right — without the rules.
+        <section
+          className="mt-12"
+          aria-labelledby="suite-judge-heading"
+          data-setting-key="judge"
+          data-subsection-id="judge"
+        >
+          <h3
+            id="suite-judge-heading"
+            className="text-lg font-semibold tracking-tight text-foreground"
+          >
+            Judge
+          </h3>
+          <p className="mt-1 max-w-prose text-sm text-muted-foreground">
+            {judgeHint}
+          </p>
+          <div className="mt-4 space-y-10">
+            <SuiteJudgeCard
+              slot="goalCompletion"
+              judgeConfig={judgeConfig}
+              onJudgeConfigChange={onJudgeConfigChange}
+              availableModels={availableModels}
+              judgesCapabilities={capabilities?.judges}
+              judgeAccessory={judgeAccessory}
+              rubricEditor={rubricEditor}
+            />
+            {rubricChecks ? (
+              <SuiteJudgeCard
+                slot="rubricChecks"
+                judgeConfig={judgeConfig}
+                onJudgeConfigChange={onJudgeConfigChange}
+                availableModels={availableModels}
+                judgesCapabilities={capabilities?.judges}
+                criteria={judgeRubric?.criteria ?? []}
+                goalJudgeOff={judgeMode(judgeConfig, goalPolicy) === "off"}
+              />
+            ) : null}
+            <SuiteJudgeCard
+              slot="groundedness"
+              judgeConfig={judgeConfig}
+              onJudgeConfigChange={onJudgeConfigChange}
+              availableModels={availableModels}
+              judgesCapabilities={capabilities?.judges}
+              groundednessEvidence={groundednessEvidence}
+            />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -697,9 +688,7 @@ function ScorerRow({
   // edited in place; everything else is shown read-only.
   const editorPredicate = row.kind === "preset" ? row.preset : predicate;
   const editorWritable =
-    row.kind === "predicate" &&
-    editable &&
-    row.predicateIndex !== undefined;
+    row.kind === "predicate" && editable && row.predicateIndex !== undefined;
   // Owned checks edit in place. A check that is off previews its fields
   // here, because Edit evaluators opens it before the box is ticked. An
   // inherited check that is already on keeps its number on the title line.
