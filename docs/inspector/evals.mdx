@@ -35,16 +35,17 @@ Click **New case** in the suite header (or in the empty-state screen when no cas
 
 The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
 
-**Left column — the case form**
+**Left column — the case spine**
 
-Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It has four sections:
+Every case opens in the spine, however it was authored — in the app, through the CLI, or from an SDK suite file. The spine is a flat, ordered list of steps. Each step is one of:
 
-- **User asks** — the prompt the model receives.
-- **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
-- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Checks by stage** section uses.
-- **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
+- **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
+- **Interact** — a widget interaction (click, typing) recorded against a live widget.
+- **Assert** — an assertion that grades the case.
 
-**Scorers**
+Below the step list, an **Expected outcome** field holds the goal sentence the judge grades against.
+
+**Assertions**
 
 One list, one **Add assertion** menu. Each row says what it checks, who wrote it, and what a miss does:
 
