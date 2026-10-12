@@ -697,8 +697,11 @@ When credits run out during a Swarm or Eval run, blocked work stops and you rece
 
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
-  turns are always billed to MCPJam and have no BYOK path, so adding a key does
-  not lift this limit for a swarm.
+  turns are billed to MCPJam and have no personal BYOK path, so adding a key
+  does not lift this limit for a swarm. An organization that uses its own keys
+  for all AI features runs those turns on its default AI model instead, and its
+  providers bill their tokens; see
+  [Organization AI key policy](#organization-ai-key-policy).
 </Warning>
 
 ### Credits temporarily held
@@ -795,14 +798,19 @@ providers count; OpenRouter and local-runtime connections do not.
   Claude Code on an Anthropic provider, Codex on an OpenAI provider. Not
   supported while the setting is on: SDK model leases (`sdk-direct`), a
   provider with a custom base URL, and a local-runtime connection.
-- **Feature coverage** on the settings page shows which features are ready.
-  Features that can't run on organization providers yet show
-  **Not supported yet** and are unavailable while the setting is on. Today
-  that includes Swarm, User Testing, insights and findings, generation, the
-  session map, transcription and Ask MCPJam. A feature that runs on the
-  organization's default AI model shows what is unavailable until that model
-  is chosen; the fix named on the card is choosing the default model, not
-  adding a provider.
+- **Default AI model.** Work nobody picks a model for (insights and findings,
+  generation, typed decisions, readiness observations, and the simulated user
+  in Swarm and User Testing) runs on the organization's default AI model. An
+  admin chooses it under **Organization → AI providers → Default AI model**,
+  and can test it there. MCPJam may suggest one but never sets it. Until it is
+  set, that work is unavailable. Model pickers never use it, and it is never
+  a suite's judge.
+- **Feature coverage** on the settings page shows which features are ready,
+  and which wait for the default AI model. Features that can't run on
+  organization providers yet show **Not supported yet** and are unavailable
+  while the setting is on. Today that includes the session map,
+  transcription and Ask MCPJam. When an eligible provider exists, the card
+  names choosing the default model as the fix for work that waits on it.
 - **Billing.** Model tokens are billed by the organization's providers.
   MCPJam's fixed product fees and usage limits still apply.
 
@@ -856,22 +864,26 @@ require organization admin rights.
 
 `org/model_unconfigured`
 
-The feature needs a default organization model, and none is set or the saved
-model can no longer run.
+The feature runs on the organization's default AI model, and none is set.
+Work nobody picks a model for, such as insights, findings, generation and
+the simulated user, runs on that model while the organization uses its own
+keys for all AI features.
 
-The feature coverage card on **Organization → AI providers** names the fix:
+The feature coverage card on **Organization → AI providers** also explains related
+configuration failures:
 
 - **Default model not set** — admins see "The organization's default AI model
   isn't set. Choose it below." Members are asked to contact an admin.
 - **Saved model can't run** — the model was saved but its connection was
   removed or it can no longer serve the feature. Admins see "The
   organization's default AI model can't run. Choose another below."
+  A removed provider connection reports `credential_missing`.
 - **No eligible provider yet** — when no direct cloud provider exists, the
   card asks for a provider first, then the model.
 
 **Next steps**
 - Organization admins can set or change the default model under
-  **Organization → AI providers**.
+  **Organization → AI providers → Default AI model**.
 - Members: ask an organization admin to configure one.
 
 ### Organization runtime unsupported
