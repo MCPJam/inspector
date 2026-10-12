@@ -1,7 +1,9 @@
+vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: mocks.report }));
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PendingOrganizationDeletions } from "../PendingOrganizationDeletions";
 const mocks = vi.hoisted(() => ({
+  report: vi.fn(),
   pending: [] as { organizationId: string; name: string; purgeAfter: number }[],
   unavailable: false,
   cancel: vi.fn(),
@@ -72,4 +74,22 @@ it("disables cancellation when the deadline passes without a query update", () =
   expect(screen.getByRole("button", { name: "Cancel deletion" })).toBeEnabled();
   act(() => vi.advanceTimersByTime(1001));
   expect(screen.getByRole("button", { name: "Cancel deletion" })).toBeDisabled();
+});
+
+it("reports unexpected failures and recovers automatically", () => {
+  vi.useFakeTimers();
+  mocks.unavailable = true;
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  render(<PendingOrganizationDeletions />);
+  expect(mocks.report).toHaveBeenCalled();
+  mocks.unavailable = false;
+  act(() => vi.advanceTimersByTime(30_001));
+  expect(screen.getByText("Deletion scheduled for Example")).toBeInTheDocument();
+  log.mockRestore();
+});
+it("does not schedule deadline timers with no pending deletion", () => {
+  vi.useFakeTimers();
+  mocks.pending = [];
+  render(<PendingOrganizationDeletions />);
+  expect(vi.getTimerCount()).toBe(0);
 });

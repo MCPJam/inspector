@@ -19,9 +19,9 @@ export function DeleteOrganizationDialog({
   name,
   pending,
   onConfirm,
-  canCancelDeletion = false,
+  cancellationWindowHours = 0,
 }: {
-  canCancelDeletion?: boolean;
+  cancellationWindowHours?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   name: string;
@@ -49,10 +49,9 @@ export function DeleteOrganizationDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
           <AlertDialogDescription>
-            Deleting “{name}” permanently removes the organization and its
-            members’ access.{" "}
-            {canCancelDeletion
-              ? "You can cancel within 48 hours. After that, deletion is permanent."
+            Deleting “{name}” removes the organization and its members’ access.{" "}
+            {cancellationWindowHours > 0
+              ? `You can cancel within ${cancellationWindowHours} hours. After that, deletion is permanent.`
               : "This action cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -89,8 +88,8 @@ export function DeleteOrganizationDialog({
               className="mt-1 accent-destructive"
             />
             I understand that{" "}
-            {canCancelDeletion
-              ? "deletion is permanent after the 48-hour cancellation window"
+            {cancellationWindowHours > 0
+              ? `deletion is permanent after the ${cancellationWindowHours}-hour cancellation window`
               : "deleting this organization is permanent"}
             .
           </label>

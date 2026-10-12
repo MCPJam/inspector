@@ -2227,8 +2227,8 @@ function OrganizationPage({
                       </h3>
                       <p className="text-sm text-foreground">
                         {isOwner
-                          ? organization.deletionCancellationWindowHours === 48
-                            ? "Delete this organization and its data. You can cancel within 48 hours."
+                          ? (organization.deletionCancellationWindowHours ?? 0) > 0
+                            ? `Delete this organization and its data. You can cancel within ${organization.deletionCancellationWindowHours} hours.`
                             : "Permanently delete this organization and its data."
                           : "You’ll lose access to this organization and its projects."}
                       </p>
@@ -2459,7 +2459,7 @@ function OrganizationPage({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         name={organization.name}
-        canCancelDeletion={organization.deletionCancellationWindowHours === 48}
+        cancellationWindowHours={organization.deletionCancellationWindowHours}
         pending={isDeleting}
         onConfirm={handleDelete}
       />

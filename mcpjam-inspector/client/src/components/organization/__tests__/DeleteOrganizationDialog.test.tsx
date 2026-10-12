@@ -44,7 +44,7 @@ it("explains the enterprise cancellation window", () => {
       open
       name="Example"
       pending={false}
-      canCancelDeletion
+      cancellationWindowHours={48}
       onOpenChange={vi.fn()}
       onConfirm={vi.fn()}
     />,

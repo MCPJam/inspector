@@ -1,4 +1,5 @@
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { Button } from "@mcpjam/design-system/button";
@@ -10,7 +11,7 @@ import {
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { endOrganizationDeletion } from "@/stores/organization-deletion-store";
 import { toast } from "@/lib/toast";
-import { convexErrMessage } from "@/lib/convex-error";
+import { isConvexQueryUnavailable, convexErrMessage } from "@/lib/convex-error";
 
 type PendingDeletion = {
   organizationId: string;
@@ -28,14 +29,23 @@ const cancelRef = makeFunctionReference<
   { success: boolean }
 >("organizations:cancelOrganizationDeletion");
 
-class DeletionBannerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  render() { return this.state.failed ? null : this.props.children; }
-}
-
 export function PendingOrganizationDeletions() {
-  return <DeletionBannerBoundary><PendingDeletionBanner /></DeletionBannerBoundary>;
+  const [retry, setRetry] = useState(0);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!failed) return;
+    const timer = setTimeout(() => {
+      setFailed(false);
+      setRetry((value) => value + 1);
+    }, Math.min(30_000 * 2 ** retry, 300_000));
+    return () => clearTimeout(timer);
+  }, [failed, retry]);
+  return (
+    <ErrorBoundary key={retry} name="pending_organization_deletions" fallback={null}
+      isExpectedError={isConvexQueryUnavailable} onError={() => setFailed(true)}>
+      <PendingDeletionBanner />
+    </ErrorBoundary>
+  );
 }
 
 function PendingDeletionBanner() {
@@ -46,9 +56,11 @@ function PendingDeletionBanner() {
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    const next = pending?.map((item) => item.purgeAfter).filter((deadline) => deadline > now).sort((a, b) => a - b)[0];
+    if (next === undefined) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(next - now + 1, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [pending, now]);
   const cancelDeletion = async (organizationId: string) => {
     setCancelling(organizationId);
     try {
@@ -72,7 +84,7 @@ function PendingDeletionBanner() {
           <AlertTitle>Deletion scheduled for {item.name}</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             <span>
-              You can cancel until {new Date(item.purgeAfter).toLocaleString()}.
+              {now >= item.purgeAfter ? "Deletion is in progress." : `You can cancel until ${new Date(item.purgeAfter).toLocaleString()}.`}
               Members cannot access this organization while deletion is pending.
             </span>
             <Button
