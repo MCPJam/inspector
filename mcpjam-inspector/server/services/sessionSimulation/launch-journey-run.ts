@@ -30,6 +30,7 @@ import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-
  */
 import { environmentModelRequiredError } from "../environments/resolve.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { aiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   createAuthorizedManager,
   type ManagerCallerContext,
@@ -135,6 +136,13 @@ export interface LaunchJourneyRunResult {
 }
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+/**
+ * A launch the organization's AI key policy refused, when the backend's own
+ * sentence is too long to pass through.
+ */
+const AI_LAUNCH_REFUSED_FALLBACK =
+  "This organization requires its own provider keys for AI features, and this launch has dependencies that can't run on them.";
 
 /** The backend's refusal for a hosted harness target with a broken image pin. */
 const JOURNEY_TARGET_IMAGE_UNAVAILABLE = "JOURNEY_TARGET_IMAGE_UNAVAILABLE";
@@ -260,13 +268,22 @@ function launchFailureDetails(
     // else to read. Cheap to forward, and the same code the eval and v1
     // environment surfaces already expose.
     const code = typeof source.code === "string" ? source.code : undefined;
-    if (!bag && !code) return undefined;
+    // The organization's AI key policy refuses a launch with EVERY
+    // dependency that can't run on its providers, beside its message.
+    const problems = Array.isArray(source.problems)
+      ? source.problems
+      : undefined;
+    if (!bag && !code && !problems) return undefined;
     // The DETAILS bag wins when it carries its own `code`. A response can hold
     // both — an envelope code describing the transport failure and a domain
     // code inside `details` naming the specific refusal — and the domain one is
     // the branchable half. The envelope code only fills a gap.
     const hasDetailCode = typeof bag?.code === "string" && bag.code.length > 0;
-    return { ...(bag ?? {}), ...(code && !hasDetailCode ? { code } : {}) };
+    return {
+      ...(bag ?? {}),
+      ...(code && !hasDetailCode ? { code } : {}),
+      ...(problems && !bag?.problems ? { problems } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -399,6 +416,22 @@ export async function launchJourneyRun(
             ? `Sponsored conversations changed while you were reviewing this launch: ${changed.expectedSponsored} were expected and ${changed.actualSponsored} of ${changed.totalConversations} would be sponsored now. Nothing was launched.`
             : "Sponsored conversations changed while you were reviewing this launch. Nothing was launched.",
           { ...(changed ?? {}), code: SWARM_FUNDING_CHANGED_CODE },
+        );
+      }
+      // The organization's AI key policy refused the launch: the same answer
+      // an eval launch gets (403 or 422 with the code and its remediation),
+      // with the problem list the client shows in full. The backend's
+      // summary sentence is often past the passthrough bound, so the
+      // fallback says what happened.
+      if (
+        details &&
+        Array.isArray(details.problems) &&
+        typeof details.code === "string"
+      ) {
+        throw aiRefusalRouteError(
+          details.code,
+          launchFailureMessage(err, AI_LAUNCH_REFUSED_FALLBACK),
+          details,
         );
       }
       // A hosted harness target whose pinned image cannot boot refuses the
