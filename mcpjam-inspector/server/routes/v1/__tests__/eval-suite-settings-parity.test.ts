@@ -240,6 +240,9 @@ describe("eval suite settings manifest — API parity", () => {
     expect(Object.keys(SETTINGS_PAGE_HIDDEN_KEYS).sort()).toEqual([
       "deleteSuite",
       "githubChecks",
+      // The judge section shows only the judge model for now. Grading
+      // instructions keep their stored value and still apply to runs.
+      "judgeRubric",
       // Baseline comparison left the settings page. The API still accepts all
       // four fields and a run still enforces them, so they are hidden rather
       // than excluded, and a stored value is shown read-only in the section.

@@ -28,6 +28,7 @@ import {
   PROBE_TOOL_NAME_PLACEHOLDER,
 } from "@/shared/probe-config";
 import type { RemoteServer } from "@/hooks/useProjects";
+import { useInvalidDraftRegistration } from "./checks-section";
 
 /** The create-flow placeholder reads as "unset". */
 function seedToolName(persisted: string | undefined): string {
@@ -128,6 +129,10 @@ export function PinnedToolCallFields({
       } as const;
     }
   }, [argsJson]);
+
+  // Block Save/Run while the arguments box holds JSON that does not parse;
+  // otherwise the last valid arguments would be saved silently.
+  useInvalidDraftRegistration(!readOnly && "error" in parsedArgs);
 
   // Keep the last successfully-parsed args so a mid-edit invalid JSON string
   // doesn't wipe the persisted arguments object.

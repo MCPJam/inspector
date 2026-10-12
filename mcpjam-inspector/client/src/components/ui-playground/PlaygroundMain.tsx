@@ -1584,6 +1584,13 @@ export function PlaygroundMain({
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  const liveChatSessionIdRef = useRef(chatSessionId);
+  liveChatSessionIdRef.current = chatSessionId;
+  const [readyEvalChatHandoffId, setReadyEvalChatHandoffId] = useState<
+    string | null
+  >(null);
+  const isEvalChatHandoffPending =
+    !!evalChatHandoff && readyEvalChatHandoffId !== evalChatHandoff.id;
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
@@ -3327,7 +3334,7 @@ export function PlaygroundMain({
       collapseCompareSelectionsTo(selectedModel);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const handoffHydration = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof handoffExec.systemPrompt === "string") {
@@ -3347,7 +3354,31 @@ export function PlaygroundMain({
     if (evalChatHandoff.messages.length > 0) {
       composer.setInput("");
     }
-    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+    // Session hydration resets the transcript asynchronously. Sending before
+    // it finishes can erase the recording prompt and leave an empty chat.
+    // Publish readiness through state so auto-run uses the hydrated session
+    // and the case settings from a fresh render.
+    const handoffId = evalChatHandoff.id;
+    void Promise.resolve(handoffHydration).then(
+      (hydratedSessionId) => {
+        if (
+          appliedEvalChatHandoffIdRef.current !== handoffId ||
+          hydratedSessionId !== liveChatSessionIdRef.current
+        ) {
+          return;
+        }
+        setReadyEvalChatHandoffId(handoffId);
+        onEvalChatHandoffConsumed?.(handoffId);
+      },
+      (error) => {
+        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+        appliedEvalChatHandoffIdRef.current = null;
+        console.error("[PlaygroundMain] Failed to load eval chat", error);
+        toast.error(
+          "Couldn't start the recording chat. Close it and try again.",
+        );
+      },
+    );
   }, [
     availableModels,
     collapseCompareSelectionsTo,
@@ -4180,9 +4211,7 @@ export function PlaygroundMain({
       isStreaming,
       projectId: convexProjectId,
       isMultiModelLayoutMode,
-      isEvalHandoffPending:
-        !!evalChatHandoff &&
-        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      isEvalHandoffPending: isEvalChatHandoffPending,
       activeHistorySessionId,
       restoreConversation: restoreConversationFromUrl,
     });
@@ -4890,9 +4919,6 @@ export function PlaygroundMain({
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldAutoRunPreview({
         autoRunInput,
@@ -4900,7 +4926,7 @@ export function PlaygroundMain({
         isSessionBootstrapComplete,
         isThreadEmpty,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -4928,6 +4954,7 @@ export function PlaygroundMain({
     autoRunInput,
     composer,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
@@ -5838,16 +5865,13 @@ export function PlaygroundMain({
   const lastRunPreviewRequestRef = useRef(0);
   const [quickRunPending, setQuickRunPending] = useState(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldRunPreview({
         runPreviewRequest,
         alreadyHandledRequest: lastRunPreviewRequestRef.current,
         isSessionBootstrapComplete,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -5858,6 +5882,7 @@ export function PlaygroundMain({
   }, [
     runPreviewRequest,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isStreaming,
     handleResetAllChats,

@@ -1,4 +1,9 @@
 import {
+  orgPolicyBlocksChatSend,
+  orgPolicySendRefusal,
+  orgPolicyChatTransport,
+} from "./org-policy-chat";
+import {
   pluginMessageParts,
   type PluginMessageIntent,
 } from "@/shared/plugin-message";
@@ -118,14 +123,11 @@ import {
   GUEST_LOCKED_MODEL_REASON,
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
-  isOrgKeysDisallowedRow,
-  orgKeysDisallowedNotice,
 } from "@/components/chat-v2/shared/available-models";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
   isOrgPolicyLockReason,
   ORG_KEYS_MODEL_REASON,
-  ORG_POLICY_LOADING_REASON,
 } from "@/lib/org-keys-refusal";
 import {
   useFreeTierOnly,
@@ -1009,21 +1011,6 @@ export const NO_ORG_MODEL_PLACEHOLDER: ModelDefinition = Object.freeze({
   disabled: true,
   disabledReason: ORG_KEYS_MODEL_REASON,
 }) as ModelDefinition;
-
-/**
- * What the chat says when the organization's AI key policy refuses to send
- * on `model`: its settings are still loading, the model is one it no longer
- * allows, or it offers no model at all.
- */
-function orgPolicySendRefusal(
-  model: ModelDefinition,
-  pending: boolean,
-): string {
-  if (pending) return ORG_POLICY_LOADING_REASON;
-  return isOrgKeysDisallowedRow(model)
-    ? orgKeysDisallowedNotice(model)
-    : ORG_KEYS_MODEL_REASON;
-}
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
   // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
@@ -3245,10 +3232,12 @@ export function useChatSession(
   // `submitBlocked`; `sendMessage` reads it too, because retry, the eval
   // handoff and widget follow-ups call it directly.
   const orgPolicyPending = hostedOrgModelConfig?.pending === true;
-  const orgPolicyBlocksSend =
-    orgPolicyPending ||
-    selectedModel === NO_ORG_MODEL_PLACEHOLDER ||
-    isOrgKeysDisallowedRow(selectedModel);
+  const orgPolicyBlocksSend = orgPolicyBlocksChatSend({
+    pending: orgPolicyPending,
+    requireOrgKeys,
+    selectedModel,
+    availableModels,
+  });
   // Read at call time: a caller can hold a `sendMessage` from an earlier
   // render (the eval handoff sends after the seeded thread hydrates).
   const orgPolicySendRef = useRef({
@@ -4081,12 +4070,12 @@ export function useChatSession(
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
     () =>
-      withWebMcpTraffic({
-        sendMessages: (options) =>
-          latestTransportRef.current.sendMessages(options),
-        reconnectToStream: (options) =>
-          latestTransportRef.current.reconnectToStream(options),
-      }),
+      withWebMcpTraffic(
+        orgPolicyChatTransport(
+          () => latestTransportRef.current,
+          () => orgPolicySendRef.current,
+        ),
+      ),
     [],
   );
 
