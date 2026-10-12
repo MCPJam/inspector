@@ -20,6 +20,12 @@ import {
   type OrgVisibleConfig,
 } from "./model-helpers";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  findModelForStoredChoice,
+  modelRowKey,
+  modelSelectionFromDefinition,
+} from "./model-selection";
+import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 export { ORG_KEYS_MODEL_REASON, ORG_POLICY_LOADING_REASON };
 
@@ -329,20 +335,27 @@ export function catalogFreshnessLabel(
 export const JUDGE_INELIGIBLE_TAG = "Not eligible";
 
 export const JUDGE_INELIGIBLE_REASON =
-  "Not eligible as a judge. Judges run on MCPJam models with verified zero data retention. Pick another model to change it.";
+  "Not eligible as a judge. Choose a model with verified zero data retention, or an organization model.";
 
 /**
- * Whether a picker row can be offered as an eval judge: an MCPJam-hosted row
- * the catalog admits as a judge (`judge_eligible`, else an OpenRouter zero
- * data retention observation of `supported`; the backend refuses `unknown`).
- * Judges never run on BYOK, org or local keys.
+ * Whether a picker row can be offered as an eval judge:
+ *  - an ORG row (the BYOK judge) whose connection the backend calls eligible
+ *    (`policyEligibility`) — `buildAvailableModelsFromOrgConfig` stamps those
+ *    `judgeEligible: true`; rows of any other connection never are;
+ *  - an MCPJam-hosted row the catalog admits as a judge (`judge_eligible`,
+ *    else an OpenRouter zero data retention observation of `supported`; the
+ *    backend refuses `unknown`).
+ * Personal (local) keys never run a judge.
  *
- * A row with no `catalogObservedAt` comes from a catalog that carries no
- * observations yet (an older backend, a cached catalog): it stays offered, as
- * it was before observations existed. Only a catalog that reports
+ * A hosted row with no `catalogObservedAt` comes from a catalog that carries
+ * no observations yet (an older backend, a cached catalog): it stays offered,
+ * as it was before observations existed. Only a catalog that reports
  * observations can take a hosted row out of the judge list.
  */
 export function isJudgeEligibleModel(model: ModelDefinition): boolean {
+  if (model.orgProvider && !isMCPJamProvidedModelMenuItem(model)) {
+    return model.judgeEligible === true;
+  }
   if (!isMCPJamProvidedModelMenuItem(model)) return false;
   if (model.catalogObservedAt === undefined) return true;
   if (model.judgeEligible !== undefined) return model.judgeEligible;
@@ -414,33 +427,78 @@ export function orgKeysDisallowedNotice(model: ModelDefinition): string {
 }
 
 /**
- * The rows a judge picker offers (`purpose: "judge"`): judge-eligible hosted
- * rows, one per id, plus
+ * The rows a judge picker offers (`purpose: "judge"`): judge-eligible rows
+ * ({@link isJudgeEligibleModel}), one per row identity, plus
  *  - the managed default, always selectable (picking it clears the override),
  *    even before the catalog loads;
- *  - the current value when it is not an eligible row (a BYOK id saved before
- *    judges were hosted-only, a model the catalog no longer admits), appended
- *    disabled with {@link JUDGE_INELIGIBLE_REASON} so the saved choice stays
- *    visible without being offered again. `currentIneligible` says so.
+ *  - the current value when it is not an eligible row (a personal-key id
+ *    saved before org judges existed, a model the catalog no longer admits),
+ *    appended disabled so the saved choice stays visible without being
+ *    offered again. `currentIneligible` says so.
+ *
+ * While the organization requires its own keys (`requireOrgKeys`), only org
+ * rows are offered and there is no managed default: a judge must be chosen
+ * from an organization provider, so an unset judge (or the managed default's
+ * id) resolves to no `current`. A saved judge the policy no longer allows is
+ * `current` as an {@link orgKeysDisallowedRow} and is not listed: it shows
+ * only on the trigger.
+ *
+ * `current` is the row the current value resolves to (by its saved selection
+ * when given, so an org judge stored under its canonical id finds its bare-id
+ * row).
  */
 export function judgeModelOptions(
   models: readonly ModelDefinition[],
-  args: { currentModelId: string; managedDefaultModelId: string }
-): { models: ModelDefinition[]; currentIneligible: boolean } {
+  args: {
+    currentModelId: string;
+    managedDefaultModelId: string;
+    /** The selection saved beside `currentModelId`, when there is one. */
+    currentSelection?: ModelSelection | null;
+    /** The organization requires its own provider keys for AI features. */
+    requireOrgKeys?: boolean;
+    /** Whether this deployment can persist a connection beside its model. */
+    selectionsSupported?: boolean;
+  },
+): {
+  models: ModelDefinition[];
+  currentIneligible: boolean;
+  current?: ModelDefinition;
+} {
+  const requireOrgKeys = args.requireOrgKeys === true;
   const rows: ModelDefinition[] = [];
   const seen = new Set<string>();
   for (const model of models) {
     const id = String(model.id);
-    if (!id || seen.has(id) || !isJudgeEligibleModel(model)) continue;
-    seen.add(id);
-    rows.push(model);
+    if (!id) continue;
+    const key = modelRowKey(model);
+    if (seen.has(key)) continue;
+    const eligible = requireOrgKeys
+      ? !isMCPJamProvidedModelMenuItem(model) &&
+        !!model.orgProvider &&
+        model.judgeEligible === true
+      : isJudgeEligibleModel(model);
+    if (!eligible) continue;
+    seen.add(key);
+    rows.push(
+      args.selectionsSupported === false && model.orgProvider
+        ? {
+            ...model,
+            disabled: true,
+            disabledReason:
+              "This deployment can't save organization model connections. Update MCPJam to choose an organization judge.",
+          }
+        : model,
+    );
   }
   const { currentModelId, managedDefaultModelId } = args;
-  if (!seen.has(managedDefaultModelId)) {
+  if (
+    !requireOrgKeys &&
+    !rows.some((row) => String(row.id) === managedDefaultModelId)
+  ) {
     const listed = models.find(
       (model) =>
         String(model.id) === managedDefaultModelId &&
-        isMCPJamProvidedModelMenuItem(model)
+        isMCPJamProvidedModelMenuItem(model),
     );
     const row = listed ?? syntheticModelRow(managedDefaultModelId);
     rows.push({
@@ -449,23 +507,66 @@ export function judgeModelOptions(
       disabled: false,
       disabledReason: undefined,
     });
-    seen.add(managedDefaultModelId);
   }
-  if (!currentModelId || seen.has(currentModelId)) {
+  // Under the policy the managed default's id names no judge (unless an org
+  // selection saved under the same canonical id says otherwise).
+  if (
+    !currentModelId ||
+    (requireOrgKeys &&
+      currentModelId === managedDefaultModelId &&
+      args.currentSelection?.source !== "org")
+  ) {
     return { models: rows, currentIneligible: false };
   }
-  const listed =
-    models.find(
-      (model) =>
-        String(model.id) === currentModelId &&
-        isMCPJamProvidedModelMenuItem(model)
-    ) ?? models.find((model) => String(model.id) === currentModelId);
-  rows.push({
-    ...(listed ?? syntheticModelRow(currentModelId)),
+  const savedSelection = args.currentSelection;
+  // Under the policy the judge grades on its saved connection, so only that
+  // connection's row is the current judge: the same model on another
+  // connection is not, and an id fallback would hide a removed connection.
+  const current = savedSelection
+    ? requireOrgKeys
+      ? rowForExactSelection(savedSelection, rows)
+      : findModelForStoredChoice(
+          { modelId: currentModelId, selection: savedSelection },
+          rows,
+          undefined,
+        )
+    : requireOrgKeys
+      ? undefined
+      : (rows.find(
+          (row) =>
+            String(row.id) === currentModelId &&
+            isMCPJamProvidedModelMenuItem(row),
+        ) ?? rows.find((row) => String(row.id) === currentModelId));
+  if (current) {
+    return { models: rows, currentIneligible: false, current };
+  }
+  const saved = savedModelRow(currentModelId, models);
+  if (requireOrgKeys) {
+    return {
+      models: rows,
+      currentIneligible: true,
+      current: orgKeysDisallowedRow(saved),
+    };
+  }
+  const ineligible: ModelDefinition = {
+    ...saved,
     disabled: true,
     disabledReason: JUDGE_INELIGIBLE_REASON,
+  };
+  rows.push(ineligible);
+  return { models: rows, currentIneligible: true, current: ineligible };
+}
+
+/** The row whose own selection is exactly `selection`. */
+function rowForExactSelection(
+  selection: ModelSelection,
+  rows: readonly ModelDefinition[],
+): ModelDefinition | undefined {
+  const wanted = selectionKey(selection);
+  return rows.find((row) => {
+    const own = modelSelectionFromDefinition(row, undefined, "chat");
+    return own !== null && selectionKey(own) === wanted;
   });
-  return { models: rows, currentIneligible: true };
 }
 
 /**

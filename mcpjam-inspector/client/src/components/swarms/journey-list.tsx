@@ -19,7 +19,11 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
-import { JudgesSection } from "@/components/evals/judges-section";
+import {
+  JUDGE_CREDITS_COST_NOTE,
+  JUDGE_ORG_PROVIDER_COST_NOTE,
+  JudgesSection,
+} from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -600,9 +604,12 @@ function JourneyGradingEditor({
   projectId: string;
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
-  const { availableModels, modelSelectionsSupported } = useAvailableModels({
-    projectId,
-  });
+  const {
+    availableModels,
+    modelSelectionsSupported,
+    requireOrgKeys,
+    onManageOrgProviders,
+  } = useAvailableModels({ projectId });
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
@@ -685,7 +692,13 @@ function JourneyGradingEditor({
             onChange={setJudgeConfig}
             availableModels={availableModels}
             saveModelSelections={modelSelectionsSupported}
-            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
+            bareAutoGradeBlurb={`Describe the goal each session should complete. ${
+              requireOrgKeys
+                ? JUDGE_ORG_PROVIDER_COST_NOTE
+                : JUDGE_CREDITS_COST_NOTE
+            }`}
+            requireOrgKeys={requireOrgKeys}
+            onManageOrgProviders={onManageOrgProviders}
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">
