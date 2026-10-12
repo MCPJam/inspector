@@ -318,11 +318,17 @@ export function storedModelChoice(
  * hosted catalog and under an org OpenRouter connection resolves to the row
  * that was actually picked. Without one (a legacy row): the row with that id,
  * hosted rows first, exactly as the legacy read did.
+ *
+ * Set `exactSelection` while the organization requires its own keys. A choice
+ * with a selection then resolves only to the row with that same source and
+ * connection, never to another row that lists the same id. Otherwise a saved
+ * hosted model would look allowed whenever an org connection lists its id.
  */
 export function findModelForStoredChoice(
   choice: { modelId: string; selection?: ModelSelection | null },
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
+  { exactSelection = false }: { exactSelection?: boolean } = {},
 ): ModelDefinition | undefined {
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);
@@ -330,7 +336,7 @@ export function findModelForStoredChoice(
       const own = modelSelectionFromDefinition(model, orgConfig, "chat");
       return own !== null && selectionKey(own) === wanted;
     });
-    if (match) return match;
+    if (match || exactSelection) return match;
   }
   const id = choice.modelId.trim();
   return (

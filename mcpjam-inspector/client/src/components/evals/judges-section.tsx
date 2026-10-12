@@ -214,12 +214,16 @@ export function JudgeModelControl({
   onChange,
   availableModels,
   saveModelSelections,
+  requireOrgKeys = false,
+  onManageOrgProviders,
 }: {
   id: string;
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
   saveModelSelections?: boolean;
+  requireOrgKeys?: boolean;
+  onManageOrgProviders?: () => void;
 }) {
   const deploymentStoresSelections = useModelSelectionsSupported();
   const saveSelections = saveModelSelections ?? deploymentStoresSelections;
@@ -230,6 +234,9 @@ export function JudgeModelControl({
       variant="pill"
       className="w-fit max-w-full"
       value={gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL}
+      selection={gc?.judgeSelection}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
       availableModels={availableModels}
       selectionsSupported={saveSelections}
       managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
