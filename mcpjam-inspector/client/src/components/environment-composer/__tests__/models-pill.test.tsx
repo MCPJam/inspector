@@ -725,3 +725,76 @@ describe("ModelsPill — reasoning effort", () => {
     expect(screen.queryByTestId("model-effort-menu")).toBeNull();
   });
 });
+
+describe("ModelsPill — a bare-id organization row", () => {
+  // An org OpenAI connection lists `gpt-5` by its bare id.
+  const ORG_GPT5 = {
+    id: "gpt-5",
+    name: "GPT-5",
+    provider: "openai",
+    hosted: false,
+    orgProvider: { providerKey: "openai", id: "orgprov_openai" },
+  };
+  const orgGpt5 = {
+    modelId: "openai/gpt-5",
+    selection: {
+      modelId: "openai/gpt-5",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_openai" },
+      nativeModelId: "gpt-5",
+      fallback: { provider: "none" as const, model: "none" as const },
+    },
+  };
+
+  it("is saved under its canonical id with its org connection while the org requires its own keys", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(option("GPT-5"));
+    // The bare `gpt-5` alone runs as a legacy id, which the policy refuses.
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [orgGpt5],
+    });
+  });
+
+  it("reads that saved pick back as the org row, and unpicking it removes it", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [orgGpt5],
+    });
+    const trigger = screen.getByRole("button", { name: "Models" });
+    expect(trigger).not.toHaveAttribute("title");
+    await user.click(trigger);
+    const row = option("GPT-5");
+    expect(row).toHaveAttribute("aria-checked", "true");
+    await user.click(row);
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+  });
+
+  it("keeps its bare id with the policy off", async () => {
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(option("GPT-5"));
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "gpt-5" }],
+    });
+  });
+});

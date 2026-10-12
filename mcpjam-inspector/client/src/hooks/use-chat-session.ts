@@ -119,11 +119,13 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
   isOrgKeysDisallowedRow,
+  orgKeysDisallowedNotice,
 } from "@/components/chat-v2/shared/available-models";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
   isOrgPolicyLockReason,
   ORG_KEYS_MODEL_REASON,
+  ORG_POLICY_LOADING_REASON,
 } from "@/lib/org-keys-refusal";
 import {
   useFreeTierOnly,
@@ -3220,6 +3222,26 @@ export function useChatSession(
     selectedModelId,
   ]);
 
+  // Why the organization's AI key policy leaves this chat no model to send
+  // to, or null when it may send: its settings are still loading, it offers
+  // no model yet, or the saved model is one it no longer allows (it stays
+  // selected, and the picker warns on its trigger). A personal key in local
+  // mode has no server-side check to refuse it, so the chat must. The composer
+  // reads it through `submitBlocked`; `sendMessage` reads it too, because
+  // retry, the eval handoff and widget follow-ups call it directly.
+  const orgPolicySendRefusal: string | null =
+    hostedOrgModelConfig?.pending === true
+      ? ORG_POLICY_LOADING_REASON
+      : selectedModel === NO_ORG_MODEL_PLACEHOLDER
+        ? ORG_KEYS_MODEL_REASON
+        : isOrgKeysDisallowedRow(selectedModel)
+          ? orgKeysDisallowedNotice(selectedModel)
+          : null;
+  // Read at call time: a caller can hold a `sendMessage` from an earlier
+  // render (the eval handoff sends after the seeded thread hydrates).
+  const orgPolicySendRefusalRef = useRef(orgPolicySendRefusal);
+  orgPolicySendRefusalRef.current = orgPolicySendRefusal;
+
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
     const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
@@ -4892,6 +4914,13 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      // The organization's AI key policy leaves no model to send to. Refused
+      // here, not only in the composer, so no caller can send around it.
+      const orgPolicyRefusal = orgPolicySendRefusalRef.current;
+      if (orgPolicyRefusal) {
+        toast.error(orgPolicyRefusal);
+        return Promise.resolve(false);
+      }
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -6108,14 +6137,8 @@ export function useChatSession(
     authHeadersNotReady ||
     hostedContextNotReady ||
     isNoRunnableHarnessModel(selectedModel) ||
-    // No model to send to: the organization's AI settings are still loading,
-    // or it requires its own keys and offers none yet.
-    hostedOrgModelConfig?.pending === true ||
-    selectedModel === NO_ORG_MODEL_PLACEHOLDER ||
-    // The saved model is one the policy no longer allows. It stays selected
-    // (the picker warns on its trigger) but never sends: a personal key in
-    // local mode has no server-side check to refuse it.
-    isOrgKeysDisallowedRow(selectedModel);
+    // The organization's AI key policy leaves no model to send to.
+    orgPolicySendRefusal !== null;
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was
