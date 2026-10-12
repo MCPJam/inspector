@@ -246,7 +246,20 @@ export function getCaniuseSupportLevel(
   return getSupportLevel(field, config) ?? "unknown";
 }
 
-export function getCaniuseSupportLabel(level: CaniuseSupportLevel): string {
+// Rows that describe a sandboxing choice rather than a feature a client can
+// lack, so a measured `false` reads "No" instead of "Not supported".
+const YES_NO_FIELD_IDS: ReadonlySet<string> = new Set([
+  "sandbox.sameOriginAppIframe",
+]);
+
+export function getCaniuseSupportLabel(
+  level: CaniuseSupportLevel,
+  fieldId?: string,
+): string {
+  if (fieldId !== undefined && YES_NO_FIELD_IDS.has(fieldId)) {
+    if (level === "supported") return "Yes";
+    if (level === "neutral" || level === "unsupported") return "No";
+  }
   switch (level) {
     case "supported":
       return "Supported";

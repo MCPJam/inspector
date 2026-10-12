@@ -984,7 +984,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * referrer allowlists (Google Maps, OAuth redirect matching) all see the
        * sandbox origin instead of `about:srcdoc`. This is how claude.ai and
        * Claude Desktop mount views (their sandbox page is loaded with
-       * `stable-origin=true`; prober, 2026-10-11); our eval browser harness
+       * `stable-origin=true`, per the prober); our eval browser harness
        * does the same.
        *
        * A new frame per mount (old one removed afterwards) means a re-send is
@@ -994,7 +994,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * `event.source === inner.contentWindow` check and are dropped.
        *
        * `mountMode: "opaque"` is how Claude's sandbox page mounts views when it is
-       * loaded WITHOUT `stable-origin=true` (captured 2026-10-09): `srcdoc` on a
+       * loaded WITHOUT `stable-origin=true`: `srcdoc` on a
        * frame without `allow-same-origin`, so the
        * view runs in an opaque origin — storage and cookies throw and its
        * fetches send `Origin: null`. srcdoc loads asynchronously, so host
@@ -1048,6 +1048,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         const next = createInnerFrame(sandboxValue, allowValue);
         // Every mount starts a fresh delivery channel. Traffic queued for a
         // replaced view dies with it rather than replaying into the new one.
+        clearReadyFlushTimer();
         innerReady = mountMode !== "opaque";
         channelDead = false;
         pendingForInner = [];
@@ -1066,14 +1067,25 @@ document.addEventListener('securitypolicyviolation', function(e) {
             } else {
               // A navigation this proxy did not start (the view navigated or
               // reloaded itself). Claude's opaque mode stops relaying for it; so do we.
+              // Say so, or the host just sees a view that stopped answering.
               channelDead = true;
               innerReady = false;
+              pendingForInner = [];
+              window.parent.postMessage(
+                {
+                  type: "mcpjam:view-channel-closed",
+                  mountId,
+                  reason: "view navigated or reloaded itself",
+                },
+                hostOrigin || "*",
+              );
             }
           });
           // Bounded wait: a subresource that never finishes must not hold
           // host messages forever. Guarded so an old timer can't flush into
-          // a newer mount.
-          setTimeout(function () {
+          // a newer mount; markInnerReady and the next mount clear it.
+          readyFlushTimer = setTimeout(function () {
+            readyFlushTimer = null;
             if (inner === next) markInnerReady();
           }, READY_FLUSH_TIMEOUT_MS);
           document.body.appendChild(next);
@@ -1177,11 +1189,19 @@ document.addEventListener('securitypolicyviolation', function(e) {
         if (channelDead || innerReady || !inner || !inner.contentWindow) {
           return;
         }
+        clearReadyFlushTimer();
         innerReady = true;
         const queued = pendingForInner;
         pendingForInner = [];
         for (const message of queued) {
           inner.contentWindow.postMessage(message, "*");
+        }
+      }
+
+      function clearReadyFlushTimer() {
+        if (readyFlushTimer !== null) {
+          clearTimeout(readyFlushTimer);
+          readyFlushTimer = null;
         }
       }
 
@@ -1213,6 +1233,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
       let innerReady = true;
       let channelDead = false;
       let pendingForInner = [];
+      let readyFlushTimer = null;
       // The proxy owns mount identity because it also owns automatic remounts
       // that the React host never sees directly.
       const proxyInstanceId = createProxyInstanceId();

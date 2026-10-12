@@ -189,7 +189,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;

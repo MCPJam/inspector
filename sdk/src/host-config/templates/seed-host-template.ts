@@ -709,7 +709,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
-            // Prober runs on 2026-10-11 (claude.ai and Claude Desktop): the
+            // Prober runs in claude.ai and Claude Desktop: the
             // App has a real `<hash>.claudemcpcontent.com` origin, because
             // Claude loads its sandbox page with `stable-origin=true`.
             // Without that flag the page mounts an opaque `srcdoc` frame.
@@ -971,7 +971,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
-            // Prober runs on 2026-10-11 (claude.ai and Claude Desktop): the
+            // Prober runs in claude.ai and Claude Desktop: the
             // App has a real `<hash>.claudemcpcontent.com` origin, because
             // Claude loads its sandbox page with `stable-origin=true`.
             // Without that flag the page mounts an opaque `srcdoc` frame.
@@ -2058,7 +2058,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
-            // Prober run 2026-10-12: the App iframe carries `allow-same-origin`.
+            // The prober saw the App iframe carry `allow-same-origin`, with a
+            // real origin of its own.
             sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {

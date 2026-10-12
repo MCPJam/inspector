@@ -1805,7 +1805,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mcpAppsModalPropsRef.current?.widgetMountMode).toBe("opaque");
   });
 
-  it("keeps an app that declares ui.domain on a stable origin", async () => {
+  it("mounts an app that declares ui.domain opaque too", async () => {
     vi.mocked(authFetch).mockResolvedValue({
       ok: true,
       json: () =>
@@ -1830,8 +1830,24 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toContain("live-widget");
     });
-    // Claude's stable-origin carve-out.
-    expect(sandboxedIframePropsRef.current.mountMode).not.toBe("opaque");
+    // No client with an opaque app iframe has been seen to honor ui.domain.
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+  });
+
+  it("mounts a cached replay opaque when the client's app iframe is not same-origin", async () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
   });
 
   it("uses the default mount when the profile never mentions it", async () => {
@@ -3395,6 +3411,34 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }),
         undefined,
         null,
+      );
+    });
+  });
+
+  it("shows a closed channel when an opaque view reloads itself", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-channel-closed",
+          reason: "view navigated or reloaded itself",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          kind: "view-channel-closed",
+          status: "error",
+          message: "view navigated or reloaded itself",
+        }),
       );
     });
   });

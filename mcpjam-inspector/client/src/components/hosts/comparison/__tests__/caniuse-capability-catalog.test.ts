@@ -129,6 +129,13 @@ describe("caniuse capability catalog", () => {
     expect(
       getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
     ).toBe("unknown");
+
+    // An opaque origin is a sandboxing choice, not a missing feature.
+    expect(getCaniuseSupportLabel("supported", field.id)).toBe("Yes");
+    expect(getCaniuseSupportLabel("neutral", field.id)).toBe("No");
+    expect(getCaniuseSupportLabel("unknown", field.id)).toBe("Not yet tested");
+    // Other rows keep their labels.
+    expect(getCaniuseSupportLabel("neutral")).toBe("Not supported");
   });
 
   it("excludes config-only fields from public capability pages", () => {

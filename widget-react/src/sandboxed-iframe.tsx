@@ -449,6 +449,13 @@ export const SandboxedIframe = forwardRef<
         return;
       }
 
+      // The opaque view navigated or reloaded itself, so the proxy stopped
+      // relaying for it (not JSON-RPC).
+      if (event.data?.type === "mcpjam:view-channel-closed") {
+        onMessageRef.current(event);
+        return;
+      }
+
       // The CSP string the proxy actually injected (not JSON-RPC) — the only
       // place the host can learn what `injectCSP` really emitted, since both
       // the permissive literal and the buildCSP result live inside the proxy.

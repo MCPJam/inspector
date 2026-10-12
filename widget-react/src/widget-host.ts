@@ -308,7 +308,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -595,8 +596,7 @@ export interface WidgetHostProfileSandbox {
   /**
    * Probe-measured: whether the app iframe shares the sandbox page's origin.
    * `false` makes the proxy mount the view in an opaque origin (srcdoc, no
-   * `allow-same-origin`) — unless the app declares
-   * `ui.domain`. Absent or `true` = same-origin.
+   * `allow-same-origin`), `ui.domain` or not. Absent or `true` = same-origin.
    */
   sameOriginAppIframe?: boolean;
 }

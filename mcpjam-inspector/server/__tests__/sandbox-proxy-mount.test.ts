@@ -60,6 +60,7 @@ const mountInnerSrc = extract("mountInner");
 const remountLastSrc = extract("remountLast");
 const markInnerReadySrc = extract("markInnerReady");
 const sendToInnerSrc = extract("sendToInner");
+const clearReadyFlushTimerSrc = extract("clearReadyFlushTimer");
 const buildAllowAttributeSrc = extract("buildAllowAttribute");
 const buildInnerAllowValueSrc = extract("buildInnerAllowValue");
 const buildInnerSandboxValueSrc = extract("buildInnerSandboxValue");
@@ -124,6 +125,7 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     let innerReady = true;
     let channelDead = false;
     let pendingForInner = [];
+    let readyFlushTimer = null;
     let mountSequence = 0;
     let currentMountId = null;
     let lastMount = null;
@@ -135,6 +137,7 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     ${remountLastSrc}
     ${markInnerReadySrc}
     ${sendToInnerSrc}
+    ${clearReadyFlushTimerSrc}
     return {
       mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared", cspIntent) =>
         mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode, cspIntent),
@@ -542,6 +545,55 @@ describe("sandbox-proxy opaque mount", () => {
     h.sendToInner({ n: 1 });
     h.markInnerReady();
     expect(sent).toEqual([]);
+  });
+
+  it("tells the host when a view that reloads itself loses its channel", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+    const viewMode = h.posted.find(
+      ([d]) => (d as { type?: string }).type === "mcpjam:view-mode",
+    )?.[0] as { mountId?: string };
+    fireLoad(h.getInner()!);
+    expect(
+      h.posted.some(
+        ([d]) => (d as { type?: string }).type === "mcpjam:view-channel-closed",
+      ),
+    ).toBe(false);
+    // location.reload() in a srcdoc frame fires a second load.
+    fireLoad(h.getInner()!);
+    expect(h.posted).toContainEqual([
+      {
+        type: "mcpjam:view-channel-closed",
+        mountId: viewMode.mountId,
+        reason: "view navigated or reloaded itself",
+      },
+      "*",
+    ]);
+  });
+
+  it("clears the 5-second flush timer once the view is ready", () => {
+    vi.useFakeTimers();
+    try {
+      const { h } = harness();
+      h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+      expect(vi.getTimerCount()).toBe(1);
+      fireLoad(h.getInner()!);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the old flush timer when a new mount replaces the view", () => {
+    vi.useFakeTimers();
+    try {
+      const { h } = harness();
+      h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+      h.mountInner(WIDGET, CLAUDE_SANDBOX, "", "light", "opaque");
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("starts a fresh channel on the next mount", () => {
