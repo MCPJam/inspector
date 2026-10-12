@@ -64,6 +64,8 @@ import {
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
+import { mapRuntimeError, webErrorFromRoute } from "../web/errors.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -3027,6 +3029,17 @@ chatV2.post("/", async (c) => {
     });
   } catch (error) {
     // (The box, if one was acquired, is released in `finally` below.)
+    // A refusal by the organization's AI-key policy (from
+    // `/stream/org/resolve`: a local-runtime connection when the org requires
+    // its own keys, a connection that is gone, …) is the organization's
+    // configuration working as designed, not an MCPJam fault. Answer it the
+    // way the hosted web route does — the refusal's own status, its code in
+    // `details.code` — and keep it out of the internal-fault report below,
+    // which would page and answer an opaque 500. Only failures before the
+    // response starts reach here; once the turn is streaming, a failure is an
+    // error chunk in the stream, as before.
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) return webErrorFromRoute(c, mapRuntimeError(aiRefusal));
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary

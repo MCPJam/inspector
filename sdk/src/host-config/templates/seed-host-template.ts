@@ -656,45 +656,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -913,45 +892,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -1302,19 +1260,41 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             csp: {
               mode: "declared",
               // ChatGPT's own baseline allowlist, merged with the widget's
-              // declared domains. The 2026-08-19 probe loaded these origins
-              // without declaring them, while undeclared frame origins were
-              // blocked. Keep this intentionally limited to what was probed.
+              // declared domains. The prober loaded each of these origins
+              // undeclared for fetch, xhr, script, style, image, font and
+              // media, while undeclared frame origins were blocked. Keep this
+              // limited to origins the prober has checked.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
@@ -1979,7 +1959,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           "openai/elicitation": { form: {} },
           "openai/form": {},
         },
-        elicitation: { form: {}, url: {} },
+        // Form only: on 2026-10-12 URL elicitation failed with -32600.
+        elicitation: { form: {} },
       };
       base.hostContext = {
         theme: "dark",
@@ -1994,20 +1975,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
-        // Probed 2026-08-26: Codex asked for tools/list once and never sent
-        // back the `nextCursor` it was handed.
-        paginationTraversal: "firstPageOnly",
+        // Probed 2026-10-12 (2026-07-28 lane): followed `nextCursor` and
+        // fetched page two. The 2026-08-26 legacy run had stopped at page one.
+        paginationTraversal: "full",
         // Same capture: Codex opens the standalone GET SSE stream and
         // list_changed reached it on the call's response stream, but no
         // tools/list followed.
         toolListChanged: { listens: true, refetches: false },
+        // 2026-10-12: Codex now connects over `server/discover` at 2026-07-28.
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // 2026-10-12 capture. Was `codex-mcp-client` 0.158.0-alpha.2.1.
           clientInfo: {
-            name: "codex-mcp-client",
-            title: "Codex",
-            // Bumped with the 2026-09-29 re-probe, from 0.150.0-alpha.12.2.
-            version: "0.158.0-alpha.2.1",
+            name: "openai-mcp (Codex)",
+            version: "1.0.0",
           },
         },
         apps: {
@@ -2019,25 +2001,48 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // below are its own baseline, merged on top of that declaration.
             csp: {
               mode: "declared",
+              // Same baseline as ChatGPT: the prober loaded each of these
+              // origins undeclared for fetch, xhr, script, style, image, font
+              // and media.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
             },
-            // Paired run 2026-09-29: the widget declared microphone and
-            // clipboardWrite and Codex refused both; its iframe `allow` is a
-            // fixed `fullscreen *`. Camera and geolocation are denied on the
-            // strength of that fixed `allow`, not a declared measurement.
-            permissions: { mode: "custom", allow: {} },
+            // 2026-10-12: clipboard write now works (refused on 2026-09-29).
+            // Microphone was refused on 2026-09-29; camera and geolocation
+            // were only undeclared canaries. All three stay off.
+            permissions: { mode: "custom", allow: { clipboardWrite: true } },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2231,17 +2236,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         ...base.clientCapabilities,
         experimental: { "microsoft/copilot": { enabled: true } },
       };
-      // Capability advertise: tracks Microsoft's published "Supported MCP
-      // Apps capabilities in Copilot" table. Only `app.openLink`,
-      // `app.callServerTool`, `app.sendMessage`, and `app.updateModelContext`
-      // are documented as supported; `app.sendLog` is explicitly ❌, and
-      // there is no documented `callServerResource`/`readResource` bridge in
-      // Copilot — so `logging` and `serverResources` are intentionally
-      // omitted. `text` sub-fields mirror the style entry for consistency.
-      // Source: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot
+      // Capability advertise, from the 2026-10-12 probe's ui/initialize.
+      // Microsoft's doc lists only openLink, callServerTool, sendMessage and
+      // updateModelContext, but real Copilot also advertises serverResources,
+      // logging and downloadFile. `text` sub-fields mirror the style entry.
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
+        serverResources: {},
+        logging: {},
+        downloadFile: {},
         message: { text: {} },
         updateModelContext: { text: {} },
       };
@@ -2294,6 +2298,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Parked: probed but not published (no field, no caniuse row).
         // 2026-08-26: no tools/call carried `_meta.progressToken` (0/3).
         // progressToken: "never",
+        // 2026-10-12: Copilot now connects over `server/discover` at 2026-07-28.
+        mcpProtocolVersion: "auto",
         initialize: {
           // Measured on the wire 2026-08-26: Copilot proposes 2024-11-05, the
           // oldest MCP revision, not the 2025-11-25 previously assumed.
@@ -2303,24 +2309,19 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             "2025-06-18",
             "2025-11-25",
           ],
-          // The real handshake sends `name: "mcs"` plus Copilot's routing
-          // fields. `agentName`, `appId` and `cdsBotId` are in the capture too
-          // and are deliberately omitted: they identify one tenant's agent.
+          // 2026-10-12 `server/discover` capture: `Sydney` 1.0.0. Its `title`
+          // (`T_<uuid>`) identifies one tenant's agent, so it is omitted. The
+          // older legacy handshake sent `mcs` plus routing fields.
           clientInfo: {
-            name: "mcs",
+            name: "Sydney",
             version: "1.0.0",
-            channelId: "pva-studio",
-            lcat: "M365_COPILOT_USER",
-            agentAuthenticationMode: "Integrated",
           },
         },
         apps: {
           uiInitialize: {
-            // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
-            // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path. Version 1.0.1 is MCPJam's compatibility-profile
-            // label, not a Microsoft-published host build number.
-            hostInfo: { name: "Copilot", version: "1.0.1" },
+            // MCP Apps extension: hostInfo sent in `ui/initialize`, as
+            // measured by the 2026-10-12 probe.
+            hostInfo: { name: "M365Copilot", version: "1.0.0" },
           },
           // Vendor compat-runtime shims. Copilot routes widgets through
           // the OpenAI Apps SDK under the hood, so the `window.openai`
@@ -2356,36 +2357,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // SEP-1865 intersection rule and silently break widgets
               // reaching anything else.
               //
-              // `frameDomains: []` IS set below — Microsoft's doc marks
-              // `frameDomains` as ❌ for Copilot (real Copilot drops the
-              // field), and the symmetric move is to deny iframe nesting
-              // at the host layer too. Encoded as an explicit empty
-              // allowlist so the intent is captured in the config; the
-              // SEP-1865 schema is allowlist-only by design (no deny
-              // primitive — see CspDomainSet in client-config-v2.ts), and
-              // the current MCP Apps renderer gates `restrictToConfigured`
-              // on non-empty arrays, so this empty-list intent is not yet
-              // enforced at runtime. Renderer-side enforcement (treat an
-              // explicit empty allowlist as deny) is a follow-up that
-              // pairs with the `containerDimensions.maxHeight` clamp
-              // noted above — until both land, iframe-nesting widgets
-              // will work in MCPJam-as-Copilot but fail in production.
+              // No `frameDomains` restriction either: on 2026-10-12 a
+              // declared frame origin loaded in real Copilot.
               mode: "declared",
-              restrictTo: { frameDomains: [] },
             },
             permissions: {
               mode: "custom",
-              // Deny by default. Microsoft's doc marks
-              // `_meta.ui.permissions` ❌ (Copilot ignores permissions
-              // a widget declares in its resource `_meta.ui`) and says
-              // nothing about which Permissions-Policy features Copilot
-              // attaches to its own iframe. The only documented signal
-              // is "no permissions surface", so MCPJam-as-Copilot
-              // mirrors that: granting nothing rather than inventing a
-              // host-side grant. Other vendor templates set
-              // `clipboardWrite: true` from live probes — Copilot has
-              // no equivalent capture, so we hold the line.
-              allow: {},
+              // 2026-10-12 probe: clipboard write works. Microphone was
+              // refused even though Copilot advertises it.
+              allow: { clipboardWrite: true },
             },
           },
         },
