@@ -57,6 +57,11 @@ const DROPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
 const MAX_REQUEST_HEADERS = 64;
 const MAX_REQUEST_HEADER_NAME_LENGTH = 128;
 const MAX_REQUEST_HEADER_VALUE_LENGTH = 8 * 1024;
+/**
+ * Access tokens from some authorization servers (e.g. Entra ID with group
+ * claims) exceed the general cap, so a bearer credential gets more room.
+ */
+const MAX_AUTHORIZATION_HEADER_VALUE_LENGTH = 32 * 1024;
 
 /** The response headers the OAuth flows and the debugger read. */
 export const HOSTED_OAUTH_RESPONSE_HEADERS: readonly string[] = [
@@ -114,11 +119,15 @@ export function prepareHostedOAuthRequestHeaders(
   }
   const prepared: Record<string, string> = {};
   for (const [name, value] of entries) {
+    const maxValueLength =
+      name.toLowerCase() === "authorization"
+        ? MAX_AUTHORIZATION_HEADER_VALUE_LENGTH
+        : MAX_REQUEST_HEADER_VALUE_LENGTH;
     if (
       typeof value !== "string" ||
       name.length === 0 ||
       name.length > MAX_REQUEST_HEADER_NAME_LENGTH ||
-      value.length > MAX_REQUEST_HEADER_VALUE_LENGTH
+      value.length > maxValueLength
     ) {
       throw new OAuthProxyError(400, "Invalid request header");
     }
