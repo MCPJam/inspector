@@ -2401,6 +2401,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // no equivalent capture, so we hold the line.
               allow: {},
             },
+            // The App iframe carries `allow-same-origin`, but the prober
+            // saw its origin as `"null"` (an opaque `about:srcdoc` frame),
+            // so the App gets no real origin of its own.
+            sameOriginAppIframe: false,
           },
         },
       };

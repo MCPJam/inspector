@@ -3621,6 +3621,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mode: "custom",
               allow: {},
             },
+            sameOriginAppIframe: false,
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
