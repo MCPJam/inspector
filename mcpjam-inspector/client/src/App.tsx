@@ -31,6 +31,7 @@ import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -6557,6 +6558,7 @@ export default function App() {
               settings={settingsShellActive}
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
+              <PendingOrganizationDeletions />
               {showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
