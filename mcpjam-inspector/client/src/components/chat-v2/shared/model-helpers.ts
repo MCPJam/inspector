@@ -135,7 +135,8 @@ const ORG_LISTED_MODEL_PROVIDERS: ReadonlySet<string> = new Set([
  * `aiKeyPolicy` / `aiReadiness` arrive even when `providers` is empty, so a
  * picker never reads "no providers" as "hosted models are fine". `unresolved`
  * is the project query's answer for a project no organization owns: no
- * organization's policy or providers apply to it. `pending` is set by the
+ * providers are borrowed for it. A strict scoped answer can still lock hosted
+ * choices until ownership is resolved. `pending` is set by the
  * client while the config is still loading (see `useHostedOrgModelConfig`).
  */
 export type OrgVisibleConfig = {
@@ -179,6 +180,7 @@ export function buildAvailableModelsFromOrgConfig(
   /** Hosted ("free") source; see `buildAvailableModels`. */
   hostedCatalog?: ModelDefinition[]
 ): ModelDefinition[] {
+  if (orgConfig?.pending) return [];
   // While the org requires its own keys, MCPJam-provided models are disabled
   // and only the connections the backend calls eligible are offered.
   const requireOrgKeys = orgRequiresOwnKeys(orgConfig);

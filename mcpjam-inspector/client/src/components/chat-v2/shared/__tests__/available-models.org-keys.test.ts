@@ -570,3 +570,30 @@ describe("judge rows with organization providers", () => {
     expect(isOrgKeysDisallowedRow(current)).toBe(true);
   });
 });
+
+describe("pending organization policy", () => {
+  it("offers no usable hosted, personal or organization model before policy loads", () => {
+    const orgConfig = { providers: [], pending: true };
+    expect(buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku])).toEqual(
+      [],
+    );
+    const rows = composeAvailableModels({
+      orgConfig,
+      isAuthenticated: true,
+      isOllamaRunning: false,
+      ollamaModels: [],
+      hasToken: () => true,
+      getOpenRouterSelectedModels: () => [],
+      getAzureBaseUrl: () => "",
+      customProviders: [],
+      hostedCatalog: [hostedHaiku],
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.disabled && row.disabledReason === ORG_POLICY_LOADING_REASON,
+      ),
+    ).toBe(true);
+  });
+});

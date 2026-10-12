@@ -49,7 +49,7 @@ describe("useHostedOrgModelConfig", () => {
     };
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfigForProject",
-      projectConfig
+      projectConfig,
     );
     mockState.queryResults.set("organizationModelProviders:getVisibleConfig", {
       providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
@@ -59,7 +59,7 @@ describe("useHostedOrgModelConfig", () => {
       useHostedOrgModelConfig({
         projectId: "project-1",
         organizationId: "org-1",
-      })
+      }),
     );
 
     expect(result.current).toBe(projectConfig);
@@ -71,18 +71,18 @@ describe("useHostedOrgModelConfig", () => {
     };
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfigForProject",
-      { providers: [] }
+      { providers: [] },
     );
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfig",
-      organizationConfig
+      organizationConfig,
     );
 
     const { result } = renderHook(() =>
       useHostedOrgModelConfig({
         projectId: "project-1",
         organizationId: "org-1",
-      })
+      }),
     );
 
     expect(result.current).toBe(organizationConfig);
@@ -95,7 +95,7 @@ describe("useHostedOrgModelConfig", () => {
       useHostedOrgModelConfig({
         projectId: "project-1",
         organizationId: "org-1",
-      })
+      }),
     );
 
     expect(result.current).toBeUndefined();
@@ -116,7 +116,7 @@ describe("useHostedOrgModelConfig", () => {
       useHostedOrgModelConfig({
         projectId: "project-1",
         organizationId: "org-1",
-      })
+      }),
     );
 
     // Signed in but the policy can't be read yet: every picker row stays
@@ -137,7 +137,7 @@ describe("useHostedOrgModelConfig", () => {
     mockState.isAuthLoading = true;
 
     const scoped = renderHook(() =>
-      useHostedOrgModelConfig({ projectId: "project-1" })
+      useHostedOrgModelConfig({ projectId: "project-1" }),
     ).result.current;
     const unscoped = renderHook(() => useHostedOrgModelConfig({})).result
       .current;
@@ -151,7 +151,7 @@ describe("useHostedOrgModelConfig", () => {
     // members; firing getVisibleConfigForProject would throw and crash the page.
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfigForProject",
-      { providers: [{ providerKey: "anthropic", enabled: true }] }
+      { providers: [{ providerKey: "anthropic", enabled: true }] },
     );
 
     const { result } = renderHook(() =>
@@ -159,7 +159,7 @@ describe("useHostedOrgModelConfig", () => {
         projectId: "project-1",
         organizationId: "org-1",
         disabled: true,
-      })
+      }),
     );
 
     expect(result.current).toBeUndefined();
@@ -232,6 +232,40 @@ describe("useHostedOrgModelConfig — organization AI key policy", () => {
     expect(render()).toBe(unresolved);
   });
 
+  it("locks an unresolved project under a strict scoped answer without borrowing providers", () => {
+    mockState.queryResults.set(
+      "organizationModelProviders:getVisibleConfigForProject",
+      { providers: [], unresolved: true },
+    );
+    mockState.queryResults.set("organizationModelProviders:getVisibleConfig", {
+      providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
+      aiKeyPolicy: { requireOrgKeys: true, revision: 4 },
+      aiReadiness: readiness,
+    });
+
+    expect(render()).toEqual({
+      providers: [],
+      unresolved: true,
+      aiKeyPolicy: { requireOrgKeys: true, revision: 4 },
+      aiReadiness: readiness,
+    });
+  });
+
+  it("waits for organization policy when the project has only providers", () => {
+    mockState.queryResults.set(
+      "organizationModelProviders:getVisibleConfigForProject",
+      {
+        providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
+      },
+    );
+    expect(render()).toBe(PENDING_ORG_MODEL_CONFIG);
+    mockState.queryResults.set("organizationModelProviders:getVisibleConfig", {
+      providers: [],
+      aiKeyPolicy: { requireOrgKeys: true, revision: 4 },
+    });
+    expect(render()?.aiKeyPolicy?.requireOrgKeys).toBe(true);
+  });
+
   it("is pending (never undefined) while both queries are in flight", () => {
     const result = render();
     expect(result).toBe(PENDING_ORG_MODEL_CONFIG);
@@ -257,7 +291,9 @@ describe("useHostedOrgModelConfig — organization AI key policy", () => {
   it("keeps a requiring policy even when the other answer lists providers without one", () => {
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfigForProject",
-      { providers: [{ providerKey: "openai", enabled: true, hasSecret: true }] },
+      {
+        providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
+      },
     );
     mockState.queryResults.set("organizationModelProviders:getVisibleConfig", {
       providers: [],
@@ -269,7 +305,7 @@ describe("useHostedOrgModelConfig — organization AI key policy", () => {
     expect(result?.aiKeyPolicy).toEqual({ requireOrgKeys: true, revision: 4 });
   });
 
-  it("stands in the org answer for a pending project once it carries a policy", () => {
+  it("waits for the project owner even when the active organization policy is off", () => {
     const organizationConfig = {
       providers: [],
       aiKeyPolicy: { requireOrgKeys: false, revision: 1 },
@@ -279,7 +315,7 @@ describe("useHostedOrgModelConfig — organization AI key policy", () => {
       organizationConfig,
     );
 
-    expect(render()).toBe(organizationConfig);
+    expect(render()).toBe(PENDING_ORG_MODEL_CONFIG);
   });
 
   it("waits for the org answer when an older project answer is empty", () => {
