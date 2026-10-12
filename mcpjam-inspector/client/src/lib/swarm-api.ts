@@ -1016,9 +1016,9 @@ export class LaunchJourneyRunError extends Error {
  * The error body's `details`, plus the `problems` the AI key policy's launch
  * refusal lists beside its message when the route put them at the top level.
  */
-function detailsWithLaunchProblems(
-  parsed: Record<string, unknown> | null,
-): unknown {
+type LaunchErrorBody = Record<string, unknown>;
+
+function detailsWithLaunchProblems(parsed: LaunchErrorBody | null): unknown {
   const details = parsed?.details;
   if (!Array.isArray(parsed?.problems)) return details;
   if (details && typeof details === "object" && !Array.isArray(details)) {
@@ -1087,8 +1087,8 @@ export async function launchJourneyRun(
       typeof parsed?.code === "string"
         ? parsed.code
         : typeof parsed?.error === "string"
-        ? parsed.error
-        : null;
+          ? parsed.error
+          : null;
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
@@ -1109,7 +1109,7 @@ export async function launchJourneyRun(
       message,
       limitDialogRaised,
       typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
-      "string"
+        "string"
         ? (parsed!.details as { code: string }).code
         : (code ?? undefined),
       detailsWithLaunchProblems(parsed),
@@ -1304,8 +1304,8 @@ async function postGenerate<T>(
       typeof body?.code === "string"
         ? body.code
         : typeof body?.error === "string"
-        ? body.error
-        : null;
+          ? body.error
+          : null;
     const normalized = isNormalizedError(body?.normalized)
       ? (body.normalized as NormalizedError)
       : undefined;
