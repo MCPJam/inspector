@@ -919,8 +919,13 @@ The organization's model provider rejected its API key (401 or 403).
 The organization provider the model is saved to run on is no longer available:
 the connection was deleted, disabled or moved, or its API key was removed.
 
+A saved default model whose provider was removed is never automatically replaced
+with another model. An admin must explicitly choose a new one.
+
 **Next steps**
 - Choose a model from an organization provider that is still connected.
+- Organization admins can update the default model under **Organization → AI providers**
+  by clicking **Change** on the Default AI model card and selecting an eligible provider.
 - Organization admins can add or reconnect the provider under **Organization → AI providers**.
 
 ### Organization provider unavailable
