@@ -41,9 +41,9 @@ export function mergeHostedOrgModelConfig(
   organizationConfig: OrgVisibleConfig | null | undefined,
 ): OrgVisibleConfig | undefined {
   if (projectConfig?.unresolved) {
-    // No organization owns this project, so no organization's policy or
-    // providers apply to it. Never fall back to another organization's
-    // providers.
+    // Ownership is unresolved: never borrow another organization's providers.
+    // The hook still locks hosted choices when either scoped answer requires
+    // organization keys, matching the executor's conservative refusal.
     return projectConfig;
   }
   if (projectConfig && projectConfig.providers.length > 0) {
@@ -99,12 +99,12 @@ export function useHostedOrgModelConfig({
 
   const projectConfig = useQuery(
     "organizationModelProviders:getVisibleConfigForProject" as any,
-    queriesProject ? ({ projectId } as any) : "skip"
+    queriesProject ? ({ projectId } as any) : "skip",
   ) as HostedOrgModelConfig | null | undefined;
 
   const organizationConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
-    queriesOrganization ? ({ organizationId } as any) : "skip"
+    queriesOrganization ? ({ organizationId } as any) : "skip",
   ) as HostedOrgModelConfig | null | undefined;
 
   return useMemo(() => {
@@ -139,20 +139,16 @@ export function useHostedOrgModelConfig({
           };
     }
     if (queriesProject && !projectAnswered) {
-      // The project answer is the authority on the policy. Until it arrives,
-      // an org-wide answer that already carries a policy (off, here) stands in
-      // for the same organization; anything else waits.
-      if (organizationConfig?.aiKeyPolicy) return organizationConfig;
+      // The project owns the policy decision; a possibly stale active
+      // organization's permissive answer cannot stand in for its owner.
       return PENDING_ORG_MODEL_CONFIG;
     }
     if (!organizationAnswered) {
-      // The project answered without providers and with no policy of its own
-      // (an older backend): today's fallback needs the org-wide answer.
+      // A provider list alone cannot establish the policy. An older backend
+      // needs the organization answer before hosted models become usable.
       if (
         projectConfig &&
-        (projectConfig.providers.length > 0 ||
-          projectConfig.unresolved ||
-          projectConfig.aiKeyPolicy)
+        (projectConfig.unresolved || projectConfig.aiKeyPolicy)
       ) {
         return projectConfig;
       }

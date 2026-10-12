@@ -590,6 +590,16 @@ export function composeAvailableModels(
 ): ModelDefinition[] {
   const { orgConfig, hostedCatalog, savedModelIds } = params;
 
+  if (orgConfig?.pending) {
+    return composeAvailableModels({ ...params, orgConfig: undefined }).map(
+      (model) => ({
+        ...model,
+        disabled: true,
+        disabledReason: ORG_POLICY_LOADING_REASON,
+      }),
+    );
+  }
+
   if (orgRequiresOwnKeys(orgConfig)) {
     // Eligible org connections only; `buildAvailableModelsFromOrgConfig`
     // applies the policy. Guest / credit locks only ever touch hosted rows,
