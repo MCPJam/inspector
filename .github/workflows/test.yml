@@ -17,9 +17,13 @@ on:
   pull_request:
   # The merge queue tests the merged result before it lands on main; without
   # this trigger the queue's required checks never report and entries time out.
+  #
+  # There is deliberately no `push: main`. The queue moves main to the exact
+  # commit it just tested, so a push run would test that commit a second time.
+  # Release's gates find green runs by commit, not by event, so they count the
+  # queue's run, and warm-node-modules.yml saves on main the node_modules cache
+  # that PR runs restore.
   merge_group:
-  push:
-    branches: [main]
 
 # Every job here runs untrusted-ish code — `npm ci` lifecycle scripts and the
 # test suites themselves. Pin the token to read-only so that stays true even if
@@ -39,11 +43,21 @@ env:
   # flaky) Electron binary download during npm ci.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
+# Every job runs on Blacksmith. GitHub's hosted runners are one pool of 60
+# concurrent jobs shared by every MCPJam repo, and at busy times these jobs
+# waited 30-80 minutes for a slot; Blacksmith has no concurrency cap. 4 vCPU /
+# 16 GB matches GitHub's public-repo runner, which the 6 GB test heap needs.
+#
+# TEST_RUNNER is the way back without a PR: if Blacksmith is down, no PR can
+# pass these required checks, a revert included. Set the repository variable to
+# `ubuntu-latest` and every job here, in lint.yml and in warm-node-modules.yml
+# moves together (their caches live with the runner that saved them).
+
 jobs:
   authoring-mirror:
     name: Compare authoring contracts with backend
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
+    if: github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
     # install still fits and a hung step fails in minutes instead of six hours.
     timeout-minutes: 10
@@ -63,15 +77,32 @@ jobs:
           path: .authoring-backend
           persist-credentials: false
           sparse-checkout: convex/lib
+      # The backend commit whose AI refusal vocabulary
+      # (`convex/lib/aiKeyPolicy.ts`) the SDK's `sdk/src/ai-refusal-codes.ts`
+      # matches. It has its own pin because it moves on its own schedule. It
+      # is the head of the backend's refusal-code branch, not yet on `main`:
+      # once the backend refusal-code PRs merge, bump it to a backend `main`
+      # commit. Bump it again whenever the vocabulary changes there.
+      - name: Checkout pinned backend AI refusal vocabulary
+        uses: actions/checkout@v7
+        with:
+          repository: MCPJam/mcpjam-backend
+          ref: ba5363a0f97c40b9905d14778f1cd132eaee8a81
+          token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          path: .ai-refusal-backend
+          persist-credentials: false
+          sparse-checkout: convex/lib
       - name: Install contract checker dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
       - name: Compare authoring implementation and step fixtures
         run: |
           node --test scripts/authoring-contract-normalization.test.mjs
           node scripts/check-authoring-mirror.mjs --backend .authoring-backend
+      - name: Compare AI refusal vocabulary with backend
+        run: node scripts/check-ai-refusal-parity.mjs --backend .ai-refusal-backend
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Run Tests
     # Pinned to the same Playwright version as the `@playwright/test` dependency.
@@ -173,7 +204,7 @@ jobs:
         run: npm run test:ci:rest
 
   packaging:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
@@ -235,7 +266,7 @@ jobs:
         run: npm run test:ci:packaging
 
   inspector:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
@@ -306,7 +337,7 @@ jobs:
         run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
@@ -386,7 +417,7 @@ jobs:
   # context sends no seeded personal data; `telemetry-egress` drives the whole
   # hosted app and proves no credential URL leaves through PostHog or Sentry.
   telemetry-egress:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Telemetry egress (Playwright, telemetry on)
     # Same pinned Playwright image as `e2e` — Chromium + system deps are
@@ -465,7 +496,7 @@ jobs:
           if-no-files-found: ignore
 
   telemetry-privacy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Telemetry Privacy (browser)
     # Telemetry ON, unlike the smoke job above: the app's real PostHog and

@@ -261,6 +261,7 @@ import {
   isComputerStartLimitError,
 } from "@/lib/billing-entitlements";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
@@ -5868,6 +5869,43 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
 
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // the banner offers Retry, which resends the last user message's text, as
+  // the chat tab's banner does. Every other policy refusal needs a
+  // configuration change first and offers no Retry. Single-model only: a
+  // compare card's turn is not the root chat's to resend. The resend goes
+  // through `handleSendFollowUp`, so it takes the same server readiness,
+  // resumed-thread and local-execution gates as every other send; that
+  // helper does not track, so the one `trackSendMessage` here is the only
+  // analytics event.
+  const lastUserMessageText = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === "user") {
+        return extractUserMessageText(message).trim();
+      }
+    }
+    return "";
+  }, [messages]);
+  const handleRetryLastMessage = useCallback(() => {
+    if (
+      !lastUserMessageText ||
+      sendBlocked ||
+      conversationSendBlockedRef.current
+    ) {
+      return;
+    }
+    trackSendMessage({ single_model_send: true });
+    handleSendFollowUp(lastUserMessageText);
+  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+  const errorRetryHandler =
+    !isCompareMode &&
+    lastUserMessageText &&
+    isRetryableOrgKeysRefusal(errorMessage?.code)
+      ? handleRetryLastMessage
+      : undefined;
+
   // Starter chips render in both empty states (compare grid and single-model
   // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
   // the broadcast queue, single mode must call `sendMessage` itself — there is
@@ -6528,6 +6566,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6536,6 +6575,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6598,6 +6638,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6606,6 +6647,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6768,12 +6810,14 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                      onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
                       code={errorMessage.code}
                       statusCode={errorMessage.statusCode}
                       isRetryable={errorMessage.isRetryable}
                       isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                      onRetry={errorRetryHandler}
                       onResetChat={resetChat}
                     />
                   </div>
@@ -7050,6 +7094,7 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                          onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
                           code={errorMessage.code}
@@ -7437,6 +7482,7 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                                  onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}
                                   code={errorMessage.code}
@@ -7445,6 +7491,7 @@ export function PlaygroundMain({
                                   isMCPJamPlatformError={
                                     errorMessage.isMCPJamPlatformError
                                   }
+                                  onRetry={errorRetryHandler}
                                   onResetChat={resetChat}
                                 />
                               </div>

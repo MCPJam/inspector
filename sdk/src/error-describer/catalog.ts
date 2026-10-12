@@ -8,6 +8,11 @@
  * one is a docs-breaking change.
  */
 
+import {
+  ORG_POLICY_ERROR_ORIGINS,
+  orgPolicyCatalogEntries,
+} from "./org-policy-catalog.js";
+
 /**
  * Who has to act — NOT a blame label.
  *
@@ -150,6 +155,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // `ambiguous` would be defensible from the wire alone — but the wire is not
   // all we have here, because MCPJam chose the pin, so the boundary is known.
   "sdk/protocol_version_pin_unsupported": "user_config",
+
+  // The organization AI-key policy's refusals (org-policy-catalog.ts).
+  ...ORG_POLICY_ERROR_ORIGINS,
 
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
@@ -974,6 +982,9 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ["Rerun the affected cases. If this recurs, report it with the run details."],
     "model-empty-response",
   ),
+
+  // --- Organization AI-key policy (org-policy-catalog.ts) ---
+  ...orgPolicyCatalogEntries(entry),
 
   // --- Internal / unknown ---
   "internal/unknown": entry(
