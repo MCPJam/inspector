@@ -793,12 +793,20 @@ rate-limiting or failing). Try those again in a moment.
 `org/keys_required`
 
 This organization requires its own provider keys for AI features, so the
-request was refused before it reached a model. The selection was an
-MCPJam-provided (hosted) model, a personal key, or a local model.
+request was refused before it reached a model. The selection was one of:
+
+- An MCPJam-provided (hosted) model.
+- A personal or local key model.
+- A model saved without an organization provider connection (a legacy bare model ID).
+- A model on an organization connection that is not eligible to run it.
+
+The Setup Run sheet catches these cases before launch and shows a blocking
+notice with a **Manage AI providers** button. If the sheet shows the notice,
+the run cannot start until you choose an eligible model.
 
 **Next steps**
-- Choose a model from an organization provider.
-- Organization admins can add a provider under **Organization → AI providers**.
+- Choose a model from an organization provider connection that is enabled and eligible.
+- Organization admins can add or configure a provider under **Organization → AI providers**.
 
 ### Organization model not configured
 
