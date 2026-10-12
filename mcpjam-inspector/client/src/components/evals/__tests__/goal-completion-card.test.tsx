@@ -586,6 +586,22 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     );
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeEnabled();
     unmount();
+    // The deployment cannot preserve the chosen organization connection.
+    capability.selections = false;
+    try {
+      const legacy = render(
+        <GoalCompletionCard
+          {...baseProps}
+          requireOrgKeys
+          run={run}
+          availableModels={[orgJudgeRow]}
+        />,
+      );
+      expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
+      legacy.unmount();
+    } finally {
+      capability.selections = true;
+    }
     // The connection was removed: the saved judge is no longer offered.
     render(
       <GoalCompletionCard
