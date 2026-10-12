@@ -856,10 +856,22 @@ require organization admin rights.
 
 `org/model_unconfigured`
 
-The feature needs a default organization model, and none is set.
+The feature needs a default organization model, and none is set or the saved
+model can no longer run.
+
+The feature coverage card on **Organization → AI providers** names the fix:
+
+- **Default model not set** — admins see "The organization's default AI model
+  isn't set. Choose it below." Members are asked to contact an admin.
+- **Saved model can't run** — the model was saved but its connection was
+  removed or it can no longer serve the feature. Admins see "The
+  organization's default AI model can't run. Choose another below."
+- **No eligible provider yet** — when no direct cloud provider exists, the
+  card asks for a provider first, then the model.
 
 **Next steps**
-- Organization admins can set one under **Organization → AI providers**.
+- Organization admins can set or change the default model under
+  **Organization → AI providers**.
 - Members: ask an organization admin to configure one.
 
 ### Organization runtime unsupported
