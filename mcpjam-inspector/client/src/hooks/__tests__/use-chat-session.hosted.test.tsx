@@ -875,19 +875,20 @@ describe("useChatSession hosted mode", () => {
     mockState.authFetch.mockClear();
 
     // Retry, the eval handoff and widget follow-ups call `sendMessage`
-    // directly, never through `submitBlocked`.
-    let dispatched: boolean | undefined;
-    await act(async () => {
-      dispatched = await result.current.sendMessage({ text: "try again" });
+    // directly, never through `submitBlocked`. The refusal is synchronous, so
+    // nothing here waits on the hook's own async work.
+    let sent!: Promise<boolean>;
+    act(() => {
+      sent = result.current.sendMessage({ text: "try again" });
     });
 
-    expect(dispatched).toBe(false);
-    expect(mockState.authFetch).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
       expect.stringContaining(
         "isn't allowed here. Choose an organization model.",
       ),
     );
+    await expect(sent).resolves.toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
     unmount();
   });
 
