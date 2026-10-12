@@ -3213,7 +3213,10 @@ export function useChatSession(
     if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId,
+      (model) =>
+        String(model.id) === selectedModelId &&
+        (!model.disabled ||
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
     );
   }, [
     availableModels,
