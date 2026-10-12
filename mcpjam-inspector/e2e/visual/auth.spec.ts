@@ -81,6 +81,13 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
     throw new Error(
       `Staging authentication failed at: ${phase}. Cause: ${cause}. Blocked operations: ${rejected.join(", ") || "none"}. App headings: ${headings.join("; ").slice(0, 500)}`,
     );
+  } finally {
+    // The app keeps loading in the background after the last assertion
+    // (`/api/v1/host-catalog`, ...), and each request the guard forwards is a
+    // `route.fetch` in flight. Closing the context under one failed a passing
+    // run with "route.fetch: Test ended", so drop the routes first and let
+    // in-flight handlers finish quietly.
+    await context.unrouteAll({ behavior: "ignoreErrors" });
   }
 });
 
