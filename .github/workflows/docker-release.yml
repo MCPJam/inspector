@@ -37,7 +37,7 @@ env:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -137,7 +137,7 @@ jobs:
   # after both builds pushed, so `latest` never names a single-arch image.
   publish:
     needs: [prepare, build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Log in to Docker Hub
@@ -154,15 +154,17 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           tags=("$DOCKER_REPOSITORY:v$VERSION")
+          skipped=""
           npm_latest="$(npm view @mcpjam/inspector dist-tags.latest)"
           if [ "$npm_latest" = "$VERSION" ]; then
             tags+=("$DOCKER_REPOSITORY:latest")
           else
-            echo "::notice::npm latest is $npm_latest, so latest stays where it is."
+            skipped="latest not moved: npm latest is $npm_latest, not $VERSION."
+            echo "::notice::$skipped"
           fi
           tag_flags=()
           for tag in "${tags[@]}"; do tag_flags+=(--tag "$tag"); done
           docker buildx imagetools create "${tag_flags[@]}" \
             "$DOCKER_REPOSITORY:v$VERSION-amd64" \
             "$DOCKER_REPOSITORY:v$VERSION-arm64"
-          echo "Published ${tags[*]} (linux/amd64, linux/arm64)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published ${tags[*]} (linux/amd64, linux/arm64). $skipped" >> "$GITHUB_STEP_SUMMARY"

@@ -741,10 +741,12 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  # The Docker Hub image at the Inspector version npm just got. Nothing waits
-  # on it, so a Docker Hub outage or a rejected token cannot hold back the
-  # webapp or the GitHub release; the run still ends red so the failure is
-  # seen. Retry with "Re-run failed jobs", or dispatch docker-release.yml.
+  # The Docker Hub image at the Inspector version npm just got. No job here
+  # waits on it, so a Docker Hub outage or a rejected token cannot hold back
+  # the webapp or the GitHub release; the run still ends red so the failure is
+  # seen. The run, and with it the `release` concurrency group, stays open
+  # until the image is pushed, so a release dispatched meanwhile starts after
+  # it. Retry with "Re-run failed jobs", or dispatch docker-release.yml.
   # `always()` and the explicit result check are needed because
   # publish-packages often runs after a skipped deploy-backend-prod, and a
   # skipped ancestor would otherwise skip this job too.
