@@ -65,16 +65,14 @@ Because a failing required assertion halts the run, an assertion written as a st
 The answer here is what marks a case negative — never an inference from its steps:
 
 - **A named tool** — the case must take that route.
-- **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the form says so.
-- **Any route** — the case names no route and is graded by its scorers. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+- **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the spine says so.
+- **Any route** — the case names no route and is graded by its assertions. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
 
 A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without an assertion, a goal sentence, or a named tool, it would pass vacuously.
 
-**Judge · Goal completion**
+**Expected outcome**
 
-The card shows which model grades this case, against what threshold, how many suite criteria also apply, and whether the judge runs automatically or on request. All of that is the suite's; **Edit in suite settings** goes there.
-
-What the case owns is the goal sentence, and the hint under it says what the judge will actually grade against:
+The **Expected outcome** field below the step list holds the goal sentence the judge grades against. The hint under it says what the judge will actually grade against:
 
 - A **goal sentence** — the judge grades against it, and the suite's criteria still apply.
 - **No sentence, but a route** — the judge grades against the expected route.
@@ -83,13 +81,9 @@ What the case owns is the goal sentence, and the hint under it says what the jud
 
 **Skip the judge for this case** turns the judge off for this case only. It applies to the next saved run.
 
-**Also in this case**
+**Saving and running**
 
-A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
-
-**Steps**
-
-**Steps** (top right of the column) swaps the form for the flat, ordered step list, in the same workspace with the same trial on the right. **Back to form** returns.
+Save and Run are disabled while any JSON field in the case (such as tool arguments) holds invalid JSON. The field is highlighted and a tooltip explains what to fix. Correct the field to re-enable both buttons.
 
 **Right column — the selected trial**
 
