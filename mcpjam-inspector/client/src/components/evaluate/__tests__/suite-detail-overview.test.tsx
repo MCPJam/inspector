@@ -15,6 +15,10 @@ import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null }),
+}));
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,

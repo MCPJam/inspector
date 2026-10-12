@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -10,6 +11,8 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { Label } from "@mcpjam/design-system/label";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
+import { HOSTED_MODE } from "@/lib/config";
 import {
   generationPreset,
   loadGenerateConfig,
@@ -34,6 +37,7 @@ export function GenerateCasesDialog({
   onClose: () => void;
   onGenerate: (config: GenerateCasesConfig) => void;
 }) {
+  const { user } = useAuth();
   const [initial] = useState(() => loadGenerateConfig(suiteId));
   const [environmentId, setEnvironmentId] = useState<string | undefined>(() =>
     environmentChoices?.some(
@@ -49,6 +53,35 @@ export function GenerateCasesDialog({
   const [coverage, setCoverage] = useState<"read-only" | "read-write">(
     initial.toolCoverage ?? "read-only",
   );
+  if (HOSTED_MODE && !user) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generate test cases</DialogTitle>
+            <DialogDescription>
+              AI case generation requires an account.
+            </DialogDescription>
+          </DialogHeader>
+          <GuestSignInMessage
+            message="Sign in to generate test cases."
+            location="eval_generate_cases"
+            compact
+          />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       open
