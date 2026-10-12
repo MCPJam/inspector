@@ -76,6 +76,7 @@ import { RouteRow, type ToolCatalogStatus } from "../case-scorecard/route-row";
 import {
   initialToolsChoice,
   isPromptFirst,
+  isToolCalledWithAssert,
   matchOptionsForKind,
   readSimpleCase,
   removeStepById,
@@ -441,14 +442,9 @@ export function CaseSpine({
   };
   const chooseNoTool = () => {
     if (readOnly) return;
-    if (
-      steps.some(
-        (step) =>
-          step.kind === "assert" &&
-          "type" in step.assertion &&
-          step.assertion.type === "toolCalledWith",
-      )
-    ) {
+    // Stash exactly what the case has now, even when that is nothing, so a
+    // check removed earlier does not come back when "no tools" is undone.
+    if (toolsChoice !== "noTool") {
       stashedToolChecks.current = steps.flatMap((step, index) =>
         step.kind === "assert" &&
         "type" in step.assertion &&
@@ -464,8 +460,8 @@ export function CaseSpine({
             ]
           : [],
       );
+      setStashedTools(view.tools);
     }
-    if (view.tools.length > 0) setStashedTools(view.tools);
     setToolsChoice("noTool");
     onStepsChange(
       writeSimpleCase(steps, {
@@ -475,8 +471,9 @@ export function CaseSpine({
       }),
     );
   };
-  const chooseTools = () => {
-    if (readOnly) return;
+  /** Returns whether it brought back stashed tools or tool checks. */
+  const chooseTools = (): boolean => {
+    if (readOnly) return false;
     setToolsChoice("tools");
     if (view.tools.length === 0 && stashedToolChecks.current.length > 0) {
       const next = [...steps];
@@ -490,8 +487,9 @@ export function CaseSpine({
           : next.findIndex((item) => item.kind === "prompt");
         next.splice(index + 1, 0, step);
       }
+      stashedToolChecks.current = [];
       onStepsChange(next);
-      return;
+      return true;
     }
     const restored = view.tools.length > 0 ? view.tools : stashedTools;
     onStepsChange(
@@ -501,6 +499,7 @@ export function CaseSpine({
         noTool: false,
       }),
     );
+    return restored.length > 0;
   };
   const addTool = (toolName: string) => {
     if (readOnly) return;
@@ -631,12 +630,12 @@ export function CaseSpine({
                   chooseNoTool();
                   setAddedKey("route:noTools");
                 } else {
-                  if (toolsChoice === "noTool") chooseTools();
+                  const restored =
+                    toolsChoice === "noTool" ? chooseTools() : false;
                   setKind("regression");
-                  if (
-                    view.tools.length === 0 &&
-                    (toolsChoice !== "noTool" || stashedTools.length === 0)
-                  ) {
+                  // A restore already wrote the steps; adding a blank check
+                  // from the same stale `steps` would overwrite it.
+                  if (view.tools.length === 0 && !restored) {
                     addCheckAfter(
                       rows.actions[0]?.step.id ?? emptyPromptId,
                       blankPredicate("toolCalledWith"),
@@ -795,7 +794,10 @@ export function CaseSpine({
       {action.checks.length > 0 ? (
         <ul className="divide-y divide-border">
           {action.checks.map((child) =>
+            // Advisory tool checks stay ordinary check rows, so their role
+            // chip and inline validation stay visible.
             !readOnly &&
+            isToolCalledWithAssert(child.step) &&
             "type" in child.step.assertion &&
             child.step.assertion.type === "toolCalledWith" &&
             card.route.route?.kind === "tools" ? (
@@ -1141,7 +1143,8 @@ export function CaseSpine({
               id="spine-expected-outcome-help"
               className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
             >
-              Describe what success looks like. The LLM as a judge checks whether this goal was met.
+              Describe what success looks like. The LLM as a judge checks
+              whether this goal was met.
             </p>
             <Textarea
               id="spine-expected-outcome"

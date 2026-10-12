@@ -344,7 +344,8 @@ export function ActionRow({
                 next.serverName === step.serverName &&
                 next.toolName === step.toolName &&
                 next.renderTimeoutMs === step.renderTimeoutMs &&
-                JSON.stringify(next.arguments) === JSON.stringify(step.arguments)
+                JSON.stringify(next.arguments) ===
+                  JSON.stringify(step.arguments)
               ) {
                 return;
               }
@@ -367,7 +368,9 @@ export function ActionRow({
                   <Select
                     value={step.toolName || undefined}
                     disabled={readOnly}
-                    onValueChange={(toolName) => onUpdate({ ...step, toolName })}
+                    onValueChange={(toolName) =>
+                      onUpdate({ ...step, toolName })
+                    }
                   >
                     <SelectTrigger
                       id={`action-view-${step.id}`}
@@ -378,9 +381,21 @@ export function ActionRow({
                       <SelectValue placeholder="Pick a view tool…" />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* A saved view tool the list doesn't carry (server not
+                          loaded, tool renamed) still shows as itself. */}
+                      {step.toolName &&
+                      !invokableTools(availableTools).some(
+                        (tool) => tool.name === step.toolName,
+                      ) ? (
+                        <SelectItem value={step.toolName}>
+                          {step.toolName}
+                        </SelectItem>
+                      ) : null}
                       {[
                         ...new Set(
-                          invokableTools(availableTools).map((tool) => tool.name),
+                          invokableTools(availableTools).map(
+                            (tool) => tool.name,
+                          ),
                         ),
                       ].map((name) => (
                         <SelectItem key={name} value={name}>
