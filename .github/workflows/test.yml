@@ -400,7 +400,7 @@ jobs:
   # context sends no seeded personal data; `telemetry-egress` drives the whole
   # hosted app and proves no credential URL leaves through PostHog or Sentry.
   telemetry-egress:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Telemetry egress (Playwright, telemetry on)
     # Same pinned Playwright image as `e2e` — Chromium + system deps are
