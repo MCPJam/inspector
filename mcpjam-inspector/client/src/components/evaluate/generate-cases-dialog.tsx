@@ -18,6 +18,7 @@ import {
 } from "@/lib/evals/eval-generation-config";
 import type { EvalSuiteEnvironmentTarget } from "../evals/types";
 import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
+import { EvalGenerationAccess } from "./eval-generation-access";
 
 export function GenerateCasesDialog({
   suiteId,
@@ -57,106 +58,111 @@ export function GenerateCasesDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (needsEnvironment && !environmentId) return;
-            const config: GenerateCasesConfig = {
-              ...generationPreset(testSet, coverage),
-              ...(needsEnvironment && environmentId ? { environmentId } : {}),
-            };
-            saveGenerateConfig(suiteId, config);
-            onGenerate(config);
-          }}
-          className="space-y-6"
-        >
-          <DialogHeader>
-            <DialogTitle>Generate test cases</DialogTitle>
-            <DialogDescription>
-              Choose the size and scope of this batch.
-            </DialogDescription>
-          </DialogHeader>
-          {environmentChoices?.length ? (
-            <EnvironmentTargetPicker
-              idPrefix="generate"
-              targets={environmentChoices}
-              value={environmentId}
-              onChange={setEnvironmentId}
-            />
-          ) : null}
-          <fieldset className="space-y-3">
-            <legend className="text-sm font-medium">Test set</legend>
-            <RadioGroup
-              aria-label="Test set"
-              value={testSet}
-              onValueChange={(value) => setTestSet(value as typeof testSet)}
-              className="grid grid-cols-2 gap-3"
-            >
-              {(
-                [
-                  ["quick", "Quick set", "5–10 cases"],
-                  ["comprehensive", "Comprehensive", "20 cases"],
-                ] as const
-              ).map(([value, title, description]) => (
-                <Label
-                  key={value}
-                  htmlFor={`generate-${value}`}
-                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
-                >
-                  <RadioGroupItem id={`generate-${value}`} value={value} />
-                  <span className="space-y-1">
-                    <span className="block text-sm">{title}</span>
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {description}
-                    </span>
-                  </span>
-                </Label>
-              ))}
-            </RadioGroup>
-          </fieldset>
-          <fieldset className="space-y-3">
-            <legend className="text-sm font-medium">Tool coverage</legend>
-            <RadioGroup
-              aria-label="Tool coverage"
-              value={coverage}
-              onValueChange={(value) => setCoverage(value as typeof coverage)}
-              className="grid grid-cols-2 gap-3"
-            >
-              {(
-                [
-                  ["read-only", "Read-only", "Retrieval and discovery"],
+        <DialogHeader>
+          <DialogTitle>Generate test cases</DialogTitle>
+          <DialogDescription>
+            Generate cases from your suite's connected servers.
+          </DialogDescription>
+        </DialogHeader>
+        <EvalGenerationAccess>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (needsEnvironment && !environmentId) return;
+              const config: GenerateCasesConfig = {
+                ...generationPreset(testSet, coverage),
+                ...(needsEnvironment && environmentId ? { environmentId } : {}),
+              };
+              saveGenerateConfig(suiteId, config);
+              onGenerate(config);
+            }}
+            className="space-y-6"
+          >
+            {environmentChoices?.length ? (
+              <EnvironmentTargetPicker
+                idPrefix="generate"
+                targets={environmentChoices}
+                value={environmentId}
+                onChange={setEnvironmentId}
+              />
+            ) : null}
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium">Test set</legend>
+              <RadioGroup
+                aria-label="Test set"
+                value={testSet}
+                onValueChange={(value) => setTestSet(value as typeof testSet)}
+                className="grid grid-cols-2 gap-3"
+              >
+                {(
                   [
-                    "read-write",
-                    "Read and write",
-                    "Include workflows that change data",
-                  ],
-                ] as const
-              ).map(([value, title, description]) => (
-                <Label
-                  key={value}
-                  htmlFor={`generate-${value}`}
-                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
-                >
-                  <RadioGroupItem id={`generate-${value}`} value={value} />
-                  <span className="space-y-1">
-                    <span className="block text-sm">{title}</span>
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {description}
+                    ["quick", "Quick set", "5–10 cases"],
+                    ["comprehensive", "Comprehensive", "20 cases"],
+                  ] as const
+                ).map(([value, title, description]) => (
+                  <Label
+                    key={value}
+                    htmlFor={`generate-${value}`}
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
+                  >
+                    <RadioGroupItem id={`generate-${value}`} value={value} />
+                    <span className="space-y-1">
+                      <span className="block text-sm">{title}</span>
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {description}
+                      </span>
                     </span>
-                  </span>
-                </Label>
-              ))}
-            </RadioGroup>
-          </fieldset>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={needsEnvironment && !environmentId}>
-              Generate cases
-            </Button>
-          </DialogFooter>
-        </form>
+                  </Label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium">Tool coverage</legend>
+              <RadioGroup
+                aria-label="Tool coverage"
+                value={coverage}
+                onValueChange={(value) => setCoverage(value as typeof coverage)}
+                className="grid grid-cols-2 gap-3"
+              >
+                {(
+                  [
+                    ["read-only", "Read-only", "Retrieval and discovery"],
+                    [
+                      "read-write",
+                      "Read and write",
+                      "Include workflows that change data",
+                    ],
+                  ] as const
+                ).map(([value, title, description]) => (
+                  <Label
+                    key={value}
+                    htmlFor={`generate-${value}`}
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-accent"
+                  >
+                    <RadioGroupItem id={`generate-${value}`} value={value} />
+                    <span className="space-y-1">
+                      <span className="block text-sm">{title}</span>
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {description}
+                      </span>
+                    </span>
+                  </Label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={needsEnvironment && !environmentId}
+              >
+                Generate cases
+              </Button>
+            </DialogFooter>
+          </form>
+        </EvalGenerationAccess>
       </DialogContent>
     </Dialog>
   );

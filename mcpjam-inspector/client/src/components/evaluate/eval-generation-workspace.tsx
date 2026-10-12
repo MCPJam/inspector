@@ -16,8 +16,19 @@ import {
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
+import { EvalGenerationAccess } from "./eval-generation-access";
 
-export function EvalGenerationWorkspace({
+export function EvalGenerationWorkspace(
+  props: Parameters<typeof AccessibleEvalGenerationWorkspace>[0],
+) {
+  return (
+    <EvalGenerationAccess>
+      <AccessibleEvalGenerationWorkspace {...props} />
+    </EvalGenerationAccess>
+  );
+}
+
+function AccessibleEvalGenerationWorkspace({
   projectId,
   suiteId,
   suiteName,
