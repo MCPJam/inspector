@@ -96,6 +96,13 @@
             ]
           },
           {
+            "group": "Privacy",
+            "icon": "eye-off",
+            "pages": [
+              "inspector/telemetry-privacy"
+            ]
+          },
+          {
             "group": "Embedding",
             "icon": "code",
             "pages": ["inspector/launch-from-code", "inspector/docs-server"]
