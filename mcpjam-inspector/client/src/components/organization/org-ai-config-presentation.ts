@@ -1,7 +1,8 @@
 /**
- * Words and shapes for the "Use your keys for all AI features" setting.
+ * Words and shapes for the "Use your keys for all AI features" setting and
+ * the organization's default AI model.
  *
- * Pure: no React, no network. Kept apart from the card so the copy rules
+ * Pure: no React, no network. Kept apart from the cards so the copy rules
  * live in one place and are testable:
  * - never imply text insights need embeddings;
  * - configuration problems read as "Unavailable", never as a spinner;
@@ -12,12 +13,16 @@
  *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
  *   vendor and what doesn't count.
  */
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type {
   AiFeatureGroupId,
   AiFeatureGroupReadiness,
   AiOperationId,
   AiReadinessStatus,
+  OrgAiModelCheck,
+  OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
 // ---------------------------------------------------------------------------
 // Feature coverage
@@ -296,4 +301,88 @@ export function degradationSentence(
     `${label.charAt(0).toUpperCase()}${label.slice(1)}`,
     "everything else still runs",
   );
+}
+
+// ---------------------------------------------------------------------------
+// The organization's AI models for background work
+// ---------------------------------------------------------------------------
+
+/** Each kind's name and the work that runs on it. */
+export const ORG_AI_MODEL_PRESENTATION: Record<
+  OrgAiModelKind,
+  { label: string; noun: string; runs: string }
+> = {
+  default: {
+    label: "Default AI model",
+    noun: "default AI model",
+    runs: "Insights and findings, generation, typed decisions and simulated users",
+  },
+  embedding: {
+    label: "Embedding model",
+    noun: "embedding model",
+    runs: "Session map and clustering",
+  },
+  transcription: {
+    label: "Transcription model",
+    noun: "transcription model",
+    runs: "Voice input",
+  },
+};
+
+/** How the last test of a saved model reads. */
+export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
+  label: string;
+  tone: StatusTone;
+} {
+  if (check.ok) return { label: "Passed", tone: "success" };
+  const code = check.code ?? "";
+  if (code === "provider_auth_failed") {
+    return { label: "Credentials rejected", tone: "destructive" };
+  }
+  if (
+    code === "provider_unavailable" ||
+    code === "timeout" ||
+    code.startsWith("http_")
+  ) {
+    return { label: "Provider unavailable", tone: "warning" };
+  }
+  if (code) return { label: "Refused", tone: "destructive" };
+  return { label: "Failed", tone: "destructive" };
+}
+
+const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Google",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  xai: "xAI",
+  moonshotai: "Moonshot AI",
+  "z-ai": "Z.ai",
+  qwen: "Qwen",
+  minimax: "MiniMax",
+  azure: "Azure OpenAI",
+  bedrock: "Amazon Bedrock",
+  ollama: "Ollama",
+  openrouter: "OpenRouter",
+};
+
+/** A connection's name as the provider list shows it. */
+export function orgProviderLabel(provider: OrgModelProvider): string {
+  if (provider.displayName?.trim()) return provider.displayName.trim();
+  const known = PROVIDER_NAMES[provider.providerKey];
+  if (known) return known;
+  if (provider.providerKey.startsWith("custom:")) {
+    return provider.providerKey.slice("custom:".length);
+  }
+  return provider.providerKey;
+}
+
+/** The model a saved selection runs, as the admin would recognise it. */
+export function selectionModelLabel(selection: ModelSelection): string {
+  const native = selection.nativeModelId?.trim();
+  const tail = selection.modelId.slice(selection.modelId.indexOf("/") + 1);
+  return native && native !== tail
+    ? `${selection.modelId} (${native})`
+    : selection.modelId;
 }

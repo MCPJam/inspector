@@ -27,6 +27,7 @@ vi.mock("convex/react", () => {
       return args === "skip" ? undefined : state.queryValue;
     },
     useMutation: call,
+    useAction: call,
   };
 });
 
@@ -34,7 +35,20 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => state.isUserReady,
 }));
 
-import { useOrgAiConfig } from "../useOrgAiConfig";
+import {
+  orgAiModelSelectionKey,
+  orgAiModelsOf,
+  useOrgAiConfig,
+  type OrgAiConfig,
+} from "../useOrgAiConfig";
+
+const DEFAULT_MODEL = {
+  modelId: "openai/gpt-5-mini",
+  source: "org" as const,
+  connectionRef: { kind: "orgProvider" as const, id: "conn_1" },
+  nativeModelId: "gpt-5-mini",
+  fallback: { provider: "none" as const, model: "none" as const },
+};
 
 const CONFIG = {
   organizationId: "org-1",
@@ -167,5 +181,110 @@ describe("useOrgAiConfig", () => {
     expect(result.current.error).toBe(
       "Use your keys for all AI features is available on Enterprise plans.",
     );
+  });
+});
+
+describe("the organization's AI models", () => {
+  it("sets one kind's model, and clears it with null", async () => {
+    const { result } = renderHook(() => useOrgAiConfig("org-1"));
+
+    await act(() => result.current.setAiModel("default", DEFAULT_MODEL));
+    await act(() => result.current.setAiModel("default", null));
+
+    expect(state.calls).toEqual([
+      {
+        name: "organizationAiModels:setOrganizationAiModel",
+        args: {
+          organizationId: "org-1",
+          kind: "default",
+          selection: DEFAULT_MODEL,
+        },
+      },
+      {
+        name: "organizationAiModels:setOrganizationAiModel",
+        args: { organizationId: "org-1", kind: "default", selection: null },
+      },
+    ]);
+  });
+
+  it("tests the saved model, or a candidate, and returns the result", async () => {
+    state.results["organizationAiModels:testOrganizationAiModel"] = {
+      ok: true,
+      checkedAt: 1,
+    };
+    const { result } = renderHook(() => useOrgAiConfig("org-1"));
+
+    let saved: unknown;
+    await act(async () => {
+      saved = await result.current.testAiModel("default");
+    });
+    await act(async () => {
+      await result.current.testAiModel("default", DEFAULT_MODEL);
+    });
+
+    expect(saved).toEqual({ ok: true, checkedAt: 1 });
+    expect(state.calls).toEqual([
+      {
+        name: "organizationAiModels:testOrganizationAiModel",
+        args: { organizationId: "org-1", kind: "default" },
+      },
+      {
+        name: "organizationAiModels:testOrganizationAiModel",
+        args: {
+          organizationId: "org-1",
+          kind: "default",
+          selection: DEFAULT_MODEL,
+        },
+      },
+    ]);
+  });
+
+  it("keeps a test's failure apart from save errors", async () => {
+    state.failures["organizationAiModels:testOrganizationAiModel"] =
+      Object.assign(new Error("[CONVEX A(x)] Server Error"), {
+        data: { message: "Not authorized for organization AI settings" },
+      });
+    const { result } = renderHook(() => useOrgAiConfig("org-1"));
+
+    await act(async () => {
+      await expect(result.current.testAiModel("default")).rejects.toThrow();
+    });
+
+    expect(result.current.testError).toBe(
+      "Not authorized for organization AI settings",
+    );
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keys a check by connection, model and native id", () => {
+    expect(orgAiModelSelectionKey(DEFAULT_MODEL)).toBe(
+      "conn_1|openai/gpt-5-mini|gpt-5-mini",
+    );
+  });
+
+  it("reads nothing from a backend without organization AI models", () => {
+    const config = CONFIG as OrgAiConfig;
+    expect(orgAiModelsOf(config)).toBeNull();
+    expect(
+      orgAiModelsOf({ ...config, supportedModelKinds: ["default"] }),
+    ).toBeNull();
+    expect(
+      orgAiModelsOf({ ...config, aiModels: { default: null } }),
+    ).toBeNull();
+  });
+
+  it("reads one entry per supported kind it knows", () => {
+    const models = orgAiModelsOf({
+      ...(CONFIG as OrgAiConfig),
+      supportedModelKinds: ["default", "future_kind", "default"],
+      aiModels: { default: null },
+      aiModelSuggestions: { default: DEFAULT_MODEL },
+    });
+
+    expect(models).toEqual({
+      kinds: ["default"],
+      models: { default: null },
+      suggestions: { default: DEFAULT_MODEL },
+    });
   });
 });
