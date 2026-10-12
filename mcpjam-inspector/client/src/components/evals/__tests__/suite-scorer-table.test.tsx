@@ -612,7 +612,6 @@ it("opens every evaluator's settings from Edit evaluators, then closes them", ()
   expect(container.querySelector('[data-setting-key="judge"]')).toBeTruthy();
 });
 
-
 describe("SuiteScorerTable organization judge control", () => {
   it("requires an explicit judge instead of the managed default", () => {
     renderTable({ requireOrgKeys: true });
@@ -626,9 +625,10 @@ describe("SuiteScorerTable organization judge control", () => {
       requireOrgKeys: true,
       judgeConfig: {
         goalCompletion: {
-          judgeModel: "gpt-4o",
+          judgeModel: "openai/gpt-4o",
           judgeSelection: {
-            modelId: "gpt-4o",
+            modelId: "openai/gpt-4o",
+            nativeModelId: "gpt-4o",
             source: "org",
             connectionRef: { kind: "orgProvider", id: "conn_1" },
             fallback: { provider: "none", model: "none" },
@@ -638,8 +638,11 @@ describe("SuiteScorerTable organization judge control", () => {
       availableModels: [
         { id: "gpt-4o", name: "Hosted GPT", provider: "openai", hosted: true },
         {
-          id: "gpt-4o", name: "Organization GPT", provider: "openai",
-          hosted: false, judgeEligible: true,
+          id: "gpt-4o",
+          name: "Organization GPT",
+          provider: "openai",
+          hosted: false,
+          judgeEligible: true,
           orgProvider: { providerKey: "openai", id: "conn_1" },
         },
       ],
