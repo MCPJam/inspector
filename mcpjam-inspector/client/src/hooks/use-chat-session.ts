@@ -1,4 +1,9 @@
 import {
+  orgPolicyBlocksChatSend,
+  orgPolicySendRefusal,
+  orgPolicyChatTransport,
+} from "./org-policy-chat";
+import {
   pluginMessageParts,
   type PluginMessageIntent,
 } from "@/shared/plugin-message";
@@ -105,6 +110,8 @@ import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -117,7 +124,15 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  isOrgPolicyLockReason,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -760,6 +775,9 @@ export interface UseChatSessionReturn {
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
+  /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -979,6 +997,20 @@ export type HiddenEnvironmentOffReason =
 function inferModelProviderFromId(modelId: string): ModelProvider {
   return providerForModelId(modelId) ?? "ollama";
 }
+
+/**
+ * The selection when the list offers nothing at all (the organization
+ * requires its own keys and has no eligible provider). The picker shows its
+ * own empty state; this only keeps every reader of `selectedModel` defined.
+ */
+export const NO_ORG_MODEL_PLACEHOLDER: ModelDefinition = Object.freeze({
+  id: "",
+  name: "No model available",
+  provider: "custom",
+  hosted: false,
+  disabled: true,
+  disabledReason: ORG_KEYS_MODEL_REASON,
+}) as ModelDefinition;
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
   // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
@@ -2907,10 +2939,34 @@ export function useChatSession(
     pendingHydration.resolve?.();
   }, []);
 
+  // Model selection with persistence
+  const {
+    selectedModelId,
+    setSelectedModelId,
+    selectedModelIds,
+    setSelectedModelIds: persistSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
+    isInitialized: isPersistedModelInitialized,
+  } = usePersistedModel();
+  // The saved lead and compare picks. When the organization's AI key policy
+  // no longer offers one, the composition keeps it as a disallowed row, so the
+  // saved choice stays selected (the picker warns on its trigger) instead of
+  // silently switching to another model.
+  const savedModelIdsSignature = [selectedModelId ?? "", ...selectedModelIds]
+    .filter(Boolean)
+    .join("\u0001");
+  const savedModelIds = useMemo(
+    () =>
+      savedModelIdsSignature ? savedModelIdsSignature.split("\u0001") : [],
+    [savedModelIdsSignature],
+  );
+
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
-  const outOfCredits = useOutOfCredits();
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -2927,6 +2983,7 @@ export function useChatSession(
         outOfCredits,
         freeTierOnly,
         hostedCatalog,
+        savedModelIds,
       }),
     [
       hasToken,
@@ -2940,13 +2997,17 @@ export function useChatSession(
       outOfCredits,
       freeTierOnly,
       hostedCatalog,
+      savedModelIds,
     ],
   );
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
-  // and every caller that mirrors the selection back) reads this list.
+  // and every caller that mirrors the selection back) reads this list. Under
+  // the organization's key policy that is only organization models on the
+  // harness's own vendor (Claude Code: Anthropic, Codex: OpenAI).
   const harnessId = harnessModelTarget?.harnessId ?? null;
   const harnessRuntimeVersion = harnessModelTarget?.runtimeVersion ?? null;
+  const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
   const availableModels = useMemo(
     () =>
       harnessPickerModels(
@@ -2954,20 +3015,11 @@ export function useChatSession(
         harnessId
           ? { harnessId, runtimeVersion: harnessRuntimeVersion }
           : null,
+        { requireOrgKeys },
       ),
-    [composedModels, harnessId, harnessRuntimeVersion],
+    [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
-  // Model selection with persistence
-  const {
-    selectedModelId,
-    setSelectedModelId,
-    selectedModelIds,
-    setSelectedModelIds: persistSelectedModelIds,
-    multiModelEnabled,
-    setMultiModelEnabled,
-    isInitialized: isPersistedModelInitialized,
-  } = usePersistedModel();
   // Which provider the lead id was picked under. The id alone is ambiguous —
   // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
   // re-picking the SAME id under a different provider (OpenRouter's
@@ -3009,7 +3061,15 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all: a disabled stand-in, never `undefined`
+      // (INSPECTOR-CLIENT-222), which every reader below dereferences. The
+      // chat refuses to send on it (`submitBlocked`). A harness host none of
+      // the rows runs on says why; otherwise the organization requires its
+      // own keys and has no eligible provider yet.
+      (harnessId || !requireOrgKeys
+        ? noRunnableHarnessModel(harnessId ?? "", { requireOrgKeys })
+        : NO_ORG_MODEL_PLACEHOLDER);
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -3029,10 +3089,14 @@ export function useChatSession(
         (model) =>
           // Keep an out-of-credits model selected so the existing send →
           // limit-error → out-of-credits modal still fires. The gray-out
-          // must not silently switch the user off it. Other locks (guest,
-          // ollama-no-tools) stay unselectable.
+          // must not silently switch the user off it. The organization's
+          // AI key policy (a saved model it no longer allows, its settings
+          // still loading, a project no organization owns) never switches
+          // a saved choice either. Other locks (guest, ollama-no-tools)
+          // stay unselectable.
           !model.disabled ||
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON,
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
+          isOrgPolicyLockReason(model.disabledReason),
       );
 
     if (initialModelId) {
@@ -3051,6 +3115,7 @@ export function useChatSession(
     leadProviderHint,
     preferredModelId,
     pinnedModelProvider,
+    requireOrgKeys,
     selectableModels,
     selectedModelId,
   ]);
@@ -3141,16 +3206,53 @@ export function useChatSession(
   const isSelectedModelResolved = useMemo(() => {
     if (initialModelId) return true;
     if (isPersistedModelInitialized === false) return false;
+    // The organization's AI settings are still loading: the list is a locked
+    // placeholder, and its default must not be written back as a choice.
+    if (hostedOrgModelConfig?.pending) return false;
+    // Nothing to offer at all: the placeholder is not a choice either.
+    if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId,
+      (model) =>
+        String(model.id) === selectedModelId &&
+        (!model.disabled ||
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
     );
   }, [
     availableModels,
+    hostedOrgModelConfig?.pending,
     initialModelId,
     isPersistedModelInitialized,
+    selectedModel,
     selectedModelId,
   ]);
+
+  // Whether the organization's AI key policy leaves this chat no model to
+  // send to: its settings are still loading, it offers no model yet, or the
+  // saved model is one it no longer allows (it stays selected, and the picker
+  // warns on its trigger). A personal key in local mode has no server-side
+  // check to refuse it, so the chat must. The composer reads it through
+  // `submitBlocked`; `sendMessage` reads it too, because retry, the eval
+  // handoff and widget follow-ups call it directly.
+  const orgPolicyPending = hostedOrgModelConfig?.pending === true;
+  const orgPolicyBlocksSend = orgPolicyBlocksChatSend({
+    pending: orgPolicyPending,
+    requireOrgKeys,
+    selectedModel,
+    availableModels,
+  });
+  // Read at call time: a caller can hold a `sendMessage` from an earlier
+  // render (the eval handoff sends after the seeded thread hydrates).
+  const orgPolicySendRef = useRef({
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  });
+  orgPolicySendRef.current = {
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  };
 
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
@@ -3971,12 +4073,12 @@ export function useChatSession(
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
     () =>
-      withWebMcpTraffic({
-        sendMessages: (options) =>
-          latestTransportRef.current.sendMessages(options),
-        reconnectToStream: (options) =>
-          latestTransportRef.current.reconnectToStream(options),
-      }),
+      withWebMcpTraffic(
+        orgPolicyChatTransport(
+          () => latestTransportRef.current,
+          () => orgPolicySendRef.current,
+        ),
+      ),
     [],
   );
 
@@ -4824,6 +4926,13 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      // The organization's AI key policy leaves no model to send to. Refused
+      // here, not only in the composer, so no caller can send around it.
+      const orgPolicy = orgPolicySendRef.current;
+      if (orgPolicy.blocked) {
+        toast.error(orgPolicySendRefusal(orgPolicy.model, orgPolicy.pending));
+        return Promise.resolve(false);
+      }
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -6038,7 +6147,10 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    isNoRunnableHarnessModel(selectedModel) ||
+    // The organization's AI key policy leaves no model to send to.
+    orgPolicyBlocksSend;
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was
@@ -6071,6 +6183,7 @@ export function useChatSession(
     setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
+    outOfCreditsReason,
 
     // Auth state
     isAuthenticated,

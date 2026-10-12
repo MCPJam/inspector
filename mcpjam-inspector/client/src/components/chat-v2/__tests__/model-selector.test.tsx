@@ -6,6 +6,7 @@ import { defaultFilter } from "cmdk";
 import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
+import { noRunnableHarnessModel } from "@/lib/harness-model-locks";
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -707,6 +708,35 @@ describe("ModelSelector", () => {
     expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
   });
 
+  // A harness host none of the rows runs on: the stand-in says why, never
+  // "No matching models", and the hand-off to add a key stays.
+  it("explains a harness host's empty list and keeps the hand-off", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={noRunnableHarnessModel("claude-code")}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      await screen.findByText(
+        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models."
+      )
+    ).toBeVisible();
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /manage organization models/i })
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the providers tab hidden with no keys and no hand-off", async () => {
     const user = userEvent.setup();
     const freeOnly = byokIntentModels.filter((model) => model.hosted);
@@ -1157,6 +1187,164 @@ describe("per-row efforts", () => {
     expect(onModelEffortSelect).toHaveBeenCalledWith(gpt, "none");
     await waitFor(() =>
       expect(screen.queryByTestId("model-effort-menu")).toBeNull(),
+    );
+  });
+});
+
+describe("ModelSelector — organization requires its own keys", () => {
+  const placeholder: ModelDefinition = {
+    id: "",
+    name: "No model available",
+    provider: "custom",
+    disabled: true,
+    disabledReason: "Choose a model from an organization provider.",
+  };
+  const savedHosted: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+    disabled: true,
+    disabledReason: "Choose a model from an organization provider.",
+  };
+  const orgModel: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "conn_1" },
+  };
+
+  it("offers an admin Add a provider when no organization model exists", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={placeholder}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      await screen.findByTestId("model-selector-org-keys-empty"),
+    ).toBeVisible();
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Free models")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  // A harness host under the policy runs only on an organization connection
+  // to its own vendor: the empty state names that vendor, once, with the fix.
+  it("names the harness's organization vendor when nothing can run it", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={noRunnableHarnessModel("codex", {
+          requireOrgKeys: true,
+        })}
+        availableModels={[]}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const empty = await screen.findByTestId("model-selector-org-keys-empty");
+    expect(empty).toHaveTextContent(
+      "This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider.",
+    );
+    expect(empty).not.toHaveTextContent(/MCPJam models/);
+    expect(
+      screen.getAllByText(/runs only on an organization OpenAI provider/),
+    ).toHaveLength(1);
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a member to ask an organization admin, warning about a saved model only on the trigger", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={savedHosted}
+        availableModels={[savedHosted]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+
+    const trigger = screen.getByTestId("model-selector-trigger");
+    expect(trigger).toHaveAccessibleName(
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+    expect(
+      screen.getByTestId("model-selector-trigger-org-keys-warning"),
+    ).toBeInTheDocument();
+
+    await user.click(trigger);
+    expect(
+      await screen.findByText("Ask an organization admin to add one."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: /Claude Haiku 4.5/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists organization models only: no free/providers split and no saved hosted row", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={savedHosted}
+        availableModels={[orgModel, savedHosted]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      await screen.findByRole("option", { name: /Claude Sonnet 4.5/ }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    // One provider heading: the hosted row no longer adds a second one.
+    expect(screen.getAllByText("Anthropic")).toHaveLength(1);
+    expect(screen.queryByText("Your providers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Free models")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("model-selector-org-keys-empty"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an allowed organization model on the trigger as usual", () => {
+    render(
+      <ModelSelector
+        currentModel={orgModel}
+        availableModels={[orgModel]}
+        onModelChange={() => {}}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.queryByTestId("model-selector-trigger-org-keys-warning"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-selector-trigger")).toHaveTextContent(
+      "Claude Sonnet 4.5",
     );
   });
 });

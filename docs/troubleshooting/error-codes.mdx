@@ -776,6 +776,106 @@ The MCP server answered the request with an HTTP error status. The message names
 
 ---
 
+## Organization provider refusals
+
+These codes mean an AI request was refused because it could not run on one of
+the organization's own model providers. None of them count against MCPJam
+credits.
+
+Most are configuration: the request won't run until someone changes its model
+or the organization's providers, so trying again doesn't help. Two are
+temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
+organization's AI settings) and `org/provider_unavailable` (the provider is
+rate-limiting or failing). Try those again in a moment.
+
+### Organization provider required
+
+`org/keys_required`
+
+This organization requires its own provider keys for AI features, so the
+request was refused before it reached a model. The selection was an
+MCPJam-provided (hosted) model, a personal key, or a local model.
+
+**Next steps**
+- Choose a model from an organization provider.
+- Organization admins can add a provider under **Organization → AI providers**.
+
+### Organization model not configured
+
+`org/model_unconfigured`
+
+The feature needs a default organization model, and none is set.
+
+**Next steps**
+- Organization admins can set one under **Organization → AI providers**.
+- Members: ask an organization admin to configure one.
+
+### Organization runtime unsupported
+
+`org/runtime_unsupported`
+
+The feature, or the selected provider, cannot run on organization credentials
+yet. Only direct cloud connections are eligible: OpenRouter (a shared gateway)
+and local-runtime connections are not.
+
+**Next steps**
+- Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
+
+### Organization scope unresolved
+
+`org/scope_unresolved`
+
+MCPJam could not tell which organization the AI request belongs to, so it did
+not run it.
+
+**Next steps**
+- Open the request from the organization's project and try again.
+- Contact support if this keeps happening.
+
+### Organization AI key policy unavailable
+
+`org/key_policy_unavailable`
+
+MCPJam could not read the organization's AI settings and refused the request
+rather than guess. This is temporary and on MCPJam's side.
+
+**Next steps**
+- Try again in a moment.
+
+### Organization provider auth failed
+
+`org/provider_auth_failed`
+
+The organization's model provider rejected its API key (401 or 403).
+
+**Next steps**
+- Organization admins can update the key under **Organization → AI providers**.
+- Members: ask an organization admin to update it.
+
+### Organization provider missing
+
+`org/credential_missing`
+
+The organization provider the model is saved to run on is no longer available:
+the connection was deleted, disabled or moved, or its API key was removed.
+
+**Next steps**
+- Choose a model from an organization provider that is still connected.
+- Organization admins can add or reconnect the provider under **Organization → AI providers**.
+
+### Organization provider unavailable
+
+`org/provider_unavailable`
+
+The organization's model provider is rate-limiting requests or temporarily
+failing.
+
+**Next steps**
+- Try again shortly.
+- Check the provider's status page and the organization's limits on its dashboard.
+
+---
+
 ## Environment errors
 
 These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on scenario shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists — for example, **Open Servers** for `ENV_NO_SERVERS` — rather than a generic retry that would fail identically.

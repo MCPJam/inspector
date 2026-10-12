@@ -98,6 +98,106 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
     : undefined;
 }
 
+/**
+ * The organization upstream each BROKERED harness can run on: its own vendor's
+ * native API, on the organization's key, and the runtime profile that talks to
+ * it. Claude Code speaks Anthropic Messages and Codex speaks OpenAI Responses,
+ * so a turn whose saved selection names an org Anthropic (resp. OpenAI)
+ * connection runs on that key through MCPJam's model proxy. Cursor
+ * authenticates with the customer's own Cursor account and runs on no org
+ * connection.
+ *
+ * This is the preflight's answer from non-secret metadata; the backend still
+ * resolves the connection id authoritatively at lease start and refuses a
+ * mismatch (`provider_mismatch`).
+ */
+export type HarnessOrgUpstream = {
+  provider: "anthropic" | "openai";
+  profile: "anthropic-native" | "openai-native";
+};
+
+export const HARNESS_ORG_UPSTREAM = {
+  "claude-code": { provider: "anthropic", profile: "anthropic-native" },
+  codex: { provider: "openai", profile: "openai-native" },
+  cursor: null,
+} as const satisfies Record<Harness, HarnessOrgUpstream | null>;
+
+/** The org upstream `harnessId` runs on, or null when it takes no org key. */
+export function harnessOrgUpstream(
+  harnessId: string,
+): HarnessOrgUpstream | null {
+  return Object.prototype.hasOwnProperty.call(HARNESS_ORG_UPSTREAM, harnessId)
+    ? HARNESS_ORG_UPSTREAM[harnessId as Harness]
+    : null;
+}
+
+/** Whether `harnessId` can run on an org connection to `providerKey`. */
+export function harnessRunsOnOrgProvider(
+  harnessId: string,
+  providerKey: string | undefined,
+): boolean {
+  return (
+    providerKey !== undefined &&
+    harnessOrgUpstream(harnessId)?.provider === providerKey
+  );
+}
+
+/**
+ * Which upstream a harness runtime is configured for, as the backend resolved
+ * it at lease start. Non-secret. The Gateway profile keeps the Gateway's
+ * Claude model spellings and effort workarounds; a native profile talks to the
+ * vendor's own API with native model ids.
+ */
+export type HarnessUpstreamProfile =
+  "gateway" | "anthropic-native" | "openai-native";
+
+const ORG_PROVIDER_LABELS: Record<HarnessOrgUpstream["provider"], string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+};
+
+/**
+ * The organization's AI key policy, as harness copy reads it. When the
+ * organization requires its own provider keys ("Use your keys for all AI
+ * features"), MCPJam-provided models are off, so a brokered harness runs only
+ * on the organization's key for its own vendor.
+ */
+export type HarnessKeyPolicy = { requireOrgKeys?: boolean };
+
+/** The refusal copy for an org connection the harness cannot run on. */
+export function harnessOrgProviderUnsupportedReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): string {
+  const name = harnessDisplayName(harnessId);
+  const upstream = harnessOrgUpstream(harnessId);
+  if (!upstream) {
+    return `the ${name} harness does not run on an organization's provider key`;
+  }
+  const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  return policy.requireOrgKeys
+    ? `the ${name} harness runs only on your organization's ${vendor} key`
+    : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;
+}
+
+/**
+ * Why a harness host's picker has no row it can run, and what fixes it. Under
+ * the key policy the picker adds the fix itself ("Add a provider", or ask an
+ * admin), so the sentence names only the vendor.
+ */
+export function harnessNoRunnableModelReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): string {
+  const name = harnessDisplayName(harnessId);
+  const upstream = harnessOrgUpstream(harnessId);
+  if (!upstream) return `${name} has no model it can run here.`;
+  const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  return policy.requireOrgKeys
+    ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider.`
+    : `${name} runs MCPJam models or your organization's ${vendor} key. Add one in Organization models.`;
+}
+
 /** Human-facing runtime names (same values as the registry's `displayName`). */
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   "claude-code": "Claude Code",

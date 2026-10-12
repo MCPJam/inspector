@@ -62,6 +62,7 @@ import {
   getFileInputAccept,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -318,6 +319,8 @@ interface ChatInputProps {
   stop: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
+  /** Why Send is off, shown in its tooltip (an out-of-credits model). */
+  submitDisabledReason?: string;
   isLoading?: boolean;
   placeholder?: string;
   className?: string;
@@ -451,6 +454,12 @@ interface ChatInputProps {
    */
   onManageOrgProviders?: () => void;
   /**
+   * The organization requires its own provider keys for AI features; the
+   * model picker then offers only organization models and, when none can be
+   * picked, says how to get one.
+   */
+  requireOrgKeys?: boolean;
+  /**
    * Environment mode (Project Environments): the environment's resolved
    * servers, id-first from the preview. When present (even empty) this
    * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
@@ -494,6 +503,7 @@ export function ChatInput({
   stop,
   disabled = false,
   submitDisabled = false,
+  submitDisabledReason,
   isLoading = false,
   placeholder = "Type your message...",
   className,
@@ -552,6 +562,7 @@ export function ChatInput({
   scenarioAttachableServers,
   onAttachScenarioServer,
   onManageOrgProviders,
+  requireOrgKeys,
   environmentServers,
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
@@ -2256,6 +2267,7 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={
@@ -2441,32 +2453,32 @@ export function ChatInput({
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="submit"
-                        size="icon"
-                        aria-label="Send message"
-                        className={cn(
-                          "size-[34px] rounded-full transition-colors shadow-none",
-                          (value.trim() || hasResults) &&
-                            !disabled &&
-                            !submitDisabled
-                            ? activeSubmitButtonClasses
-                            : inactiveSubmitButtonClasses,
-                          pulseSubmit && "animate-onboarding-pulse",
-                        )}
-                        disabled={
-                          (!value.trim() && !hasResults) ||
-                          disabled ||
-                          submitDisabled
-                        }
-                      >
-                        <ArrowUp size={16} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Send message</TooltipContent>
-                  </Tooltip>
+                  <DisabledReasonTooltip
+                    reason={submitDisabledReason}
+                    fallback="Send message"
+                  >
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        (value.trim() || hasResults) &&
+                          !disabled &&
+                          !submitDisabled
+                          ? activeSubmitButtonClasses
+                          : inactiveSubmitButtonClasses,
+                        pulseSubmit && "animate-onboarding-pulse",
+                      )}
+                      disabled={
+                        (!value.trim() && !hasResults) ||
+                        disabled ||
+                        submitDisabled
+                      }
+                    >
+                      <ArrowUp size={16} />
+                    </Button>
+                  </DisabledReasonTooltip>
                 ))
               )}
             </div>

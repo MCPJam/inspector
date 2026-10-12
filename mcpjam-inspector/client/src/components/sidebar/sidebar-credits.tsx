@@ -86,6 +86,11 @@ export function SidebarCredits({
     Math.max(0, monthlyRemaining),
   );
   const meterCapacity = monthlyTotal + rolloverRemaining;
+  // Paid top-ups are a separate pool from the plan allowance and are never
+  // folded into it. Shown only when there is something in it: a "0 credits"
+  // row would read as a second exhausted meter.
+  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
+  const showPaidCredits = !isLoading && paidRemaining > 0;
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
@@ -203,6 +208,19 @@ export function SidebarCredits({
                   showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"
                 }
               />
+
+              {showPaidCredits ? (
+                <SidebarUsageRow
+                  label="Shared paid credits"
+                  percentText={`${paidRemaining.toLocaleString()} credits`}
+                  helperText={null}
+                  fillPercent={0}
+                  isLoading={false}
+                  showBar={false}
+                  showCoin
+                  testId="sidebar-usage-paid"
+                />
+              ) : null}
 
               {showEvalIterationUsage ? (
                 <SidebarUsageRow

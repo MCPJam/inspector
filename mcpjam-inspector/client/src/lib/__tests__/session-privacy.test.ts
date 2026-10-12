@@ -51,59 +51,69 @@ function posthogStub() {
 describe("resolveSessionPrivacy", () => {
   const base: SessionPrivacyInputs = {
     surface: "hosted",
-    account: "signed_in",
     sharedLink: false,
-    enterprisePrivacyInView: false,
+    recording: "full",
   };
+  const answers = ["full", "masked", "off", undefined] as const;
 
   it("is off wherever replay is off", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
-      expect(resolveSessionPrivacy({ ...base, surface: "off", account })).toBe(
-        "off",
-      );
+    for (const recording of answers) {
+      expect(
+        resolveSessionPrivacy({ ...base, surface: "off", recording }),
+      ).toBe("off");
     }
   });
 
-  it("is masked on packaged desktop for everyone", async () => {
+  it("is off wherever the backend answers off, on every recording surface", async () => {
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
-      for (const enterprisePrivacyInView of [true, false, undefined]) {
+    for (const surface of ["hosted", "desktop"] as const) {
+      for (const sharedLink of [false, true]) {
         expect(
-          resolveSessionPrivacy({
-            ...base,
-            surface: "desktop",
-            account,
-            enterprisePrivacyInView,
-          }),
-        ).toBe("masked");
+          resolveSessionPrivacy({ surface, sharedLink, recording: "off" }),
+        ).toBe("off");
       }
     }
   });
 
-  it("on hosted: full signed out, by organization signed in, pending until known", async () => {
+  it("is masked on packaged desktop for everyone else, once answered", async () => {
     const { resolveSessionPrivacy } = await load();
-    expect(resolveSessionPrivacy({ ...base, account: "signed_out" })).toBe(
-      "full",
-    );
-    expect(resolveSessionPrivacy({ ...base, account: "loading" })).toBe(
+    expect(
+      resolveSessionPrivacy({
+        ...base,
+        surface: "desktop",
+        recording: undefined,
+      }),
+    ).toBe("pending");
+    for (const recording of ["full", "masked"] as const) {
+      expect(
+        resolveSessionPrivacy({ ...base, surface: "desktop", recording }),
+      ).toBe("masked");
+    }
+  });
+
+  it("on hosted: the backend's answer, pending until it arrives", async () => {
+    const { resolveSessionPrivacy } = await load();
+    expect(resolveSessionPrivacy({ ...base, recording: undefined })).toBe(
       "pending",
     );
-    expect(
-      resolveSessionPrivacy({ ...base, enterprisePrivacyInView: undefined }),
-    ).toBe("pending");
-    expect(
-      resolveSessionPrivacy({ ...base, enterprisePrivacyInView: true }),
-    ).toBe("masked");
+    expect(resolveSessionPrivacy({ ...base, recording: "masked" })).toBe(
+      "masked",
+    );
+    // Only a verified non-private context records in full.
     expect(resolveSessionPrivacy(base)).toBe("full");
   });
 
-  it("masks a share link whoever is viewing it", async () => {
+  it("records nothing on a share link, whatever the viewer's own answer", async () => {
+    // The page shows an organization the viewer may not belong to; its
+    // owner's replay might be off, and the backend answers for the viewer.
     const { resolveSessionPrivacy } = await load();
-    for (const account of ["loading", "signed_out", "signed_in"] as const) {
-      expect(
-        resolveSessionPrivacy({ ...base, account, sharedLink: true }),
-      ).toBe("masked");
+    for (const recording of ["full", "masked", "off", undefined] as const) {
+      for (const surface of ["hosted", "desktop"] as const) {
+        expect(
+          resolveSessionPrivacy({ surface, recording, sharedLink: true }),
+        ).toBe("off");
+      }
     }
   });
 });
@@ -123,44 +133,27 @@ describe("recordingSurface", () => {
   });
 });
 
-describe("enterprise privacy from the organization list", () => {
-  const orgs = [
-    { _id: "org_plain" },
-    { _id: "org_private", enterprisePrivacy: true },
-    { _id: "org_explicit_off", enterprisePrivacy: false },
-  ];
-
-  it("in view: unknown until the list loads or something is in view", async () => {
-    const { resolveEnterprisePrivacyInView } = await load();
+describe("APP_ROUTE_WORDS", () => {
+  // The relay scrubs URLs with the shared list and cannot read the route
+  // table, so the list must cover every literal segment of it.
+  it("covers every literal segment of the route table", async () => {
+    const { APP_ROUTE_WORDS } = await load();
+    const { APP_ROUTES } = await import("../app-routes");
+    const missing = [
+      ...new Set(
+        APP_ROUTES.flatMap((route) => route.path.split("/")).filter(
+          (segment) =>
+            segment &&
+            !segment.startsWith(":") &&
+            segment !== "*" &&
+            !APP_ROUTE_WORDS.has(segment),
+        ),
+      ),
+    ];
     expect(
-      resolveEnterprisePrivacyInView(undefined, ["org_private"]),
-    ).toBeUndefined();
-    expect(
-      resolveEnterprisePrivacyInView(orgs, [null, undefined]),
-    ).toBeUndefined();
-  });
-
-  it("in view: any one organization in view is enough, and only `true` counts", async () => {
-    const { resolveEnterprisePrivacyInView } = await load();
-    expect(
-      resolveEnterprisePrivacyInView(orgs, ["org_plain", null, "org_private"]),
-    ).toBe(true);
-    expect(resolveEnterprisePrivacyInView(orgs, ["org_plain"])).toBe(false);
-    expect(resolveEnterprisePrivacyInView(orgs, ["org_explicit_off"])).toBe(
-      false,
-    );
-    // A private organization the user belongs to but is not looking at.
-    expect(
-      resolveEnterprisePrivacyInView(orgs, ["org_plain", "org_gone"]),
-    ).toBe(false);
-  });
-
-  it("membership: any organization in the list, unknown until it loads", async () => {
-    const { resolveEnterprisePrivacyMember } = await load();
-    expect(resolveEnterprisePrivacyMember(undefined)).toBeUndefined();
-    expect(resolveEnterprisePrivacyMember([])).toBe(false);
-    expect(resolveEnterprisePrivacyMember([orgs[0], orgs[2]])).toBe(false);
-    expect(resolveEnterprisePrivacyMember(orgs)).toBe(true);
+      missing,
+      "Add these route segments to APP_ROUTE_WORDS in shared/telemetry-privacy.ts",
+    ).toEqual([]);
   });
 });
 
@@ -272,13 +265,17 @@ describe("profiles", () => {
       responseBody: "{}",
     } as Record<string, unknown> & { name: string });
 
-    expect(masked).toMatchObject({
+    expect(masked).toEqual({
       name: "https://app.mcpjam.com/api/web/servers/[name]/tools",
-      requestHeaders: undefined,
-      responseHeaders: undefined,
-      requestBody: undefined,
-      responseBody: undefined,
     });
+    for (const field of [
+      "requestHeaders",
+      "responseHeaders",
+      "requestBody",
+      "responseBody",
+    ]) {
+      expect(masked).not.toHaveProperty(field);
+    }
     // The recorded page URL goes through the same callback as `{ name }`.
     expect(maskReplayRequest({ name: "/servers/acme" }).name).toBe(
       "/servers/[name]",
@@ -412,6 +409,27 @@ describe("syncSessionRecording", () => {
     });
   });
 
+  it("an off answer stops the recorder and keeps analytics masked", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    client.log.length = 0;
+
+    mod.setSessionPrivacy("off");
+    mod.syncSessionRecording(client, "/servers");
+    mod.syncSessionRecording(client, "/tools");
+
+    expect(client.log).toEqual(["stop", "config:masked"]);
+    expect(mod.shouldMaskAnalytics()).toBe(true);
+  });
+
+  it("an off surface keeps unmasked analytics", async () => {
+    const mod = await load();
+    expect(mod.currentSessionPrivacy()).toBe("off");
+    expect(mod.shouldMaskAnalytics()).toBe(false);
+  });
+
   it("never throws when posthog is unavailable or ad-blocked", async () => {
     const mod = await load({ hosted: true });
     mod.setSessionPrivacy("full");
@@ -426,6 +444,82 @@ describe("syncSessionRecording", () => {
         "/servers",
       ),
     ).not.toThrow();
+  });
+});
+
+describe("replayFramesToSend", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("drops the buffer that a full → masked stop flushes", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    // posthog-js flushes its buffer synchronously from inside stop().
+    let flushed: unknown[] | null | undefined;
+    client.stopSessionRecording.mockImplementation(() => {
+      flushed = mod.replayFramesToSend([{ type: 2, timestamp: Date.now() }]);
+      return client.log.push("stop");
+    });
+
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+
+    expect(client.log).toContain("stop");
+    expect(flushed).toBeNull();
+  });
+
+  it("drops frames older than the masked recorder from a later flush", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+    vi.setSystemTime(5_000);
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+
+    // A deferred flush of the full buffer, then the masked recorder's own.
+    expect(mod.replayFramesToSend([{ timestamp: 4_999 }])).toBeNull();
+    expect(
+      mod.replayFramesToSend([
+        { timestamp: 4_000 },
+        { timestamp: 5_000 },
+        { timestamp: 5_001 },
+      ]),
+    ).toEqual([{ timestamp: 5_000 }, { timestamp: 5_001 }]);
+  });
+
+  it("passes frames through on the full profile, and refuses a non-array", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+
+    const frames = [{ timestamp: 1 }];
+    expect(mod.replayFramesToSend(frames)).toBe(frames);
+    expect(mod.replayFramesToSend("not frames")).toBeNull();
+  });
+
+  it("keeps what a masked → full stop flushes: it was recorded masked", async () => {
+    const mod = await load({ hosted: true });
+    const client = posthogStub();
+    mod.setSessionPrivacy("masked");
+    mod.syncSessionRecording(client, "/servers");
+    let flushed: unknown[] | null | undefined;
+    const frames = [{ timestamp: Date.now() + 1 }];
+    client.stopSessionRecording.mockImplementation(() => {
+      flushed = mod.replayFramesToSend(frames);
+      return client.log.push("stop");
+    });
+
+    mod.setSessionPrivacy("full");
+    mod.syncSessionRecording(client, "/servers");
+
+    expect(flushed).toEqual(frames);
   });
 });
 
@@ -476,6 +570,68 @@ describe("filterSentryReplayFrame", () => {
     expect(spanFrame.data.payload.description).toContain("acme");
   });
 
+  it("takes the page's text out of click and key frames short of full", async () => {
+    const mod = await load({ hosted: true });
+    const clickFrame = {
+      data: {
+        tag: "breadcrumb",
+        payload: {
+          category: "ui.slowClickDetected",
+          message:
+            'body > div.app > button#server-acme-prod.btn[aria-label="Delete Acme Prod"][type="button"]',
+          data: {
+            url: "https://app.mcpjam.com/servers/acme-prod",
+            route: "/servers/acme-prod",
+            nodeId: 12,
+            node: {
+              id: 12,
+              tagName: "button",
+              textContent: "Delete Acme Prod",
+              attributes: {
+                id: "server-acme-prod",
+                class: "btn",
+                "aria-label": "Delete Acme Prod",
+                title: "Delete Acme Prod",
+                name: "acme-prod",
+                testId: "repo-row-acme/prod",
+              },
+            },
+            clickCount: 1,
+          },
+        },
+      },
+    };
+    mod.setSessionPrivacy("full");
+    expect(mod.filterSentryReplayFrame(clickFrame)).toBe(clickFrame);
+
+    mod.setSessionPrivacy("masked");
+    const payload = mod.filterSentryReplayFrame(clickFrame)?.data
+      .payload as any;
+    expect(JSON.stringify(payload)).not.toMatch(/acme/i);
+    expect(payload).toMatchObject({
+      category: "ui.slowClickDetected",
+      message: "body > div.app > button.btn",
+      data: {
+        url: "https://app.mcpjam.com/servers/[name]",
+        route: "/servers/[name]",
+        nodeId: 12,
+        clickCount: 1,
+        node: {
+          tagName: "button",
+          textContent: "****** **** ****",
+          attributes: {
+            id: "***",
+            class: "btn",
+            "aria-label": "***",
+            title: "***",
+            name: "***",
+            testId: "***",
+          },
+        },
+      },
+    });
+  });
+
   it("is wired into the Sentry options, which mask at every level", async () => {
     const { SENTRY_REPLAY_OPTIONS, filterSentryReplayFrame } = await load();
     expect(SENTRY_REPLAY_OPTIONS).toMatchObject({
@@ -488,6 +644,38 @@ describe("filterSentryReplayFrame", () => {
     expect(SENTRY_REPLAY_OPTIONS.beforeAddRecordingEvent).toBe(
       filterSentryReplayFrame,
     );
+    // Sentry's rrweb skips attribute masking for `style`: an element whose
+    // inline style names a URL or holds a string is blocked instead.
+    expect(SENTRY_REPLAY_OPTIONS.block).toEqual(
+      expect.arrayContaining([
+        '[style*="url(" i]',
+        '[style*="image-set(" i]',
+        `[style*='"']`,
+        `[style*="'"]`,
+      ]),
+    );
+  });
+});
+
+describe("stripSelectorAttributes", () => {
+  it("drops every attribute part, values with brackets included", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes(
+        'div#main > button.btn[aria-label="a]b"][disabled][title="Zelda"]',
+      ),
+    ).toBe("div > button.btn");
+    // An id can be a name: an MCP prompt argument's, an elicitation field's.
+    expect(
+      stripSelectorAttributes("form > input#prompt-arg-acme-billing.field"),
+    ).toBe("form > input.field");
+  });
+
+  it("cuts the selector at a value holding its own quote", async () => {
+    const { stripSelectorAttributes } = await load();
+    expect(
+      stripSelectorAttributes('div > span.x[title="say "Zelda""] > b'),
+    ).toBe("div > span.x");
   });
 });
 
@@ -511,5 +699,112 @@ describe("currentSessionPrivacy", () => {
     expect(mod.shouldMaskAnalytics()).toBe(false);
     mod.setSessionPrivacy("masked");
     expect(mod.shouldMaskAnalytics()).toBe(true);
+  });
+});
+
+describe("filterSentryBreadcrumb", () => {
+  it("keeps everything at full", async () => {
+    const mod = await load({ hosted: true });
+    mod.setSessionPrivacy("full");
+    const crumb = { category: "console", message: "Zelda" };
+    expect(mod.filterSentryBreadcrumb(crumb)).toBe(crumb);
+  });
+
+  it("short of full: drops console output and scrubs names from URLs", async () => {
+    const mod = await load({ hosted: true });
+    for (const level of ["masked", "pending"] as const) {
+      mod.setSessionPrivacy(level);
+      expect(
+        mod.filterSentryBreadcrumb({ category: "console", message: "Zelda" }),
+      ).toBeNull();
+      expect(
+        mod.filterSentryBreadcrumb({
+          category: "fetch",
+          data: { url: "/api/web/servers/acme-billing", method: "GET" },
+        }),
+      ).toEqual({
+        category: "fetch",
+        data: { url: "/api/web/servers/[name]", method: "GET" },
+      });
+      expect(
+        mod.filterSentryBreadcrumb({
+          category: "navigation",
+          data: { from: "/servers/acme", to: "/servers/zelda" },
+        }),
+      ).toEqual({
+        category: "navigation",
+        data: { from: "/servers/[name]", to: "/servers/[name]" },
+      });
+      for (const category of ["ui.click", "ui.input"]) {
+        expect(
+          mod.filterSentryBreadcrumb({
+            category,
+            message:
+              'div.row > button.danger[aria-label="Delete Acme Prod"][name="acme"]',
+            data: { "ui.component_name": "DeleteButton" },
+          }),
+        ).toEqual({
+          category,
+          message: "div.row > button.danger",
+          data: { "ui.component_name": "DeleteButton" },
+        });
+      }
+      const click = { category: "ui.click", message: "button.harness" };
+      expect(mod.filterSentryBreadcrumb(click)).toBe(click);
+    }
+  });
+});
+
+describe("remembered replay off", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("holds off the person it was answered for, and anyone not known yet", async () => {
+    const mod = await load({ hosted: true });
+    expect(mod.replayOffRemembered("user_a")).toBe(false);
+
+    mod.rememberReplayOff("user_a", true);
+    expect(mod.replayOffRemembered("user_a")).toBe(true);
+    expect(mod.replayOffRemembered(undefined)).toBe(true);
+    expect(mod.replayOffRemembered("user_b")).toBe(false);
+    expect(mod.replayOffRemembered(null)).toBe(false);
+  });
+
+  it("survives a reload, and a later answer for the same person clears it", async () => {
+    const first = await load({ hosted: true });
+    first.rememberReplayOff("user_a", true);
+
+    const reloaded = await load({ hosted: true });
+    expect(reloaded.replayOffRemembered("user_a")).toBe(true);
+    // An answer for someone else leaves it alone.
+    reloaded.rememberReplayOff("user_b", false);
+    expect(reloaded.replayOffRemembered("user_a")).toBe(true);
+    reloaded.rememberReplayOff("user_a", false);
+    expect(reloaded.replayOffRemembered("user_a")).toBe(false);
+    expect((await load({ hosted: true })).replayOffRemembered(undefined)).toBe(
+      false,
+    );
+  });
+
+  it("works from memory when storage throws", async () => {
+    const mod = await load({ hosted: true });
+    const storage = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    try {
+      mod.rememberReplayOff("user_a", true);
+      expect(mod.replayOffRemembered("user_a")).toBe(true);
+    } finally {
+      storage.mockRestore();
+      write.mockRestore();
+    }
   });
 });

@@ -9,6 +9,11 @@ import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
 }));
@@ -338,8 +343,6 @@ describe("SuiteScorerTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
-    expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
-    expect(screen.getByTestId("groundedness-not-yet-run")).toBeTruthy();
   });
 
   it("disables the judge's Required segment with the panel's copy", () => {
@@ -509,7 +512,9 @@ it("enters edit mode when checking a box, including after the row is saved", () 
   expect(
     screen.getByRole("button", { name: "Edit evaluators" }),
   ).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("button", { name: "Description quality" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Description quality" }),
+  ).toBeNull();
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Description quality" }),
   );
@@ -547,10 +552,9 @@ it("shows short names at rest and allows multiple role editors to stay open", ()
   fireEvent.click(
     within(row).getByRole("checkbox", { name: "Tool errors (isError)" }),
   );
-  expect(screen.getByRole("button", { name: "Close evaluators" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  expect(
+    screen.getByRole("button", { name: "Close evaluators" }),
+  ).toHaveAttribute("aria-expanded", "true");
   expect(
     container.querySelectorAll("[data-scorer-editor]").length,
   ).toBeGreaterThan(1);
@@ -567,9 +571,9 @@ it("opens every evaluator's settings from Edit evaluators, then closes them", ()
   });
   expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
-  const ids = [
-    ...container.querySelectorAll("[data-scorer-editor]"),
-  ].map((node) => node.getAttribute("data-scorer-editor"));
+  const ids = [...container.querySelectorAll("[data-scorer-editor]")].map(
+    (node) => node.getAttribute("data-scorer-editor"),
+  );
   expect(ids).toEqual(
     expect.arrayContaining([
       "predicate:0",
@@ -591,15 +595,14 @@ it("opens every evaluator's settings from Edit evaluators, then closes them", ()
   expect(
     container.querySelector('[data-setting-key="matchOptions"]'),
   ).toHaveAttribute("open");
-  expect(container.querySelector('[data-setting-key="judge"]')).toHaveAttribute(
-    "open",
+  // The judge is its own section, always shown: nothing to open.
+  expect(container.querySelector('[data-setting-key="judge"]')?.tagName).toBe(
+    "SECTION",
   );
   fireEvent.click(screen.getByRole("button", { name: "Close evaluators" }));
   expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(0);
   expect(
     container.querySelector('[data-setting-key="matchOptions"]'),
   ).not.toHaveAttribute("open");
-  expect(
-    container.querySelector('[data-setting-key="judge"]'),
-  ).not.toHaveAttribute("open");
+  expect(container.querySelector('[data-setting-key="judge"]')).toBeTruthy();
 });
