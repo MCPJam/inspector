@@ -1,3 +1,4 @@
+import { useSpineDrag } from "./spine-drag";
 /**
  * One numbered action, with everything that grades it underneath.
  *
@@ -8,20 +9,32 @@
  *
  * Bodies differ by kind on purpose. A prompt stays on screen and stays
  * editable; the last one cannot be removed, because a case has to ask
- * something. A pinned tool call and a recorded interaction are three-field
- * forms that are read far more often than edited, so they collapse to one
- * line and open on click.
+ * something. Tool calls and interactions keep their field editors visible
+ * so they can be configured directly, just like the assertion rows.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { useMemo, useState, type ReactNode, type Ref } from "react";
+import { MoreHorizontal, Trash2 } from "lucide-react";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@mcpjam/design-system/popover";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import { Input } from "@mcpjam/design-system/input";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { RemoteServer } from "@/hooks/useProjects";
-import type { InteractStep, TestStep } from "@/shared/steps";
+import type { TestStep } from "@/shared/steps";
 import {
   InteractActionFields,
   invokableTools,
@@ -44,6 +57,7 @@ export function ActionRow({
   projectServers,
   evalValidationBorderClass,
   autoFocus,
+  promptRef,
   promptAriaLabel,
   onUpdate,
   onMove,
@@ -51,8 +65,9 @@ export function ActionRow({
   canRemove,
   onHover,
   onSelect,
-  defaultOpen = false,
   children,
+  newest = false,
+  addAfter,
 }: {
   action: SpineAction;
   total: number;
@@ -64,6 +79,7 @@ export function ActionRow({
   projectServers?: RemoteServer[];
   evalValidationBorderClass?: string;
   autoFocus?: boolean;
+  promptRef?: Ref<HTMLTextAreaElement>;
   promptAriaLabel: string;
   onUpdate: (next: TestStep) => void;
   onMove: (dir: -1 | 1) => void;
@@ -72,23 +88,28 @@ export function ActionRow({
   canRemove: boolean;
   onHover?: (stepId: string | null) => void;
   onSelect?: () => void;
-  defaultOpen?: boolean;
   children: ReactNode;
+  newest?: boolean;
+  addAfter?: ReactNode;
 }) {
   const step = action.step;
   const meta = STEP_META[step.kind];
   const Icon = meta.Icon;
-  const expandable = step.kind !== "prompt";
-  const [open, setOpen] = useState(defaultOpen);
+  const isActionCard = step.kind !== "prompt";
+  const drag = useSpineDrag({
+    id: `step:${step.id}`,
+    phase: "steps",
+    kind: "action",
+    disabled: readOnly || !isActionCard,
+  });
+  const [optionsOpen, setOptionsOpen] = useState(false);
   // An authored tool call names its server by ID, so the row would otherwise
   // read "search-products on p570g76zwcpz1…".
   const serverNamesById = useMemo(
     () =>
       new Map(
         (projectServers ?? []).flatMap((server) =>
-          server._id && server.name
-            ? [[server._id, server.name] as const]
-            : [],
+          server._id && server.name ? [[server._id, server.name] as const] : [],
         ),
       ),
     [projectServers],
@@ -96,116 +117,200 @@ export function ActionRow({
 
   return (
     <li
+      {...drag.rowProps}
       data-testid="spine-action-row"
       data-step-kind={step.kind}
       data-step-id={step.id}
       data-ordinal={action.ordinal}
       onMouseEnter={onHover ? () => onHover(step.id) : undefined}
       onMouseLeave={onHover ? () => onHover(null) : undefined}
-      className="group space-y-2"
+      data-newest={newest || undefined}
+      className={cn(
+        "group",
+        step.kind !== "prompt" && "relative bg-card py-2.5 pl-8 pr-11",
+        newest &&
+          step.kind !== "prompt" &&
+          "relative before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-primary",
+      )}
       data-active={isActive || undefined}
     >
-      <div className="flex items-center gap-2 py-1">
-        <span
-          aria-hidden
-          className={cn(
-            total === 1 && "sr-only",
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground",
-          )}
-        >
-          {action.ordinal}
-        </span>
-        <Icon className={cn("size-4 shrink-0", step.kind === "prompt" ? "text-info" : meta.tint)} />
-        {expandable ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-label={`Edit step ${action.ordinal}`}
-            onClick={() => setOpen((value) => !value)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left hover:bg-muted/50 focus-visible:outline focus-visible:outline-ring"
-          >
-            <ChevronRight
-              className={cn(
-                "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
-                open && "rotate-90",
-              )}
-            />
-            <span className="min-w-0 truncate text-xs text-foreground">
-              {summarizeStep(step, serverNamesById)}
-            </span>
-          </button>
-        ) : (
-          <Label
-            htmlFor={`spine-prompt-${step.id}`}
-            className="min-w-0 flex-1 text-lg font-semibold text-info"
-            onClick={onSelect}
-          >
-            User Prompt
-          </Label>
+      {/* Prompt: the newest bar marks only the prompt, not the assertions
+          below it. Prompt steps have no card padding, so make room. */}
+      <div
+        className={cn(
+          step.kind === "prompt" ? "space-y-2" : "contents",
+          newest &&
+            step.kind === "prompt" &&
+            "relative pl-3.5 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-primary",
         )}
-        {status ? <StepStatusBadge status={status} /> : null}
-        {readOnly || total === 1 ? null : (
-          <>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} up`}
-              disabled={action.ordinal === 1}
-              onClick={() => onMove(-1)}
+      >
+        <div className="flex items-center gap-2">
+          {isActionCard
+            ? drag.handle(step.kind === "toolCall" ? "Call tool" : meta.label)
+            : null}
+          {!isActionCard ? (
+            <Icon
+              className={cn(
+                "size-4 shrink-0",
+                step.kind === "prompt" ? "text-card-foreground" : meta.tint,
+              )}
+              aria-hidden="true"
+            />
+          ) : null}
+          {isActionCard ? (
+            <h3
+              className="min-w-0 flex-1 text-[13px] font-semibold leading-[18px] text-card-foreground"
+              title={summarizeStep(step, serverNamesById)}
             >
-              ↑
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} down`}
-              disabled={action.ordinal === total}
-              onClick={() => onMove(1)}
+              {step.kind === "toolCall" ? "Call tool" : meta.label}
+            </h3>
+          ) : (
+            <Label
+              htmlFor={`spine-prompt-${step.id}`}
+              className="min-w-0 flex-1 text-lg leading-7 font-semibold text-card-foreground"
+              onClick={onSelect}
             >
-              ↓
-            </Button>
-            {canRemove ? (
+              User prompt
+            </Label>
+          )}
+          {status ? <StepStatusBadge status={status} /> : null}
+          {!readOnly && isActionCard ? (
+            <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-2 size-7 shrink-0"
+                  aria-label={`Options for step ${action.ordinal}`}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 space-y-1 p-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full justify-start"
+                  aria-label={`Move step ${action.ordinal} up`}
+                  disabled={action.ordinal === 1}
+                  onClick={() => {
+                    setOptionsOpen(false);
+                    onMove(-1);
+                  }}
+                >
+                  Move up
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full justify-start"
+                  aria-label={`Move step ${action.ordinal} down`}
+                  disabled={action.ordinal === total}
+                  onClick={() => {
+                    setOptionsOpen(false);
+                    onMove(1);
+                  }}
+                >
+                  Move down
+                </Button>
+                {canRemove ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full justify-start"
+                    aria-label={`Remove step ${action.ordinal}`}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      onRemove();
+                    }}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+                {addAfter}
+              </PopoverContent>
+            </Popover>
+          ) : null}
+          {readOnly || total === 1 || isActionCard ? null : (
+            <>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-                aria-label={`Remove step ${action.ordinal}`}
-                onClick={onRemove}
+                aria-label={`Move step ${action.ordinal} up`}
+                disabled={action.ordinal === 1}
+                onClick={() => onMove(-1)}
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                ↑
               </Button>
-            ) : null}
-          </>
-        )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                aria-label={`Move step ${action.ordinal} down`}
+                disabled={action.ordinal === total}
+                onClick={() => onMove(1)}
+              >
+                ↓
+              </Button>
+              {canRemove ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                  aria-label={`Remove step ${action.ordinal}`}
+                  onClick={onRemove}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+            </>
+          )}
+        </div>
+        {step.kind === "prompt" ? (
+          <div className="space-y-2">
+            <p
+              id={`spine-prompt-help-${step.id}`}
+              className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
+            >
+              The message the user could send the agent.
+            </p>
+            <Textarea
+              ref={promptRef}
+              id={`spine-prompt-${step.id}`}
+              value={step.prompt}
+              onChange={(event) =>
+                onUpdate({ ...step, prompt: event.target.value })
+              }
+              rows={2}
+              placeholder="Enter the user prompt…"
+              autoFocus={autoFocus}
+              aria-label={promptAriaLabel}
+              aria-describedby={`spine-prompt-help-${step.id}`}
+              readOnly={readOnly}
+              className={cn(
+                "min-h-[72px] resize-y rounded-lg border-input bg-card px-3.5 py-3 font-sans text-[15px] leading-[22px] text-card-foreground md:text-[15px]",
+                !step.prompt.trim() && evalValidationBorderClass,
+              )}
+            />
+          </div>
+        ) : null}
       </div>
 
-      <div className="space-y-5">
-        {step.kind === "prompt" ? (
-          <Textarea
-            id={`spine-prompt-${step.id}`}
-            value={step.prompt}
-            onChange={(event) =>
-              onUpdate({ ...step, prompt: event.target.value })
-            }
-            rows={4}
-            placeholder="Enter the user prompt…"
-            autoFocus={autoFocus}
-            aria-label={promptAriaLabel}
-            readOnly={readOnly}
-            className={cn(
-              "resize-none bg-background text-foreground",
-              !step.prompt.trim() && evalValidationBorderClass,
-            )}
-          />
-        ) : null}
-
-        {open && step.kind === "toolCall" ? (
+      <div
+        className={cn(
+          "space-y-5",
+          isActionCard && "mt-1.5",
+          step.kind === "prompt" && "mt-5",
+        )}
+      >
+        {step.kind === "toolCall" ? (
           <PinnedToolCallFields
+            paper
             seedKey={step.id}
             value={{
               ...(step.serverId ? { serverId: step.serverId } : {}),
@@ -222,7 +327,7 @@ export function ActionRow({
             readOnly={readOnly}
             onChange={(cfg) => {
               if (readOnly) return;
-              onUpdate({
+              const next = {
                 ...step,
                 serverId:
                   cfg.serverId ??
@@ -233,22 +338,92 @@ export function ActionRow({
                 toolName: cfg.toolName,
                 arguments: cfg.arguments as Record<string, unknown>,
                 renderTimeoutMs: cfg.renderTimeoutMs,
-              });
+              };
+              if (
+                next.serverId === step.serverId &&
+                next.serverName === step.serverName &&
+                next.toolName === step.toolName &&
+                next.renderTimeoutMs === step.renderTimeoutMs &&
+                JSON.stringify(next.arguments) === JSON.stringify(step.arguments)
+              ) {
+                return;
+              }
+              onUpdate(next);
             }}
           />
         ) : null}
 
-        {open && step.kind === "interact" ? (
-          <fieldset disabled={readOnly} className="contents">
-            <InteractActionFields
-              value={(step as InteractStep).action}
-              onChange={(next) => onUpdate({ ...step, action: next })}
-              readOnly={readOnly}
-            />
+        {step.kind === "interact" ? (
+          <fieldset disabled={readOnly} className="min-w-0">
+            <div className="space-y-2 text-card-foreground">
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor={`action-view-${step.id}`}
+                  className="text-sm font-medium leading-[18px]"
+                >
+                  View (tool)
+                </Label>
+                {invokableTools(availableTools).length > 0 ? (
+                  <Select
+                    value={step.toolName || undefined}
+                    disabled={readOnly}
+                    onValueChange={(toolName) => onUpdate({ ...step, toolName })}
+                  >
+                    <SelectTrigger
+                      id={`action-view-${step.id}`}
+                      className="h-9 w-full text-sm font-normal"
+                      aria-label={`View tool for step ${action.ordinal}`}
+                      aria-invalid={!readOnly && !step.toolName.trim()}
+                    >
+                      <SelectValue placeholder="Pick a view tool…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        ...new Set(
+                          invokableTools(availableTools).map((tool) => tool.name),
+                        ),
+                      ].map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id={`action-view-${step.id}`}
+                    className="h-9 text-sm md:text-sm"
+                    aria-label={`View tool for step ${action.ordinal}`}
+                    value={step.toolName}
+                    placeholder="View tool name…"
+                    readOnly={readOnly}
+                    aria-invalid={!readOnly && !step.toolName.trim()}
+                    onChange={(event) =>
+                      onUpdate({ ...step, toolName: event.target.value })
+                    }
+                  />
+                )}
+              </div>
+              <InteractActionFields
+                paper
+                value={step.action}
+                onChange={(next) => onUpdate({ ...step, action: next })}
+                readOnly={readOnly}
+              />
+            </div>
           </fieldset>
         ) : null}
 
-        {children}
+        {step.kind === "prompt" || readOnly ? (
+          children
+        ) : (
+          <div
+            className="relative -ml-8 -mr-11 -mb-2.5 border-t border-border bg-card"
+            data-testid="action-following-checks"
+          >
+            {children}
+          </div>
+        )}
       </div>
     </li>
   );
