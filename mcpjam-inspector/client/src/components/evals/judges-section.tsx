@@ -238,6 +238,7 @@ export function JudgeModelControl({
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
       availableModels={availableModels}
+      selectionsSupported={saveSelections}
       managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
       onChange={(row) =>
         onChange(
@@ -375,6 +376,7 @@ export function JudgesSection({
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
               availableModels={availableModels}
+              selectionsSupported={saveSelections}
               managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
               onChange={(row) =>
                 update(

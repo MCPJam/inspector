@@ -61,6 +61,7 @@ export function JudgeModelPicker({
   requireOrgKeys = false,
   onManageOrgProviders,
   variant = "outline",
+  selectionsSupported = true,
 }: {
   /** The trigger's id, for the caller's `<Label htmlFor>`. */
   id: string;
@@ -79,6 +80,7 @@ export function JudgeModelPicker({
    * "Add a provider" instead of "Ask an organization admin".
    */
   onManageOrgProviders?: () => void;
+  selectionsSupported?: boolean;
   availableModels: readonly ModelDefinition[];
   managedDefaultModelId: string;
   /** The picked row (never the current value's disabled row). */
@@ -96,8 +98,16 @@ export function JudgeModelPicker({
         managedDefaultModelId,
         currentSelection: selection,
         requireOrgKeys,
+        selectionsSupported,
       }),
-    [availableModels, value, managedDefaultModelId, selection, requireOrgKeys],
+    [
+      availableModels,
+      value,
+      managedDefaultModelId,
+      selection,
+      requireOrgKeys,
+      selectionsSupported,
+    ],
   );
   // Under the policy nothing stands in for an unset judge: one must be chosen.
   const currentModel =
@@ -136,7 +146,9 @@ export function JudgeModelPicker({
             className,
           )}
         >
-          {variant === "pill" && !isOrgKeysDisallowedRow(currentModel) && currentModel !== NO_JUDGE_MODEL ? (
+          {variant === "pill" &&
+          !isOrgKeysDisallowedRow(currentModel) &&
+          currentModel !== NO_JUDGE_MODEL ? (
             <ProviderLogo
               provider={currentModel.provider}
               customProviderName={currentModel.customProviderName}
