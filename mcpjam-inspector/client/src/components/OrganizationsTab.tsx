@@ -1876,8 +1876,7 @@ function OrganizationPage({
                         </div>
                       ) : billingStatus && !billingStatus.billingConfigured ? (
                         <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Purchases are unavailable here. You can still view the
-                          plans.
+                          Purchases are unavailable here. You can still view the plans.
                         </div>
                       ) : billingStatus ? (
                         <>

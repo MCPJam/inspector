@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { Button } from "@mcpjam/design-system/button";
@@ -28,14 +28,27 @@ const cancelRef = makeFunctionReference<
   { success: boolean }
 >("organizations:cancelOrganizationDeletion");
 
+class DeletionBannerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? null : this.props.children; }
+}
+
 export function PendingOrganizationDeletions() {
+  return <DeletionBannerBoundary><PendingDeletionBanner /></DeletionBannerBoundary>;
+}
+
+function PendingDeletionBanner() {
   const { isAuthenticated } = useConvexAuth();
   const ready = useDbUserReady();
   const pending = useQuery(pendingRef, isAuthenticated && ready ? {} : "skip");
   const cancel = useMutation(cancelRef);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
-  // No polling is needed: the query changes when the worker claims the job.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const cancelDeletion = async (organizationId: string) => {
     setCancelling(organizationId);
     try {
@@ -45,7 +58,7 @@ export function PendingOrganizationDeletions() {
     } catch (error) {
       setNow(Date.now());
       toast.error(
-        convexErrMessage(error, "Unable to cancel organization deletion"),
+        convexErrMessage(error, "Could not cancel organization deletion. Try again."),
       );
     } finally {
       setCancelling(null);

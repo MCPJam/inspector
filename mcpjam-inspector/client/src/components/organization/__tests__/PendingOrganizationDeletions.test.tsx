@@ -1,15 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PendingOrganizationDeletions } from "../PendingOrganizationDeletions";
 const mocks = vi.hoisted(() => ({
   pending: [] as { organizationId: string; name: string; purgeAfter: number }[],
+  unavailable: false,
   cancel: vi.fn(),
   end: vi.fn(),
   error: vi.fn(),
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useQuery: () => mocks.pending,
+  useQuery: () => { if (mocks.unavailable) throw new Error("Server Error"); return mocks.pending; },
   useMutation: () => mocks.cancel,
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.unavailable = false;
   mocks.pending = [
     {
       organizationId: "org",
@@ -52,4 +54,22 @@ it("renders nothing when the owner has no pending deletions", () => {
   mocks.pending = [];
   const { container } = render(<PendingOrganizationDeletions />);
   expect(container).toBeEmptyDOMElement();
+});
+
+afterEach(() => { vi.useRealTimers(); });
+it("isolates an unavailable backend function from the app", () => {
+  mocks.unavailable = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  render(<><span>App remains available</span><PendingOrganizationDeletions /></>);
+  expect(screen.getByText("App remains available")).toBeInTheDocument();
+  expect(screen.queryByText("Deletion scheduled for Example")).not.toBeInTheDocument();
+  error.mockRestore();
+});
+it("disables cancellation when the deadline passes without a query update", () => {
+  vi.useFakeTimers();
+  mocks.pending[0].purgeAfter = Date.now() + 1000;
+  render(<PendingOrganizationDeletions />);
+  expect(screen.getByRole("button", { name: "Cancel deletion" })).toBeEnabled();
+  act(() => vi.advanceTimersByTime(1001));
+  expect(screen.getByRole("button", { name: "Cancel deletion" })).toBeDisabled();
 });
