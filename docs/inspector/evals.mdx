@@ -301,6 +301,15 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. When every model the suite would run is out of MCPJam credits, **Run all** and each case's **Run** button are disabled with an "Out of MCPJam credits · resets in …" tooltip — switching any case to a model from your own providers re-enables those buttons. The header pickers will tell you which condition applies.
 </Tip>
 
+### Organization key policy
+
+When your organization requires its own provider keys for AI features, the model pickers in the Evaluate surface follow the same policy as the Playground:
+
+- The suite's target picker, the case run sheet's model list, and the generated-drafts model picker show only your organization's models.
+- If no organization model is available yet, the picker shows an empty state: **Admins** see an **Add a provider** button that opens the organization's AI providers settings; **Members** see "Ask an organization admin to add one."
+- If a previously saved target is no longer allowed under the policy, a warning appears on its picker trigger showing the model's catalog name. When two targets of the same model differ only by reasoning effort, the effort level is shown beside the warning so the two targets stay distinguishable.
+- The judge model picker follows the same rules: it lists only organization models, and a saved judge the policy no longer allows shows a warning on its trigger.
+
 ### Run review
 
 When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
