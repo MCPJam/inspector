@@ -2058,6 +2058,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // Prober run 2026-10-12: the App iframe carries `allow-same-origin`.
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             // Correction: absent through 2026-09-02; the 2026-09-29 capture

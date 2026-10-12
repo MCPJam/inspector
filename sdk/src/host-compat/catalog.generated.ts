@@ -3152,6 +3152,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sessionStorage: true,
               indexedDB: true,
             },
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: true,

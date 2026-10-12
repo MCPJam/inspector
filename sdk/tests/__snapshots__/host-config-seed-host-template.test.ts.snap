@@ -2244,6 +2244,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow": {},
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
         },
       },
       "initialize": {
@@ -2441,6 +2442,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow": {},
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
         },
       },
       "initialize": {
