@@ -250,7 +250,7 @@ describe("OrganizationDefaultModelCard", () => {
       aiModelSuggestions: { default: DEFAULT_MODEL },
     });
     renderCard();
-    expect(screen.getByText(/Suggested:/)).toBeInTheDocument();
+    expect(screen.getByText(/Suggested model/)).toBeInTheDocument();
   });
 
   it("never offers a suggestion over a saved model", () => {
@@ -266,7 +266,7 @@ describe("OrganizationDefaultModelCard", () => {
     });
     renderCard();
 
-    expect(screen.queryByText(/Suggested:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Suggested model/)).not.toBeInTheDocument();
   });
 
   it("shows the saved model to members", () => {
@@ -293,7 +293,7 @@ describe("OrganizationDefaultModelCard", () => {
     });
     renderCard({ isAdmin: true });
 
-    expect(screen.queryByText(/Suggested:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Suggested model/)).not.toBeInTheDocument();
   });
 
   describe("Enterprise only", () => {

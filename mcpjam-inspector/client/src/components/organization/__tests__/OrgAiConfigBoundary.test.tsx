@@ -113,17 +113,28 @@ describe("OrgAiCardBoundary", () => {
     expect(reportBoundaryError).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves a failure of the shared query to the outer boundary", () => {
+  it.each([
+    ["a redacted failure", PROD_REDACTED],
+    ["a missing query", DEV_MISSING],
+  ])("propagates %s even with a healthy sibling", (_label, message) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "debug").mockImplementation(() => {});
     reportBoundaryError.mockClear();
     const { container } = render(
-      <OrgAiCardBoundary name="card" title="the default AI model">
-        <Throws error={new Error(PROD_REDACTED)} />
-      </OrgAiCardBoundary>,
+      <OrgAiConfigBoundary name="outer">
+        <p>Healthy policy card</p>
+        <OrgAiCardBoundary name="card" title="the default AI model">
+          <Throws error={new Error(message)} />
+        </OrgAiCardBoundary>
+      </OrgAiConfigBoundary>,
     );
-
-    expect(container).toBeEmptyDOMElement();
-    expect(reportBoundaryError).not.toHaveBeenCalled();
+    if (message === DEV_MISSING) {
+      expect(container).toBeEmptyDOMElement();
+      expect(reportBoundaryError).not.toHaveBeenCalled();
+    } else {
+      expect(screen.getByTestId("org-ai-config-error")).toBeVisible();
+      expect(screen.queryByTestId("card-error")).not.toBeInTheDocument();
+      expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+    }
   });
 });

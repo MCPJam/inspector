@@ -223,7 +223,7 @@ function ModelRow({
               Not set
               {suggestion ? (
                 <>
-                  {" · Suggested: "}
+                  {" · Suggested model "}
                   <SelectionSummary
                     selection={suggestion}
                     providers={providers}

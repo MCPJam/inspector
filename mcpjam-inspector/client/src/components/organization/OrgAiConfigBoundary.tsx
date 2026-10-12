@@ -84,9 +84,8 @@ export function isOrgAiConfigQueryError(error: Error): boolean {
  * render bug in it shows a short error in its place and never takes the AI
  * keys switch down with it.
  *
- * A failure of the shared query is not this card's to show: the outer
- * boundary shows one message for it and reports it. Here it renders nothing
- * and is not reported a second time.
+ * Shared query failures propagate to the outer boundary even if the sibling
+ * policy card rendered successfully. Only that boundary reports them.
  */
 export function OrgAiCardBoundary({
   name,
@@ -101,8 +100,9 @@ export function OrgAiCardBoundary({
   return (
     <ErrorBoundary
       name={name}
-      fallback={({ error, reset }) =>
-        error && isOrgAiConfigQueryError(error) ? null : (
+      fallback={({ error, reset }) => {
+        if (error && isOrgAiConfigQueryError(error)) throw error;
+        return (
           <Alert variant="destructive" data-testid={`${name}-error`}>
             <AlertTitle>Couldn&apos;t show {title}</AlertTitle>
             <AlertDescription className="space-y-2">
@@ -114,8 +114,8 @@ export function OrgAiCardBoundary({
               </Button>
             </AlertDescription>
           </Alert>
-        )
-      }
+        );
+      }}
       isExpectedError={isOrgAiConfigQueryError}
     >
       {children}
