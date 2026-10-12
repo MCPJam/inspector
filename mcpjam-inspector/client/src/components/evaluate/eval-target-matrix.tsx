@@ -185,10 +185,14 @@ export function EvalTargetMatrix({
 }) {
   const reduceMotion = useReducedMotion();
   const readHarnessByHost = useHostHarnessTargets(hostIds);
-  const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
+  const harnessFor = (
+    hostId: string,
+  ): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     return host?.harness !== undefined
-      ? (typeof host.harness === "string" ? { harnessId: host.harness } : host.harness)
+      ? typeof host.harness === "string"
+        ? { harnessId: host.harness }
+        : host.harness
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({
@@ -509,8 +513,11 @@ export function EvalModelChoices({
           { modelId: id, selection },
           availableModels,
           undefined,
+          { exactSelection: requireOrgKeys },
         )
-      : availableModels.find((model) => String(model.id) === id)) ??
+      : requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
+        ? undefined
+        : availableModels.find((model) => String(model.id) === id)) ??
     (requireOrgKeys && saved && !isRuntimeChosenModelSentinel(id)
       ? orgKeysDisallowedRow(savedModelRow(id, availableModels))
       : {

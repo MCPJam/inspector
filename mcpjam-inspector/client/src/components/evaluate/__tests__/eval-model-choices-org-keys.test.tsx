@@ -93,6 +93,47 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     expect(choices.getByText("High")).toBeInTheDocument();
   });
 
+  it("warns about a saved hosted target that an org connection also lists, by source and connection", () => {
+    // The org's OpenRouter connection lists the hosted catalog's id. Only the
+    // target saved on that connection is allowed; the hosted one still warns.
+    const fallback = { provider: "none" as const, model: "none" as const };
+    const modelId = "anthropic/claude-haiku-4.5";
+    const openRouterRow = {
+      id: modelId,
+      name: "Claude Haiku 4.5",
+      provider: "openrouter",
+      hosted: false,
+      orgProvider: { providerKey: "openrouter", id: "conn_or" },
+    } as ModelDefinition;
+    render(
+      <EvalModelChoices
+        value={{
+          includeClientDefaults: false,
+          explicitTargets: [
+            { modelId, selection: { modelId, source: "hosted", fallback } },
+            {
+              modelId,
+              selection: {
+                modelId,
+                source: "org",
+                connectionRef: { kind: "orgProvider", id: "conn_or" },
+                fallback,
+              },
+            },
+          ],
+        }}
+        onChange={vi.fn()}
+        disabled={false}
+        testId="choices"
+        availableModels={[...ORG_MODELS, openRouterRow]}
+        requireOrgKeys
+      />,
+    );
+    expect(
+      screen.getAllByTestId("model-trigger-org-keys-warning"),
+    ).toHaveLength(1);
+  });
+
   it("keeps the raw id, without a warning, when the policy is off", () => {
     render(
       <EvalModelChoices
@@ -124,6 +165,37 @@ describe("EvalModelChoices — organization requires its own keys", () => {
       fallback: { provider: "none" as const, model: "none" as const },
     },
   };
+
+  it.each([
+    [
+      "a removed connection",
+      {
+        ...orgSonnet,
+        selection: {
+          ...orgSonnet.selection,
+          connectionRef: { kind: "orgProvider" as const, id: "conn_removed" },
+        },
+      },
+    ],
+    ["a legacy id without a connection", { modelId: "claude-sonnet-4-5" }],
+  ])(
+    "warns about %s even when another connection lists the same model",
+    (_label, target) => {
+      render(
+        <EvalModelChoices
+          value={{ includeClientDefaults: false, explicitTargets: [target] }}
+          onChange={vi.fn()}
+          disabled={false}
+          testId="choices"
+          availableModels={ORG_MODELS}
+          requireOrgKeys
+        />,
+      );
+      expect(
+        screen.getByTestId("model-trigger-org-keys-warning"),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("saves a bare-id org row picked in place of a target with its org selection", async () => {
     const onChange = vi.fn();
