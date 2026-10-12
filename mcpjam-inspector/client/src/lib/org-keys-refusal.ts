@@ -179,8 +179,8 @@ export function orgKeysRefusalNextStep(
       return "Choose a model from an organization provider.";
     case "configure_org_model_role":
       return admin
-        ? "Set the organization's default models in Organization → AI providers."
-        : "Ask an organization admin to set the organization's default models.";
+        ? "Set the organization's default AI model in Organization → AI providers."
+        : "Ask an organization admin to set the organization's default AI model.";
     case "add_org_provider":
       return admin
         ? "Add or reconnect a provider in Organization → AI providers."
