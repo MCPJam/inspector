@@ -83,7 +83,7 @@ describe("GET /api/web/flags", () => {
 
   it("returns only allowlisted keys with flag-shaped values", async () => {
     mocks.getAllFlags.mockResolvedValueOnce({
-      "computers-enabled": true,
+      "sandbox-images-enabled": true,
       "guest-credit-wall-copy": "treatment",
       xaa: false,
       "unlisted-flag": true,
@@ -96,7 +96,7 @@ describe("GET /api/web/flags", () => {
     expect(body).toEqual({
       flags: {
         ...LOCAL_HARNESS_FLAGS_OFF,
-        "computers-enabled": true,
+        "sandbox-images-enabled": true,
         "guest-credit-wall-copy": "treatment",
         xaa: false,
       },

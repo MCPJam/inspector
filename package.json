@@ -17,6 +17,7 @@
     "vitest"
   ],
   "scripts": {
+    "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\"",
     "build": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/vitest && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
@@ -53,7 +54,11 @@
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:publish": "changeset publish",
-    "check:mirrors": "node scripts/check-authoring-mirror.mjs"
+    "check:mirrors": "node scripts/check-authoring-mirror.mjs",
+    "slop:measure": "node scripts/slop/measure.mjs",
+    "slop:check": "node scripts/slop/ratchet.mjs",
+    "slop:size": "node scripts/slop/pr-size.mjs",
+    "slop:copy": "node scripts/slop/copy-review.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
@@ -61,6 +66,7 @@
     "@types/dagre": "^0.7.54",
     "concurrently": "^10.0.5",
     "@changesets/changelog-github": "^1.0.1",
+    "vite": "^7.3.6",
     "vitest": "^4.1.11"
   },
   "dependencies": {

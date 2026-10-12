@@ -1936,14 +1936,17 @@ describe("web routes — chat-v2 hosted mode", () => {
       });
     });
 
-    it("a plain Claude Code turn stays on the personal computer: no box, no binding", async () => {
+    it("a plain Claude Code turn gets the conversation's box, with its harness id", async () => {
       const response = await post({}, claudeCode);
       expect(response.status).toBe(200);
-      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ harness: "claude-code" })
+      );
       expect(
         handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
-          .harnessSandboxBinding
-      ).toBeUndefined();
+          .harnessSandboxBinding?.sandboxId
+      ).toBe("sbx_pg");
     });
 
     it("a compare column gets a box of its own even for Claude Code", async () => {

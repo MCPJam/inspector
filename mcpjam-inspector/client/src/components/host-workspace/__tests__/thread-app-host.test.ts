@@ -94,6 +94,20 @@ describe("owned App display contract", () => {
   });
 });
 
+describe("who decides an owned App's display mode", () => {
+  it.each(["global", "thread"] as const)(
+    "a %s entrypoint fixes fullscreen, so an App's own declaration can't refuse it",
+    (kind) => {
+      const owned = createThreadAppHost(host, handle, "server", kind);
+      expect(owned.surface.fixedDisplayMode).toBe("fullscreen");
+    },
+  );
+  it("a model App keeps negotiating its modes", () => {
+    const owned = createThreadAppHost(host, handle, "server", "model");
+    expect(owned.surface.fixedDisplayMode).toBeUndefined();
+  });
+});
+
 describe("a model App in the chat", () => {
   it("keeps the client's chat display modes and request policy, so it can leave fullscreen", () => {
     const client = {

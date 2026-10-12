@@ -20,6 +20,10 @@ import {
   isRuntimeChosenModelSentinel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import { normalizeSuiteServerRefs } from "../evals/use-eval-handlers";
 import type { EvalCase, EvalSuite } from "../evals/types";
@@ -40,6 +44,12 @@ export type RunPreflight = {
 };
 
 export type RunPreflightState = RunPreflight & {
+  /** Every model the launch runs is out of MCPJam credits: why it cannot start. */
+  outOfCreditsReason?: string | null;
+  /** The same answer for only the environments picked in the sheet. */
+  outOfCreditsReasonForEnvironments?: (
+    environmentIds: readonly string[],
+  ) => string | null;
   serverName: (ref: string) => string;
   connect?: (ref: string) => Promise<string | null>;
   manageModels?: () => void;
@@ -301,7 +311,9 @@ export function useSuiteRunPreflight({
     isAuthenticated,
   });
   const { hosts } = useHostList({ isAuthenticated, projectId });
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, outOfCreditsReason } = useAvailableModels({
+    projectId,
+  });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
@@ -312,16 +324,17 @@ export function useSuiteRunPreflight({
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
     planned?.templateOnlyIds,
   );
+  const targets = preflightTargets({
+    suite,
+    cases,
+    environments,
+    hosts,
+    environmentServerRefs: environment.serverRefs,
+    targets: planned?.targets,
+    serverRefs: planned?.serverRefs,
+  });
   const preflight = runPreflight({
-    ...preflightTargets({
-      suite,
-      cases,
-      environments,
-      hosts,
-      environmentServerRefs: environment.serverRefs,
-      targets: planned?.targets,
-      serverRefs: planned?.serverRefs,
-    }),
+    ...targets,
     refused: environment.refusals,
     refusalByEnvironment: environment.refusalByEnvironment,
     servers: appState?.servers ?? {},
@@ -330,8 +343,30 @@ export function useSuiteRunPreflight({
     availableModelIds: availableModels.map((model) => String(model.id)),
     orgConfig,
   });
+  // The models are locked in `availableModels` only while the org is out.
+  const creditsReasonFor = (models: typeof targets.models) =>
+    allModelsOutOfCredits(models, availableModels)
+      ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+      : null;
   return {
     ...preflight,
+    outOfCreditsReason: creditsReasonFor(targets.models),
+    // Planned cells are already what launches; otherwise the sheet picks
+    // environments, and only theirs count.
+    ...(planned
+      ? {}
+      : {
+          outOfCreditsReasonForEnvironments: (environmentIds) =>
+            creditsReasonFor(
+              preflightTargets({
+                suite: { ...suite, environmentIds: [...environmentIds] },
+                cases,
+                environments,
+                hosts,
+                environmentServerRefs: [],
+              }).models,
+            ),
+        }),
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
     ...(actions
@@ -351,15 +386,26 @@ export function useSuiteRunPreflight({
   };
 }
 
-/** An environment suite's refusals, kept only for the environments selected. */
-export function scopePreflightToEnvironments<T extends RunPreflight>(
-  preflight: T,
-  selectedEnvironmentIds: readonly string[],
-): T {
+/**
+ * An environment suite's refusals and credits gate, kept only for the
+ * environments selected.
+ */
+export function scopePreflightToEnvironments<
+  T extends RunPreflight &
+    Pick<RunPreflightState, "outOfCreditsReasonForEnvironments">,
+>(preflight: T, selectedEnvironmentIds: readonly string[]): T {
+  const credits = preflight.outOfCreditsReasonForEnvironments
+    ? {
+        outOfCreditsReason: preflight.outOfCreditsReasonForEnvironments(
+          selectedEnvironmentIds,
+        ),
+      }
+    : {};
   const byEnvironment = preflight.refusalByEnvironment;
-  if (!byEnvironment) return preflight;
+  if (!byEnvironment) return { ...preflight, ...credits };
   return {
     ...preflight,
+    ...credits,
     refused: [
       ...new Set(
         selectedEnvironmentIds.flatMap((id) =>

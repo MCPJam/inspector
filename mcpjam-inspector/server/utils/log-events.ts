@@ -324,6 +324,22 @@ export type RequestEventMap = {
     modelId: string;
     reason: string;
   };
+  /**
+   * A chat continuation was refused before any model call or MCP connection
+   * (`server/utils/agent-loop-guard.ts`): the user message's step budget was
+   * already spent, or the model's call to one tool had its input rejected in
+   * each of the last few steps. The browser stops resuming on the refusal, so
+   * a steady rate from one session is an old tab that has not reloaded yet.
+   *
+   * Counts and the tool's name only — never message content.
+   */
+  "agent.loop_guard.tripped": {
+    surface: "mcpjam_agent" | "chat_v2";
+    reason: "step_limit" | "repeated_tool_input_error";
+    steps: number;
+    maxSteps: number;
+    toolName?: string;
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"
@@ -595,6 +611,20 @@ export type SystemEventMap = {
     rateLimitRejects: number;
     projectRejects: number;
     busyRejects: number;
+    /** Requests forwarded with at least one event under a restricted policy. */
+    privacyMasked: number;
+    /** Requests refused outright: nothing the policy allows was left to forward. */
+    privacyRejected: number;
+    /** Requests with at least one event whose policy was unresolved. */
+    privacyUnresolved: number;
+    /** Replay events the policy did not allow, dropped from forwarded requests. */
+    privacyReplayDropped: number;
+    /** Requests refused because an event or metric could not be shown clean. */
+    scrubDrops: number;
+    /** Replay events dropped: they carried a credential URL. */
+    replayCredentialDrops: number;
+    /** Replay events dropped: their nested data could not be decoded. */
+    replayUndecodableDrops: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

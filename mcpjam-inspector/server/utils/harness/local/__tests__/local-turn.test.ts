@@ -256,6 +256,58 @@ describe("a local setup that fails partway through", () => {
   });
 });
 
+describe("a local turn on the organization's own key", () => {
+  const selection = {
+    source: "org" as const,
+    modelId: "anthropic/claude-haiku-4.5",
+    connectionRef: { kind: "orgProvider" as const, id: "conn_1" },
+  };
+
+  it("carries the org selection to the loopback start and surfaces the confirmed binding", async () => {
+    const orgUpstream = {
+      credentialSource: "org" as const,
+      profile: "anthropic-native" as const,
+      nativeModelId: "claude-haiku-4-5",
+      credentialRevision: "0123456789abcdef",
+    };
+    startLoopbackModelBroker.mockImplementationOnce(async () => ({
+      ok: true as const,
+      runId: "run_1",
+      expiresAt: Date.now() + 60_000,
+      protocol: "anthropic" as const,
+      proxyBaseUrl: "https://api.example.test/proxy",
+      delivery: "inspector-loopback-gateway" as const,
+      lease: "lease.token.value",
+      orgUpstream,
+    }));
+    const result = await prepareLocalHarnessTurn({
+      ...turnArgs(),
+      modelSelection: selection as never,
+    });
+    expect(startLoopbackModelBroker).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelSelection: selection }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.prepared.orgUpstream).toEqual(orgUpstream);
+    // Still a capability, never the lease, on the org key too.
+    expect(JSON.stringify(result.prepared.auth)).not.toContain("lease.token");
+    await result.prepared.teardown();
+  });
+
+  it("a hosted turn's loopback start carries no selection", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    const startArgs = (
+      startLoopbackModelBroker.mock.lastCall as unknown[]
+    )?.[0] as Record<string, unknown> | undefined;
+    expect(startArgs && "modelSelection" in startArgs).toBe(false);
+    if (result.ok) {
+      expect(result.prepared.orgUpstream).toBeUndefined();
+      await result.prepared.teardown();
+    }
+  });
+});
+
 describe("a local setup that succeeds", () => {
   it("registers the session and hands back a capability, never the lease", async () => {
     const result = await prepareLocalHarnessTurn(turnArgs());
@@ -433,6 +485,22 @@ describe("local lane state lifetime", () => {
     expect(delivered).not.toHaveBeenCalled();
     await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
     expect(delivered).toHaveBeenCalledOnce();
+    await result.prepared.discardState();
+  });
+
+  it("lands composer attachments in the session's own state, never the workspace", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
+    const attachments = join(providerArgs.sessionStateDir, "attachments");
+    // Inside the state root the session's file API is confined to, and
+    // outside the user's checkout.
+    expect(result.prepared.attachmentsDir).toEqual({
+      writeDir: toAdapterPath(attachments),
+      agentDir: attachments,
+    });
+    expect(providerArgs.workspacePath).toEqual(expect.any(String));
+    expect(attachments.startsWith(providerArgs.workspacePath)).toBe(false);
     await result.prepared.discardState();
   });
 

@@ -15,8 +15,15 @@ on:
   # all — not a pattern added by hand while some stack happens to be in flight,
   # which only works for the stack somebody remembered to name.
   pull_request:
-  push:
-    branches: [main]
+  # The merge queue tests the merged result before it lands on main; without
+  # this trigger the queue's required checks never report and entries time out.
+  #
+  # There is deliberately no `push: main`. The queue moves main to the exact
+  # commit it just tested, so a push run would test that commit a second time.
+  # Release's gates find green runs by commit, not by event, so they count the
+  # queue's run, and warm-node-modules.yml saves on main the node_modules cache
+  # that PR runs restore.
+  merge_group:
 
 # Every job here runs untrusted-ish code — `npm ci` lifecycle scripts and the
 # test suites themselves. Pin the token to read-only so that stays true even if
@@ -36,11 +43,24 @@ env:
   # flaky) Electron binary download during npm ci.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
+# Every job runs on Blacksmith. GitHub's hosted runners are one pool of 60
+# concurrent jobs shared by every MCPJam repo, and at busy times these jobs
+# waited 30-80 minutes for a slot; Blacksmith has no concurrency cap. 4 vCPU /
+# 16 GB matches GitHub's public-repo runner, which the 6 GB test heap needs.
+#
+# TEST_RUNNER is the way back without a PR: if Blacksmith is down, no PR can
+# pass these required checks, a revert included. Set the repository variable to
+# `ubuntu-latest` and every job here, in lint.yml and in warm-node-modules.yml
+# moves together (their caches live with the runner that saved them).
+
 jobs:
   authoring-mirror:
     name: Compare authoring contracts with backend
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
+    if: github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,7 +85,8 @@ jobs:
           node scripts/check-authoring-mirror.mjs --backend .authoring-backend
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
     name: Run Tests
     # Pinned to the same Playwright version as the `@playwright/test` dependency.
     # The image ships Chromium + every system library preinstalled, so we skip
@@ -166,7 +187,8 @@ jobs:
         run: npm run test:ci:rest
 
   packaging:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -227,7 +249,8 @@ jobs:
         run: npm run test:ci:packaging
 
   inspector:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -297,7 +320,8 @@ jobs:
         run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -368,5 +392,145 @@ jobs:
           path: |
             mcpjam-inspector/playwright-report/
             mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Two telemetry-on browser jobs, on two harnesses: `telemetry-privacy`
+  # drives a small page built from the telemetry modules and proves a private
+  # context sends no seeded personal data; `telemetry-egress` drives the whole
+  # hosted app and proves no credential URL leaves through PostHog or Sentry.
+  telemetry-egress:
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
+    name: Telemetry egress (Playwright, telemetry on)
+    # Same pinned Playwright image as `e2e` — Chromium + system deps are
+    # preinstalled, and its Chromium is the one this Playwright version expects.
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+    # A hosted build with Sentry and PostHog ON, because they are what it
+    # tests: every request to the PostHog relay and to Sentry ingest
+    # intercepted with `page.route`, recorded, decoded and searched for
+    # planted credentials. Nothing is forwarded — the spec fulfils every
+    # request itself, serves the app from the build, and stands in for
+    # Convex — so unlike `e2e` there is no VITE_DISABLE_SENTRY: turning Sentry
+    # off would turn half the proof off. No server runs, so the server-side
+    # DO_NOT_TRACK has nothing to apply to.
+    # See mcpjam-inspector/e2e/telemetry/browser-harness.ts.
+
+    steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` and `e2e` jobs.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Build inspector
+        # The same build `e2e` runs: it builds the SDK and the bundles the
+        # client imports. The telemetry client build below reuses them.
+        run: npm run build -w @mcpjam/inspector
+
+      - name: Build the telemetry client
+        # Hosted mode (what records), PostHog and Sentry on, a Convex URL the
+        # spec stands in for. Written to dist/telemetry-client, next to the
+        # normal client, never instead of it.
+        run: npm run build:client:telemetry-e2e -w @mcpjam/inspector
+
+      - name: Run telemetry egress e2e
+        run: npm run test:e2e:telemetry -w @mcpjam/inspector
+
+      - name: Upload telemetry egress report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-telemetry
+          path: |
+            mcpjam-inspector/playwright-report/telemetry/
+            mcpjam-inspector/test-results/telemetry/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  telemetry-privacy:
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    name: Telemetry Privacy (browser)
+    # Telemetry ON, unlike the smoke job above: the app's real PostHog and
+    # Sentry setup, with both transports intercepted in the browser and every
+    # outbound payload decoded. Nothing reaches a vendor. Proves a private
+    # context sends masked, useful recordings and no seeded personal data.
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+
+    steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Run telemetry privacy browser test
+        run: npm run test:e2e:telemetry-privacy -w @mcpjam/inspector
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: telemetry-privacy-report
+          path: mcpjam-inspector/test-results/
           retention-days: 7
           if-no-files-found: ignore

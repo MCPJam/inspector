@@ -35,6 +35,8 @@ const f = vi.hoisted(() => ({
   anchors: new Map<string, string>(),
   /** Every backend and MCP boundary crossed, in the order it started. */
   log: [] as string[],
+  /** The App's `ui://` HTML; a small page unless a test sets it. */
+  uiText: undefined as string | undefined,
   /** The backend calls that started while no other backend call was in
    * flight: the request's one-after-another round trips. */
   serial: [] as string[],
@@ -167,7 +169,7 @@ vi.mock("../auth.js", async () => ({
               {
                 uri: "ui://fixture/app",
                 mimeType: "text/html;profile=mcp-app",
-                text: "<p>App</p>",
+                text: f.uiText ?? "<p>App</p>",
                 _meta: { ui: {} },
               },
             ],
@@ -567,6 +569,40 @@ describe("App call backend trips", () => {
     },
   );
 
+  it.each([
+    [
+      "a 1.1 MB UI, the size OpenAI's Bits & Bolts example ships",
+      1_150_000,
+      200,
+    ],
+    ["a UI over 5 MB", 5 * 1024 * 1024 + 1, 403],
+  ])("opens %s only within the App UI bound", async (_label, bytes, status) => {
+    f.uiText = "<p>" + "x".repeat(bytes - 7) + "</p>";
+    f.controls.clear();
+    f.anchors.clear();
+    try {
+      const opened = await post("activation/open", {
+        ...scope,
+        hostId: "host",
+        serverId: "server",
+        toolName: tool.name,
+        threadId: `thread-ui-${bytes}`,
+        kind: "thread",
+      });
+      expect(opened.status).toBe(status);
+      const value = (await opened.json()) as {
+        code?: string;
+        widgetContent?: { html: string };
+      };
+      if (status === 200) {
+        expect(value.widgetContent?.html.length).toBe(bytes);
+      } else {
+        expect(value.code).toBe("INSTANCE_UI_UNAVAILABLE");
+      }
+    } finally {
+      f.uiText = undefined;
+    }
+  });
   it("answers without waiting for the completion record", async () => {
     const instanceToken = await open("thread-hold");
     let release!: () => void;
