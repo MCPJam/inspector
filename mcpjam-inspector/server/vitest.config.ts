@@ -135,6 +135,10 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@mcpjam/sdk/account-deletion",
+        replacement: path.resolve(rootDir, "../sdk/src/account-deletion.ts"),
+      },
+      {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
       },

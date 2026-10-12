@@ -13,6 +13,11 @@ import {
 } from "./components/GuestTabRecoveryBoundary";
 import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
+import {
+  AccountDeletionReceiptPage,
+  isAccountReceiptPath,
+} from "./components/AccountDeletionReceiptPage";
+import { activeAccountDeletion } from "./lib/account-deletion-storage";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
@@ -190,11 +195,32 @@ function isServerConnectionHandoff(): boolean {
   );
 }
 
+const activeAccountReceipt = activeAccountDeletion();
+
 // If we're in an iframe, render a helpful error message instead of the full Inspector
 if (isInIframe) {
   root.render(
     <StrictMode>
       <IframeRouterError />
+    </StrictMode>,
+  );
+} else if (
+  isAccountReceiptPath(window.location.pathname) ||
+  activeAccountReceipt
+) {
+  // Receipt-only bootstrap must not materialize a blocked account or create a guest.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  if (!isAccountReceiptPath(window.location.pathname) && activeAccountReceipt) {
+    window.history.replaceState(
+      null,
+      "",
+      `/account-deletion/receipt/${encodeURIComponent(activeAccountReceipt)}`,
+    );
+  }
+  root.render(
+    <StrictMode>
+      <AccountDeletionReceiptPage />
     </StrictMode>,
   );
 } else if (isServerConnectionHandoff()) {

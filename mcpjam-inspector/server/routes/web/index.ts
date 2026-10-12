@@ -49,6 +49,7 @@ import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
 import authSession from "./auth-session.js";
+import accountDeletion from "./account-deletion.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
@@ -355,6 +356,8 @@ web.route("/api-keys", apiKeys);
 // Sign-out's session revocation (MJ-011). Brings its own bearer middleware for
 // the same reason `/api-keys` does.
 web.route("/auth-session", authSession);
+// Only POST /account-deletion/receipt is public: finite minimal bearer recovery without account materialization.
+web.route("/account-deletion", accountDeletion);
 
 // Public guest JWKS compatibility endpoint: the selected guest authority's
 // keys, read-only (it never provisions anything).

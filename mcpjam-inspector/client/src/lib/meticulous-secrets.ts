@@ -20,6 +20,8 @@ const SECRET_KEYS = new Set([
   "xapikey",
   "secret",
   "clientsecret",
+  "receiptsecret",
+  "idempotencykey",
   "password",
   "codeverifier",
   "privatekey",

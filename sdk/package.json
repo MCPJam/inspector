@@ -72,6 +72,11 @@
       "import": "./dist/host-config/templates/index.js",
       "default": "./dist/host-config/templates/index.js"
     },
+    "./account-deletion": {
+      "types": "./dist/account-deletion.d.ts",
+      "import": "./dist/account-deletion.js",
+      "default": "./dist/account-deletion.js"
+    },
     "./platform": {
       "types": "./dist/platform/index.d.ts",
       "import": "./dist/platform/index.js",

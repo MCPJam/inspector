@@ -1,4 +1,5 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
+import { AccountDeletionSection } from "./settings/AccountDeletionSection";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { useSettingsDraft } from "./settings/SettingsDraftProvider";
 import { useRef, useState } from "react";
@@ -283,6 +284,7 @@ export function ProfileTab() {
             )}
           </div>
         </form>
+        <AccountDeletionSection />
       </div>
     </SettingsPageShell>
   );

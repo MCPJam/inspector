@@ -2307,31 +2307,19 @@ describe("PlaygroundMain", () => {
     });
 
     it("drops the original conversation from the URL when a rewind branches", async () => {
-      // Regression. Detaching from the resumed thread (the fix above) clears
-      // `activeHistorySessionId`, and that is one of the two guards holding the
-      // conversation-URL restore effect back:
-      //
-      //     if (activeHistorySessionId) return;
-      //     if (hasMessages) return;
-      //
-      // The other falls too when the user edits the FIRST message: the prefix
-      // before it is empty, so the branch is seeded with an empty transcript.
-      // With both guards down and `?conversation=` still naming the ORIGINAL,
-      // the restore effect refetched the original and reloaded it over the
-      // branch — the edit appeared to do nothing but show a toast.
-      //
-      // `onReset("fork")` deliberately does not clear the URL (auth-bootstrap
-      // re-mints are the SAME conversation and must keep it), so a branch has
-      // to say so itself — exactly as New Chat does via `onReset("reset")`.
-      //
-      // This asserts the fix's mechanism rather than replaying the empty-thread
-      // window, which the chat-session mock cannot produce: it never actually
-      // truncates the transcript.
+      // A first-message rewind clears activeHistorySessionId and leaves an empty
+      // prefix. Keeping the original URL lets restoration reload its thread.
+      // onReset("fork") preserves the URL for same-thread auth bootstrap, so
+      // onBeforeBranch clears it only once a branch starts. The real rewind then
+      // mints a distinct ID (use-chat-session.ts); a stale mocked ID and nonempty
+      // transcript let URL sync put the original back after the clear mask drops.
+      // Await the stable branch URL rather than observing that transient clear.
       const ORIGINAL_CONVERSATION_ID = "original-chat-session";
+      const BRANCH_CONVERSATION_ID = "branched-chat-session";
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`,
       );
       // The live session IS the one the URL names — the hook's stated invariant
       // ("restored ⇔ chatSessionId === param"). Without this the sync effect
@@ -2344,6 +2332,11 @@ describe("PlaygroundMain", () => {
         .fn()
         .mockImplementation(async (options) => {
           options?.onBeforeBranch?.();
+          // Pin the clear itself before a new ID could make URL sync hide a regression.
+          expect(window.location.search).not.toContain(
+            ORIGINAL_CONVERSATION_ID,
+          );
+          mockUseChatSession.chatSessionId = BRANCH_CONVERSATION_ID;
           return { previousChatSessionId: ORIGINAL_CONVERSATION_ID };
         });
 
@@ -2358,12 +2351,13 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      // Not "no param at all": once the branch's transcript has content the sync
-      // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on.
+      // Wait for the observable branch, not the transient clear before URL sync.
       await waitFor(() => {
-        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
+        expect(
+          new URLSearchParams(window.location.search).get("conversation"),
+        ).toBe(BRANCH_CONVERSATION_ID);
       });
+      expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {

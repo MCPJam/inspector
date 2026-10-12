@@ -15,7 +15,8 @@
  * `harness status` reported success on a machine with no runtime pack.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -29,11 +30,14 @@ const CLI = join(
 );
 
 function run(args: string[]): { code: number; output: string } {
+  // Status must inspect this test's empty runtime root, never the caller's installed packs.
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "mcpjam-harness-cli-status-"));
   try {
     const output = execFileSync(process.execPath, [CLI, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30_000,
+      env: { ...process.env, MCPJAM_RUNTIME_ROOT: runtimeRoot },
     });
     return { code: 0, output };
   } catch (error) {
@@ -46,6 +50,8 @@ function run(args: string[]): { code: number; output: string } {
       code: failure.status ?? -1,
       output: `${failure.stdout ?? ""}${failure.stderr ?? ""}`,
     };
+  } finally {
+    rmSync(runtimeRoot, { recursive: true, force: true });
   }
 }
 

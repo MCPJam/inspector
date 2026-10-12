@@ -67,6 +67,7 @@ export const SIGN_OUT_SUPPRESSION_WINDOW_MS = 10_000;
 export const SIGN_OUT_REQUEST_TIMEOUT_MS = 5_000;
 
 let signOutStartedAt: number | null = null;
+let signOutOwner = 0;
 
 /**
  * Call IMMEDIATELY before `signOut()`, on every path that signs out.
@@ -74,8 +75,26 @@ let signOutStartedAt: number | null = null;
  * Synchronous and un-awaited on purpose: the refresh timer can fire on the
  * very next tick, so anything deferred is already too late.
  */
-export function markSignOutInProgress(now: number = Date.now()): void {
+export function markSignOutInProgress(now: number = Date.now()): number {
   signOutStartedAt = now;
+  return ++signOutOwner;
+}
+
+/** A refused account intake can release only the exit it started itself. */
+export function clearOwnedSignOut(owner: number): boolean {
+  if (owner !== signOutOwner) return false;
+  signOutStartedAt = null;
+  return true;
+}
+
+export function ownsSignOut(owner: number): boolean {
+  return owner === signOutOwner && isSignOutInProgress();
+}
+
+/** Bounded account intake keeps its own deliberate exit alive while awaiting acceptance. */
+export function renewOwnedSignOut(owner: number): void {
+  if (owner === signOutOwner && signOutStartedAt !== null)
+    signOutStartedAt = Date.now();
 }
 
 /** True while a sign-out started recently enough to explain a dead session. */
@@ -100,4 +119,5 @@ export function isSignOutInProgress(now: number = Date.now()): boolean {
 /** Test-only: drop the latch without waiting out the window. */
 export function resetSignOutLatchForTests(): void {
   signOutStartedAt = null;
+  signOutOwner++;
 }

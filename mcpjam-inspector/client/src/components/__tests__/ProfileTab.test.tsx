@@ -10,7 +10,12 @@ const { updateName, updateInfo, uploadImage } = vi.hoisted(() => ({
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
-    user: { firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" },
+    user: {
+      id: "user_profileFixture",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+    },
     signIn: vi.fn(),
   }),
 }));
@@ -22,6 +27,17 @@ vi.mock("convex/react", () => ({
       : name === "users:updateInfo"
         ? updateInfo
         : vi.fn(),
+}));
+vi.mock("@/lib/account-deletion-flow", async (original) => ({
+  ...(await original<typeof import("@/lib/account-deletion-flow")>()),
+  accountDeletionClient: () => ({
+    capabilities: async () => ({
+      available: false,
+      protocolVersion: 1,
+      scopeTypes: ["account"],
+      canCancel: false,
+    }),
+  }),
 }));
 vi.mock("@/hooks/useProfilePicture", () => ({
   useProfilePicture: () => ({ profilePictureUrl: "/avatar.png" }),

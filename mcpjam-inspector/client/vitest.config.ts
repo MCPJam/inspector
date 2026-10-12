@@ -144,6 +144,10 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      {
+        find: "@mcpjam/sdk/account-deletion",
+        replacement: path.resolve(rootDir, "../sdk/src/account-deletion.ts"),
+      },
       // More specific subpaths must precede the bare alias (first match wins).
       { find: "@mcpjam/chat-ui/json-tokens", replacement: chatUiJsonTokensEntry },
       {

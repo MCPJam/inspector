@@ -277,6 +277,7 @@
     "es-module-lexer": "1.7.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^27.4.0",
     "node-abi": "^4.35.0",
     "png-to-ico": "^3.0.2",

@@ -236,6 +236,10 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: {
+        "@mcpjam/sdk/account-deletion": path.resolve(
+          __dirname,
+          "../../sdk/src/account-deletion.ts",
+        ),
         "@repo/assets": path.resolve(clientDir, "src/assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),

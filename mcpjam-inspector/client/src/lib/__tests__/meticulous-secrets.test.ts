@@ -82,3 +82,8 @@ describe("openKeyAtEnd and maskSplitKey", () => {
     });
   });
 });
+
+it("masks account receipt bearer and companion recovery key", () => {
+  expect(maskSecrets({ receiptSecret: "a".repeat(64), idempotencyKey: "original-key", requestId: "receipt-1" }))
+    .toEqual({ receiptSecret: "*".repeat(64), idempotencyKey: "*".repeat(12), requestId: "receipt-1" });
+});

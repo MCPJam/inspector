@@ -96,6 +96,7 @@ export default defineConfig({
     "exit-hook",
     "@mcpjam/sdk",
     "@mcpjam/sdk/browser",
+    "@mcpjam/sdk/account-deletion",
     "@mcpjam/sdk/operations",
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
@@ -119,6 +120,10 @@ export default defineConfig({
       // Specific subpaths BEFORE the bare alias — shared/xaa.ts re-exports XAA
       // primitives from the browser entry, so the server bundle must resolve it.
       "@mcpjam/sdk/browser": join(rootDir, "../sdk/dist/browser.js"),
+      "@mcpjam/sdk/account-deletion": join(
+        rootDir,
+        "../sdk/dist/account-deletion.js",
+      ),
       // Node-only SSRF guard + DNS-pinned transport, used by the connection
       // flow's discovery and validation steps.
       //

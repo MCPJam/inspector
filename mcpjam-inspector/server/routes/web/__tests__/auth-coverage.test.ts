@@ -72,6 +72,10 @@ const ALL_ROUTE_METHODS = [
  */
 const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
   [
+    "POST /api/web/account-deletion/receipt",
+    "finite minimal bearer receipt recovery after sign-out; secret and original key travel only in the body, never bootstrap an account, and invalid/expired/revoked credentials return null",
+  ],
+  [
     "GET /api/web/apps/mcp-apps/sandbox-proxy",
     "a static sandbox document, needed by the MCP-apps renderer before any authed flow",
   ],
