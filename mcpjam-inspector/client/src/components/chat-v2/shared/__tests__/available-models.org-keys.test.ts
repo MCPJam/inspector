@@ -6,6 +6,7 @@ import type { ModelDefinition } from "@/shared/types";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
   composeAvailableModels,
+  ORG_POLICY_LOADING_REASON,
   isOrgKeysDisallowedRow,
   ORG_KEYS_MODEL_REASON,
   ORG_POLICY_LOADING_REASON,
@@ -410,5 +411,32 @@ describe("composeAvailableModels under the policy", () => {
     const models = compose({ providers: [], unresolved: true });
     expect(models.length).toBeGreaterThan(0);
     expect(models).toEqual(compose(undefined));
+  });
+});
+
+describe("pending organization policy", () => {
+  it("offers no usable hosted, personal or organization model before policy loads", () => {
+    const orgConfig = { providers: [], pending: true };
+    expect(buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku])).toEqual(
+      [],
+    );
+    const rows = composeAvailableModels({
+      orgConfig,
+      isAuthenticated: true,
+      isOllamaRunning: false,
+      ollamaModels: [],
+      hasToken: () => true,
+      getOpenRouterSelectedModels: () => [],
+      getAzureBaseUrl: () => "",
+      customProviders: [],
+      hostedCatalog: [hostedHaiku],
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.disabled && row.disabledReason === ORG_POLICY_LOADING_REASON,
+      ),
+    ).toBe(true);
   });
 });
