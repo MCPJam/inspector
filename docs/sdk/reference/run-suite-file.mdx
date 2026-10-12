@@ -59,7 +59,7 @@ try {
 |---|---|
 | `verdict` | `"passed"` or `"failed"` only for a completed run; `"inconclusive"` when the validity policy withheld a verdict; `"notEstablished"` for an interrupted or undecidable run. |
 | `passed` | `verdict === "passed"`. |
-| `termination` | `"completed"`, `"aborted"` (the signal) or `"stopped"` (a credential or billing refusal stopped scheduling). |
+| `termination` | `"completed"`, `"aborted"` (the signal) or `"stopped"` (a credential, billing, or organization AI-key policy refusal stopped scheduling). |
 | `complete` | Whether every planned iteration reached a terminal state. |
 | `decision` | The validated v2 `EvalVerdictDecision` over the planned population. For an interrupted run it is partial evidence, never a completed gate — read `verdict`. |
 | `cases` | Per case: effective model and rail, configured iterations and threshold, the evaluator-config hash, judge state, import evidence, per-iteration evidence (lifecycle status, task verdict, evaluator error, attributed refusal, tool calls, policy blocks, scores, stage chain) and the case's row of the decision. |
