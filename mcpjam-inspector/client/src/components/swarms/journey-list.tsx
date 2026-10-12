@@ -692,7 +692,7 @@ function JourneyGradingEditor({
             onChange={setJudgeConfig}
             availableModels={availableModels}
             saveModelSelections={modelSelectionsSupported}
-            bareAutoGradeBlurb={`The goal completion judge grades each session against this goal to decide whether it passed. ${
+            bareAutoGradeBlurb={`Describe the goal each session should complete. ${
               requireOrgKeys
                 ? JUDGE_ORG_PROVIDER_COST_NOTE
                 : JUDGE_CREDITS_COST_NOTE
