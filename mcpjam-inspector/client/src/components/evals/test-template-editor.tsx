@@ -214,6 +214,7 @@ import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
 import {
   caseModelEntry,
+  caseModelEntryValue,
   type CaseModelEntry,
 } from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
@@ -237,6 +238,7 @@ import {
   resolveModelOptionLabel,
   caseModelEntriesForCompareValues,
   caseModelEntriesUnchanged,
+  type CompareCaseModelEntry,
   quickRunKey,
   quickRunModelValue,
 } from "./compare-playground-helpers";
@@ -397,6 +399,13 @@ interface TestTemplateEditorProps {
    */
   simpleCaseEditor?: boolean;
   availableModels: ModelDefinition[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   /**
    * Iterations for the entire suite, already subscribed by the parent via
    * `getAllTestCasesAndIterationsBySuite`. We filter to the current case
@@ -1036,6 +1045,8 @@ export function TestTemplateEditor({
   connectedServerNames,
   projectId,
   availableModels,
+  requireOrgKeys = false,
+  onManageOrgProviders,
   suiteIterations,
   suiteRuns: listedSuiteRuns = [],
   onExportDraft,
@@ -2931,6 +2942,8 @@ export function TestTemplateEditor({
   };
 
   // Case chips save a model selection only where the deployment stores one.
+  // Under the policy an organization row with a bare id (`gpt-5`) is saved
+  // with its canonical id and connection, so the run uses that connection.
   const modelSelectionsSupported = useModelSelectionsSupported(projectId);
   const buildSelectedCompareModels = (
     modelValues: string[],
@@ -2944,8 +2957,50 @@ export function TestTemplateEditor({
         { provider, model },
         availableModels,
         modelSelectionsSupported,
+        { orgCanonicalIds: requireOrgKeys },
       );
     });
+  };
+
+  // The `models[]` the editor saves for its picks. Saved entries keep their
+  // selections; a new pick is built from its catalog row. Under the policy an
+  // entry that would run as a legacy id (no selection, or a stored legacy
+  // one) is saved again from the organization row the picker shows for it,
+  // so it runs on that connection instead of being refused.
+  const nextCaseModels = (
+    modelValues: readonly string[],
+    currentModels: EvalCase["models"],
+  ): EvalCase["models"] =>
+    caseModelEntriesForCompareValues(
+      modelValues,
+      currentModels,
+      (modelValue) => buildSelectedCompareModels([modelValue])[0]!,
+      caseEntryValue,
+    ).map((entry) => {
+      if (
+        !requireOrgKeys ||
+        (entry.selection && entry.selection.source !== "legacy")
+      ) {
+        return entry;
+      }
+      const upgraded = caseModelEntry(
+        entry,
+        availableModels,
+        modelSelectionsSupported,
+        { orgCanonicalIds: true },
+      );
+      return upgraded.selection?.source === "org" ? upgraded : entry;
+    });
+
+  // The `provider/model` a quick run asks the server for: the saved entry's
+  // own id, which is the canonical id for an organization row saved under
+  // the policy. The server runs the saved entry whose model matches it.
+  const caseRunModelValue = (modelValue: string): string => {
+    const entry = nextCaseModels(
+      [modelValue],
+      currentTestCase?.models ?? [],
+    )[0];
+    return entry ? `${entry.provider}/${entry.model}` : modelValue;
   };
 
   const persistCompareRunDraft = async (
@@ -2959,11 +3014,7 @@ export function TestTemplateEditor({
     const currentModels: EvalCase["models"] = currentTestCase.models ?? [];
     // Saved entries keep their selections (efforts, and two entries of one
     // model); only newly picked models are built from the catalog row.
-    const nextModels = caseModelEntriesForCompareValues(
-      modelValues,
-      currentModels,
-      (modelValue) => buildSelectedCompareModels([modelValue])[0]!,
-    );
+    const nextModels = nextCaseModels(modelValues, currentModels);
     // Selection-aware: an effort-only edit is a change.
     const modelsUnchanged = caseModelEntriesUnchanged(
       currentModels,
@@ -2994,15 +3045,23 @@ export function TestTemplateEditor({
     () => resolveLatestCompareRunId(recentIterations),
     [recentIterations],
   );
+  // The picker value a saved case entry reads back as: an organization row
+  // saved under its canonical id maps back to that row.
+  const caseEntryValue = useCallback(
+    (entry: CompareCaseModelEntry) =>
+      caseModelEntryValue(entry, availableModels),
+    [availableModels],
+  );
   const routeCompareAnchorModelValue = useMemo(
     () =>
       routeCompareAnchorIteration
         ? resolveIterationModelValue(
             routeCompareAnchorIteration,
             currentTestCase,
+            caseEntryValue,
           )
         : null,
-    [currentTestCase, routeCompareAnchorIteration],
+    [caseEntryValue, currentTestCase, routeCompareAnchorIteration],
   );
   const routeCompareAnchorRunId = useMemo(
     () => readCompareRunIdFromIteration(routeCompareAnchorIteration),
@@ -3068,6 +3127,7 @@ export function TestTemplateEditor({
       testCaseId: currentTestCase._id ?? selectedTestCaseId,
       testCase: currentTestCase,
       modelOptions,
+      entryValue: caseEntryValue,
     });
     const initialSelectedModels = resolveInitialCompareModelValues({
       testCase: currentTestCase,
@@ -3075,6 +3135,7 @@ export function TestTemplateEditor({
       preferredModelValue:
         preferredModelValue ??
         getPersistedTestCaseModelValue(currentTestCase._id),
+      entryValue: caseEntryValue,
     });
     const routeAnchoredModels = routeCompareAnchorModelValue
       ? [
@@ -3089,6 +3150,7 @@ export function TestTemplateEditor({
     setSelectedModelValues(routeAnchoredModels);
     setQuickRunSelections({});
   }, [
+    caseEntryValue,
     currentTestCase,
     modelOptions,
     routeCompareAnchorIteration,
@@ -3132,9 +3194,11 @@ export function TestTemplateEditor({
         testCase: currentTestCase,
         existingRecords: current,
         preferredIteration: routeCompareAnchorIteration ?? null,
+        entryValue: caseEntryValue,
       }),
     );
   }, [
+    caseEntryValue,
     currentTestCase,
     compareLabelByValue,
     recentIterations,
@@ -3479,7 +3543,7 @@ export function TestTemplateEditor({
                 },
               },
               testCase: currentTestCase,
-              selectedModel: quickRunModelValue(modelValue),
+              selectedModel: caseRunModelValue(quickRunModelValue(modelValue)),
               getAccessToken,
               namedHostId: quickRunHostPlan.namedHostId,
               testCaseOverrides,
@@ -4651,6 +4715,8 @@ export function TestTemplateEditor({
                     models={selectedModelValues}
                     modelLabelByValue={modelLabelByValue}
                     availableModels={availableModels}
+                    requireOrgKeys={requireOrgKeys}
+                    onManageOrgProviders={onManageOrgProviders}
                     disabled={isRunningCompare}
                     onModelsChange={setSelectedModelValues}
                     {...(isEnvironmentSuite
