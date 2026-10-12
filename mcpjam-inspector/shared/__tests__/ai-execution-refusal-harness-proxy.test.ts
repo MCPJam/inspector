@@ -5,6 +5,7 @@ import {
   AI_RETRYABLE_REFUSAL_CODES,
   aiRefusalRemediation,
 } from "../ai-execution-refusal";
+import { describeAiRefusal } from "../ai-refusal-copy";
 import { HARNESS_PROXY_REFUSAL_REASONS } from "../harness-proxy-refusal-reasons";
 
 /**
@@ -50,5 +51,17 @@ describe("codes shared by the key policy and the harness model proxy", () => {
     expect(HARNESS_PROXY_REFUSAL_REASONS.ai_key_policy_unavailable.retry).toBe(
       false,
     );
+  });
+
+  it("each shared code has its own copy, for members and admins", () => {
+    for (const code of shared) {
+      for (const audience of ["admin", "member"] as const) {
+        const copy = describeAiRefusal(code, audience);
+        expect(copy.title, `${code} ${audience}`).not.toBe("AI unavailable");
+        expect(copy.body, `${code} ${audience}`).not.toMatch(
+          /This AI request was refused/,
+        );
+      }
+    }
   });
 });
