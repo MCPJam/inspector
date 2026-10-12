@@ -4,6 +4,7 @@
  * (`org-runtime-admission.ts`), kept apart so neither imports the other.
  */
 import dns from "node:dns/promises";
+import { logger } from "./logger.js";
 import {
   isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
 } from "@/shared/local-only-mcp";
@@ -88,8 +89,16 @@ export async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void>
   if (isIpLiteral) return;
 
   const resolvedIps: string[] = [];
-  try { resolvedIps.push(...await dns.resolve4(host)); } catch { /* NXDOMAIN etc */ }
-  try { resolvedIps.push(...await dns.resolve6(host)); } catch {}
+  for (const resolve of [dns.resolve4, dns.resolve6]) {
+    try {
+      resolvedIps.push(...await resolve(host));
+    } catch (error) {
+      // One address family may be absent; the empty-address guard fails closed.
+      logger.debug("Provider DNS lookup failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
   if (resolvedIps.length === 0) {
     throw new Error(
       `Provider base URL is blocked: hostname "${host}" could not be resolved`,

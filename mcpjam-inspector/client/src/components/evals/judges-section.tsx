@@ -231,6 +231,7 @@ export function JudgeModelControl({
       className="w-fit max-w-full"
       value={gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL}
       availableModels={availableModels}
+      selectionsSupported={saveSelections}
       managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
       onChange={(row) =>
         onChange(
@@ -368,6 +369,7 @@ export function JudgesSection({
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
               availableModels={availableModels}
+              selectionsSupported={saveSelections}
               managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
               onChange={(row) =>
                 update(

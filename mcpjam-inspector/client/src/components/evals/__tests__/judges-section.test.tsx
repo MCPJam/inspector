@@ -505,6 +505,26 @@ describe("JudgesSection — organization requires its own keys", () => {
     });
   });
 
+  it("cannot save an organization judge on deployments without selection storage", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <JudgesSection
+        chrome="panel"
+        value={{ goalCompletion: { enabled: true, autoRun: true } }}
+        availableModels={[orgSonnet]}
+        onChange={onChange}
+        saveModelSelections={false}
+        requireOrgKeys
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    const row = screen.getByRole("option", { name: /Claude Sonnet 4\.5/ });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    await user.click(row);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("offers an admin 'Add a provider' when no organization model can judge", async () => {
     const user = userEvent.setup();
     const onManageOrgProviders = vi.fn();

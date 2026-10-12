@@ -5,6 +5,7 @@
  * `org-model-config.ts` answers from the same cache.
  */
 import { createHash } from "node:crypto";
+import { logger } from "./logger.js";
 import { selectionKey, type ModelSelection } from "@mcpjam/sdk";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import {
@@ -177,7 +178,14 @@ export async function requestOrgProviderRuntime(
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
+      const body = await response.text().catch((error) => {
+        // The HTTP status still refuses this request when its body is unreadable.
+        logger.debug("Org runtime refusal body could not be read", {
+          status: response.status,
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+        return "";
+      });
       let message = `Org runtime resolution failed (${response.status})`;
       let code: string | undefined;
       try {
@@ -191,8 +199,12 @@ export async function requestOrgProviderRuntime(
         if (typeof parsed?.code === "string" && parsed.code.trim()) {
           code = parsed.code.trim().toLowerCase();
         }
-      } catch {
-        // ignore
+      } catch (error) {
+        // Preserve the HTTP refusal even when the backend returns no JSON code.
+        logger.debug("Org runtime refusal body was not JSON", {
+          status: response.status,
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
       }
       throw orgRuntimeResolveFailure(response.status, message, code);
     }

@@ -456,6 +456,8 @@ export function judgeModelOptions(
     currentSelection?: ModelSelection | null;
     /** The organization requires its own provider keys for AI features. */
     requireOrgKeys?: boolean;
+    /** Whether this deployment can persist a connection beside its model. */
+    selectionsSupported?: boolean;
   },
 ): {
   models: ModelDefinition[];
@@ -477,7 +479,16 @@ export function judgeModelOptions(
       : isJudgeEligibleModel(model);
     if (!eligible) continue;
     seen.add(key);
-    rows.push(model);
+    rows.push(
+      args.selectionsSupported === false && model.orgProvider
+        ? {
+            ...model,
+            disabled: true,
+            disabledReason:
+              "This deployment can't save organization model connections. Update MCPJam to choose an organization judge.",
+          }
+        : model,
+    );
   }
   const { currentModelId, managedDefaultModelId } = args;
   if (
@@ -519,11 +530,13 @@ export function judgeModelOptions(
           rows,
           undefined,
         )
-    : (rows.find(
-        (row) =>
-          String(row.id) === currentModelId &&
-          isMCPJamProvidedModelMenuItem(row),
-      ) ?? rows.find((row) => String(row.id) === currentModelId));
+    : requireOrgKeys
+      ? undefined
+      : (rows.find(
+          (row) =>
+            String(row.id) === currentModelId &&
+            isMCPJamProvidedModelMenuItem(row),
+        ) ?? rows.find((row) => String(row.id) === currentModelId));
   if (current) {
     return { models: rows, currentIneligible: false, current };
   }

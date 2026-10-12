@@ -527,6 +527,16 @@ describe("judge rows with organization providers", () => {
     expect(current?.disabledReason).toBe(JUDGE_INELIGIBLE_REASON);
   });
 
+  it("does not bind a legacy judge to an organization connection by model ID", () => {
+    const { current, currentIneligible } = judgeModelOptions([orgRow], {
+      currentModelId: String(orgRow.id),
+      managedDefaultModelId: "anthropic/claude-haiku-4.5",
+      requireOrgKeys: true,
+    });
+    expect(currentIneligible).toBe(true);
+    expect(isOrgKeysDisallowedRow(current)).toBe(true);
+  });
+
   it("resolves an org judge saved under its canonical id through its selection", () => {
     const { current, currentIneligible } = judgeModelOptions([orgRow], {
       currentModelId: "anthropic/claude-sonnet-4.5",
