@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AiFeatureGroupReadiness } from "@/hooks/useOrgAiConfig";
+import type {
+  AiFeatureGroupReadiness,
+  AiOperationReadiness,
+} from "@/hooks/useOrgAiConfig";
 import {
   EVALS_JUDGE_GUIDANCE,
   HARNESS_NOT_SUPPORTED_GUIDANCE,
@@ -11,6 +14,7 @@ import {
   featureGuidance,
   listedBlockers,
   listedModelFitsKind,
+  operationModelFix,
   orderedFeatures,
   orgAiModelCheckPresentation,
   orgModelIds,
@@ -156,6 +160,78 @@ describe("featureGuidance", () => {
     );
   });
 
+  describe("a feature waiting on the organization's default AI model", () => {
+    const insights = feature({ id: "insights", blockedBy: ["text_analysis"] });
+    const unset: AiOperationReadiness = {
+      operation: "text_analysis",
+      status: "unconfigured",
+      code: "org_model_unconfigured",
+      modelKind: "default",
+    };
+
+    it("asks for the default model, not a provider", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [unset],
+          canManage: true,
+        }),
+      ).toBe("The organization's default AI model isn't set. Choose it below.");
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [unset],
+          canManage: false,
+        }),
+      ).toBe(
+        "The organization's default AI model isn't set. Ask an organization admin to choose it.",
+      );
+    });
+
+    it("reads an older backend's code the same way when a provider exists", () => {
+      const { modelKind: _omitted, ...withoutKind } = unset;
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [withoutKind],
+          canManage: true,
+        }),
+      ).toBe("The organization's default AI model isn't set. Choose it below.");
+      // With no provider at all, the same code means "add a provider".
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: [],
+          operations: [withoutKind],
+          canManage: true,
+        }),
+      ).toBe("Add a direct cloud provider below.");
+    });
+
+    it("asks for a provider first, then the model", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: [],
+          operations: [unset],
+          canManage: true,
+        }),
+      ).toBe(
+        "Add a direct cloud provider below. Then choose the organization's default AI model.",
+      );
+    });
+
+    it("says a saved model can't run", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [{ ...unset, code: "credential_missing" }],
+          canManage: true,
+        }),
+      ).toBe(
+        "The organization's default AI model can't run. Choose another below.",
+      );
+    });
+  });
+
   it("says nothing for a ready feature other than evals", () => {
     expect(
       featureGuidance(feature({ id: "chat", status: "ready" }), {
@@ -241,6 +317,77 @@ describe("degradationSentence", () => {
     );
     expect(degradationSentence("evals", "text_analysis", "unsupported")).toBe(
       "Automatic findings not supported yet; runs and grading still complete",
+    );
+  });
+});
+
+describe("operationModelFix", () => {
+  it("names the model an operation waits on", () => {
+    expect(
+      operationModelFix({
+        operation: "embedding",
+        status: "unconfigured",
+        code: "org_model_unconfigured",
+        modelKind: "embedding",
+      }),
+    ).toEqual({ kind: "embedding", reason: "unset" });
+    expect(
+      operationModelFix(
+        {
+          operation: "speech_transcription",
+          status: "unconfigured",
+          code: "org_model_unconfigured",
+        },
+        ["conn_1"],
+      ),
+    ).toEqual({ kind: "transcription", reason: "unset" });
+  });
+
+  it("is null for anything that is not a missing or unusable model", () => {
+    expect(operationModelFix(undefined)).toBeNull();
+    expect(
+      operationModelFix({ operation: "chat", status: "ready" }, ["conn_1"]),
+    ).toBeNull();
+    expect(
+      operationModelFix(
+        {
+          operation: "text_analysis",
+          status: "unsupported",
+          code: "org_runtime_unsupported",
+        },
+        ["conn_1"],
+      ),
+    ).toBeNull();
+    // A picked model's operation with no capable provider.
+    expect(
+      operationModelFix(
+        {
+          operation: "chat",
+          status: "unconfigured",
+          code: "credential_missing",
+        },
+        ["conn_1"],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("degradationSentence and the default model", () => {
+  it("says what waits for the default model", () => {
+    expect(
+      degradationSentence("evals", "text_analysis", "unconfigured", "default"),
+    ).toBe(
+      "Automatic findings unavailable until the organization's default AI model is set; runs and grading still complete",
+    );
+    expect(
+      degradationSentence(
+        "insights",
+        "typed_decision",
+        "unconfigured",
+        "default",
+      ),
+    ).toBe(
+      "Automatic titles and classification unavailable until the organization's default AI model is set; everything else still runs",
     );
   });
 });
