@@ -285,6 +285,50 @@ describe("guest-session module", () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it("force refresh resolves null on a 429 refusal and records it, like a mint", async () => {
+      // PLB-308: a burst (several tabs falling back to guest at once, or a
+      // reconnect storm) hits the per-IP limiter, and Convex's refetch goes
+      // through the force-refresh path. Rethrowing the refusal there made the
+      // auth ladder retry into the same 429 three more times and report it
+      // as "guest_token_refresh failed".
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          get: (name: string) => (name === "retry-after" ? "45" : null),
+        },
+      } as unknown as Response);
+
+      const before = Date.now();
+      await expect(
+        guestSession.forceRefreshGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      const refusal = guestSession.getGuestSessionRefusal();
+      expect(refusal).not.toBeNull();
+      expect(refusal!.until).toBeGreaterThanOrEqual(before + 45_000);
+      expect(refusal!.until).toBeLessThan(before + 46_000);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("force refresh does not request while a refusal stands", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          get: (name: string) => (name === "retry-after" ? "45" : null),
+        },
+      } as unknown as Response);
+      await guestSession.getOrCreateGuestSessionOrThrow();
+      vi.mocked(global.fetch).mockClear();
+
+      await expect(
+        guestSession.forceRefreshGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it("force refresh rejects while its wrapper returns null", async () => {
       vi.mocked(global.fetch).mockResolvedValue(unavailable);
 

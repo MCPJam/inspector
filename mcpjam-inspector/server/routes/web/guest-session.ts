@@ -18,6 +18,7 @@ import {
 import {
   GUEST_SESSION_COOKIE_NAME,
   allowMint,
+  mintRetryAfterSeconds,
   appendGuestSessionSetCookie,
   extractGuestSessionCookie,
 } from "./guest-session-shared.js";
@@ -89,8 +90,12 @@ guestSession.post("/", async (c) => {
   }
   const rateLimitKey = ip ?? "local-dev";
 
-  // Check rate limit (shared singleton — see guest-session-shared.ts)
+  // Check rate limit (shared singleton — see guest-session-shared.ts). The
+  // client records every 429 as a refusal until Retry-After, so name when this
+  // burst window reopens; left unset it falls back to the daily cap's ten
+  // minutes (PLB-308).
   if (!allowMint(rateLimitKey)) {
+    c.header("Retry-After", String(mintRetryAfterSeconds(rateLimitKey)));
     return c.json(
       {
         code: ErrorCode.RATE_LIMITED,

@@ -451,6 +451,36 @@ describe("useUnifiedConvexAuth", () => {
       );
     });
 
+    it("stops a forced refresh at a 429 refusal without retrying or reporting", async () => {
+      // PLB-308: the refusal used to surface here as a thrown error, so the
+      // ladder spent three more requests on the same 429 and reported
+      // "guest_token_refresh failed". A refused refresh now resolves null
+      // with the refusal recorded, which the ladder treats as terminal.
+      mockState.getCachedGuestSession.mockReturnValue(session);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
+      const result = await mountGuest();
+      mockState.forceRefreshGuestSessionOrThrow.mockImplementation(async () => {
+        mockState.getGuestSessionRefusal.mockReturnValue({
+          until: Date.now() + 45_000,
+        });
+        return null;
+      });
+
+      let token: string | null = "unset";
+      await act(async () => {
+        token = await result.current.fetchAccessToken({
+          forceRefreshToken: true,
+        });
+      });
+
+      expect(token).toBeNull();
+      expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(mockState.reportCaught).not.toHaveBeenCalled();
+      expect(useSessionRefreshStore.getState().kind).not.toBe("transient");
+    });
+
     it("retries a transient WorkOS network failure", async () => {
       mockState.workos.user = { id: "user-1" };
       mockState.workos.getAccessToken

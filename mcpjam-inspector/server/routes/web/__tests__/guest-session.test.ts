@@ -414,6 +414,28 @@ describe("POST /guest-session", () => {
       expect(data.code).toBe("RATE_LIMITED");
     });
 
+    it("tells the client when the per-minute window reopens", async () => {
+      // PLB-308: without Retry-After the client assumed the 10-minute daily
+      // cap and blocked the guest for ten minutes over a one-minute burst.
+      for (let i = 0; i < 10; i++) {
+        await app.request("/guest-session", {
+          method: "POST",
+          headers: { "x-forwarded-for": "10.0.0.20" },
+        });
+      }
+
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "10.0.0.20" },
+      });
+
+      expect(res.status).toBe(429);
+      const retryAfter = Number(res.headers.get("retry-after"));
+      expect(Number.isInteger(retryAfter)).toBe(true);
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+    });
+
     it("rate limits are per-IP", async () => {
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
