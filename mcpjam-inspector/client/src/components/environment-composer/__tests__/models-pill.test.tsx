@@ -273,6 +273,76 @@ describe("ModelsPill", () => {
     });
   });
 
+  it("marks a legacy id without a saved selection as unavailable under the policy", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [
+      {
+        id: "openai/gpt-5",
+        name: "GPT-5",
+        provider: "openai",
+        hosted: false,
+        orgProvider: { providerKey: "openai", id: "conn_openai" },
+      },
+    ];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "openai/gpt-5" }],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const stale = screen
+      .getAllByRole("option", { name: /^GPT-5/ })
+      .find((row) => row.textContent?.includes("Not allowed here"));
+    expect(stale).toBeDefined();
+    await user.click(stale!);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+  });
+
+  it("removes only the disallowed target when an org target shares its id", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "openrouter",
+        hosted: false,
+        orgProvider: { providerKey: "openrouter", id: "conn_or" },
+      },
+    ];
+    const fallback = { provider: "none" as const, model: "none" as const };
+    const modelId = "anthropic/claude-haiku-4.5";
+    const orgTarget = {
+      modelId,
+      selection: {
+        modelId,
+        source: "org" as const,
+        connectionRef: { kind: "orgProvider" as const, id: "conn_or" },
+        fallback,
+      },
+    };
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [
+        { modelId, selection: { modelId, source: "hosted", fallback } },
+        orgTarget,
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const stale = screen
+      .getAllByRole("option", { name: /^Claude Haiku 4\.5/ })
+      .find((row) => row.textContent?.includes("Not allowed here"));
+    expect(stale).toBeDefined();
+    await user.click(stale!);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [orgTarget],
+    });
+  });
+
   it("lets the user deselect a persisted locked model", async () => {
     const user = userEvent.setup();
     const onChange = renderPill({

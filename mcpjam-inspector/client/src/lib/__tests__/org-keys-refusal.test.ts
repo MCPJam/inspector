@@ -182,7 +182,7 @@ describe("orgKeysRefusalSentence", () => {
 });
 
 describe("notAnalyzedLine", () => {
-  it("is the colon form for refusals and the findings skip, else undefined", () => {
+  it("is the Not analyzed line for refusals and the findings skip, else undefined", () => {
     expect(notAnalyzedLine("org_model_unavailable")).toBe(
       "Not analyzed because this organization requires its own provider keys and has no compatible default AI model. An organization admin needs to choose one in Organization → AI providers.",
     );
