@@ -95,7 +95,7 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
       slug: "eval/ai_refused",
       rawCode: "org_model_unconfigured",
       nextSteps: [
-        "Ask an organization admin to set the organization's default models.",
+        "Ask an organization admin to set the organization's default AI model.",
       ],
     });
   });
