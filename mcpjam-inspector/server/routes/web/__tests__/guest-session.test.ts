@@ -415,8 +415,8 @@ describe("POST /guest-session", () => {
     });
 
     it("tells the client when the per-minute window reopens", async () => {
-      // PLB-308: without Retry-After the client assumed the 10-minute daily
-      // cap and blocked the guest for ten minutes over a one-minute burst.
+      // Without Retry-After the client falls back to the daily cap's ten
+      // minutes and holds the guest off that long over a one-minute burst.
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
           method: "POST",

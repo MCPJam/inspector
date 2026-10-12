@@ -654,8 +654,7 @@ export async function getGuestPromotionProof(): Promise<string | null> {
  *
  * A 429 refusal resolves null and records the refusal, exactly as a mint
  * does: retrying it only spends more of the per-IP budget, and the ladder
- * reads the standing refusal as terminal instead of reporting a failure
- * (PLB-308).
+ * reads the standing refusal as terminal instead of reporting a failure.
  */
 export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> {
   if (forceRefreshInFlight) {

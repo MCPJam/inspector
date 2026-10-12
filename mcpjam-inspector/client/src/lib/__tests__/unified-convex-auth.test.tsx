@@ -452,10 +452,9 @@ describe("useUnifiedConvexAuth", () => {
     });
 
     it("stops a forced refresh at a 429 refusal without retrying or reporting", async () => {
-      // PLB-308: the refusal used to surface here as a thrown error, so the
-      // ladder spent three more requests on the same 429 and reported
-      // "guest_token_refresh failed". A refused refresh now resolves null
-      // with the refusal recorded, which the ladder treats as terminal.
+      // A refused refresh resolves null with the refusal recorded, which the
+      // ladder treats as terminal: no second request into the same 429 and
+      // no report.
       mockState.getCachedGuestSession.mockReturnValue(session);
       mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
       const result = await mountGuest();

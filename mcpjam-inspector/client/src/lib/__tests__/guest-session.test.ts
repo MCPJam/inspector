@@ -245,6 +245,12 @@ describe("guest-session module", () => {
       status: 503,
       statusText: "Service Unavailable",
     } as Response;
+    const refused = (retryAfterSeconds: number) =>
+      new Response(null, {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: { "Retry-After": String(retryAfterSeconds) },
+      });
 
     it("rejects with the real cause and status on a non-ok response", async () => {
       vi.mocked(global.fetch).mockResolvedValue(unavailable);
@@ -286,19 +292,11 @@ describe("guest-session module", () => {
     });
 
     it("force refresh resolves null on a 429 refusal and records it, like a mint", async () => {
-      // PLB-308: a burst (several tabs falling back to guest at once, or a
-      // reconnect storm) hits the per-IP limiter, and Convex's refetch goes
-      // through the force-refresh path. Rethrowing the refusal there made the
-      // auth ladder retry into the same 429 three more times and report it
-      // as "guest_token_refresh failed".
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        status: 429,
-        statusText: "Too Many Requests",
-        headers: {
-          get: (name: string) => (name === "retry-after" ? "45" : null),
-        },
-      } as unknown as Response);
+      // A burst (several tabs falling back to guest at once, or a reconnect
+      // storm) hits the per-IP limiter, and Convex's refetch goes through the
+      // force-refresh path. A rethrown refusal would send the auth ladder into
+      // the same 429 three more times and report it as a failure.
+      vi.mocked(global.fetch).mockResolvedValue(refused(45));
 
       const before = Date.now();
       await expect(
@@ -312,14 +310,7 @@ describe("guest-session module", () => {
     });
 
     it("force refresh does not request while a refusal stands", async () => {
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        status: 429,
-        statusText: "Too Many Requests",
-        headers: {
-          get: (name: string) => (name === "retry-after" ? "45" : null),
-        },
-      } as unknown as Response);
+      vi.mocked(global.fetch).mockResolvedValue(refused(45));
       await guestSession.getOrCreateGuestSessionOrThrow();
       vi.mocked(global.fetch).mockClear();
 

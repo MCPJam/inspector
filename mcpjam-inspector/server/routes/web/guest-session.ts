@@ -93,7 +93,7 @@ guestSession.post("/", async (c) => {
   // Check rate limit (shared singleton — see guest-session-shared.ts). The
   // client records every 429 as a refusal until Retry-After, so name when this
   // burst window reopens; left unset it falls back to the daily cap's ten
-  // minutes (PLB-308).
+  // minutes.
   if (!allowMint(rateLimitKey)) {
     c.header("Retry-After", String(mintRetryAfterSeconds(rateLimitKey)));
     return c.json(
