@@ -590,8 +590,9 @@ export function composeAvailableModels(
 ): ModelDefinition[] {
   const { orgConfig, hostedCatalog, savedModelIds } = params;
 
+
   if (orgConfig?.pending) {
-    return composeAvailableModels({ ...params, orgConfig: undefined }).map(
+    return composeUnrestrictedModels({ ...params, orgConfig: undefined }).map(
       (model) => ({
         ...model,
         disabled: true,
@@ -639,15 +640,6 @@ function composeUnrestrictedModels(
     hostedCatalog,
   } = params;
 
-  if (orgConfig?.pending) {
-    return composeAvailableModels({ ...params, orgConfig: undefined }).map(
-      (model) => ({
-        ...model,
-        disabled: true,
-        disabledReason: ORG_POLICY_LOADING_REASON,
-      }),
-    );
-  }
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
     const orgModels = buildAvailableModelsFromOrgConfig(

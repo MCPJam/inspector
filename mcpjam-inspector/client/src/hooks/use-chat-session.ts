@@ -3154,12 +3154,18 @@ export function useChatSession(
   const isSelectedModelResolved = useMemo(() => {
     if (initialModelId) return true;
     if (isPersistedModelInitialized === false) return false;
+    // A loading row is a placeholder, never a selection to persist.
+    if (hostedOrgModelConfig?.pending) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId,
+      (model) =>
+        String(model.id) === selectedModelId &&
+        (!model.disabled ||
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
     );
   }, [
     availableModels,
+    hostedOrgModelConfig?.pending,
     initialModelId,
     isPersistedModelInitialized,
     selectedModelId,
