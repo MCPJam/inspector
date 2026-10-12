@@ -37,9 +37,9 @@ vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
-
-// Only the network poll is doubled; the store it writes into is real.
-// An imported draft opens in the step editor, which renders the model picker.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));

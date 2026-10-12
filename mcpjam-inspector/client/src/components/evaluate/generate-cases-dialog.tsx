@@ -18,6 +18,8 @@ import {
 } from "@/lib/evals/eval-generation-config";
 import type { EvalSuiteEnvironmentTarget } from "../evals/types";
 import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 export function GenerateCasesDialog({
   suiteId,
@@ -34,6 +36,7 @@ export function GenerateCasesDialog({
   onClose: () => void;
   onGenerate: (config: GenerateCasesConfig) => void;
 }) {
+  const member = useIsMemberActor();
   const [initial] = useState(() => loadGenerateConfig(suiteId));
   const [environmentId, setEnvironmentId] = useState<string | undefined>(() =>
     environmentChoices?.some(
@@ -49,6 +52,43 @@ export function GenerateCasesDialog({
   const [coverage, setCoverage] = useState<"read-only" | "read-write">(
     initial.toolCoverage ?? "read-only",
   );
+  if (member !== true) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generate test cases</DialogTitle>
+            {member === undefined ? (
+              <DialogDescription role="status">
+                Loading account…
+              </DialogDescription>
+            ) : (
+              <DialogDescription>
+                AI case generation requires an account.
+              </DialogDescription>
+            )}
+          </DialogHeader>
+          {member === false && (
+            <GuestSignInMessage
+              compact
+              message="Sign in to generate test cases."
+              location="eval_case_generation"
+            />
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       open
@@ -60,6 +100,7 @@ export function GenerateCasesDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
+            if (member !== true) return;
             if (needsEnvironment && !environmentId) return;
             const config: GenerateCasesConfig = {
               ...generationPreset(testSet, coverage),
