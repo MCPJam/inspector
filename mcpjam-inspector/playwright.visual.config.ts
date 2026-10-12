@@ -14,9 +14,15 @@ export default defineConfig<ChromaticConfig>({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  // The job's timeout-minutes is the real ceiling. Playwright's 30s default
+  // kills slow captures before they reach Chromatic, which hides the cause.
+  timeout: 600_000,
+  expect: { timeout: 120_000 },
   forbidOnly: Boolean(process.env.CI),
   reporter: "list",
   use: {
+    actionTimeout: 120_000,
+    navigationTimeout: 120_000,
     baseURL: "http://127.0.0.1:6289",
     browserName: "chromium",
     serviceWorkers: "block",

@@ -58,7 +58,7 @@ export async function guardStagingNetwork(
     const server = socket.connectToServer();
     socket.onMessage((raw) => {
       if (!permitsConvexFrame(raw.toString())) {
-        rejected.push("Convex frame outside bootstrap/read policy");
+        rejected.push(`Convex ${describeConvexFrame(raw.toString())}`);
         socket.close();
       } else server.send(raw);
     });
@@ -95,6 +95,21 @@ export function permitsConvexFrame(raw: string): boolean {
     );
   }
   return ["Connect", "ModifyQuerySet", "Event"].includes(String(message.type));
+}
+
+// Names the rejected function without echoing its arguments, which can hold
+// account data.
+export function describeConvexFrame(raw: string): string {
+  let message: unknown;
+  try {
+    message = JSON.parse(raw);
+  } catch {
+    return "unparseable frame";
+  }
+  if (!message || typeof message !== "object") return "unparseable frame";
+  const type = "type" in message ? String(message.type) : "unknown";
+  const udfPath = "udfPath" in message ? ` ${String(message.udfPath)}` : "";
+  return `${type}${udfPath}`;
 }
 
 export async function fulfillWithoutForwardingCredentials(

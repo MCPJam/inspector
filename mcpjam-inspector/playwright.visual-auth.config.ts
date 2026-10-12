@@ -6,7 +6,10 @@ export default defineConfig({
   outputDir: ".playwright/auth-check",
   workers: 1,
   retries: 0,
-  timeout: 120_000,
+  // Staging cold starts can take minutes; the job's timeout-minutes is the
+  // real ceiling.
+  timeout: 600_000,
+  expect: { timeout: 120_000 },
   reporter: "dot",
   use: {
     browserName: "chromium",
@@ -14,7 +17,7 @@ export default defineConfig({
     video: "off",
     screenshot: "off",
     serviceWorkers: "block",
-    actionTimeout: 20_000,
-    navigationTimeout: 30_000,
+    actionTimeout: 120_000,
+    navigationTimeout: 120_000,
   },
 });

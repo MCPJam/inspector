@@ -656,45 +656,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -913,45 +892,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -1302,19 +1260,41 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             csp: {
               mode: "declared",
               // ChatGPT's own baseline allowlist, merged with the widget's
-              // declared domains. The 2026-08-19 probe loaded these origins
-              // without declaring them, while undeclared frame origins were
-              // blocked. Keep this intentionally limited to what was probed.
+              // declared domains. The prober loaded each of these origins
+              // undeclared for fetch, xhr, script, style, image, font and
+              // media, while undeclared frame origins were blocked. Keep this
+              // limited to origins the prober has checked.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
@@ -2019,16 +1999,40 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // below are its own baseline, merged on top of that declaration.
             csp: {
               mode: "declared",
+              // Same baseline as ChatGPT: the prober loaded each of these
+              // origins undeclared for fetch, xhr, script, style, image, font
+              // and media.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
