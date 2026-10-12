@@ -19,7 +19,9 @@ export function DeleteOrganizationDialog({
   name,
   pending,
   onConfirm,
+  canCancelDeletion = false,
 }: {
+  canCancelDeletion?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   name: string;
@@ -48,7 +50,10 @@ export function DeleteOrganizationDialog({
           <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
           <AlertDialogDescription>
             Deleting “{name}” permanently removes the organization and its
-            members’ access. This action cannot be undone.
+            members’ access.{" "}
+            {canCancelDeletion
+              ? "You can cancel within 48 hours. After that, deletion is permanent."
+              : "This action cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-4">
@@ -83,7 +88,11 @@ export function DeleteOrganizationDialog({
               onChange={(e) => setPermanentAcknowledged(e.target.checked)}
               className="mt-1 accent-destructive"
             />
-            I understand that deleting this organization is permanent.
+            I understand that{" "}
+            {canCancelDeletion
+              ? "deletion is permanent after the 48-hour cancellation window"
+              : "deleting this organization is permanent"}
+            .
           </label>
         </div>
         <AlertDialogFooter>

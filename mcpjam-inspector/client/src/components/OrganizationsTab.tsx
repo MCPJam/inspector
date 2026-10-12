@@ -1307,7 +1307,7 @@ function OrganizationPage({
     beginOrganizationDeletion(organization._id);
     try {
       await deleteOrganization({ organizationId: organization._id });
-      toast.success("Organization deleted");
+      toast.success("Organization deletion requested");
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
@@ -1876,7 +1876,8 @@ function OrganizationPage({
                         </div>
                       ) : billingStatus && !billingStatus.billingConfigured ? (
                         <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Purchases are unavailable here. You can still view the plans.
+                          Purchases are unavailable here. You can still view the
+                          plans.
                         </div>
                       ) : billingStatus ? (
                         <>
@@ -2227,7 +2228,9 @@ function OrganizationPage({
                       </h3>
                       <p className="text-sm text-foreground">
                         {isOwner
-                          ? "Permanently delete this organization. This action cannot be undone."
+                          ? organization.deletionCancellationWindowHours === 48
+                            ? "Delete this organization and its data. You can cancel within 48 hours."
+                            : "Permanently delete this organization and its data."
                           : "You’ll lose access to this organization and its projects."}
                       </p>
                     </div>
@@ -2457,6 +2460,7 @@ function OrganizationPage({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         name={organization.name}
+        canCancelDeletion={organization.deletionCancellationWindowHours === 48}
         pending={isDeleting}
         onConfirm={handleDelete}
       />
