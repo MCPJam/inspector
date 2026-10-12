@@ -757,6 +757,8 @@ jobs:
       needs.preflight.outputs.publish_inspector == 'true' &&
       needs.publish-packages.result == 'success'
     uses: ./.github/workflows/docker-release.yml
+    with:
+      sha: ${{ github.sha }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

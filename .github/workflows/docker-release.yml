@@ -10,6 +10,11 @@ name: Docker Release
 # `npx @mcpjam/inspector` runs.
 on:
   workflow_call:
+    inputs:
+      sha:
+        description: "The commit the release published to npm"
+        required: true
+        type: string
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -17,9 +22,12 @@ on:
         required: true
   workflow_dispatch:
 
+# Every release must get its tags, so pending runs wait in line instead of
+# replacing each other.
 concurrency:
   group: docker-release
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -30,20 +38,20 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
-      # `latest` moves on every run, so only `main` may publish: a dispatch
-      # from a branch would hand every `docker pull` unreleased code.
       - name: Enforce main branch
         run: |
-          if [ "${GITHUB_REF_NAME}" != "main" ]; then
-            echo "docker-release.yml must run from main" >&2
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "docker-release.yml must run from the main branch" >&2
             exit 1
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: mcpjam-inspector/package.json
@@ -55,7 +63,7 @@ jobs:
 
       # Between a version PR merging and its release publishing, `main`
       # already carries the next version; a dispatch in that window must not
-      # tag it `latest`. Retried because release.yml calls this seconds after
+      # publish it. Retried because release.yml calls this seconds after
       # `npm publish`, before the registry may answer for the new version.
       - name: Require the version on npm
         env:
@@ -70,11 +78,31 @@ jobs:
           echo "::error::@mcpjam/inspector@$VERSION is not on npm. Only released versions go to Docker Hub." >&2
           exit 1
 
+      # The image must hold the code npm got for this version. A release
+      # passes the commit it published from. A dispatch builds the commit the
+      # `v<version>` tag names, not whatever `main` has merged since.
+      - name: Resolve the release commit
+        id: commit
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sha="$RELEASE_SHA"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote origin "refs/tags/v$VERSION" | cut -f1)"
+          fi
+          if [ -z "$sha" ]; then
+            echo "::error::Tag v$VERSION does not exist yet, so its release has not finished. Re-run the Docker job from that release run instead." >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   # One native runner per architecture: under QEMU the arm64 build (npm ci,
   # the client bundle, Chromium) takes several times longer.
   build:
     needs: prepare
     name: Build ${{ matrix.arch }}
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
@@ -85,8 +113,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.sha }}
           # The build context is the whole checkout and this image is public;
           # keep the token out of .git/config.
           persist-credentials: false
@@ -110,7 +139,7 @@ jobs:
           tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
 
   # The tags users pull, each pointing at both architectures. Written only
@@ -118,6 +147,7 @@ jobs:
   publish:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Log in to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -125,13 +155,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # `latest` follows npm's `latest` dist-tag, so re-running an older
+      # release's Docker job refreshes its own tag without moving `latest`
+      # back, and a prerelease never becomes `latest`.
       - name: Create the multi-arch tags
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          docker buildx imagetools create \
-            --tag "$DOCKER_REPOSITORY:v$VERSION" \
-            --tag "$DOCKER_REPOSITORY:latest" \
+          tags=(--tag "$DOCKER_REPOSITORY:v$VERSION")
+          npm_latest="$(npm view @mcpjam/inspector dist-tags.latest)"
+          if [ "$npm_latest" = "$VERSION" ]; then
+            tags+=(--tag "$DOCKER_REPOSITORY:latest")
+          else
+            echo "::notice::npm latest is $npm_latest, so latest stays where it is."
+          fi
+          docker buildx imagetools create "${tags[@]}" \
             "$DOCKER_REPOSITORY:v$VERSION-amd64" \
             "$DOCKER_REPOSITORY:v$VERSION-arm64"
-          echo "Published \`$DOCKER_REPOSITORY:v$VERSION\` and \`latest\` (linux/amd64, linux/arm64)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published ${tags[*]} (linux/amd64, linux/arm64)." >> "$GITHUB_STEP_SUMMARY"
