@@ -137,6 +137,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
     String(model.id).includes("/"),
   ),
+  compactModelLabel: vi.fn((label: string) => label),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({

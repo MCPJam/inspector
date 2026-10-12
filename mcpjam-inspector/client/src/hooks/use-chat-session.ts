@@ -1010,6 +1010,21 @@ export const NO_ORG_MODEL_PLACEHOLDER: ModelDefinition = Object.freeze({
   disabledReason: ORG_KEYS_MODEL_REASON,
 }) as ModelDefinition;
 
+/**
+ * What the chat says when the organization's AI key policy refuses to send
+ * on `model`: its settings are still loading, the model is one it no longer
+ * allows, or it offers no model at all.
+ */
+function orgPolicySendRefusal(
+  model: ModelDefinition,
+  pending: boolean,
+): string {
+  if (pending) return ORG_POLICY_LOADING_REASON;
+  return isOrgKeysDisallowedRow(model)
+    ? orgKeysDisallowedNotice(model)
+    : ORG_KEYS_MODEL_REASON;
+}
+
 function createLockedInitialModel(modelId: string): ModelDefinition {
   // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
   // else this builds, and the copy has to say so. `cursor/auto` is not a model
@@ -3222,25 +3237,30 @@ export function useChatSession(
     selectedModelId,
   ]);
 
-  // Why the organization's AI key policy leaves this chat no model to send
-  // to, or null when it may send: its settings are still loading, it offers
-  // no model yet, or the saved model is one it no longer allows (it stays
-  // selected, and the picker warns on its trigger). A personal key in local
-  // mode has no server-side check to refuse it, so the chat must. The composer
-  // reads it through `submitBlocked`; `sendMessage` reads it too, because
-  // retry, the eval handoff and widget follow-ups call it directly.
-  const orgPolicySendRefusal: string | null =
-    hostedOrgModelConfig?.pending === true
-      ? ORG_POLICY_LOADING_REASON
-      : selectedModel === NO_ORG_MODEL_PLACEHOLDER
-        ? ORG_KEYS_MODEL_REASON
-        : isOrgKeysDisallowedRow(selectedModel)
-          ? orgKeysDisallowedNotice(selectedModel)
-          : null;
+  // Whether the organization's AI key policy leaves this chat no model to
+  // send to: its settings are still loading, it offers no model yet, or the
+  // saved model is one it no longer allows (it stays selected, and the picker
+  // warns on its trigger). A personal key in local mode has no server-side
+  // check to refuse it, so the chat must. The composer reads it through
+  // `submitBlocked`; `sendMessage` reads it too, because retry, the eval
+  // handoff and widget follow-ups call it directly.
+  const orgPolicyPending = hostedOrgModelConfig?.pending === true;
+  const orgPolicyBlocksSend =
+    orgPolicyPending ||
+    selectedModel === NO_ORG_MODEL_PLACEHOLDER ||
+    isOrgKeysDisallowedRow(selectedModel);
   // Read at call time: a caller can hold a `sendMessage` from an earlier
   // render (the eval handoff sends after the seeded thread hydrates).
-  const orgPolicySendRefusalRef = useRef(orgPolicySendRefusal);
-  orgPolicySendRefusalRef.current = orgPolicySendRefusal;
+  const orgPolicySendRef = useRef({
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  });
+  orgPolicySendRef.current = {
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  };
 
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
@@ -4916,9 +4936,9 @@ export function useChatSession(
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
       // The organization's AI key policy leaves no model to send to. Refused
       // here, not only in the composer, so no caller can send around it.
-      const orgPolicyRefusal = orgPolicySendRefusalRef.current;
-      if (orgPolicyRefusal) {
-        toast.error(orgPolicyRefusal);
+      const orgPolicy = orgPolicySendRef.current;
+      if (orgPolicy.blocked) {
+        toast.error(orgPolicySendRefusal(orgPolicy.model, orgPolicy.pending));
         return Promise.resolve(false);
       }
       chatToolCallRequestIdsRef.current.clear();
@@ -6138,7 +6158,7 @@ export function useChatSession(
     hostedContextNotReady ||
     isNoRunnableHarnessModel(selectedModel) ||
     // The organization's AI key policy leaves no model to send to.
-    orgPolicySendRefusal !== null;
+    orgPolicyBlocksSend;
   const inputDisabled = submitBlocked;
 
   // Only once the response has settled, and only for the session it was
