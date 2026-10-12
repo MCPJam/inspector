@@ -21,6 +21,10 @@ export const GUEST_SESSION_FAILURE_REASONS = [
   // The guest authority could not be resolved from this install's
   // configuration (see `server/utils/guest-authority.ts`).
   "configuration",
+  // An Inspector's per-IP request limiter (`guest-session-shared.ts`) answered
+  // 429. It clears within a minute, so the client waits out `Retry-After` and
+  // tries again. Not the authority's daily creation cap, which is a refusal.
+  "throttled",
 ] as const;
 
 export type GuestSessionFailureReason =

@@ -1,4 +1,7 @@
-import type { GuestSessionFailureReason } from "@/shared/guest-session-failure";
+import {
+  sanitizeGuestSessionFailureDetails,
+  type GuestSessionFailureReason,
+} from "@/shared/guest-session-failure";
 import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 import { getFetchErrorCause, isFetchTimeout } from "./fetch-error-cause.js";
 import { logger } from "./logger.js";
@@ -175,6 +178,19 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
   };
 }
 
+// A hosted authority's own per-IP limiter marks its 429 `throttled`; its daily
+// creation cap does not. Only the closed reason is read from the body.
+async function isThrottledResponse(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.json()) as { details?: unknown } | null;
+    return (
+      sanitizeGuestSessionFailureDetails(body?.details)?.reason === "throttled"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function parseRetryAfterSeconds(raw: string | null): number | undefined {
   if (!raw) return undefined;
   const seconds = Number.parseInt(raw, 10);
@@ -237,12 +253,14 @@ export async function fetchGuestSession(
         response.status === 429
           ? parseRetryAfterSeconds(response.headers.get("retry-after"))
           : undefined;
+      const throttled =
+        response.status === 429 && (await isThrottledResponse(response));
       return {
         kind: "error",
         status: response.status,
         setCookies,
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-        reason: "upstream_status",
+        reason: throttled ? "throttled" : "upstream_status",
         upstreamStatus: response.status,
       };
     }

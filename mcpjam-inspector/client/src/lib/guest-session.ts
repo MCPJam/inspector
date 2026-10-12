@@ -64,6 +64,9 @@ const sessionListeners = new Set<() => void>();
 // the refusal is deterministic for the rest of the window, so retrying only
 // burns the network — and the app offers sign-in instead.
 const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
+// A throttled request (the Inspector's per-IP limiter, which resets every
+// minute) is retried after its Retry-After instead; see the auth retry ladders.
+const GUEST_SESSION_THROTTLED_DEFAULT_MS = 60 * 1000;
 export interface GuestSessionRefusal {
   /** Epoch ms after which a new attempt is allowed. */
   readonly until: number;
@@ -266,6 +269,18 @@ export class GuestSessionRefusedError extends GuestSessionRequestError {
   }
 }
 
+/** Throttled for now (429 `throttled`): transient, retry after the wait. */
+export class GuestSessionThrottledError extends GuestSessionRequestError {
+  readonly retryAfterMs: number;
+  constructor(retryAfterMs: number) {
+    super("guest-session request throttled (429)", 429, {
+      reason: "throttled",
+    });
+    this.name = "GuestSessionThrottledError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 // This fetch has no timeout, so reading a stalled error body without a bound
 // would hang the retry ladder behind a report that only wants a reason.
 const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
@@ -308,11 +323,12 @@ function describeUpstreamFailure(
   return ` (${failure.reason}${extra ? ` ${extra}` : ""})`;
 }
 
-function parseRetryAfterMs(raw: string | null | undefined): number {
+function parseRetryAfterMs(
+  raw: string | null | undefined,
+  fallbackMs: number,
+): number {
   const seconds = raw ? Number.parseInt(raw, 10) : Number.NaN;
-  return Number.isFinite(seconds) && seconds > 0
-    ? seconds * 1000
-    : GUEST_SESSION_REFUSED_DEFAULT_MS;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : fallbackMs;
 }
 
 /**
@@ -352,8 +368,16 @@ async function requestGuestSession(
   }
 
   if (response.status === 429) {
+    const retryAfter = response.headers?.get?.("retry-after");
+    // Only the authority's creation cap is a refusal; the per-IP limiter's
+    // 429 says `throttled` and clears within a minute.
+    if ((await readUpstreamFailure(response))?.reason === "throttled") {
+      throw new GuestSessionThrottledError(
+        parseRetryAfterMs(retryAfter, GUEST_SESSION_THROTTLED_DEFAULT_MS),
+      );
+    }
     throw new GuestSessionRefusedError(
-      parseRetryAfterMs(response.headers?.get?.("retry-after")),
+      parseRetryAfterMs(retryAfter, GUEST_SESSION_REFUSED_DEFAULT_MS),
     );
   }
 

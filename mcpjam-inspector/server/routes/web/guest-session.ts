@@ -1,5 +1,8 @@
 import { Hono } from "hono";
-import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import {
+  sanitizeGuestSessionFailureDetails,
+  type GuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
 import type { Context } from "hono";
 import {
   fetchGuestPromotionProof,
@@ -17,8 +20,8 @@ import {
 } from "../../utils/scoped-cookie-context.js";
 import {
   GUEST_SESSION_COOKIE_NAME,
-  allowMint,
   appendGuestSessionSetCookie,
+  consumeMintBudget,
   extractGuestSessionCookie,
 } from "./guest-session-shared.js";
 import {
@@ -41,6 +44,25 @@ const MAX_LEGACY_TOKEN_LENGTH = 4096;
 export const GUEST_SESSION_REFUSED_MESSAGE =
   "Too many guest sessions from your network today. Sign in to continue.";
 const GUEST_SESSION_REFUSED_RETRY_AFTER_S = 600;
+
+// The per-IP request limiter (`guest-session-shared.ts`), here or at the hosted
+// authority this install relays to. Unlike the creation cap above it clears
+// within a minute, so it says when, and is marked `throttled` so the client
+// waits and retries instead of offering sign-in for ten minutes.
+const GUEST_SESSION_THROTTLED_RETRY_AFTER_S = 60;
+
+function guestSessionThrottled(c: Context, retryAfterSeconds: number) {
+  c.header("Retry-After", String(retryAfterSeconds));
+  const details: GuestSessionFailureDetails = { reason: "throttled" };
+  return c.json(
+    {
+      code: ErrorCode.RATE_LIMITED,
+      message: "Too many guest session requests. Try again later.",
+      details,
+    },
+    429
+  );
+}
 
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
@@ -73,7 +95,8 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * instance's namespace-scoped cookie instead (`guest-cookie-scope.ts`), so
  * concurrent instances on one machine never share or overwrite a guest.
  *
- * Rate limited to 10 requests per minute per IP.
+ * Rate limited to 10 requests per minute per IP, except this machine's own
+ * requests to a local Inspector.
  */
 guestSession.post("/", async (c) => {
   const ip = getSpendClientIp(c);
@@ -87,17 +110,10 @@ guestSession.post("/", async (c) => {
       429
     );
   }
-  const rateLimitKey = ip ?? "local-dev";
-
   // Check rate limit (shared singleton — see guest-session-shared.ts)
-  if (!allowMint(rateLimitKey)) {
-    return c.json(
-      {
-        code: ErrorCode.RATE_LIMITED,
-        message: "Too many guest session requests. Try again later.",
-      },
-      429
-    );
+  const budget = consumeMintBudget(c, ip);
+  if (!budget.allowed) {
+    return guestSessionThrottled(c, budget.retryAfterSeconds);
   }
 
   let body: GuestSessionRequestBody = {};
@@ -169,6 +185,13 @@ guestSession.post("/", async (c) => {
         message: "Guest session revoked.",
       },
       403
+    );
+  }
+
+  if (result.status === 429 && result.reason === "throttled") {
+    return guestSessionThrottled(
+      c,
+      result.retryAfterSeconds ?? GUEST_SESSION_THROTTLED_RETRY_AFTER_S
     );
   }
 
@@ -338,16 +361,9 @@ guestSession.post("/promotion-proof", async (c) => {
       429
     );
   }
-  const rateLimitKey = ip ?? "local-dev";
-
-  if (!allowMint(rateLimitKey)) {
-    return c.json(
-      {
-        code: ErrorCode.RATE_LIMITED,
-        message: "Too many guest session requests. Try again later.",
-      },
-      429
-    );
+  const budget = consumeMintBudget(c, ip);
+  if (!budget.allowed) {
+    return guestSessionThrottled(c, budget.retryAfterSeconds);
   }
 
   const scoped = usesScopedSessionCookies(c);

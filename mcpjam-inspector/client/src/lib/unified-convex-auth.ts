@@ -98,7 +98,9 @@ async function fetchTokenWithRetry(
     }
 
     if (attempt === AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length) break;
-    await delay(AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS[attempt]);
+    await delay(
+      retryDelayMs(lastError, AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS[attempt]),
+    );
   }
 
   if (opts.request?.signal?.aborted) return null;
@@ -149,6 +151,31 @@ function guestFailureExtra(error: unknown): Record<string, string | number> {
     }
   }
   return extra;
+}
+
+// The longest a throttled guest request makes a retry ladder wait: the
+// Inspector's per-IP limiter resets every minute, and a bad Retry-After must
+// not park the ladder.
+const GUEST_SESSION_THROTTLED_MAX_WAIT_MS = 60_000;
+
+// The ladder's own delay, or a throttled guest request's Retry-After when that
+// is longer — retrying sooner only hits the same limiter. Read by shape, like
+// `guestFailureExtra`.
+function retryDelayMs(error: unknown, ladderDelayMs: number): number {
+  const { retryAfterMs, upstreamFailure } = (error ?? {}) as {
+    retryAfterMs?: unknown;
+    upstreamFailure?: unknown;
+  };
+  if (
+    typeof retryAfterMs !== "number" ||
+    sanitizeGuestSessionFailureDetails(upstreamFailure)?.reason !== "throttled"
+  ) {
+    return ladderDelayMs;
+  }
+  return Math.max(
+    ladderDelayMs,
+    Math.min(retryAfterMs, GUEST_SESSION_THROTTLED_MAX_WAIT_MS),
+  );
 }
 
 // Persist the "this browser used Convex as a guest" marker for the currently
@@ -258,7 +285,12 @@ export function useUnifiedConvexAuth() {
           return;
         }
 
-        await delay(GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS[attempt]);
+        await delay(
+          retryDelayMs(
+            lastError,
+            GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS[attempt],
+          ),
+        );
         if (cancelled) return;
       }
     };

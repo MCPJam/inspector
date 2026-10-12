@@ -199,6 +199,56 @@ describe("guest-session module", () => {
       expect(listener).toHaveBeenCalled();
     });
 
+    function throttledResponse(retryAfter: string | null): Response {
+      return {
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          get: (name: string) => (name === "retry-after" ? retryAfter : null),
+        },
+        json: async () => ({
+          code: "RATE_LIMITED",
+          details: { reason: "throttled" },
+        }),
+      } as unknown as Response;
+    }
+
+    it("treats a throttled 429 as transient: no refusal, and the next call asks again", async () => {
+      vi.mocked(global.fetch).mockResolvedValueOnce(throttledResponse("12"));
+
+      const error = await guestSession
+        .getOrCreateGuestSessionOrThrow()
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(guestSession.GuestSessionThrottledError);
+      expect((error as { retryAfterMs: number }).retryAfterMs).toBe(12_000);
+      expect(guestSession.getGuestSessionRefusal()).toBeNull();
+
+      const mockSession = {
+        guestId: "guest-1",
+        token: "token-1",
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      };
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockSession),
+      } as Response);
+      await expect(guestSession.getOrCreateGuestSession()).resolves.toEqual(
+        mockSession,
+      );
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("waits a minute on a throttle that names no Retry-After", async () => {
+      vi.mocked(global.fetch).mockResolvedValueOnce(throttledResponse(null));
+
+      const error = await guestSession
+        .getOrCreateGuestSessionOrThrow()
+        .catch((e: unknown) => e);
+      expect((error as { retryAfterMs: number }).retryAfterMs).toBe(60_000);
+    });
+
     it("returns null on network error", async () => {
       vi.mocked(global.fetch).mockRejectedValue(new Error("network"));
       const session = await guestSession.getOrCreateGuestSession();

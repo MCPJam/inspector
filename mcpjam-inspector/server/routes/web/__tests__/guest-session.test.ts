@@ -165,6 +165,37 @@ describe("POST /guest-session", () => {
     expect(body.message).toMatch(/Sign in to continue/);
   });
 
+  it("relays an upstream throttle as a throttle, not as the creation refusal", async () => {
+    vi.mocked(global.fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: "RATE_LIMITED",
+            message: "Too many guest session requests. Try again later.",
+            details: { reason: "throttled" },
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "retry-after": "30",
+            },
+          },
+        ),
+    );
+
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.10" },
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("30");
+    const body = await res.json();
+    expect(body.details).toEqual({ reason: "throttled" });
+    expect(body.message).not.toMatch(/Sign in to continue/);
+  });
+
   it("forwards Set-Cookie from Convex to the browser", async () => {
     const res = await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
@@ -410,8 +441,53 @@ describe("POST /guest-session", () => {
       });
 
       expect(res.status).toBe(429);
+      const retryAfter = Number(res.headers.get("retry-after"));
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(60);
       const data = await res.json();
       expect(data.code).toBe("RATE_LIMITED");
+      // Marked so the client waits it out instead of showing the
+      // creation-refusal banner.
+      expect(data.details).toEqual({ reason: "throttled" });
+    });
+
+    // The TCP peer as @hono/node-server's getConnInfo reads it.
+    function socketFrom(remoteAddress: string) {
+      return { incoming: { socket: { remoteAddress } } };
+    }
+
+    it("does not limit this machine's own requests to a local Inspector", async () => {
+      for (let i = 0; i < 12; i++) {
+        const res = await app.request(
+          "/guest-session",
+          { method: "POST" },
+          socketFrom("127.0.0.1"),
+        );
+        expect(res.status).toBe(200);
+      }
+    });
+
+    it("still limits a loopback peer that forwards another client's IP", async () => {
+      const send = () =>
+        app.request(
+          "/guest-session",
+          { method: "POST", headers: { "x-forwarded-for": "10.0.0.9" } },
+          socketFrom("127.0.0.1"),
+        );
+      for (let i = 0; i < 10; i++) {
+        expect((await send()).status).toBe(200);
+      }
+      expect((await send()).status).toBe(429);
+    });
+
+    it("still limits loopback requests in hosted mode", async () => {
+      process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+      const send = () =>
+        app.request("/guest-session", { method: "POST" }, socketFrom("::1"));
+      for (let i = 0; i < 10; i++) {
+        expect((await send()).status).toBe(200);
+      }
+      expect((await send()).status).toBe(429);
     });
 
     it("rate limits are per-IP", async () => {
