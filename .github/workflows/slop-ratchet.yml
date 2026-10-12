@@ -25,7 +25,9 @@ jobs:
   ratchet:
     name: Slop Ratchet
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
       # The PR merge commit and its first parent, the base it merges into, are

@@ -123,6 +123,8 @@ export function CiEvalsTab({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: convexProjectId,
@@ -838,6 +840,8 @@ export function CiEvalsTab({
                     deletingSuiteId={deletingSuiteId}
                     deletingRunId={deletingRunId}
                     availableModels={availableModels}
+                    requireOrgKeys={requireOrgKeys}
+                    onManageOrgProviders={onManageOrgProviders}
                     route={route}
                     userMap={userMap}
                     navigation={ciNavigation}

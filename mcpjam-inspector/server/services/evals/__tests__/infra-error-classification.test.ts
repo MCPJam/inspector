@@ -32,6 +32,87 @@ describe("classifyEvalInfraError — our backend's codes are an allowlist", () =
     },
   );
 
+  it.each([
+    ["org_keys_required", 403, "platform"],
+    ["org_model_unconfigured", 422, "model"],
+    ["org_runtime_unsupported", 422, "model"],
+    ["ai_scope_unresolved", 403, "model"],
+    ["provider_auth_failed", 422, "model"],
+    ["credential_missing", 422, "model"],
+  ] as const)(
+    "the org-key policy's %s (HTTP %s) is configuration, never auth or an account limit",
+    (code, httpStatus, layer) => {
+      expect(
+        classifyEvalInfraError({
+          source: "backend_model",
+          endpoint: "platform",
+          code,
+          httpStatus,
+        }),
+      ).toEqual({
+        class: "configuration",
+        layer,
+        retryable: false,
+        code,
+        httpStatus,
+      });
+    },
+  );
+
+  it.each(["org_keys_required", "ai_key_policy_unavailable"] as const)(
+    "%s reads the same from the backend and from the harness proxy",
+    (code) => {
+      const fromBackend = classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code,
+        httpStatus: code === "org_keys_required" ? 403 : 503,
+      });
+      const fromProxy = classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "platform",
+        code,
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      });
+      expect(fromProxy?.class).toBe(fromBackend?.class);
+      expect(fromProxy?.layer).toBe(fromBackend?.layer);
+      // The proxy never re-sends a call, so on its surface neither code is
+      // retryable, even the temporary one.
+      expect(fromProxy?.retryable).toBe(false);
+    },
+  );
+
+  it("the org-key policy's transient refusals are a retryable provider_unavailable", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "provider_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: true,
+      code: "provider_unavailable",
+      httpStatus: 503,
+    });
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "ai_key_policy_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "platform",
+      retryable: true,
+      code: "ai_key_policy_unavailable",
+      httpStatus: 503,
+    });
+  });
+
   it("files the gateway's upstream 429 as rate_limited, not as an account limit", () => {
     // `mcpjam_rate_limit` is ALSO on the account-limit list; asking that list
     // first would call a provider throttle a wallet problem.

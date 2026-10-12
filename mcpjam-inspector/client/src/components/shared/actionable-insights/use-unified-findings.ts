@@ -49,7 +49,7 @@ export type UnifiedFindingsState = {
   findings: ActionableFinding[];
   provenance: InsightsFindingProvenance[];
   analyze: FindingsAnalysisAction;
-  analysisFailure: { errorCode?: string } | null;
+  analysisFailure: { errorCode?: string; skipped?: boolean } | null;
   build: {
     available: boolean;
     pending: boolean;
@@ -368,15 +368,19 @@ export function useUnifiedFindings(args: {
     args.generation.pending;
   const enrichment = experiment?.snapshot?.enrichment;
   const job = experiment?.job;
+  // `skipped`: an automatic analysis was never started (the backend's
+  // `EvalFindingsSkipReason`, e.g. `org_model_unavailable`).
+  const jobSkipped = job?.status === "skipped";
   const analysisFailure =
-    job?.kind === "enrich" &&
-    job.status === "failed" &&
+    job &&
+    ((job.kind === "enrich" && job.status === "failed") || jobSkipped) &&
     !analyzePending &&
     !(enrichment && enrichment.generatedAt >= job.startedAt)
       ? {
           ...(job.errorCode && job.errorCode !== "cancelled"
             ? { errorCode: job.errorCode }
             : {}),
+          ...(jobSkipped ? { skipped: true } : {}),
         }
       : null;
 
