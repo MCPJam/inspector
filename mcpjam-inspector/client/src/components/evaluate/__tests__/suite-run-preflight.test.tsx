@@ -757,11 +757,35 @@ describe("runPreflight while the organization requires its own keys", () => {
     const preflight = runPreflight({
       serverRefs: [],
       servers: {},
-      models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
+      models: [
+        {
+          model: "anthropic/claude-sonnet-4.5",
+          provider: "anthropic",
+          selection: {
+            source: "org",
+            connectionRef: { kind: "orgProvider", id: "conn_anthropic" },
+          },
+        },
+      ],
       orgConfig: policy,
     });
     expect(preflight.orgKeyProblems).toBeUndefined();
     expect(hasBlockingPreflight(preflight)).toBe(false);
+  });
+
+  it("blocks a case model saved as a bare id with no selection, even on an eligible connection's provider", () => {
+    // The backend reads it as a legacy id and refuses it (`org_keys_required`):
+    // only a saved org selection names the connection it runs on.
+    const preflight = runPreflight({
+      serverRefs: [],
+      servers: {},
+      models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
+      orgConfig: policy,
+    });
+    expect(preflight.orgKeyProblems).toEqual([
+      "claude-sonnet-4-5 isn't saved with an organization provider connection, which this organization requires. Choose a model from an organization provider.",
+    ]);
+    expect(hasBlockingPreflight(preflight)).toBe(true);
   });
 
   it("follows the backend's verdict, and blocks a connection without one", () => {

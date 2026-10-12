@@ -53,9 +53,12 @@ function eligibleConnection(
 
 /**
  * Whether a saved model can run while the organization requires its own
- * keys: an org selection on an eligible connection, or (for a legacy id) a
- * provider the organization serves on an eligible connection. Hosted and
- * personal-key models never can.
+ * keys: only an org selection on an eligible connection can. Hosted and
+ * personal-key models never can, and neither can a legacy id (a model saved
+ * with no selection): the backend reads it as `{ source: "legacy" }` and
+ * refuses it (`org_keys_required`), even when an eligible connection serves
+ * its provider. That case gets its own sentence, since the model itself is
+ * one the organization offers.
  */
 function orgKeyModelProblem(
   orgConfig: PreflightOrgConfig,
@@ -84,7 +87,7 @@ function orgKeyModelProblem(
       (provider) => provider.providerKey === model.provider,
     )
   ) {
-    return null;
+    return `${label} isn't saved with an organization provider connection, which this organization requires. ${ORG_KEYS_MODEL_REASON}`;
   }
   return `${label} runs on a personal or local key, which this organization doesn't allow. ${ORG_KEYS_MODEL_REASON}`;
 }
