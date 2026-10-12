@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -91,7 +91,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { toast } from "@/lib/toast";
-import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";
+import {
+  GithubInstallCallbackRoute,
+  resetGithubCallbackForTests,
+} from "../GithubInstallCallbackRoute";
 
 const PATH = "/settings/integrations/github/callback";
 
@@ -118,6 +121,8 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The captured callback lives for the page, i.e. the test module.
+  resetGithubCallbackForTests();
   // `clearAllMocks` clears CALLS, not implementations. Two tests here make the
   // redirect throw to prove the guard's developer text never reaches the
   // screen, and without this that throwing implementation leaks into every
@@ -343,6 +348,7 @@ describe("the OAuth leg", () => {
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
         "/settings/integrations/github",
+        { replace: true },
       ),
     );
     expect(toast.success).toHaveBeenCalledWith("Connected acme.");
@@ -671,6 +677,201 @@ describe("neither leg", () => {
     await user.click(
       await screen.findByRole("button", { name: /Back to GitHub Checks/ }),
     );
-    expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github");
+    expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github", {
+      replace: true,
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE ADDRESS BAR LETS GO OF THE CODE
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// GitHub's `code` is a one-time credential and `state` the other half of the
+// proof. The page captures both on mount and takes them out of the URL at
+// once — before auth has settled, before either leg runs, and well before a
+// user who is choosing an account on the picker is done — and every exit
+// REPLACES the callback entry so nothing in history replays it.
+
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+  );
+}
+
+function renderCallbackWithProbe(query: string) {
+  return render(
+    <StrictMode>
+      <MemoryRouter initialEntries={[`${PATH}${query}`]}>
+        <Routes>
+          <Route
+            path={PATH}
+            element={
+              <>
+                <GithubInstallCallbackRoute />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    </StrictMode>,
+  );
+}
+
+describe("a remount before the flow has run", () => {
+  it("still finishes with the callback the first mount captured", async () => {
+    // First mount: auth not settled, the URL is scrubbed, nothing called.
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    const first = renderCallbackWithProbe(
+      "?code=gh-code&state=raw-oauth-state",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    first.unmount();
+
+    // The tree remounts on the bare path (as AuthRecoveryBoundary does).
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    renderCallbackWithProbe("");
+    await waitFor(() =>
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
+        code: "gh-code",
+        state: "raw-oauth-state",
+      }),
+    );
+    expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1);
+  });
+
+  it("never writes the callback to storage", async () => {
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    renderCallbackWithProbe("?code=gh-code&state=raw-oauth-state");
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    const stored = [sessionStorage, localStorage]
+      .flatMap((storage) =>
+        Array.from({ length: storage.length }, (_, i) =>
+          storage.getItem(storage.key(i) ?? ""),
+        ),
+      )
+      .join("\n");
+    expect(stored).not.toContain("gh-code");
+    expect(stored).not.toContain("raw-oauth-state");
+  });
+});
+
+describe("the address bar", () => {
+  it("drops code and state from the URL on mount, before auth has settled", async () => {
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    renderCallbackWithProbe("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(PATH),
+    );
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("still forwards the captured code and state after the URL is bare", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    renderCallbackWithProbe("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() =>
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
+        code: "gh-code",
+        state: "raw-oauth-state",
+      }),
+    );
+    expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("location").textContent).toBe(PATH);
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith(
+        "/settings/integrations/github",
+        { replace: true },
+      ),
+    );
+  });
+
+  it("drops the setup leg's parameters too, and still follows the authorize URL", async () => {
+    mockCompleteInstallSetup.mockResolvedValue({
+      authorizeUrl: "https://github.com/login/oauth/authorize?state=next",
+    });
+    renderCallbackWithProbe("?installation_id=4242&state=install-state");
+
+    await waitFor(() =>
+      expect(mockRedirectToGithub).toHaveBeenCalledWith(
+        "https://github.com/login/oauth/authorize?state=next",
+      ),
+    );
+    expect(mockCompleteInstallSetup).toHaveBeenCalledWith({
+      installationId: 4242,
+      state: "install-state",
+    });
+    // The entry GitHub's redirect leaves behind carries nothing to replay.
+    expect(screen.getByTestId("location").textContent).toBe(PATH);
+  });
+
+  it("shows the picker on a bare URL, and the claim leaves by replacing", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+        },
+      ],
+    });
+    mockClaimProvenInstallation.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    const user = userEvent.setup();
+    renderCallbackWithProbe("?code=c&state=s");
+    await screen.findByText("acme");
+    expect(screen.getByTestId("location").textContent).toBe(PATH);
+
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith(
+        "/settings/integrations/github",
+        { replace: true },
+      ),
+    );
+  });
+
+  it("leaves a refusal by replacing too", async () => {
+    mockCompleteUserAuthorization.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    renderCallbackWithProbe("?code=c&state=s");
+    await user.click(
+      await screen.findByRole("button", { name: /Back to GitHub Checks/ }),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github", {
+      replace: true,
+    });
+    expect(mockNavigate).not.toHaveBeenCalledWith(
+      "/settings/integrations/github",
+    );
+  });
+
+  it("leaves an unrelated query alone", async () => {
+    renderCallbackWithProbe("?utm_source=mail");
+    expect(
+      await screen.findByText(/opened without the details GitHub sends/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("location").textContent).toBe(
+      `${PATH}?utm_source=mail`,
+    );
   });
 });

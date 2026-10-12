@@ -41,6 +41,7 @@ import {
   resolveSyntheticModelSource,
   type SyntheticModelSource,
 } from "./org-model-config.js";
+import { admitEachLocalOrgAttempt } from "./local-org-attempt-admission.js";
 import { postLocalUsage } from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
@@ -241,9 +242,14 @@ export async function resolveTurnRuntime(
       );
     }
 
-    // Same validation + build the SSE/headless local handlers run.
+    // Same validation + build the SSE/headless local handlers run. Each
+    // provider attempt (every step, every retry) asks the backend first.
     assertOrgModelAllowed(orgRuntime.provider, modelId);
-    const llmModel = buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId);
+    const llmModel = admitEachLocalOrgAttempt(
+      buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId),
+      orgRuntime.admission,
+      modelId,
+    );
 
     // The inspector calls the provider, so the effort is applied here, as
     // provider options, or refused when this provider has no effort control.
@@ -452,6 +458,9 @@ export async function resolveTurnRuntime(
           ? { extraBodyFields: hostedExtraBodyFields }
           : {}),
         ...(args.harness ? { harness: args.harness } : {}),
+        ...(args.harness && hostedSelection
+          ? { modelSelection: hostedSelection }
+          : {}),
       },
       modelSource: "mcpjam",
       finalizeUsage: HOSTED_NOOP_FINALIZE,
@@ -495,6 +504,7 @@ export async function resolveTurnRuntime(
           : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
+      ...(args.harness && orgSelection ? { modelSelection: orgSelection } : {}),
     },
     modelSource: "byok",
     finalizeUsage: HOSTED_NOOP_FINALIZE,

@@ -32,9 +32,11 @@ import {
   parseLLMString,
   type CreateModelOptions,
 } from "../model-factory.js";
+import { ERROR_CATALOG } from "../error-describer/catalog.js";
 import {
   McpjamLeaseError,
   classifyMcpjamLeaseError,
+  mcpjamLeasePolicyCode,
 } from "../mcpjam-model-lease.js";
 import { isLoopbackHost } from "../oauth/state-machines/shared/client-id-metadata.js";
 import { redactTelemetryString } from "../telemetry-redaction.js";
@@ -432,6 +434,11 @@ function fromLeaseKind(
   switch (kind) {
     case "billing":
       return "billing";
+    // The organization's AI-key policy, never the credential: a 403 (lease)
+    // or 409 (proxy) carrying `org_keys_required` read as `credentials` would
+    // send someone to rotate a key that works.
+    case "policy":
+      return "orgPolicy";
     case "auth":
       return "credentials";
     case "rateLimited":
@@ -539,11 +546,93 @@ export function refusalMessage(error: unknown): string {
   return message.trim() === "" ? bounded : `${message}: ${bounded}`;
 }
 
-/** Credential and billing refusals stop the run; the others are transient. */
+/**
+ * Credential, billing and organization-policy refusals stop the run; the
+ * others are transient.
+ */
 export function isTerminalRefusal(
   refusal: SuiteFileRefusalAttribution
-): refusal is "credentials" | "billing" {
-  return refusal === "credentials" || refusal === "billing";
+): refusal is "credentials" | "billing" | "orgPolicy" {
+  return (
+    refusal === "credentials" ||
+    refusal === "billing" ||
+    refusal === "orgPolicy"
+  );
+}
+
+/**
+ * The organization AI-key policy code behind an `orgPolicy` refusal, read
+ * from the lease error or the proxy's response body, or `undefined` when it
+ * names none.
+ */
+export function orgPolicyRefusalCode(error: unknown): string | undefined {
+  const current = RetryError.isInstance(error) ? error.lastError : error;
+  if (current instanceof McpjamLeaseError) {
+    return mcpjamLeasePolicyCode(current);
+  }
+  if (APICallError.isInstance(current) && current.statusCode !== undefined) {
+    const lease = leaseErrorFromBody(current.statusCode, current.responseBody);
+    if (lease) return mcpjamLeasePolicyCode(lease);
+  }
+  return undefined;
+}
+
+/**
+ * For each policy code, the error catalog entry whose sentence says what
+ * happened (the same copy `describeError` shows), and the step that fixes it
+ * for whoever ran the suite when that sentence names none. Only an
+ * organization admin can change the organization's providers, so those steps
+ * send the reader to one.
+ */
+const ORG_POLICY_REFUSAL_COPY: Readonly<
+  Record<string, { slug: string; nextStep?: string }>
+> = {
+  org_keys_required: { slug: "org/keys_required" },
+  org_model_unconfigured: {
+    slug: "org/model_unconfigured",
+    nextStep: "Ask an organization admin to set one.",
+  },
+  org_runtime_unsupported: {
+    slug: "org/runtime_unsupported",
+    nextStep:
+      "An organization admin can turn off “Use your keys for all AI features” if this run needs it.",
+  },
+  ai_scope_unresolved: {
+    slug: "org/scope_unresolved",
+    nextStep:
+      "Check that the run's project belongs to the organization, and contact support if this keeps happening.",
+  },
+  provider_auth_failed: {
+    slug: "org/provider_auth_failed",
+    nextStep:
+      "Ask an organization admin to update the key in Organization → AI providers.",
+  },
+  credential_missing: {
+    slug: "org/credential_missing",
+    nextStep:
+      "Choose a model from an organization provider that is still connected, or ask an organization admin to reconnect it.",
+  },
+};
+
+/**
+ * The sentence a run states for an organization-policy refusal: that the
+ * model did not run, why, and the change that fixes it, by the refusal's
+ * code. Only `org_keys_required` means MCPJam refused one of its own models;
+ * `provider_auth_failed`, for one, is the organization's provider rejecting
+ * the organization's key. A refusal with no code reads as
+ * `org_keys_required`, the policy's usual refusal.
+ */
+export function orgPolicyRefusalMessage(model: string, code?: string): string {
+  const copy =
+    ORG_POLICY_REFUSAL_COPY[code?.trim().toLowerCase() ?? ""] ??
+    ORG_POLICY_REFUSAL_COPY.org_keys_required!;
+  return [
+    `${model} did not run.`,
+    ERROR_CATALOG[copy.slug]?.oneLine,
+    copy.nextStep,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
 }
 
 type LanguageModelFactory = (

@@ -8,6 +8,7 @@ import {
 import type { ModelSelection } from "../environment-stack";
 
 const mockModels = vi.hoisted(() => ({
+  requireOrgKeys: false,
   availableModels: [
     {
       id: "google/gemini-2.5-flash",
@@ -29,6 +30,7 @@ const mockModels = vi.hoisted(() => ({
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: mockModels.availableModels,
+    requireOrgKeys: mockModels.requireOrgKeys,
   }),
 }));
 
@@ -48,6 +50,7 @@ const DEFAULT_MODELS = [...mockModels.availableModels];
 
 beforeEach(() => {
   mockModels.availableModels = [...DEFAULT_MODELS];
+  mockModels.requireOrgKeys = false;
 });
 
 /** A model row in the open picker (cmdk option; `aria-checked` in multi). */
@@ -224,6 +227,48 @@ describe("ModelsPill", () => {
     await user.click(stale);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
+      explicitTargets: [],
+    });
+  });
+
+  it("warns on the trigger about a picked model the organization's policy no longer allows", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [
+      {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+        hosted: false,
+        orgProvider: { providerKey: "anthropic", id: "conn_1" },
+      },
+    ];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
+    });
+    const trigger = screen.getByRole("button", { name: "Models" });
+    expect(trigger).toHaveAttribute(
+      "title",
+      "Claude Haiku 4.5 isn't allowed here. Choose an organization model.",
+    );
+    expect(trigger).toHaveTextContent("Claude Haiku 4.5");
+    expect(
+      screen.getByTestId("models-pill-org-keys-warning"),
+    ).toBeInTheDocument();
+
+    await user.click(trigger);
+    // Removable by its catalog name, never offered as a model row.
+    const stale = option("Claude Haiku 4.5");
+    expect(stale).toHaveTextContent(
+      "Not allowed here. Choose an organization model.",
+    );
+    expect(
+      screen.queryByRole("option", { name: /anthropic\/claude-haiku-4\.5/ }),
+    ).not.toBeInTheDocument();
+    await user.click(stale);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: false,
       explicitTargets: [],
     });
   });
@@ -513,6 +558,42 @@ describe("ModelsPill — harness × model support", () => {
   });
 });
 
+describe("ModelsPill — harness × whose key", () => {
+  const ORG_ANTHROPIC = {
+    id: "claude-sonnet-4-5",
+    name: "Org Sonnet",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_a" },
+  };
+  // The SAME canonical model as a hosted row, but through the org's
+  // OpenRouter connection: Claude Code runs only the org's Anthropic key.
+  const ORG_OPENROUTER = {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Sonnet via OpenRouter",
+    provider: "openrouter",
+    hosted: false,
+    orgProvider: { providerKey: "openrouter", id: "orgprov_r" },
+  };
+
+  it("an org Anthropic row is pickable on Claude Code; another vendor's connection is locked with the reason", async () => {
+    mockModels.availableModels = [ORG_ANTHROPIC, ORG_OPENROUTER];
+    const user = userEvent.setup();
+    renderPill(
+      { includeClientDefaults: true, explicitTargets: [] },
+      { harnessTargets: [{ harnessId: "claude-code" }] },
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(option("Org Sonnet")).not.toHaveAttribute("aria-disabled", "true");
+    const openrouter = option("Sonnet via OpenRouter");
+    expect(openrouter).toHaveAttribute("aria-disabled", "true");
+    await user.hover(openrouter);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "your organization's Anthropic key",
+    );
+  });
+});
+
 describe("ModelsPill — reasoning effort", () => {
   const GPT5 = {
     id: "openai/gpt-5",
@@ -642,5 +723,78 @@ describe("ModelsPill — reasoning effort", () => {
     await userEvent.click(screen.getByRole("button", { name: "Models" }));
     await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
     expect(screen.queryByTestId("model-effort-menu")).toBeNull();
+  });
+});
+
+describe("ModelsPill — a bare-id organization row", () => {
+  // An org OpenAI connection lists `gpt-5` by its bare id.
+  const ORG_GPT5 = {
+    id: "gpt-5",
+    name: "GPT-5",
+    provider: "openai",
+    hosted: false,
+    orgProvider: { providerKey: "openai", id: "orgprov_openai" },
+  };
+  const orgGpt5 = {
+    modelId: "openai/gpt-5",
+    selection: {
+      modelId: "openai/gpt-5",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_openai" },
+      nativeModelId: "gpt-5",
+      fallback: { provider: "none" as const, model: "none" as const },
+    },
+  };
+
+  it("is saved under its canonical id with its org connection while the org requires its own keys", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(option("GPT-5"));
+    // The bare `gpt-5` alone runs as a legacy id, which the policy refuses.
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [orgGpt5],
+    });
+  });
+
+  it("reads that saved pick back as the org row, and unpicking it removes it", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [orgGpt5],
+    });
+    const trigger = screen.getByRole("button", { name: "Models" });
+    expect(trigger).not.toHaveAttribute("title");
+    await user.click(trigger);
+    const row = option("GPT-5");
+    expect(row).toHaveAttribute("aria-checked", "true");
+    await user.click(row);
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+  });
+
+  it("keeps its bare id with the policy off", async () => {
+    mockModels.availableModels = [ORG_GPT5];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(option("GPT-5"));
+    expect(onChange).toHaveBeenLastCalledWith({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "gpt-5" }],
+    });
   });
 });

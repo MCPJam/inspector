@@ -4,6 +4,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
+
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -12,10 +18,20 @@ const mocks = vi.hoisted(() => ({
   runOverview: vi.fn(),
   evaluateRunContent: vi.fn(),
   runDetailView: vi.fn(),
+  suiteDashboard: vi.fn(),
+  testCasesOverview: vi.fn(),
   useQueries: vi.fn(
     (_queries: Record<string, { args: { runId: string } }>) =>
       ({}) as Record<string, unknown>,
   ),
+}));
+
+const creditsState = vi.hoisted(() => ({
+  reason: null as string | null,
+}));
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useCreditBalance")>()),
+  useOutOfCreditsReason: () => creditsState.reason,
 }));
 
 const cloudState = vi.hoisted(() => ({
@@ -142,15 +158,14 @@ vi.mock("../suite-hero-stats", () => ({
 }));
 
 vi.mock("../suite-dashboard", () => ({
-  SuiteDashboard: ({
-    onTestCaseClick,
-    onOpenLastRun,
-    selectedRunId,
-  }: {
+  SuiteDashboard: (props: {
     onTestCaseClick: (testCaseId: string) => void;
     onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
     selectedRunId?: string | null;
-  }) => (
+  }) => {
+    mocks.suiteDashboard(props);
+    const { onTestCaseClick, onOpenLastRun, selectedRunId } = props;
+    return (
     <div data-testid="suite-dashboard">
       All runs latest + trends per client
       {selectedRunId ? null : (
@@ -172,7 +187,8 @@ vi.mock("../suite-dashboard", () => ({
         </>
       )}
     </div>
-  ),
+    );
+  },
 }));
 
 vi.mock("../../evaluate/evaluate-run-content", () => ({
@@ -187,13 +203,13 @@ vi.mock("../run-detail-view", () => ({
 }));
 
 vi.mock("../test-cases-overview", () => ({
-  TestCasesOverview: ({
-    onTestCaseClick,
-    onOpenLastRun,
-  }: {
+  TestCasesOverview: (props: {
     onTestCaseClick: (testCaseId: string) => void;
     onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
-  }) => (
+  }) => {
+    mocks.testCasesOverview(props);
+    const { onTestCaseClick, onOpenLastRun } = props;
+    return (
     <div>
       <button
         type="button"
@@ -210,7 +226,8 @@ vi.mock("../test-cases-overview", () => ({
         Open last run
       </button>
     </div>
-  ),
+    );
+  },
 }));
 
 const noopNav = {
@@ -714,6 +731,110 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
     expect(mocks.suiteHeader).toHaveBeenCalledWith(
       expect.objectContaining({ evalRunsDisabledReason: null }),
     );
+  });
+});
+
+describe("SuiteIterationsView out-of-credits gate", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  const LOCKED = "anthropic/claude-haiku-4.5";
+  const BYOK = "custom:acme:acme-large";
+  const lockedCase = {
+    _id: "case-locked",
+    title: "Locked",
+    models: [{ model: LOCKED, provider: "anthropic" }],
+  } as any;
+  const byokCase = {
+    _id: "case-byok",
+    title: "Own key",
+    models: [{ model: BYOK, provider: "custom" }],
+  } as any;
+  const availableModels = [
+    {
+      id: LOCKED,
+      name: "Haiku",
+      provider: "anthropic",
+      disabled: true,
+      disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+    },
+    { id: BYOK, name: "Acme", provider: "custom" },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cloudState.ephemeralAvailable = true;
+    cloudState.environments = [];
+    creditsState.reason = REASON;
+    mocks.useMutation.mockReturnValue(vi.fn());
+    mocks.useQuery.mockReturnValue(undefined);
+  });
+
+  function renderView(cases: unknown[]) {
+    render(
+      withDataRouter(
+        <SuiteIterationsView
+          suite={baseSuite}
+          cases={cases as any}
+          iterations={[]}
+          allIterations={[]}
+          runs={[]}
+          runsLoading={false}
+          aggregate={null}
+          onRerun={vi.fn()}
+          onCancelRun={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteRun={vi.fn()}
+          onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+          connectedServerNames={new Set()}
+          canDeleteSuite={false}
+          rerunningSuiteId={null}
+          cancellingRunId={null}
+          deletingSuiteId={null}
+          deletingRunId={null}
+          availableModels={availableModels}
+          route={{
+            type: "suite-overview",
+            suiteId: "suite-1",
+            view: "test-cases",
+          }}
+          navigation={noopNav}
+        />,
+      ),
+    );
+  }
+
+  const caseReason = () => {
+    const props = [
+      ...mocks.suiteDashboard.mock.calls,
+      ...mocks.testCasesOverview.mock.calls,
+    ].at(-1)?.[0] as {
+      runTestCaseOutOfCreditsReason?: (testCase: unknown) => string | null;
+      runTestCaseDisabledReason?: string | null;
+    };
+    return props;
+  };
+
+  it("turns Run all off, with the reset text, when every case's model is locked", () => {
+    renderView([lockedCase]);
+
+    expect(mocks.suiteHeader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evalRunsDisabledReason: REASON }),
+    );
+    expect(caseReason().runTestCaseOutOfCreditsReason?.(lockedCase)).toBe(
+      REASON,
+    );
+  });
+
+  it("gates each case's Run on its own models, and keeps Run all for a suite that can still run", () => {
+    renderView([lockedCase, byokCase]);
+
+    expect(mocks.suiteHeader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evalRunsDisabledReason: null }),
+    );
+    const props = caseReason();
+    // The suite-wide reason never reaches a case row.
+    expect(props.runTestCaseDisabledReason ?? null).toBeNull();
+    expect(props.runTestCaseOutOfCreditsReason?.(lockedCase)).toBe(REASON);
+    expect(props.runTestCaseOutOfCreditsReason?.(byokCase)).toBeNull();
   });
 });
 

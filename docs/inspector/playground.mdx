@@ -103,9 +103,24 @@ The model picker in the chat input lets you choose which LLM to use. Models are 
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
 
+### Organization key policy
+
+When your organization requires its own provider keys for AI features, the model picker changes:
+
+- The **Free models** / **Your providers** split is replaced by a single list of your organization's models only.
+- If no organization model is available yet, the picker shows an empty state:
+  - **Admins** see an **Add a provider** button that opens the organization's AI providers settings.
+  - **Members** see "Ask an organization admin to add one."
+- If your previously saved model is no longer allowed under the policy, a warning icon appears on the picker trigger naming the model. The model is not listed in the menu, and the chat is blocked from sending until you choose an allowed model.
+- While the organization's AI settings are loading, every row is locked and the chat is blocked from sending. This prevents a hosted model from becoming the default before the policy is known.
+
+The same rules apply to the models pill in the environment composer and the model field in the client builder.
+
 ### Out-of-credits state
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
+
+The **Send** button is disabled with an "Out of MCPJam credits · resets in …" tooltip when the selected model is a locked MCPJam model. Switching to a model from your own providers re-enables Send immediately.
 
 If the out-of-credits dialog appears, the actions available depend on your plan and role:
 
@@ -113,6 +128,8 @@ If the out-of-credits dialog appears, the actions available depend on your plan 
 - **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+Dismissing the dialog keeps it closed for subsequent automatic notices until credits come back or a purchase begins. Buttons you press explicitly — such as **View credit options** or the credits button in a chat error — still open it. A "not enough credits" notice (one request too large for your balance) always opens the dialog regardless of whether you previously dismissed it.
 
 ### Frontier models and sign-in
 

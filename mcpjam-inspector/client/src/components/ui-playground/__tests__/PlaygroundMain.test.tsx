@@ -11,6 +11,7 @@ import {
 import { PlaygroundMain } from "../PlaygroundMain";
 import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
@@ -566,10 +567,24 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   },
 }));
 
-// Mock ErrorBox
+// Mock ErrorBox. `onRetry` is forwarded so a test can see whether the
+// playground handed the banner a Retry action, and click it.
 vi.mock("@/components/chat-v2/error", () => ({
-  ErrorBox: ({ message }: { message: string }) => (
-    <div data-testid="error-box">{message}</div>
+  ErrorBox: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
+    <div data-testid="error-box">
+      {message}
+      {onRetry && (
+        <button data-testid="error-box-retry" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -815,8 +830,16 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   >();
   return {
     ...actual,
+    // A test that needs `errorMessage.code` attaches a `formatted` bag to
+    // the Error it hands to `mockUseChatSession.error`.
     formatErrorMessage: (error: any) =>
-      error ? { message: error.message || "Error", details: null } : null,
+      error
+        ? {
+            message: error.message || "Error",
+            details: null,
+            ...error.formatted,
+          }
+        : null,
     STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
@@ -3186,6 +3209,50 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toBeDisabled();
     });
 
+    it("turns Send off, saying why, for a model locked by credits", async () => {
+      const selectedModel = mockUseChatSession.selectedModel;
+      try {
+        Object.assign(mockUseChatSession, {
+          selectedModel: {
+            ...selectedModel,
+            disabled: true,
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+          },
+          outOfCreditsReason: "Out of MCPJam credits · resets in 3h",
+        });
+
+        render(<PlaygroundMain {...defaultProps} />);
+
+        expect(mockChatInputProps).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            submitDisabled: true,
+            submitDisabledReason: "Out of MCPJam credits · resets in 3h",
+          })
+        );
+        // The shared send gate refuses it too, not only the button.
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "hello" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      } finally {
+        Object.assign(mockUseChatSession, {
+          selectedModel,
+          outOfCreditsReason: undefined,
+        });
+      }
+    });
+
+    it("leaves Send alone for a model credits do not lock", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockChatInputProps).not.toHaveBeenLastCalledWith(
+        expect.objectContaining({ submitDisabledReason: expect.anything() })
+      );
+    });
+
     it("shows correct placeholder", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -3595,6 +3662,123 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("error-box")).toHaveTextContent(
         "Something went wrong"
       );
+    });
+
+    it("offers Retry for a temporary organization policy refusal and resends the last user message", async () => {
+      // The organization's AI-key policy couldn't be read, or its provider
+      // was briefly down. Both lift on their own, so the playground must hand
+      // the banner a Retry action.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI policy couldn't be checked."),
+        { formatted: { code: "ai_key_policy_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "List my open tickets" })
+      );
+    });
+
+    it("runs a policy Retry through the send gates and tracks it once", async () => {
+      // Retry is a send like any other: a disconnected server is connected
+      // first, and nothing is sent when it can't be.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      const notReady = {
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      };
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValueOnce(notReady)
+        .mockResolvedValue({
+          ...notReady,
+          readyServerNames: ["test-server"],
+          failedServerNames: [],
+        });
+      vi.mocked(track).mockClear();
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(ensureServersReady).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "List my open tickets" })
+        );
+      });
+      expect(ensureServersReady).toHaveBeenCalledTimes(2);
+      expect(
+        vi
+          .mocked(track)
+          .mock.calls.filter(([event]) => event === "app_builder_send_message")
+      ).toHaveLength(2);
+    });
+
+    it("offers Retry when the organization's provider is briefly unavailable", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box-retry")).toBeInTheDocument();
+    });
+
+    it("offers no Retry for a policy refusal that needs a configuration change", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("Choose a model from an organization provider."),
+        { formatted: { code: "org_keys_required" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box")).toBeInTheDocument();
+      expect(screen.queryByTestId("error-box-retry")).not.toBeInTheDocument();
     });
   });
 

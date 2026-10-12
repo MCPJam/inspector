@@ -10,6 +10,7 @@ jobs:
     # merged docs PRs prevents a generate -> auto-merge -> generate loop.
     if: github.event.pull_request.merged == true && github.event.pull_request.user.login != 'mintlify[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Get PR details

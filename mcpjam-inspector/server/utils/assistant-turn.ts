@@ -16,7 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -84,6 +84,8 @@ export interface RunAssistantTurnOptions {
    * refuses the turn before any spend.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** The saved selection; an org one runs a harness on the org's own key. */
+  modelSelection?: ModelSelection;
 
   selectedServerIds?: string[];
   /**
@@ -702,6 +704,7 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -733,6 +736,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
+    handlerOptions.modelSelection = opts.modelSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness

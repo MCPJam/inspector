@@ -11,9 +11,23 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-09
 
+#### Added
+
+- **Muse Directory Readiness in the Conformance page** — the Conformance page now has a **Muse Directory Readiness** section alongside Claude's and OpenAI's, graded against Meta's Muse connector guidelines. It shows the technical-preflight and submission-ready verdicts. Muse readiness has no AI-observations option and is free to run.
+
+- **Execution budgets on eval suites** — a suite can now author five execution clocks: per-turn timeout, per-tool-call timeout, per-iteration timeout, whole-run timeout, and model-call retry count. Set them in suite settings; an empty field shows the platform default it inherits rather than a blank. Clearing a field saves as `null`, which resets to the platform default. The budgets are also settable over the API at `settings.executionBudgets.*` on the suite PATCH.
+
+- **Sponsored conversations in swarm launches** — swarm launches can now use sponsored conversations (paid from MCPJam's per-user allowance). The New swarm flow shows "N sponsored conversations · M use org credits" before launch. Pass `--expected-sponsored <n>` to `mcpjam cloud goals run` to declare how many conversations you expect to be sponsored; if the actual split differs, the launch is refused with a `409` and nothing is created. Remaining sponsored conversations appear in the sidebar credits card and the organization usage card.
+
+- **`@mcpjam/sdk/platform` feature gating** — `OPERATION_FEATURES` maps every platform operation to its feature flag (`null` when generally available), and `PLATFORM_FEATURES` names each feature. Use `isOperationAvailable(name, features)` to check whether an operation is available given the platform's reported feature set, and `disabledOperations(features)` to list what is off. Both fail closed: a feature not reported as on counts as off.
+
+- **`@mcpjam/vitest` now accepts Vitest 4** — the peer dependency range is now `>=3.2.0 <5`, so projects that upgrade to Vitest 4 can keep using `@mcpjam/vitest`.
+
 #### Changed
 
 - **Step-by-step case editor: "Expect a tool call" under every prompt** — in the Evaluate step-by-step editor (behind `evaluate-observe-first`), each prompt now offers an **Expect a tool call** button even when that prompt has no tool yet. Clicking it opens that prompt's tool picker and writes the chosen tool into that prompt's own steps, so the assertion grades that prompt's turn. Previously, adding a tool expectation to a later prompt required going through the generic assertion drawer. The button is not shown on a case that says no tool is called, on a pinned-first case, in a read-only view, or before the draft has a prompt step.
+
+- **Ask MCPJam now runs on Claude Haiku 5.5** — Ask MCPJam uses Claude Haiku 5.5 instead of GPT-5.6 Luna. It is cheaper per step, and guests can use it, so Ask MCPJam works again for guests. The Playground model picker is unaffected.
 
 ### 2026-10-07
 
