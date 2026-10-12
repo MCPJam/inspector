@@ -87,4 +87,4 @@ One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `
 | `cancelled` | The signal fired before execution began |
 | `integrity` | The run's own report failed validation, after the cases ran |
 
-An iteration that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion.
+An iteration that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion. Refusal attributions include `credentials`, `billing`, `orgPolicy` (organization AI-key policy), `rateLimited`, and `unavailable`. A terminal refusal (`credentials`, `billing`, or `orgPolicy`) stops scheduling further iterations.
