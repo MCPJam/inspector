@@ -8,6 +8,7 @@ import {
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
+import { ORG_POLICY_LOADING_REASON } from "@/lib/org-keys-refusal";
 import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
@@ -488,6 +489,16 @@ export function composeAvailableModels(params: {
     freeTierOnly = false,
     hostedCatalog,
   } = params;
+
+  if (orgConfig?.pending) {
+    return composeAvailableModels({ ...params, orgConfig: undefined }).map(
+      (model) => ({
+        ...model,
+        disabled: true,
+        disabledReason: ORG_POLICY_LOADING_REASON,
+      }),
+    );
+  }
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
     const orgModels = buildAvailableModelsFromOrgConfig(orgConfig, hostedCatalog);
