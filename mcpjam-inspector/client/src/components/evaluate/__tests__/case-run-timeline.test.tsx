@@ -29,6 +29,32 @@ const chooseFilter = async (filter: "Client" | "Model", option: string) => {
   await user.click(screen.getByRole("option", { name: option, exact: true }));
 };
 describe("CaseRunTimeline", () => {
+  it("labels recording separately from a run and stops it when closed", async () => {
+    const onStopRecording = vi.fn();
+    render(
+      <CaseRunTimeline
+        caseTitle="Case"
+        iterations={[]}
+        selectedIterationId={null}
+        onSelect={vi.fn()}
+        live
+        recording
+        onStopRecording={onStopRecording}
+      >
+        Live app
+      </CaseRunTimeline>,
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Record interactions" }),
+    ).toBeVisible();
+    expect(screen.getByTestId("case-run-status")).toHaveTextContent(
+      "Recording",
+    );
+    expect(screen.getByText("Live app")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onStopRecording).toHaveBeenCalledTimes(1);
+  });
+
   it("switches client and model targets and updates their averages", async () => {
     const trials = [
       {
