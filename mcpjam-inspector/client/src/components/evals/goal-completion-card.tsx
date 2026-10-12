@@ -21,10 +21,7 @@ import { judgeModelPatch } from "./judges-section";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
-import {
-  selectionConfigKey,
-  type ModelSelection,
-} from "@mcpjam/sdk/browser";
+import { selectionConfigKey, type ModelSelection } from "@mcpjam/sdk/browser";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
@@ -188,22 +185,31 @@ export function GoalCompletionCard({
             managedDefaultModelId: DEFAULT_JUDGE_MODEL,
             currentSelection: selectedSelection,
             requireOrgKeys,
+            selectionsSupported: saveSelections,
           })
         : undefined,
-    [availableModels, selectedModelId, selectedSelection, requireOrgKeys],
+    [
+      availableModels,
+      selectedModelId,
+      selectedSelection,
+      requireOrgKeys,
+      saveSelections,
+    ],
   );
   const judgeUnset =
     requireOrgKeys &&
     (selectedSelection?.source !== "org" ||
       !judgeOptions?.current ||
-      judgeOptions.currentIneligible);
+      judgeOptions.currentIneligible ||
+      judgeOptions.current.disabled === true);
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the
     // suite config. Threshold is no longer adjustable from this card — it
     // always inherits the suite default.
     // ...or when the judge's selection (its effort) differs from the suite's.
-    const modelDiffers = Boolean(selectedModelId) && selectedModelId !== suiteModel;
+    const modelDiffers =
+      Boolean(selectedModelId) && selectedModelId !== suiteModel;
     const selectionDiffers =
       (selectedSelection ? selectionConfigKey(selectedSelection) : "") !==
       (suiteSelection ? selectionConfigKey(suiteSelection) : "");
@@ -277,8 +283,8 @@ export function GoalCompletionCard({
   const runLabel = ungraded.some((c) => c.status === "error")
     ? "Retry grading"
     : goalCompletion
-    ? "Re-run judge"
-    : "Run judge";
+      ? "Re-run judge"
+      : "Run judge";
 
   return (
     <section
@@ -330,6 +336,7 @@ export function GoalCompletionCard({
                 className="w-full"
                 value={selectedModelId}
                 selection={selectedSelection}
+                selectionsSupported={saveSelections}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
                 availableModels={availableModels}
