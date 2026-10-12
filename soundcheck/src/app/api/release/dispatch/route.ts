@@ -5,7 +5,7 @@
  *
  *   - action "start": prepare-release.yml, which opens the version PR.
  *     Merging that PR is the release; release-trigger.yml runs release.yml
- *     once main is green, inside the release window.
+ *     once main is green.
  *   - action "publish": release.yml directly. The retry path, for versions
  *     already merged whose automatic run failed or never started.
  *   - deploy-mcp-prod.yml when deploy_mcp_production === true, alongside

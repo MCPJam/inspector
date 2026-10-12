@@ -13,44 +13,6 @@
 /** Workflow files that must each have a successful run on the commit. */
 export const REQUIRED_CHECKS = ["test.yml", "lint.yml", "deploy-staging.yml"];
 
-/**
- * When an automatic release may start. A version PR merged earlier in the day
- * waits for the window, so production changes at a time people expect and are
- * around to watch. Two ways around it, both deliberate: Run release now in
- * Soundcheck dispatches release.yml directly, and a version PR that ticked
- * skip_verify releases on merge. Soundcheck's release-state.ts mirrors this.
- */
-export const RELEASE_WINDOW = {
-  timeZone: "America/Los_Angeles",
-  // Sunday to Friday, as getDay() numbers them.
-  days: [0, 1, 2, 3, 4, 5],
-  startHour: 17,
-  endHour: 21,
-  label: "5 PM to 9 PM Pacific, Sunday to Friday",
-};
-
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** Read in the window's own time zone, so daylight saving needs no handling. */
-export function releaseWindowOpen(date, window = RELEASE_WINDOW) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: window.timeZone,
-      weekday: "short",
-      hour: "numeric",
-      hourCycle: "h23",
-    })
-      .formatToParts(date)
-      .map(({ type, value }) => [type, value])
-  );
-  const hour = Number(parts.hour);
-  return (
-    window.days.includes(WEEKDAYS.indexOf(parts.weekday)) &&
-    hour >= window.startHour &&
-    hour < window.endHour
-  );
-}
-
 /** `unpublished` is unpublished-versions.mjs output: `{ name, newVersion }`. */
 export function releaseLabel(unpublished) {
   const inspector = unpublished.find((r) => r.name === "@mcpjam/inspector");
@@ -73,8 +35,6 @@ export function releaseRunName(label) {
  * @param {{status: string, conclusion: string | null, displayTitle: string}[]} state.releaseRuns
  *   recent release.yml runs, newest first
  * @param {boolean} [state.skipVerify] the merged version PR ticked skip_verify
- * @param {boolean} [state.inWindow] releaseWindowOpen() now. Closed unless
- *   said otherwise, so a caller that forgets it holds instead of shipping.
  */
 export function decideRelease({
   headSha,
@@ -83,7 +43,6 @@ export function decideRelease({
   unpublished,
   releaseRuns,
   skipVerify = false,
-  inWindow = false,
 }) {
   const skip = (reason) => ({ dispatch: false, reason });
 
@@ -112,13 +71,6 @@ export function decideRelease({
   if (last && last.conclusion !== "success")
     return skip(
       `The automatic release of ${label} ended "${last.conclusion}". Re-run its failed jobs or start Release from Soundcheck.`
-    );
-
-  // Last, so a reason that needs action (a red check, a failed run) is never
-  // hidden behind "wait for 5 PM".
-  if (!skipVerify && !inWindow)
-    return skip(
-      `${label} is ready at ${headSha} and holds for the release window (${RELEASE_WINDOW.label}). Run release now in Soundcheck ships it sooner.`
     );
 
   return {

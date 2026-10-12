@@ -119,7 +119,7 @@ export default async function Home() {
       <Section
         numeral="II"
         title="Release readiness"
-        description="Where the release stands, and the gates release.yml checks on the tip of main. Once a version PR has merged, Release starts by itself at the first commit where they are all green, between 5 PM and 9 PM Pacific, Sunday to Friday."
+        description="Where the release stands, and the gates release.yml checks on the tip of main. Once a version PR has merged, Release starts by itself at the first commit where they are all green."
       >
         <Suspense fallback={<ReleaseReadinessSkeleton />}>
           <ReleaseReadiness />

@@ -1,12 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import {
   decideRelease,
-  RELEASE_WINDOW,
   releaseLabel,
   releaseRunName,
-  releaseWindowOpen,
   REQUIRED_CHECKS,
 } from "./release-trigger.mjs";
 
@@ -20,7 +17,6 @@ const ready = {
   greenChecks: REQUIRED_CHECKS,
   unpublished,
   releaseRuns: [],
-  inWindow: true,
 };
 
 test("dispatches once the tip of main is green and carries new versions", () => {
@@ -101,63 +97,4 @@ test("skip_verify still ships only the tip, only once, and only what npm lacks",
   assert.equal(decideRelease({ ...base, unpublished: [] }).dispatch, false);
   const releaseRuns = [{ status: "in_progress", conclusion: null, displayTitle: "Release 3.12.3" }];
   assert.equal(decideRelease({ ...base, releaseRuns }).dispatch, false);
-});
-
-test("holds a ready release until the window opens", () => {
-  const decision = decideRelease({ ...ready, inWindow: false });
-  assert.equal(decision.dispatch, false);
-  assert.match(decision.reason, /holds for the release window/);
-});
-
-test("a caller that does not say the window is open holds", () => {
-  const { inWindow, ...rest } = ready;
-  assert.equal(decideRelease(rest).dispatch, false);
-});
-
-test("outside the window, a reason that needs action still comes first", () => {
-  const red = decideRelease({ ...ready, inWindow: false, greenChecks: [] });
-  assert.match(red.reason, /^Waiting on/);
-  const failed = decideRelease({
-    ...ready,
-    inWindow: false,
-    releaseRuns: [{ status: "completed", conclusion: "failure", displayTitle: "Release 3.12.3" }],
-  });
-  assert.match(failed.reason, /ended "failure"/);
-});
-
-test("skip_verify releases outside the window", () => {
-  const decision = decideRelease({ ...ready, inWindow: false, greenChecks: [], skipVerify: true });
-  assert.equal(decision.dispatch, true);
-});
-
-test("the window is 5 PM to 9 PM Pacific, Sunday to Friday, across daylight saving", () => {
-  const open = (iso) => releaseWindowOpen(new Date(iso));
-  assert.equal(open("2026-10-16T23:59:00Z"), false); // Fri 16:59 PDT
-  assert.equal(open("2026-10-17T00:00:00Z"), true); // Fri 17:00 PDT
-  assert.equal(open("2026-10-17T03:59:00Z"), true); // Fri 20:59 PDT
-  assert.equal(open("2026-10-17T04:00:00Z"), false); // Fri 21:00 PDT
-  assert.equal(open("2026-10-18T01:00:00Z"), false); // Sat 18:00 PDT
-  assert.equal(open("2026-10-19T00:30:00Z"), true); // Sun 17:30 PDT
-  assert.equal(open("2026-11-03T00:30:00Z"), false); // Mon 16:30 PST
-  assert.equal(open("2026-11-03T01:00:00Z"), true); // Mon 17:00 PST
-});
-
-test("Soundcheck's hand-synced copy of the release window matches", () => {
-  const source = readFileSync(
-    new URL("../../soundcheck/src/lib/release-state.ts", import.meta.url),
-    "utf8"
-  );
-  const block = source.match(/export const RELEASE_WINDOW = \{([\s\S]*?)\n\};/)?.[1];
-  assert.ok(block, "release-state.ts no longer exports RELEASE_WINDOW");
-  const field = (name) => block.match(new RegExp(`^\\s*${name}: (.*?),?$`, "m"))?.[1];
-  assert.deepEqual(
-    {
-      timeZone: JSON.parse(field("timeZone")),
-      days: JSON.parse(field("days")),
-      startHour: Number(field("startHour")),
-      endHour: Number(field("endHour")),
-      label: JSON.parse(field("label")),
-    },
-    RELEASE_WINDOW
-  );
 });

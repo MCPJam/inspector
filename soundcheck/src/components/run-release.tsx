@@ -6,8 +6,7 @@
  *
  *   - start: prepare-release.yml opens the version PR, with the deploy
  *     flags as checkboxes in it. Merging the PR is the release;
- *     release-trigger.yml runs release.yml once main is green, inside the
- *     release window.
+ *     release-trigger.yml runs release.yml once main is green.
  *   - publish: release.yml directly, for versions already merged whose
  *     automatic run failed or never started.
  *   - deploy-mcp-prod.yml (deploy_mcp_production), with either or alone.
@@ -178,8 +177,7 @@ export function RunRelease() {
       <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
         Start release opens the version PR; merging it ships to npm and
         production once <span className="font-mono text-foreground">main</span>{" "}
-        is green, in the 5 PM to 9 PM Pacific release window. Run release now
-        skips the wait. MCP promotes through{" "}
+        is green. MCP promotes through{" "}
         <span className="font-mono text-foreground">deploy-mcp-prod.yml</span>.
         Confirmation required; the server re-checks your email before
         touching the write token.

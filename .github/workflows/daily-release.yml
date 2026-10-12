@@ -1,17 +1,10 @@
-name: Daily release cut
-
-# The first half of the daily release. Around 1 PM Pacific this opens the
-# version PR for whatever changesets are on `main`, with both production
-# deploys ticked, exactly as Soundcheck's Start release would. A person still
-# approves and merges it; release-trigger.yml then ships it once `main` is
-# green, inside the 5 PM release window. The four hours between are for that
-# review and for CI and staging to finish on the version commit. A changeset
-# merged after the cut is versioned in the next day's PR.
+name: Daily Inspector release
 
 on:
   schedule:
-    # Off the top of the hour, which is when GitHub delays scheduled runs most.
-    - cron: "17 13 * * 0-5"
+    # Prepare release usually takes 2-5 minutes, so the version PR is up by
+    # 5 PM. Also off the top of the hour, when GitHub delays scheduled runs most.
+    - cron: "50 16 * * 0-5"
       timezone: America/Los_Angeles
   workflow_dispatch:
 
@@ -76,4 +69,4 @@ jobs:
               owner, repo, workflow_id: "prepare-release.yml", ref: "main",
               inputs: { deploy_backend_prod: "true", deploy_webapp: "true", skip_verify: "false" },
             });
-            await core.summary.addRaw("\nDispatched Prepare release. Approve and merge its version PR before 5 PM Pacific; release-trigger.yml ships it in the release window once CI and staging pass.").write();
+            await core.summary.addRaw("\nDispatched Prepare release. Review and merge its version PR to start production deployment after CI and staging pass.").write();

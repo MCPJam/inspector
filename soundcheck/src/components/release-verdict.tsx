@@ -11,8 +11,7 @@
  *
  * The CI and staging gates only matter in (2): release-trigger.yml starts
  * Release at the first commit where test.yml, lint.yml and deploy-staging.yml
- * all passed, inside the release window, so they say how long the wait is,
- * not whether to start.
+ * all passed, so they say how long the wait is, not whether to start.
  *
  * This component does its own fetches rather than reading from the readiness
  * tile, so the verdict renders even if the readiness tile is still streaming.
@@ -28,9 +27,7 @@ import { fetchPendingChangesets } from "@/lib/changesets";
 import {
   automaticReleaseRun,
   fetchUnpublishedVersions,
-  RELEASE_WINDOW,
   releaseLabel,
-  releaseWindowOpen,
   VERSION_PR_BRANCH
 } from "@/lib/release-state";
 import { shortSha } from "@/lib/format";
@@ -183,23 +180,14 @@ export async function ReleaseVerdict() {
       lintRun ? null : "lint.yml",
       stagingRun ? null : "deploy-staging.yml"
     ].filter((name): name is string => name !== null);
-    if (waiting.length === 0 && !releaseWindowOpen(new Date())) {
-      return (
-        <Verdict
-          tone="running"
-          headline={`${label} is merged and holds for the release window.`}
-          detail={`Everything is green on ${shortSha(headSha)}. Release starts by itself in the release window (${RELEASE_WINDOW.label}); Run release now below ships it sooner.`}
-        />
-      );
-    }
     return (
       <Verdict
         tone="running"
         headline={`${label} is merged and waiting for a green main.`}
         detail={
           waiting.length > 0
-            ? `Release starts by itself in the release window (${RELEASE_WINDOW.label}) at the first commit where test.yml, lint.yml and deploy-staging.yml all pass. ${shortSha(headSha)} is waiting on ${waiting.join(", ")}.`
-            : `Everything is green on ${shortSha(headSha)} and the release window is open, so Release starts within half an hour.`
+            ? `Release starts by itself at the first commit where test.yml, lint.yml and deploy-staging.yml all pass. ${shortSha(headSha)} is waiting on ${waiting.join(", ")}.`
+            : `Everything is green on ${shortSha(headSha)}, so Release should start within a minute.`
         }
       />
     );
@@ -221,7 +209,7 @@ export async function ReleaseVerdict() {
       <Verdict
         tone="info"
         headline={`Version PR #${versionPr.number} is waiting for review.`}
-        detail={`Approve and merge "${versionPr.title}" before 5 PM Pacific to release today. Everything after the merge runs by itself.`}
+        detail={`Approve and merge "${versionPr.title}" to release. Everything after the merge runs by itself.`}
       />
     );
   }
@@ -254,7 +242,7 @@ export async function ReleaseVerdict() {
     <Verdict
       tone="success"
       headline="Ready to start a release."
-      detail={`${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. The daily cut opens the version PR around 1 PM Pacific, or Start release opens it now.`}
+      detail={`${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Start release opens the version PR.`}
     />
   );
 }
