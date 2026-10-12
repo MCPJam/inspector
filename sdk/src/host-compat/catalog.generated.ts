@@ -626,6 +626,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -939,6 +940,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1110,6 +1112,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           listens: true,
           refetches: true,
         },
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1500,6 +1504,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         toolListChanged: {
           listens: true,
         },
+        toolResultAuthChallenge: "prompt",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1508,6 +1513,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          pluginExtensions: {
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              mentions: false,
+            },
+            enabled: true,
+          },
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
@@ -2976,6 +2990,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
           },
+          "openai/elicitation": {
+            form: {},
+          },
+          "openai/form": {},
         },
         elicitation: {
           form: {},
@@ -3100,6 +3118,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          pluginExtensions: {
+            enabled: true,
+          },
           sandbox: {
             csp: {
               mode: "declared",

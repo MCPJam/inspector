@@ -253,6 +253,36 @@ describe("seedHostTemplate", () => {
     });
   });
 
+  it("allows esm.sh only on hosts whose sandbox loaded it undeclared", () => {
+    const cspDirectivesOf = (id: HostTemplateId) =>
+      seedHostTemplate(id, { theme: "dark" }).mcpProfile?.apps?.sandbox?.csp
+        ?.cspDirectives ?? {};
+    // ChatGPT and Codex loaded esm.sh undeclared on every one of these.
+    for (const id of ["chatgpt", "codex"] as const) {
+      const directives = cspDirectivesOf(id);
+      for (const directive of [
+        "connect-src",
+        "script-src",
+        "style-src",
+        "img-src",
+        "font-src",
+        "media-src",
+      ]) {
+        expect(directives[directive], `${id} ${directive}`).toContain(
+          "https://esm.sh"
+        );
+      }
+    }
+    // Claude's CSP blocked it everywhere, so no directive may list it.
+    for (const id of ["claude", "claude-desktop"] as const) {
+      const directives = cspDirectivesOf(id);
+      expect(Object.keys(directives).length).toBeGreaterThan(0);
+      for (const [directive, sources] of Object.entries(directives)) {
+        expect(sources, `${id} ${directive}`).not.toContain("https://esm.sh");
+      }
+    }
+  });
+
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(

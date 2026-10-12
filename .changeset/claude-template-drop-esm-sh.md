@@ -2,4 +2,4 @@
 "@mcpjam/sdk": patch
 ---
 
-The Claude and Claude Desktop templates no longer allow MCP Apps to load from `esm.sh` without declaring it. Real Claude blocks those loads, so an App that relied on them worked in MCPJam but broke in Claude.
+Host templates now match how real clients treat `esm.sh` when an MCP App loads from it without declaring it. Claude and Claude Desktop no longer allow it, because real Claude blocks those loads. ChatGPT and Codex now allow it by default, because real ChatGPT and Codex load it. Clients already set up keep their old list until the user clicks "Update to latest".

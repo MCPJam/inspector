@@ -659,9 +659,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // `assets.claude.ai` is added by Claude itself (NOT in
               // advertised metadata): it shows up in the App's
               // `resource-src` without being declared. `esm.sh` is not:
-              // prober runs inside claude.ai and Claude Desktop
-              // (2026-10-11) loaded it undeclared and Claude's CSP blocked
-              // every load, so it is not listed here.
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
@@ -895,9 +895,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // `assets.claude.ai` is added by Claude itself (NOT in
               // advertised metadata): it shows up in the App's
               // `resource-src` without being declared. `esm.sh` is not:
-              // prober runs inside claude.ai and Claude Desktop
-              // (2026-10-11) loaded it undeclared and Claude's CSP blocked
-              // every load, so it is not listed here.
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
@@ -1260,9 +1260,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             csp: {
               mode: "declared",
               // ChatGPT's own baseline allowlist, merged with the widget's
-              // declared domains. The 2026-08-19 probe loaded these origins
-              // without declaring them, while undeclared frame origins were
-              // blocked. Keep this intentionally limited to what was probed.
+              // declared domains. The prober loaded each of these origins
+              // undeclared for fetch, xhr, script, style, image, font and
+              // media, while undeclared frame origins were blocked. Keep this
+              // limited to origins the prober has checked.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
@@ -1998,6 +1999,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // below are its own baseline, merged on top of that declaration.
             csp: {
               mode: "declared",
+              // Same baseline as ChatGPT: the prober loaded each of these
+              // origins undeclared for fetch, xhr, script, style, image, font
+              // and media.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
