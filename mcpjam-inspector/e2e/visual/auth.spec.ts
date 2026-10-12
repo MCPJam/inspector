@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./staging-test";
 import { guardStagingNetwork, SYNTHETIC_ROLE } from "./staging-network";
 
 test("staging synthetic user logs in and refreshes through the same-origin proxy", async ({
