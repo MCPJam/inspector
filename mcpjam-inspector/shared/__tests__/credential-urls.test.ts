@@ -49,6 +49,10 @@ const GENERIC_CORPUS = [
   `https://bucket.s3.amazonaws.com/o?X-Amz-Signature=${sentinel("amz")}&X-Amz-Credential=${sentinel("amzc")}`,
   `https://idp.example.com/sso?SAMLResponse=${sentinel("saml")}&RelayState=${sentinel("relay")}`,
   `https://provider.example.com/token?client_secret=${sentinel("cs")}&refresh_token=${sentinel("rt")}`,
+  `https://api.example.com/feed?jwt=${sentinel("jwt")}&page=2`,
+  `https://api.example.com/feed?page=2&auth=${sentinel("auth")}`,
+  `https://api.example.com/feed?Authorization=${sentinel("authz")}`,
+  `https://login.example.com/verify#otp=${sentinel("otp")}`,
   `mcpjam://oauth/callback?code=${sentinel("electron")}`,
   `/oauth/callback/debug#access_token=${sentinel("implicit")}`,
   `/#/results/${sentinel("hashroute")}`,
@@ -234,6 +238,10 @@ describe("isSecretParamKey", () => {
       "RelayState",
       "ticket",
       "x_vendor_access_token",
+      "jwt",
+      "Auth",
+      "AUTHORIZATION",
+      "otp",
     ]) {
       expect(isSecretParamKey(key)).toBe(true);
     }
