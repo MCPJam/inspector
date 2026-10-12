@@ -26,6 +26,7 @@ import {
   callbackMatchesPending,
   clearPendingAuthorization,
   HANDOFF_SIGN_IN_STATE_KEY,
+  handoffRefusedPath,
   handoffRequestPath,
   isTerminalHandoffStatus,
   isWaitingHandoffStatus,
@@ -36,7 +37,14 @@ import {
   rememberClaimedHandoff,
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
+  type CallbackParams,
+  type PendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "@/lib/oauth-callback-inbox";
+import { ErrorCard } from "@/components/ui/error-card";
 import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
@@ -45,235 +53,21 @@ import {
   type ClaimRefusalDetails,
 } from "@/shared/server-connection-claim-refusal";
 import { useAuth } from "@workos-inc/authkit-react";
-
-const API = "/api/web/server-connections";
+import { ClaimRefusal } from "./ClaimRefusal";
+import {
+  bestEffortAccessToken,
+  call,
+  HandoffCallError,
+  isTransientCallFailure,
+  isUsedLinkError,
+  type HandoffState,
+} from "./handoff-api";
+import { Shell, Spinner } from "./HandoffShell";
 
 /** Slow enough to be polite to a shared backend, fast enough that a discovery
  * finishing feels immediate. Only ever runs while a step belongs to someone
  * else — the page stops on every status the user must act on. */
 const POLL_INTERVAL_MS = 2_000;
-
-interface HandoffState {
-  requestId: string;
-  status: string;
-  live: boolean;
-  displayUrl: string;
-  hasQuery: boolean;
-  requestedName: string | null;
-  serverName: string | null;
-  isGuestOwner: boolean;
-  errorCode: string | null;
-  errorMessage: string | null;
-  errorRetryable: boolean | null;
-  projects: Array<{ id: string; name: string }>;
-}
-
-/**
- * Who the visitor is, when they are signed in — for the CLAIM and nothing else.
- *
- * The backend refuses an account-owned handoff link to anyone but its owner,
- * and it can only tell who is asking from a verified bearer token. This page
- * used to send none, so the ownership check compared "nobody" against an owner
- * and refused EVERY account-owned link: create a request from the CLI, open
- * the link in the very same account, get "This authorization link belongs to a
- * different account."
- *
- * `getAccessToken` comes from `AuthKitProvider`, which `main.tsx` now mounts
- * around this page. Deliberately the SDK and not a fetch at a known URL: the
- * `/user_management` proxy is mounted only when `!HOSTED_MODE`, so a
- * hand-rolled call to it 404s in hosted and silently reproduces the same
- * refusal. Only the SDK knows which AuthKit origin this deployment uses.
- *
- * BEST EFFORT, ALWAYS. A signed-out visitor, a guest, an expired session or a
- * refresh that throws all resolve to `null`, the claim proceeds without a
- * header, and possession of the single-use token remains the capability for a
- * guest-owned request exactly as before.
- */
-async function bestEffortAccessToken(
-  getAccessToken: () => Promise<string | undefined>,
-): Promise<string | null> {
-  try {
-    const token = await getAccessToken();
-    return typeof token === "string" && token ? token : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A failed call, with the envelope's `details` kept.
- *
- * The page used to throw a bare `Error` carrying only the message, which is
- * enough to REPORT a failure and not enough to ACT on one. A refused claim is
- * the case that needs more: whether to offer "sign in" or "switch account"
- * lives in `details`, not in the prose.
- */
-class HandoffCallError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = "HandoffCallError";
-  }
-}
-
-function isUsedLinkError(error: unknown): boolean {
-  return (
-    error instanceof HandoffCallError &&
-    typeof error.details === "object" &&
-    error.details !== null &&
-    (error.details as { reason?: unknown }).reason === "REQUEST_NOT_FOUND"
-  );
-}
-
-async function call<T>(
-  path: string,
-  body?: unknown,
-  accessToken?: string | null,
-): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    // Same-origin is the default, but stating it makes the cookie requirement
-    // legible next to the fetch that depends on it.
-    credentials: "same-origin",
-    ...(body === undefined
-      ? {}
-      : {
-          headers: {
-            "content-type": "application/json",
-            ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify(body),
-        }),
-  });
-  const payload = (await response.json().catch(() => null)) as
-    | (T & { message?: string; details?: unknown })
-    | null;
-  if (!response.ok) {
-    throw new HandoffCallError(
-      payload?.message ?? "Something went wrong. Please try again.",
-      response.status,
-      payload?.details,
-    );
-  }
-  if (!payload) throw new Error("The server sent an unreadable response.");
-  return payload;
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-6">{children}</div>
-    </div>
-  );
-}
-
-function Spinner() {
-  return (
-    <div
-      className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground"
-      role="status"
-      aria-label="Working"
-    />
-  );
-}
-
-/**
- * The claim was refused because of WHO is asking — the one failure on this page
- * with something to do about it.
- *
- * Both branches say the link survives, because it does: the backend checks the
- * claimant before it consumes the token, so the same URL still works after
- * signing in or switching accounts. That is the fact the old single message
- * left out, and the reason people treated a recoverable state as a dead end.
- */
-function ClaimRefusal({
-  refusal,
-  signedInAs,
-  busy,
-  onSignIn,
-  onSwitchAccount,
-}: {
-  refusal: ClaimRefusalDetails;
-  signedInAs: string | null;
-  busy: boolean;
-  onSignIn: () => void;
-  onSwitchAccount: () => void;
-}) {
-  const owner = refusal.ownerHint;
-
-  if (refusal.reason === "sign-in-required") {
-    return (
-      <Shell>
-        <div className="space-y-2">
-          <h1 className="text-lg font-semibold">
-            Sign in to finish connecting
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {owner
-              ? `This connection request was created by ${owner}. Sign in to that account to continue.`
-              : "This connection request was created by an MCPJam account. Sign in to continue."}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            This link is still valid — nothing has been used up.
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={busy}
-          className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
-          onClick={onSignIn}
-        >
-          {busy ? "Opening sign-in…" : "Sign in"}
-        </button>
-      </Shell>
-    );
-  }
-
-  return (
-    <Shell>
-      <div className="space-y-2">
-        <h1 className="text-lg font-semibold">
-          This link belongs to a different account
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {signedInAs ? (
-            <>
-              You are signed in as{" "}
-              <span className="font-medium text-foreground">{signedInAs}</span>.{" "}
-            </>
-          ) : null}
-          {owner
-            ? `This connection request was created by ${owner}.`
-            : "This connection request was created by a different MCPJam account."}
-        </p>
-        {/* Named explicitly because the CLI is where these links come from, and
-            an agent driving it cannot see which account it is acting as. The
-            mismatch is almost always "the browser and the terminal are logged
-            into different accounts", and `whoami` is the one command that
-            settles it. */}
-        <p className="text-sm text-muted-foreground">
-          If you started this from the MCPJam CLI, that is the account it is
-          logged into — <code className="font-mono text-xs">mcpjam whoami</code>{" "}
-          will confirm which.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          This link is still valid. Switch accounts and open it again.
-        </p>
-      </div>
-      <button
-        type="button"
-        disabled={busy}
-        className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
-        onClick={onSwitchAccount}
-      >
-        {busy ? "Signing out…" : "Switch account"}
-      </button>
-    </Shell>
-  );
-}
 
 export function ServerConnectionHandoff() {
   const {
@@ -288,7 +82,26 @@ export function ServerConnectionHandoff() {
   const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
+  // A completion that failed, kept for an in-page retry. The authorization
+  // answer lives in memory only (`oauth-callback-inbox.ts`), so a reload
+  // cannot retry it; this button can.
+  const [retryableCompletion, setRetryableCompletion] = useState<{
+    callback: CallbackParams;
+    pending: PendingAuthorization;
+  } | null>(null);
+  // A claim that failed without an answer about the link (see
+  // `isTransientCallFailure`), kept for an in-page retry from `claimLinkRef`.
+  const [retryableClaim, setRetryableClaim] = useState(false);
   const claimed = useRef(false);
+  // The link as it was opened, held in memory only. A claim that does not
+  // succeed takes the token out of the address bar (below), but the two
+  // recoveries for a refusal about WHO is asking — sign in, switch account —
+  // must come back to this exact link, and the token is the link.
+  const claimLinkRef = useRef<string | null>(
+    matchHandoffRoute(window.location.pathname)?.kind === "claim"
+      ? `${window.location.pathname}${window.location.search}`
+      : null,
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -297,6 +110,96 @@ export function ServerConnectionHandoff() {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
+
+  /** Trade the token for the cookie, then take it out of the URL. Throws. */
+  const claimHandoff = useCallback(
+    async (handoffToken: string) => {
+      const result = await call<{ requestId: string }>(
+        "/claim",
+        { handoffToken },
+        // Only the claim carries identity. Every later step authenticates
+        // with the continuation cookie, which is scoped to this request.
+        await bestEffortAccessToken(getAccessToken),
+      );
+      // Record what this token became, so a later reopen of THIS link can
+      // tell the continuation cookie is describing the same request rather
+      // than whichever one this browser claimed most recently.
+      rememberClaimedHandoff(handoffToken, result.requestId);
+      // `replaceState`, not push: the token URL must not be somewhere the
+      // back button can return to, and it is single-use anyway.
+      window.history.replaceState({}, "", handoffRequestPath(result.requestId));
+    },
+    [getAccessToken],
+  );
+
+  /** What a claim that did not succeed leaves on screen. */
+  const settleFailedClaim = useCallback(
+    async (handoffToken: string, cause: unknown) => {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      // No answer about the link: keep it, in the address bar as well as in
+      // `claimLinkRef`, so both Retry and a reload try the claim again.
+      if (isTransientCallFailure(cause)) {
+        setRetryableClaim(true);
+        setError(message);
+        return;
+      }
+      setRetryableClaim(false);
+      // A refused claim must not leave its token in the address bar for as
+      // long as the error screen stays up: every telemetry sink and every
+      // `Referer` sees the URL. The success path trades it for the request
+      // page; this is the same rule for a refusal. The resume below may still
+      // move on to the request page, and the recoveries use `claimLinkRef`,
+      // not the URL.
+      window.history.replaceState({}, "", handoffRefusedPath());
+      // A refusal about WHO is asking is recoverable, and gets its own screen
+      // with the action that recovers it. Everything else is the existing
+      // dead-end report.
+      const claimRefusal =
+        cause instanceof HandoffCallError
+          ? readClaimRefusal(cause.details)
+          : null;
+      if (claimRefusal) {
+        setRefusal(claimRefusal);
+        return;
+      }
+      // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
+      // is what turned a re-opened link into a burned retry. The first claim
+      // cleared the handoff digest, but it also set the continuation cookie —
+      // the credential every later step of the flow already authenticates
+      // with. If that cookie still resolves to a request, this is the same
+      // browser coming back to its own link, and the honest answer is to put
+      // the user back in the flow rather than tell them it is gone.
+      //
+      // A browser that never claimed has no cookie and gets the used-link
+      // screen exactly as before.
+      //
+      // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
+      // describes the last link this browser claimed, so a browser that
+      // claimed A and then B would answer a reopened A with B — a different
+      // server quietly swapped in behind the URL the user opened. The claim
+      // recorded which request each token became; only that request may be
+      // resumed here. When they disagree, the session behind this link really
+      // is gone, and the used-link screen is the honest answer.
+      if (isUsedLinkError(cause)) {
+        const claimedRequestId = readClaimedHandoff(handoffToken);
+        const resumed = claimedRequestId
+          ? await call<HandoffState>("/state").catch(() => null)
+          : null;
+        if (resumed && resumed.requestId === claimedRequestId) {
+          window.history.replaceState(
+            {},
+            "",
+            handoffRequestPath(resumed.requestId),
+          );
+          setState(resumed);
+          return;
+        }
+        setUsedLink(true);
+      }
+      setError(message);
+    },
+    [],
+  );
 
   // First load: trade the token for the cookie, then take it out of the URL.
   //
@@ -323,29 +226,14 @@ export function ServerConnectionHandoff() {
 
     void (async () => {
       const route = matchHandoffRoute(window.location.pathname);
-      const callback = readCallbackParams(window.location.search);
+      // The callback's answer from the inbox `main.tsx` moved it into before
+      // telemetry started; the address bar holds only `?oauth_pending=1`.
+      const callback = readCallbackParams(readOAuthCallbackParams() ?? "");
       const pending = readPendingAuthorization();
 
       try {
         if (route?.kind === "claim") {
-          const result = await call<{ requestId: string }>(
-            "/claim",
-            { handoffToken: route.handoffToken },
-            // Only the claim carries identity. Every later step authenticates
-            // with the continuation cookie, which is scoped to this request.
-            await bestEffortAccessToken(getAccessToken),
-          );
-          // Record what this token became, so a later reopen of THIS link can
-          // tell the continuation cookie is describing the same request rather
-          // than whichever one this browser claimed most recently.
-          rememberClaimedHandoff(route.handoffToken, result.requestId);
-          // `replaceState`, not push: the token URL must not be somewhere the
-          // back button can return to, and it is single-use anyway.
-          window.history.replaceState(
-            {},
-            "",
-            handoffRequestPath(result.requestId),
-          );
+          await claimHandoff(route.handoffToken);
         } else if (callbackMatchesPending(pending, callback)) {
           // Returned from the authorization server. The cookie travelled with
           // the top-level navigation, so this post is already authorized.
@@ -355,6 +243,10 @@ export function ServerConnectionHandoff() {
           // one thing that could route them home already gone — and a reload,
           // the obvious thing to try, would do nothing.
           clearPendingAuthorization();
+          // Spent: its reload copy goes with the callback route. Kept on a
+          // failure above, for the same reason the marker is — a reload is the
+          // obvious retry, and it needs the answer.
+          consumeOAuthCallbackParams();
           window.history.replaceState(
             {},
             "",
@@ -362,9 +254,10 @@ export function ServerConnectionHandoff() {
           );
         }
       } catch (cause) {
-        // A refusal about WHO is asking is recoverable, and gets its own
-        // screen with the action that recovers it. Everything else is the
-        // existing dead-end report.
+        if (route?.kind === "claim") {
+          await settleFailedClaim(route.handoffToken, cause);
+          return;
+        }
         const claimRefusal =
           cause instanceof HandoffCallError
             ? readClaimRefusal(cause.details)
@@ -373,46 +266,58 @@ export function ServerConnectionHandoff() {
           setRefusal(claimRefusal);
           return;
         }
-        // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
-        // is what turned a re-opened link into a burned retry. The first claim
-        // cleared the handoff digest, but it also set the continuation cookie —
-        // the credential every later step of the flow already authenticates
-        // with. If that cookie still resolves to a request, this is the same
-        // browser coming back to its own link, and the honest answer is to put
-        // the user back in the flow rather than tell them it is gone.
-        //
-        // A browser that never claimed has no cookie and gets the used-link
-        // screen exactly as before.
-        //
-        // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
-        // describes the last link this browser claimed, so a browser that
-        // claimed A and then B would answer a reopened A with B — a different
-        // server quietly swapped in behind the URL the user opened. The claim
-        // recorded which request each token became; only that request may be
-        // resumed here. When they disagree, the session behind this link really
-        // is gone, and the used-link screen is the honest answer.
-        if (route?.kind === "claim" && isUsedLinkError(cause)) {
-          const claimedRequestId = readClaimedHandoff(route.handoffToken);
-          const resumed = claimedRequestId
-            ? await call<HandoffState>("/state").catch(() => null)
-            : null;
-          if (resumed && resumed.requestId === claimedRequestId) {
-            window.history.replaceState(
-              {},
-              "",
-              handoffRequestPath(resumed.requestId),
-            );
-            setState(resumed);
-            return;
-          }
-          setUsedLink(true);
+        if (pending && callback && callbackMatchesPending(pending, callback)) {
+          setRetryableCompletion({ callback, pending });
         }
         setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
       await refresh();
     })();
-  }, [isAuthLoading, refresh]);
+  }, [isAuthLoading, refresh, claimHandoff, settleFailedClaim]);
+
+  /** Retry a claim that failed without an answer, from the link in memory. */
+  const retryClaim = useCallback(async () => {
+    const link = claimLinkRef.current;
+    const route = link ? matchHandoffRoute(link.split(/[?#]/)[0] ?? "") : null;
+    if (route?.kind !== "claim") return;
+    setBusy(true);
+    setError(null);
+    setRetryableClaim(false);
+    try {
+      await claimHandoff(route.handoffToken);
+    } catch (cause) {
+      await settleFailedClaim(route.handoffToken, cause);
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await refresh();
+  }, [claimHandoff, settleFailedClaim, refresh]);
+
+  /** Retry a failed `/authorize/complete` with the answer still in memory. */
+  const retryCompletion = useCallback(async () => {
+    if (!retryableCompletion) return;
+    const { callback, pending } = retryableCompletion;
+    setBusy(true);
+    setError(null);
+    try {
+      await call("/authorize/complete", callback);
+      clearPendingAuthorization();
+      consumeOAuthCallbackParams();
+      setRetryableCompletion(null);
+      window.history.replaceState(
+        {},
+        "",
+        handoffRequestPath(pending.requestId),
+      );
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [retryableCompletion, refresh]);
 
   // Poll only while the outstanding step is someone else's.
   useEffect(() => {
@@ -484,10 +389,10 @@ export function ServerConnectionHandoff() {
   /**
    * Sign in and come back to THIS link.
    *
-   * The return path is the address bar as it stands, which on a refused claim
-   * still carries the handoff token — the page only strips it after a claim
-   * SUCCEEDS. `rememberHandoffSignInReturn` keeps that path same-origin and
-   * sends only a nonce through AuthKit; see its docblock.
+   * The return path is the link as it was opened (`claimLinkRef`), NOT the
+   * address bar: a refused claim has already taken the token out of the URL,
+   * and coming back needs it. `rememberHandoffSignInReturn` keeps that path
+   * same-origin and sends only a nonce through AuthKit; see its docblock.
    *
    * A `null` nonce means the return could not be stored, so the user signs in
    * without one and lands on the app shell rather than back here. Refusing to
@@ -496,7 +401,8 @@ export function ServerConnectionHandoff() {
   const signInAndReturn = useCallback(() => {
     setBusy(true);
     const nonce = rememberHandoffSignInReturn(
-      `${window.location.pathname}${window.location.search}`,
+      claimLinkRef.current ??
+        `${window.location.pathname}${window.location.search}`,
       window.location.origin,
     );
     void Promise.resolve(
@@ -528,7 +434,12 @@ export function ServerConnectionHandoff() {
     // And the gate, for the same reason: Convex drops its identity on the
     // render that loses the user. See `pause-queries-before-auth-clear`.
     pauseQueriesBeforeAuthClear();
-    const back = `${window.location.pathname}${window.location.search}`;
+    // The link itself, from memory: the address bar no longer carries the
+    // token after a refusal. Loading it puts the token back in the URL only for
+    // the claim that follows, which takes it out again either way.
+    const back =
+      claimLinkRef.current ??
+      `${window.location.pathname}${window.location.search}`;
     // Revoke the session being dropped before WorkOS forgets it; bounded,
     // never rejects. See `revoke-session`.
     void startSessionRevocation(getAccessToken)
@@ -569,13 +480,32 @@ export function ServerConnectionHandoff() {
         <h1 className="text-lg font-semibold">
           {usedLink
             ? "This link was opened somewhere else"
-            : "This link cannot be used"}
+            : retryableClaim
+              ? "This link could not be opened yet"
+              : "This link cannot be used"}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          {usedLink
-            ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
-            : error}
-        </p>
+        {usedLink ? (
+          <p className="text-sm text-muted-foreground">
+            Connection links only work in the browser that first opened them.
+            Create a new link from the CLI to connect again.
+          </p>
+        ) : (
+          <ErrorCard
+            error={error}
+            variant="inline"
+            onRetry={
+              retryableCompletion
+                ? () => {
+                    if (!busy) void retryCompletion();
+                  }
+                : retryableClaim
+                  ? () => {
+                      if (!busy) void retryClaim();
+                    }
+                  : undefined
+            }
+          />
+        )}
       </Shell>
     );
   }
@@ -623,8 +553,8 @@ export function ServerConnectionHandoff() {
             {state.status === "discovering"
               ? "Checking what this server requires…"
               : state.status === "authorizing"
-              ? "Waiting for authorization to finish…"
-              : "Verifying the connection…"}
+                ? "Waiting for authorization to finish…"
+                : "Verifying the connection…"}
           </span>
         </div>
       )}
