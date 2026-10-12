@@ -29,7 +29,8 @@ vi.mock("../../../services/evals/route-helpers.js", async (original) => ({
   }),
 }));
 
-import { orgPolicyConfigForClientKeys, prepareEvalRun } from "../evals";
+import { prepareEvalRun } from "../evals";
+import { orgPolicyConfigForClientKeys } from "../../../services/evals/org-policy-client-keys.js";
 import { resolveEvalSelectionRoute } from "../../../services/evals-runner";
 import { ModelResolutionRefusalError } from "../../../utils/model-resolution-local";
 import { WebRouteError } from "../../web/errors.js";
@@ -87,12 +88,16 @@ describe("orgPolicyConfigForClientKeys", () => {
     });
   });
 
-  it("runs as before when the build cannot reach the organization's config", async () => {
+  it("refuses missing service credentials on a configured backend", async () => {
     resolveOrgModelConfig.mockRejectedValue(
       new ServiceCredentialUnavailableError("org-model-config"),
     );
-    expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
+    await expect(orgPolicyConfigForClientKeys(target, auth)).rejects.toMatchObject({
+      status: 503, details: { code: "ai_key_policy_unavailable", isRetryable: true },
+    });
+  });
 
+  it("allows local runs when no backend is configured", async () => {
     vi.stubEnv("CONVEX_HTTP_URL", "");
     resolveOrgModelConfig.mockClear();
     expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
