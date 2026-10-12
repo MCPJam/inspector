@@ -6,14 +6,18 @@ import {
   HARNESS_ORG_KEYS_GUIDANCE,
   NOT_SUPPORTED_YET_GUIDANCE,
   blockedBySentence,
+  buildOrgModelSelection,
   degradationSentence,
   featureGuidance,
   listedBlockers,
+  listedModelFitsKind,
   orderedFeatures,
   orgAiModelCheckPresentation,
+  orgModelIds,
   orgProviderLabel,
   selectionModelLabel,
 } from "../org-ai-config-presentation";
+import { modelSelectionFromDefinition } from "@/components/chat-v2/shared/model-selection";
 
 function feature(
   overrides: Partial<AiFeatureGroupReadiness> &
@@ -241,7 +245,140 @@ describe("degradationSentence", () => {
   });
 });
 
+describe("orgModelIds", () => {
+  it("prefixes the provider and keeps the provider's own id as native", () => {
+    expect(orgModelIds("openai", "gpt-5-mini")).toEqual({
+      modelId: "openai/gpt-5-mini",
+      nativeModelId: "gpt-5-mini",
+    });
+  });
+
+  it("spells Anthropic's dashed versions the catalog way", () => {
+    expect(orgModelIds("anthropic", "claude-haiku-4-5")).toEqual({
+      modelId: "anthropic/claude-haiku-4.5",
+      nativeModelId: "claude-haiku-4-5",
+    });
+    // Dated ids are not version-shaped and pass through.
+    expect(orgModelIds("anthropic", "claude-3-5-sonnet-20241022")).toEqual({
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
+      nativeModelId: "claude-3-5-sonnet-20241022",
+    });
+  });
+
+  it("uses canonical vendor prefixes", () => {
+    expect(orgModelIds("xai", "grok-4")?.modelId).toBe("x-ai/grok-4");
+    expect(orgModelIds("mistral", "mistral-large-latest")?.modelId).toBe(
+      "mistralai/mistral-large-latest",
+    );
+    expect(orgModelIds("z-ai", "glm-4.6")?.modelId).toBe("z-ai/glm-4.6");
+  });
+
+  it("keeps an Azure deployment name as the native id", () => {
+    expect(orgModelIds("azure", "prod-gpt51")).toEqual({
+      modelId: "azure/prod-gpt51",
+      nativeModelId: "prod-gpt51",
+    });
+  });
+
+  it("drops a pasted provider prefix from the native id", () => {
+    expect(orgModelIds("openai", "openai/gpt-5")).toEqual({
+      modelId: "openai/gpt-5",
+      nativeModelId: "gpt-5",
+    });
+    expect(orgModelIds("xai", "x-ai/grok-4")).toEqual({
+      modelId: "x-ai/grok-4",
+      nativeModelId: "grok-4",
+    });
+  });
+
+  it("returns null for an empty model", () => {
+    expect(orgModelIds("openai", "   ")).toBeNull();
+  });
+
+  it("saves the id a model picker saves for the same connection's row", () => {
+    for (const [providerKey, typed] of [
+      ["openai", "gpt-5"],
+      ["anthropic", "claude-sonnet-4-5"],
+      ["meta", "llama-4-scout"],
+    ] as const) {
+      // The row a picker lists for this model on the org connection.
+      const picked = modelSelectionFromDefinition(
+        {
+          id: typed,
+          name: typed,
+          provider: providerKey,
+          hosted: false,
+          orgProvider: { providerKey, id: "conn_1" },
+        },
+        undefined,
+        "analysis",
+      );
+      expect(picked).not.toBeNull();
+      expect(
+        buildOrgModelSelection({ id: "conn_1", providerKey }, typed)?.modelId,
+      ).toBe(picked!.modelId);
+    }
+    // A second prefix table used to save these as `meta/…` and `alibaba/…`.
+    expect(orgModelIds("meta", "llama-4-scout")?.modelId).toBe(
+      "meta-llama/llama-4-scout",
+    );
+    expect(orgModelIds("alibaba", "qwen-3-32b")?.modelId).toBe(
+      "qwen/qwen-3-32b",
+    );
+  });
+});
+
+describe("buildOrgModelSelection", () => {
+  it("builds an org selection that never falls back", () => {
+    expect(
+      buildOrgModelSelection(
+        { id: "conn_1", providerKey: "openai" },
+        " gpt-5-mini ",
+      ),
+    ).toEqual({
+      modelId: "openai/gpt-5-mini",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      nativeModelId: "gpt-5-mini",
+      fallback: { provider: "none", model: "none" },
+    });
+  });
+
+  it.each([
+    ["google", "models/gemini-2.5-flash"],
+    ["openai", "meta-llama/Llama-4"],
+    ["bedrock", "arn:aws:bedrock:region:account:inference-profile/model"],
+  ])("keeps %s's namespace around a native path", (providerKey, nativeModelId) => {
+    expect(orgModelIds(providerKey, nativeModelId)).toEqual({
+      modelId: `${providerKey}/${nativeModelId}`,
+      nativeModelId,
+    });
+  });
+
+  it("refuses a connection without an id or a model that is not an id", () => {
+    expect(
+      buildOrgModelSelection({ providerKey: "openai" }, "gpt-5"),
+    ).toBeNull();
+    expect(
+      buildOrgModelSelection({ id: "conn_1", providerKey: "openai" }, "gpt 5"),
+    ).toBeNull();
+  });
+});
+
 describe("the default model editor's helpers", () => {
+  it("suggests listed models that fit the kind", () => {
+    expect(listedModelFitsKind("gpt-5-mini", "default")).toBe(true);
+    expect(listedModelFitsKind("text-embedding-3-small", "default")).toBe(
+      false,
+    );
+    expect(listedModelFitsKind("text-embedding-3-small", "embedding")).toBe(
+      true,
+    );
+    expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
+      true,
+    );
+  });
+
   it("reads a test's result", () => {
     expect(orgAiModelCheckPresentation({ ok: true, checkedAt: 1 })).toEqual({
       label: "Passed",

@@ -266,6 +266,47 @@ describe("OrganizationDefaultModelCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a saved model that can't run, with the backend's reason, and never reselects one", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      aiModels: {
+        default: saved(orgSelection("conn_gone", "openai/gpt-5", "gpt-5"), {
+          problem: {
+            code: "credential_missing",
+            message:
+              "The organization provider connection this default names is no longer available.",
+          },
+        }),
+      },
+    });
+    renderCard();
+
+    const row = screen.getByTestId("org-ai-model-default");
+    expect(
+      within(row).getByText(
+        "The organization provider connection this default names is no longer available.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(row).getByText("conn_gone · openai/gpt-5"),
+    ).toBeInTheDocument();
+    expect(
+      within(row).queryByRole("button", { name: "Test default AI model" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(row).getByRole("button", { name: "Change default AI model" }),
+    );
+    const editor = screen.getByTestId("org-ai-model-default-editor");
+    expect(
+      within(editor).getByRole("combobox", {
+        name: "Default AI model provider",
+      }),
+    ).toHaveTextContent("Choose a provider");
+    expect(within(editor).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(mocks.setAiModel).not.toHaveBeenCalled();
+  });
+
   it("shows a suggestion without saving it until clicked", async () => {
     const user = userEvent.setup();
     const suggestion = orgSelection(
@@ -311,6 +352,144 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.queryByRole("button", { name: "Use suggested model" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers a connection a newer backend marks eligible without a client provider table", async () => {
+    hookState.config = makeConfig({
+      supportedModelKinds: ["embedding"],
+      aiModels: { embedding: null },
+      readiness: {
+        requireOrgKeys: true,
+        features: [],
+        operations: [],
+        eligibleConnectionIds: ["conn_future"],
+      },
+    });
+    const user = userEvent.setup();
+    renderCard({
+      providers: [
+        {
+          id: "conn_future",
+          providerKey: "future-cloud",
+          displayName: "Future Cloud",
+          enabled: true,
+          hasSecret: true,
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Set embedding model" }));
+    const editor = screen.getByTestId("org-ai-model-embedding-editor");
+    await user.click(
+      within(editor).getByRole("combobox", { name: "Embedding model provider" }),
+    );
+    expect(screen.getByRole("option", { name: "Future Cloud" })).toBeInTheDocument();
+  });
+
+  it("builds an org selection from an eligible connection and a typed model", async () => {
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Set default AI model" }),
+    );
+    const editor = screen.getByTestId("org-ai-model-default-editor");
+    expect(within(editor).getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.click(
+      within(editor).getByRole("combobox", {
+        name: "Default AI model provider",
+      }),
+    );
+    // Only eligible connections are offered: no OpenRouter.
+    expect(screen.getByRole("option", { name: "OpenAI" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Anthropic" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "OpenRouter" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "Anthropic" }));
+
+    await user.type(
+      within(editor).getByLabelText("Default AI model id"),
+      "claude-haiku-4-5",
+    );
+    expect(
+      within(editor).getByText("Saved as anthropic/claude-haiku-4.5"),
+    ).toBeInTheDocument();
+    await user.click(within(editor).getByRole("button", { name: "Save" }));
+
+    expect(mocks.setAiModel).toHaveBeenCalledWith(
+      "default",
+      orgSelection(
+        "conn_anthropic",
+        "anthropic/claude-haiku-4.5",
+        "claude-haiku-4-5",
+      ),
+    );
+  });
+
+  it("offers only connections the backend marks eligible", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      supportedModelKinds: ["default", "embedding"],
+      aiModels: { default: null, embedding: null },
+      readiness: {
+        requireOrgKeys: true,
+        features: [],
+        operations: [],
+        eligibleConnectionIds: ["conn_openai"],
+      },
+    });
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Set embedding model" }),
+    );
+    const editor = screen.getByTestId("org-ai-model-embedding-editor");
+    await user.click(
+      within(editor).getByRole("combobox", {
+        name: "Embedding model provider",
+      }),
+    );
+    expect(screen.getByRole("option", { name: "OpenAI" })).toBeInTheDocument();
+    // The backend did not mark the Anthropic connection eligible.
+    expect(
+      screen.queryByRole("option", { name: "Anthropic" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tests a candidate before it is saved", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      aiModels: { default: saved(DEFAULT_MODEL) },
+    });
+    mocks.testAiModel.mockResolvedValue({ ok: true, checkedAt: Date.now() });
+    renderCard();
+
+    await user.click(
+      screen.getByRole("button", { name: "Change default AI model" }),
+    );
+    const editor = screen.getByTestId("org-ai-model-default-editor");
+    const model = within(editor).getByLabelText("Default AI model id");
+    await user.clear(model);
+    await user.type(model, "gpt-5.1");
+    await user.click(
+      within(editor).getByRole("button", {
+        name: "Test this default AI model",
+      }),
+    );
+
+    expect(mocks.testAiModel).toHaveBeenCalledWith(
+      "default",
+      orgSelection("conn_openai", "openai/gpt-5.1", "gpt-5.1"),
+    );
+    expect(
+      await within(editor).findByTestId(
+        "org-ai-model-default-candidate-outcome",
+      ),
+    ).toHaveTextContent("Passed");
+    expect(mocks.setAiModel).not.toHaveBeenCalled();
   });
 
   it("clears the model by saving null", async () => {
@@ -368,7 +547,7 @@ describe("OrganizationDefaultModelCard", () => {
       screen.getByText("Only organization owners and admins can change this."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^(Test|Clear) / }),
+      screen.queryByRole("button", { name: /^(Test|Change|Set|Clear) / }),
     ).not.toBeInTheDocument();
   });
 
@@ -380,7 +559,7 @@ describe("OrganizationDefaultModelCard", () => {
     renderCard({ isAdmin: true });
 
     expect(
-      screen.queryByRole("button", { name: "Use suggested model" }),
+      screen.queryByRole("button", { name: "Set default AI model" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Suggested model/)).not.toBeInTheDocument();
   });
@@ -403,6 +582,9 @@ describe("OrganizationDefaultModelCard", () => {
         "opacity-60",
       );
       expect(
+        screen.queryByRole("button", { name: "Set default AI model" }),
+      ).not.toBeInTheDocument();
+      expect(
         screen.queryByRole("button", { name: "Use suggested model" }),
       ).not.toBeInTheDocument();
     });
@@ -421,6 +603,9 @@ describe("OrganizationDefaultModelCard", () => {
         within(row).getByText("OpenAI · openai/gpt-5-mini"),
       ).toBeInTheDocument();
       expect(
+        within(row).queryByRole("button", { name: "Change default AI model" }),
+      ).not.toBeInTheDocument();
+      expect(
         within(row).queryByRole("button", { name: "Test default AI model" }),
       ).not.toBeInTheDocument();
 
@@ -428,6 +613,18 @@ describe("OrganizationDefaultModelCard", () => {
         within(row).getByRole("button", { name: "Clear default AI model" }),
       );
       expect(mocks.setAiModel).toHaveBeenCalledWith("default", null);
+    });
+
+    it("never reads the plan anywhere but the backend's answer", () => {
+      hookState.config = makeConfig({ canEnable: true });
+      renderCard();
+
+      expect(
+        screen.queryByTestId("org-ai-default-model-enterprise-badge"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Set default AI model" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -506,6 +703,37 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.queryByRole("button", { name: /^(Test|Clear) / }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the editor loading until saved-provider metadata can prefill it", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      aiModels: { default: saved(DEFAULT_MODEL) },
+    });
+    const { rerender } = renderCard({ providers: undefined });
+    await user.click(
+      screen.getByRole("button", { name: "Change default AI model" }),
+    );
+    expect(
+      screen.getByTestId("org-ai-model-default-provider-loading"),
+    ).toHaveTextContent("Loading organization providers.");
+    expect(
+      screen.queryByText(/No eligible organization provider/),
+    ).not.toBeInTheDocument();
+    rerender(
+      <OrganizationDefaultModelCard
+        organizationId="org-1"
+        isAdmin
+        providers={PROVIDERS}
+      />,
+    );
+    const editor = screen.getByTestId("org-ai-model-default-editor");
+    expect(
+      within(editor).getByRole("combobox", { name: "Default AI model provider" }),
+    ).toHaveTextContent("OpenAI");
+    expect(within(editor).getByLabelText("Default AI model id")).toHaveValue(
+      "gpt-5-mini",
+    );
   });
 
 });
