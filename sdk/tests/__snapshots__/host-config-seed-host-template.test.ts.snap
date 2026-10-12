@@ -202,10 +202,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -215,18 +217,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
@@ -396,10 +402,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -409,18 +417,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
@@ -840,11 +852,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -855,29 +865,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1195,11 +1200,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1210,29 +1213,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1553,11 +1551,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1568,29 +1564,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -1911,11 +1902,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "connect-src": [
                 "'self'",
-                "https://esm.sh",
               ],
               "font-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "form-action": [
@@ -1926,29 +1915,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               ],
               "img-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "media-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "script-src": [
                 "'self'",
                 "'unsafe-eval'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "style-src": [
                 "'self'",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
               "worker-src": [
                 "'self'",
                 "blob:",
-                "https://esm.sh",
                 "https://assets.claude.ai",
               ],
             },
@@ -2205,10 +2189,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -2218,18 +2204,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
@@ -2402,10 +2392,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -2415,18 +2407,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
