@@ -218,7 +218,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       hostStyle: "mcpjam",
-      modelId: "anthropic/claude-haiku-4.5",
+      modelId: "anthropic/claude-haiku-5.5",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,
@@ -626,6 +626,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -647,36 +648,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -962,6 +941,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -983,36 +963,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -1156,6 +1114,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           listens: true,
           refetches: true,
         },
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1546,6 +1506,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         toolListChanged: {
           listens: true,
         },
+        toolResultAuthChallenge: "prompt",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1554,6 +1515,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          pluginExtensions: {
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              mentions: false,
+            },
+            enabled: true,
+          },
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
@@ -1573,12 +1543,33 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
@@ -2781,8 +2772,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Codex",
       provenance: "probe",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1790640000000,
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
+      verifiedAt: 1791763200000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -3002,10 +2998,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
           },
+          "openai/elicitation": {
+            form: {},
+          },
+          "openai/form": {},
         },
         elicitation: {
           form: {},
-          url: {},
         },
       },
       hostContext: {
@@ -3112,20 +3111,23 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
-        paginationTraversal: "firstPageOnly",
+        paginationTraversal: "full",
         toolListChanged: {
           listens: true,
           refetches: false,
         },
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
-            name: "codex-mcp-client",
-            title: "Codex",
-            version: "0.158.0-alpha.2.1",
+            name: "openai-mcp (Codex)",
+            version: "1.0.0",
           },
         },
         apps: {
+          pluginExtensions: {
+            enabled: true,
+          },
           sandbox: {
             csp: {
               mode: "declared",
@@ -3133,19 +3135,42 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
             },
             permissions: {
               mode: "custom",
-              allow: {},
+              allow: {
+                clipboardWrite: true,
+              },
             },
             browserStorage: {
               localStorage: true,
@@ -3224,8 +3249,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-03-26",
         "2025-06-18",
         "2025-11-25",
+        "2026-07-28",
       ],
-      verifiedAt: 1790640000000,
+      verifiedAt: 1791763200000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -3537,6 +3563,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostCapabilitiesOverride: {
         openLinks: {},
         serverTools: {},
+        serverResources: {},
+        logging: {},
+        downloadFile: {},
         message: {
           text: {},
         },
@@ -3573,6 +3602,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         toolListChanged: {
           listens: false,
         },
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: [
             "2024-11-05",
@@ -3581,18 +3611,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "2025-11-25",
           ],
           clientInfo: {
-            name: "mcs",
+            name: "Sydney",
             version: "1.0.0",
-            channelId: "pva-studio",
-            lcat: "M365_COPILOT_USER",
-            agentAuthenticationMode: "Integrated",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
-              name: "Copilot",
-              version: "1.0.1",
+              name: "M365Copilot",
+              version: "1.0.0",
             },
           },
           compatRuntime: {
@@ -3613,13 +3640,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           sandbox: {
             csp: {
               mode: "declared",
-              restrictTo: {
-                frameDomains: [],
-              },
             },
             permissions: {
               mode: "custom",
-              allow: {},
+              allow: {
+                clipboardWrite: true,
+              },
             },
             sameOriginAppIframe: false,
           },
@@ -3627,20 +3653,20 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
-            hostContextChanged: false,
+            hostContextChanged: true,
             resourceTeardown: false,
             toolInfo: false,
             openLinks: true,
             serverTools: true,
-            serverResources: false,
-            logging: false,
+            serverResources: true,
+            logging: true,
             updateModelContext: true,
             message: true,
-            sandboxPermissions: false,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
             resourcePrefersBorder: false,
-            downloadFile: false,
+            downloadFile: true,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },

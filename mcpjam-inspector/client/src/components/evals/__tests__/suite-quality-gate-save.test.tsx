@@ -13,6 +13,11 @@ import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import { QUALITY_GATE_REASON_HINT } from "../suite-quality-gate-section";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 const mocks = vi.hoisted(() => ({
   applySuiteSettings: vi.fn(async () => ({ revisionNumber: 4 })),
   updateTestSuite: vi.fn(async () => ({})),

@@ -2867,7 +2867,7 @@ export function MCPAppsRendererSurface({
       // from the iframe; `https:` (and friends) covers them just as
       // effectively as naming `https://app.mcpjam.com` directly.
       // Templates that need broad access should list specific origins
-      // (e.g. Claude lists `https://esm.sh`, `https://assets.claude.ai`).
+      // (e.g. Claude lists `https://assets.claude.ai`).
       if (token === "*") return true;
       if (/^(https?|wss?):$/i.test(token)) return true;
       // Other scheme-only tokens (data:, blob:, about:, filesystem:,

@@ -62,6 +62,7 @@ import {
   getFileInputAccept,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -318,6 +319,8 @@ interface ChatInputProps {
   stop: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
+  /** Why Send is off, shown in its tooltip (an out-of-credits model). */
+  submitDisabledReason?: string;
   isLoading?: boolean;
   placeholder?: string;
   className?: string;
@@ -494,6 +497,7 @@ export function ChatInput({
   stop,
   disabled = false,
   submitDisabled = false,
+  submitDisabledReason,
   isLoading = false,
   placeholder = "Type your message...",
   className,
@@ -2441,32 +2445,32 @@ export function ChatInput({
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="submit"
-                        size="icon"
-                        aria-label="Send message"
-                        className={cn(
-                          "size-[34px] rounded-full transition-colors shadow-none",
-                          (value.trim() || hasResults) &&
-                            !disabled &&
-                            !submitDisabled
-                            ? activeSubmitButtonClasses
-                            : inactiveSubmitButtonClasses,
-                          pulseSubmit && "animate-onboarding-pulse",
-                        )}
-                        disabled={
-                          (!value.trim() && !hasResults) ||
-                          disabled ||
-                          submitDisabled
-                        }
-                      >
-                        <ArrowUp size={16} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Send message</TooltipContent>
-                  </Tooltip>
+                  <DisabledReasonTooltip
+                    reason={submitDisabledReason}
+                    fallback="Send message"
+                  >
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        (value.trim() || hasResults) &&
+                          !disabled &&
+                          !submitDisabled
+                          ? activeSubmitButtonClasses
+                          : inactiveSubmitButtonClasses,
+                        pulseSubmit && "animate-onboarding-pulse",
+                      )}
+                      disabled={
+                        (!value.trim() && !hasResults) ||
+                        disabled ||
+                        submitDisabled
+                      }
+                    >
+                      <ArrowUp size={16} />
+                    </Button>
+                  </DisabledReasonTooltip>
                 ))
               )}
             </div>

@@ -169,12 +169,22 @@ import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { useSessionPrivacy } from "./hooks/useSessionPrivacy";
 import {
+  telemetryMembershipKey,
+  useTelemetryPrivacyContext,
+} from "./hooks/useTelemetryPrivacyContext";
+import { usePostHogRelayAuth } from "./hooks/usePostHogRelayAuth";
+import {
   recordingSurface,
-  resolveEnterprisePrivacyInView,
-  resolveEnterprisePrivacyMember,
+  rememberReplayOff,
+  replayOffRemembered,
   resolveSessionPrivacy,
 } from "./lib/session-privacy";
-import { setSentryIdOnlyIdentity } from "./lib/sentry-identity";
+import {
+  resetTelemetryIdentity,
+  setTelemetryActor,
+  setTelemetryCaptureContext,
+  setTelemetryIdentity,
+} from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -303,6 +313,11 @@ import {
   getHostedOAuthCallbackContext,
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackAttempt,
+  readOAuthCallbackParams,
+} from "./lib/oauth-callback-inbox";
 import {
   FIRST_RUN_OAUTH_CANCELLED_EVENT,
   getFirstRunOAuthReturnServerName,
@@ -494,7 +509,8 @@ function mergeFirstRunAnalyticsContext(
 }
 
 function getHostedOAuthCallbackErrorMessage(): string {
-  const params = new URLSearchParams(window.location.search);
+  // The inbox, not the address bar: see `lib/oauth-callback-inbox.ts`.
+  const params = readOAuthCallbackParams() ?? new URLSearchParams();
   const error = params.get("error");
   const description = params.get("error_description");
 
@@ -3007,10 +3023,9 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
-  // The org list once it is authoritative, for the session privacy level and
-  // identity. `undefined` until then: an empty list reads as "no organization
-  // asked for privacy", which must not be concluded from a list that has not
-  // arrived.
+  // The org list once it is authoritative. Its membership key resets the
+  // telemetry identity grant whenever memberships reload; `undefined` until
+  // then, which reads as "still loading", never as "no organizations".
   const loadedOrganizations =
     isAuthenticated && !isLoadingOrganizations
       ? sortedOrganizations
@@ -3081,7 +3096,10 @@ export default function App() {
       return;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started. Read, not consumed: the attempt key dedupes re-runs,
+    // and `finalizeHostedOAuth` consumes it on the way out.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
@@ -3093,12 +3111,15 @@ export default function App() {
     hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
-    const callbackSearch = window.location.search;
+    // Which callback this is. Every pending page has the same URL
+    // (`?oauth_pending=1`), so the URL cannot tell attempts apart; the inbox's
+    // attempt id can, and it is null once the page has left the callback.
+    const callbackAttempt = readOAuthCallbackAttempt();
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       // Ignore a completion after the user has left or started another attempt.
       if (
         window.location.pathname !== "/oauth/callback" ||
-        window.location.search !== callbackSearch
+        readOAuthCallbackAttempt() !== callbackAttempt
       )
         return;
       if (errorMessage && callbackContext.serverName) {
@@ -3120,6 +3141,8 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
+      // The code is spent; it must not outlive the route.
+      consumeOAuthCallbackParams(callbackAttempt);
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
       });
@@ -3262,16 +3285,22 @@ export default function App() {
     previousWorkOsUserIdRef.current = workOsUserId;
   }, [workOsUser?.id]);
 
-  // Members of an organization with enterprise privacy are identified by id
-  // alone, in analytics and in error tracking.
-  const enterprisePrivacyMember =
-    resolveEnterprisePrivacyMember(loadedOrganizations);
-  usePostHogIdentify({ enterprisePrivacyMember });
-  useEffect(() => {
-    if (enterprisePrivacyMember !== undefined) {
-      setSentryIdOnlyIdentity(enterprisePrivacyMember);
-    }
-  }, [enterprisePrivacyMember]);
+  // Telemetry attributes to this actor from now on. A layout effect, so the
+  // identity grant is cleared before any passive effect — identify, Sentry's
+  // scope — runs for the new actor.
+  useLayoutEffect(() => {
+    setTelemetryActor(actorKey ?? null);
+  }, [actorKey]);
+  // Name and email follow the backend's identity answer for this actor
+  // (set further down, once the contexts in view are known).
+  usePostHogIdentify();
+  // PostHog's requests to the relay carry the actor's bearer, so the relay can
+  // check what each event was captured under (server/routes/relay.ts).
+  usePostHogRelayAuth({
+    actorKey,
+    signedIn: !!workOsUser,
+    getAccessToken,
+  });
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
@@ -4717,27 +4746,77 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
+  // Telemetry privacy for what is in view: the same three organizations
+  // billing reads, plus the active project, resolved by the backend through
+  // this actor's own access (`telemetryPrivacy:getContext`). The most
+  // restrictive context wins; anything it cannot verify is masked and
+  // id-only.
+  const telemetryOrganizationIds = [
+    routeScopedOrganizationId,
+    activeOrganizationId,
+    activeProject?.organizationId,
+  ];
+  const telemetryProjectIds = [convexProjectId];
+  const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  const telemetryPrivacy = useTelemetryPrivacyContext({
+    // Every surface asks: identity applies wherever analytics run, even
+    // where replay is off.
+    enabled: true,
+    actor: telemetryActor,
+    membershipKey: telemetryMembershipKey(loadedOrganizations),
+    projectIds: telemetryProjectIds,
+    organizationIds: telemetryOrganizationIds,
+  });
+  // Every event captured from here on is stamped with these contexts
+  // (lib/telemetry-context.ts). Layout effect: in the same commit that
+  // renders the new context, before anything in it can be captured.
+  useLayoutEffect(() => {
+    setTelemetryCaptureContext({
+      projectIds: telemetryProjectIds,
+      organizationIds: telemetryOrganizationIds,
+    });
+  });
+  // Names follow an affirmative answer for THIS actor only; an answer for
+  // anyone else is ignored, and no answer means id-only.
+  useLayoutEffect(() => {
+    if (telemetryPrivacy.identity === undefined) {
+      resetTelemetryIdentity();
+    } else {
+      setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
+    }
+  }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
+  // Only the backend's own answer can permit recording: a query that fails
+  // or never answers leaves the level `pending`, which records nothing. Replay
+  // `off` is also remembered per person, so someone last answered `off` stays
+  // unrecorded while the next answer is slow, failing or not asked yet.
+  const answeredRecording = telemetryPrivacy.answered
+    ? telemetryPrivacy.policy?.recording
+    : undefined;
+  useEffect(() => {
+    if (answeredRecording !== undefined) {
+      rememberReplayOff(telemetryPrivacy.actor, answeredRecording === "off");
+    }
+  }, [answeredRecording, telemetryPrivacy.actor]);
+  const telemetryRecording =
+    answeredRecording ??
+    (replayOffRemembered(telemetryActor) ? "off" : undefined);
   // The session privacy level (lib/session-privacy.ts) for both recorders.
-  // The same three organizations billing reads are "in view", but it fails
-  // closed: ANY of them with enterprise privacy makes the session `masked`.
+  // Full replay needs the backend to have verified a non-private context and
+  // the destination to have finished loading; until it answers, nothing
+  // records, and after a navigation, recording carries on masked.
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
-      account: isWorkOsLoading
-        ? "loading"
-        : workOsUser
-          ? "signed_in"
-          : "signed_out",
       sharedLink: isScenarioChatRoute,
-      enterprisePrivacyInView: resolveEnterprisePrivacyInView(
-        loadedOrganizations,
-        [
-          routeScopedOrganizationId,
-          activeOrganizationId,
-          activeProject?.organizationId,
-        ],
-      ),
+      recording: telemetryRecording,
     }),
+    {
+      contextReady:
+        !isAuthLoading &&
+        !isLoadingOrganizations &&
+        !isProjectServerConfigLoading,
+      permissionKey: telemetryPrivacy.scope,
+    },
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =

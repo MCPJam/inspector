@@ -118,6 +118,21 @@ describe("suite run review", () => {
     },
   );
 
+  it("blocks the case sheet when every model it launches is out of credits", async () => {
+    const onStart = vi.fn();
+    const reason = "Out of MCPJam credits · resets in 3h";
+    render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""
+      environments={environments} hostNamesById={names}
+      preflight={{ disconnected: [], removed: [], refused: [], disabledProviders: [],
+        outOfCreditsReason: reason, serverName: (ref) => ref }}
+      onStart={onStart} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    const button = screen.getByRole("button", { name: "Run test case" });
+    expect(button).toBeDisabled();
+    await userEvent.setup().click(button);
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
   it("keeps the case sheet open when a launch refuses quota", async () => {
     const onClose = vi.fn();
     render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""

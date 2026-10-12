@@ -5,6 +5,7 @@ import {
   seedHostTemplate,
 } from "@mcpjam/sdk/host-config/templates";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
+import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
 import {
   DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
@@ -260,6 +261,12 @@ describe("DEFAULT_SEEDED_HOST_MODEL_ID", () => {
     expect(DEFAULT_SEEDED_HOST_MODEL_ID).toMatch(
       /^anthropic\/claude-[a-z]+-\d+\.\d+$/,
     );
+  });
+
+  it("is in the offline hosted-model snapshot", () => {
+    // Cold start with the live catalog unreachable classifies hosted models
+    // from this snapshot alone; a default missing from it bills as own-key.
+    expect(HOSTED_MODEL_IDS).toContain(DEFAULT_SEEDED_HOST_MODEL_ID);
   });
 });
 

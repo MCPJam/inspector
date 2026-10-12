@@ -240,6 +240,7 @@ export function SuiteRunReviewContent({
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??
+    scopedPreflight?.outOfCreditsReason ??
     (hasBlockingPreflight(scopedPreflight)
       ? "Fix the setup problem above before running."
       : null);
