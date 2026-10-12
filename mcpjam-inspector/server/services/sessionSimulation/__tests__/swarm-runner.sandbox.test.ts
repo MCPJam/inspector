@@ -435,8 +435,10 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     async (hosted) => {
       personaDrivesOneTurn();
       await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
-      // The source resolves to `mcpjam` here, so the bare pin reaches `/stream`
-      // under the canonical id the hosted check decided on (PLB-147).
+      // What this pins is the `hosted` flag reaching the turn. The source mock
+      // answers `mcpjam` for every row, so each turn takes the `/stream` rail
+      // and its id is canonicalized; in production `hosted: false` resolves to
+      // the org's own key and keeps the bare id (runner.dispatch.test.ts).
       expect(turnOptions().modelDefinition).toMatchObject({
         id: "openai/gpt-5-nano",
         provider: "openai",

@@ -75,6 +75,10 @@ import {
   turnReasoningEffortOf,
 } from "../../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../../utils/harness/registry.js";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../hosted-model-catalog.js";
 
 const TURN_TRACE = {
   turnId: "test-turn",
@@ -211,11 +215,10 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   });
 
   it("sends the canonical id to /stream when a bare pinned id resolves to an MCPJam-hosted model", async () => {
-    // PLB-147: a swarm snapshot pinned before selections existed carries the
-    // bare `gpt-5.6-luna`. The hosted check canonicalizes it to
+    // A swarm snapshot pinned before selections existed carries the bare
+    // `gpt-5.6-luna`. The hosted check canonicalizes it to
     // `openai/gpt-5.6-luna` and routes the turn to `/stream`, whose catalog
-    // only knows the prefixed id — so sending the bare one came back
-    // `invalid_model` on every attempt.
+    // knows only the prefixed id and refuses the bare one as `invalid_model`.
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
@@ -238,6 +241,32 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.endpointPath).toBe("/stream");
     expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
     expect(opts.modelDefinition.provider).toBe("openai");
+  });
+
+  it("canonicalizes a bare id the live hosted catalog knows but the snapshot does not", async () => {
+    __setHostedCatalogForTests(["openai/gpt-live-only"]);
+    try {
+      const calls: unknown[] = [];
+      runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+      resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+      await drainAssistantTurn(
+        baseArgs({
+          modelId: "gpt-live-only",
+          modelDefinition: {
+            id: "gpt-live-only",
+            name: "Live only",
+            provider: "openai",
+          } as ModelDefinition,
+        }) as Parameters<typeof drainAssistantTurn>[0],
+      );
+
+      expect((calls[0] as any).modelDefinition.id).toBe(
+        "openai/gpt-live-only",
+      );
+    } finally {
+      __resetHostedModelCatalogForTests();
+    }
   });
 
   it("keeps an already-prefixed hosted id unchanged on /stream", async () => {

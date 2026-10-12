@@ -35,6 +35,7 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
 import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
+import { hostedCatalogModelDefinitions } from "../hosted-model-catalog.js";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
 // (org-model-config.ts) — that helper falls back to BYOK provider parsing
 // when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
@@ -2239,11 +2240,13 @@ export async function drainAssistantTurn(
   // The id `/stream` is sent must be the one the hosted check decided on. A
   // snapshot pinned before selections existed carries the bare id
   // (`gpt-5.6-luna`), which `isHostedCatalogModel` canonicalizes to
-  // `openai/gpt-5.6-luna` to route the turn here — but the engine writes
-  // `modelDefinition.id` into the body, and `/stream`'s catalog only knows the
-  // prefixed id, so the bare one was refused `invalid_model` (PLB-147). Same
-  // override the hosted eval turn makes. `/stream/org` keeps the bare id: that
-  // is the org provider's own model name.
+  // `openai/gpt-5.6-luna` to route the turn here, while the engine writes
+  // `modelDefinition.id` into the body and `/stream`'s catalog knows only the
+  // prefixed id, refusing the bare one as `invalid_model`. Canonicalized
+  // against the live hosted catalog too, so a model the backend added after
+  // the snapshot resolves the same way. Same override the hosted eval turn
+  // makes. `/stream/org` keeps the bare id: that is the org provider's own
+  // model name.
   const turnModelDefinition =
     rt.modelSource === "mcpjam"
       ? {
@@ -2251,6 +2254,7 @@ export async function drainAssistantTurn(
           id: getCanonicalModelId(
             String(modelDefinition.id),
             modelDefinition.provider,
+            hostedCatalogModelDefinitions(),
           ),
         }
       : modelDefinition;
