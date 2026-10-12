@@ -87,24 +87,24 @@ function afterFailure(
   return Math.max(RETRY_DELAYS_MS[attempt], failure.retryAfterMs ?? 0);
 }
 
-type Attempt = {
-  run: () => Promise<unknown>;
+type Attempt<T> = {
+  run: () => Promise<T>;
   /** False once the caller has moved to another project or unmounted. */
   isCurrent: () => boolean;
   isNeeded: () => boolean;
   nextAttempt: () => number;
   settle: (state: ProjectClientInitState) => void;
   retryIn: (delayMs: number) => void;
-  onDone: () => void;
+  /** Runs even after the caller left, so its result can still be saved. */
+  onSuccess: (result: T) => void;
 };
 
 /** One request, and what its outcome means for the next step. */
-function runAttempt(attempt: Attempt): Promise<void> {
+function runAttempt<T>(attempt: Attempt<T>): Promise<void> {
   return attempt.run().then(
-    () => {
-      if (!attempt.isCurrent()) return;
-      attempt.settle(DONE);
-      attempt.onDone();
+    (result) => {
+      if (attempt.isCurrent()) attempt.settle(DONE);
+      attempt.onSuccess(result);
     },
     (error: unknown) => {
       if (!attempt.isCurrent()) return;
@@ -168,11 +168,13 @@ function useRetryTimer() {
   return { clear, schedule };
 }
 
-type InitOptions = {
+type InitOptions<T> = {
   projectId: string | null;
   intent: ProjectClientInitIntent;
   needed: boolean;
-  run: () => Promise<unknown>;
+  /** Called only with a project; `needed` gates when. */
+  run: (projectId: string) => Promise<T>;
+  onSuccess?: (result: T) => void;
 };
 
 /**
@@ -202,19 +204,21 @@ export function useProjectClientInitStatus(
  * Transient failures retry after 1s, 4s and 10s, or after the backend's
  * `retryAfterMs` when that is longer, then stop with a Retry. Refusals do not
  * retry. When `needed` turns false (another caller's client arrived) pending
- * retries are cancelled and any error is cleared. A response for a project the
- * caller has left is dropped.
+ * retries are cancelled and any error is cleared. A failure for a project the
+ * caller has left is dropped; a success still reaches `onSuccess`, which
+ * decides what to save for that project and what to show for the current one.
  */
-export function useProjectClientInitialization({
+export function useProjectClientInitialization<T>({
   projectId,
   intent,
   needed,
   run,
-}: InitOptions): Published {
+  onSuccess,
+}: InitOptions<T>): Published {
   const key = projectId ? `${projectId}:${intent}` : null;
   const [entry, setEntry] = useState({ key, state: IDLE });
   const state = entry.key === key ? entry.state : IDLE;
-  const latest = useLatest({ run, needed });
+  const latest = useLatest({ run, onSuccess, needed });
   const keyRef = useRef(key);
   const attemptsRef = useRef(0);
   const inFlightRef = useRef(new Set<string>());
@@ -241,13 +245,13 @@ export function useProjectClientInitialization({
   }, [needed, clearTimer, resetTo]);
 
   useEffect(() => {
-    if (!key || !needed || state.status !== "idle") return;
+    if (!projectId || !key || !needed || state.status !== "idle") return;
     if (inFlightRef.current.has(key)) return;
     inFlightRef.current.add(key);
     resetTo(PENDING);
     const isCurrent = () => keyRef.current === key;
     void runAttempt({
-      run: latest.current.run,
+      run: () => latest.current.run(projectId),
       isCurrent,
       isNeeded: () => latest.current.needed,
       nextAttempt: () => attemptsRef.current++,
@@ -256,8 +260,9 @@ export function useProjectClientInitialization({
         schedule(() => {
           if (isCurrent()) resetTo(IDLE);
         }, delayMs),
-      onDone: () => {
-        attemptsRef.current = 0;
+      onSuccess: (result) => {
+        if (isCurrent()) attemptsRef.current = 0;
+        latest.current.onSuccess?.(result);
       },
     }).finally(() => {
       inFlightRef.current.delete(key);
