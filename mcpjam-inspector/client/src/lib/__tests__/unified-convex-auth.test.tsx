@@ -100,6 +100,58 @@ describe("useUnifiedConvexAuth", () => {
     expect(result.current.isAuthenticated).toBe(false);
   });
 
+  // The shape `GuestSessionThrottledError` has; this module reads it by shape.
+  function throttledError(retryAfterMs: number) {
+    return Object.assign(new Error("guest-session request throttled (429)"), {
+      status: 429,
+      retryAfterMs,
+      upstreamFailure: { reason: "throttled" },
+    });
+  }
+
+  it("waits out a throttle's Retry-After before retrying guest session bootstrap", async () => {
+    mockState.getOrCreateGuestSessionOrThrow
+      .mockRejectedValueOnce(throttledError(20_000))
+      .mockResolvedValueOnce({
+        guestId: "guest-1",
+        token: "guest-token",
+        expiresAt: Date.now() + 60_000,
+      });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    // Past the ladder's own 500ms: retrying then would hit the same limiter.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(19_000);
+    });
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(2);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("caps a throttle's wait at a minute", async () => {
+    mockState.getOrCreateGuestSessionOrThrow
+      .mockRejectedValueOnce(throttledError(10 * 60_000))
+      .mockResolvedValueOnce({
+        guestId: "guest-1",
+        token: "guest-token",
+        expiresAt: Date.now() + 60_000,
+      });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(mockState.getOrCreateGuestSessionOrThrow).toHaveBeenCalledTimes(2);
+    expect(result.current.isAuthenticated).toBe(true);
+  });
+
   it("reports once after guest session bootstrap exhausts every attempt", async () => {
     mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 

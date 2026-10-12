@@ -1,4 +1,5 @@
 import { type Context } from "hono";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import {
   fetchGuestSession,
   type GuestSessionFetchContext,
@@ -21,7 +22,7 @@ import {
 // IP-based rate limiting: 10 req/min per IP (sliding window).
 //
 // This state is a SINGLE shared singleton intentionally exported via
-// `allowMint(ip)` so the client `/api/web/guest-session` route AND the
+// `consumeMintBudget` so the client `/api/web/guest-session` route AND the
 // document-bootstrap path draw from the SAME per-IP budget. Importing this
 // module from both keeps them on one limiter rather than two parallel ones.
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
@@ -38,32 +39,75 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
+export type MintBudget =
+  | { allowed: true }
+  | { allowed: false; retryAfterSeconds: number };
+
 /**
- * Consume one unit of the per-IP rate-limit budget for `ip`. Returns `true`
- * when the request is within budget (and records the consumption), `false`
- * when the IP has exceeded `IP_RATE_LIMIT` within the current window.
- *
- * Shared singleton: both the client route and the document bootstrap call
- * this so a guest cannot get 2x the budget by alternating paths.
+ * Consume one unit of the per-IP rate-limit budget for `ip`. When the IP has
+ * exceeded `IP_RATE_LIMIT` within the current window, says how long until the
+ * window resets instead.
  */
-export function allowMint(ip: string): boolean {
+function allowMint(ip: string): MintBudget {
   const now = Date.now();
   const entry = ipWindows.get(ip);
   if (entry) {
     if (now - entry.windowStart < IP_WINDOW_MS) {
       if (entry.count >= IP_RATE_LIMIT) {
-        return false;
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((entry.windowStart + IP_WINDOW_MS - now) / 1000)
+          ),
+        };
       }
       entry.count++;
-      return true;
+      return { allowed: true };
     }
     // Reset window
     entry.count = 1;
     entry.windowStart = now;
-    return true;
+    return { allowed: true };
   }
   ipWindows.set(ip, { count: 1, windowStart: now });
-  return true;
+  return { allowed: true };
+}
+
+const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+/**
+ * A request this machine made to its own local Inspector: not hosted mode, the
+ * TCP peer is loopback, and so is the client IP the limiter would key on. All
+ * three, so a same-host reverse proxy forwarding someone else's IP is still
+ * limited, and a remote caller cannot qualify by sending a loopback
+ * `x-forwarded-for`.
+ *
+ * Every tab, reload and dev-server restart on a developer's machine shares the
+ * one loopback key, so the limiter only ever throttled the developer. The
+ * authority still caps guest CREATION per IP on its side.
+ */
+function isLocalLoopbackRequest(c: Context, ip: string | null): boolean {
+  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") return false;
+  if (!ip || !LOOPBACK_ADDRESSES.has(ip)) return false;
+  try {
+    const peer = getConnInfo(c).remote.address;
+    return peer !== undefined && LOOPBACK_ADDRESSES.has(peer);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Charge one guest-session request from `ip` (null keys to "local-dev") to the
+ * per-IP budget, unless it is this machine calling its own local Inspector.
+ *
+ * Shared singleton: both the client route and the document bootstrap call
+ * this so a guest cannot get 2x the budget by alternating paths.
+ */
+export function consumeMintBudget(c: Context, ip: string | null): MintBudget {
+  if (isLocalLoopbackRequest(c, ip)) return { allowed: true };
+  return allowMint(ip ?? "local-dev");
 }
 
 export const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
@@ -154,8 +198,7 @@ export async function mintGuestSessionForDocument(
   if (!ip && process.env.NODE_ENV === "production") {
     return empty;
   }
-  const rateLimitKey = ip ?? "local-dev";
-  if (!allowMint(rateLimitKey)) {
+  if (!consumeMintBudget(c, ip).allowed) {
     return empty;
   }
 
