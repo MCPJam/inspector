@@ -336,13 +336,15 @@ export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
 } {
   if (check.ok) return { label: "Passed", tone: "success" };
   const code = check.code ?? "";
-  if (code === "provider_auth_failed") {
+  if (["provider_auth_failed", "http_401", "http_403"].includes(code)) {
     return { label: "Credentials rejected", tone: "destructive" };
   }
   if (
     code === "provider_unavailable" ||
     code === "timeout" ||
-    code.startsWith("http_")
+    code === "http_408" ||
+    code === "http_429" ||
+    /^http_5\d{2}$/.test(code)
   ) {
     return { label: "Provider unavailable", tone: "warning" };
   }

@@ -271,6 +271,22 @@ describe("the default model editor's helpers", () => {
     );
   });
 
+  it.each([
+    ["http_400", "Refused", "destructive"],
+    ["http_401", "Credentials rejected", "destructive"],
+    ["http_403", "Credentials rejected", "destructive"],
+    ["http_404", "Refused", "destructive"],
+    ["http_408", "Provider unavailable", "warning"],
+    ["http_429", "Provider unavailable", "warning"],
+    ["http_500", "Provider unavailable", "warning"],
+    ["http_503", "Provider unavailable", "warning"],
+  ])("classifies HTTP check %s as %s", (code, label, tone) => {
+    expect(orgAiModelCheckPresentation({ ok: false, code, checkedAt: 1 })).toEqual({
+      label,
+      tone,
+    });
+  });
+
   it("names connections the way the provider list does", () => {
     expect(
       orgProviderLabel({
