@@ -2778,8 +2778,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Codex",
       provenance: "probe",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1790640000000,
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
+      verifiedAt: 1791763200000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -3002,7 +3007,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
         elicitation: {
           form: {},
-          url: {},
         },
       },
       hostContext: {
@@ -3109,17 +3113,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
-        paginationTraversal: "firstPageOnly",
+        paginationTraversal: "full",
         toolListChanged: {
           listens: true,
           refetches: false,
         },
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
-            name: "codex-mcp-client",
-            title: "Codex",
-            version: "0.158.0-alpha.2.1",
+            name: "openai-mcp (Codex)",
+            version: "1.0.0",
           },
         },
         apps: {
@@ -3142,7 +3146,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
             permissions: {
               mode: "custom",
-              allow: {},
+              allow: {
+                clipboardWrite: true,
+              },
             },
             browserStorage: {
               localStorage: true,
@@ -3220,8 +3226,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-03-26",
         "2025-06-18",
         "2025-11-25",
+        "2026-07-28",
       ],
-      verifiedAt: 1790640000000,
+      verifiedAt: 1791763200000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -3533,6 +3540,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostCapabilitiesOverride: {
         openLinks: {},
         serverTools: {},
+        serverResources: {},
+        logging: {},
+        downloadFile: {},
         message: {
           text: {},
         },
@@ -3569,6 +3579,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         toolListChanged: {
           listens: false,
         },
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: [
             "2024-11-05",
@@ -3577,18 +3588,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "2025-11-25",
           ],
           clientInfo: {
-            name: "mcs",
+            name: "Sydney",
             version: "1.0.0",
-            channelId: "pva-studio",
-            lcat: "M365_COPILOT_USER",
-            agentAuthenticationMode: "Integrated",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
-              name: "Copilot",
-              version: "1.0.1",
+              name: "M365Copilot",
+              version: "1.0.0",
             },
           },
           compatRuntime: {
@@ -3609,33 +3617,32 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           sandbox: {
             csp: {
               mode: "declared",
-              restrictTo: {
-                frameDomains: [],
-              },
             },
             permissions: {
               mode: "custom",
-              allow: {},
+              allow: {
+                clipboardWrite: true,
+              },
             },
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
-            hostContextChanged: false,
+            hostContextChanged: true,
             resourceTeardown: false,
             toolInfo: false,
             openLinks: true,
             serverTools: true,
-            serverResources: false,
-            logging: false,
+            serverResources: true,
+            logging: true,
             updateModelContext: true,
             message: true,
-            sandboxPermissions: false,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
             resourcePrefersBorder: false,
-            downloadFile: false,
+            downloadFile: true,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },

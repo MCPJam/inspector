@@ -159,8 +159,9 @@ describe("seedHostTemplate", () => {
           mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
         },
       },
-      elicitation: { form: {}, url: {} },
     });
+    // Form only: URL elicitation failed with -32600 on 2026-10-12.
+    expect(config.clientCapabilities?.elicitation).toEqual({ form: {} });
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
@@ -266,19 +267,20 @@ describe("seedHostTemplate", () => {
     const config = seedHostTemplate("copilot", { theme: "dark" });
     const profile = config.mcpProfile;
 
-    // Probed 2026-08-26: the real handshake sends `mcs` 1.0.0 plus Copilot's
-    // routing fields. hostInfo below stays at the vendor-doc profile — no
-    // ui/initialize was ever observed, so nothing measured contradicts it.
+    // 2026-10-12 probe: `server/discover` at 2026-07-28 as `Sydney` 1.0.0,
+    // and a real ui/initialize reporting `M365Copilot` 1.0.0.
+    expect(profile?.mcpProtocolVersion).toBe("auto");
     expect(profile?.initialize?.clientInfo).toEqual({
-      name: "mcs",
+      name: "Sydney",
       version: "1.0.0",
-      channelId: "pva-studio",
-      lcat: "M365_COPILOT_USER",
-      agentAuthenticationMode: "Integrated",
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
-      name: "Copilot",
-      version: "1.0.1",
+      name: "M365Copilot",
+      version: "1.0.0",
+    });
+    expect(profile?.apps?.sandbox?.permissions).toEqual({
+      mode: "custom",
+      allow: { clipboardWrite: true },
     });
     expect(profile?.apps?.compatRuntime).toMatchObject({
       openaiApps: true,
@@ -294,6 +296,9 @@ describe("seedHostTemplate", () => {
     expect(config.hostCapabilitiesOverride).toEqual({
       openLinks: {},
       serverTools: {},
+      serverResources: {},
+      logging: {},
+      downloadFile: {},
       message: { text: {} },
       updateModelContext: { text: {} },
     });
