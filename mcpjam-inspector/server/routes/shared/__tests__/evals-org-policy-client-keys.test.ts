@@ -87,11 +87,13 @@ describe("orgPolicyConfigForClientKeys", () => {
     });
   });
 
-  it("runs as before when the build cannot reach the organization's config", async () => {
+  it("refuses missing credentials on a configured backend", async () => {
     resolveOrgModelConfig.mockRejectedValue(
       new ServiceCredentialUnavailableError("org-model-config"),
     );
-    expect(await orgPolicyConfigForClientKeys(target, auth)).toBeUndefined();
+    await expect(orgPolicyConfigForClientKeys(target, auth)).rejects.toMatchObject({
+      status: 503, details: { code: "ai_key_policy_unavailable", isRetryable: true },
+    });
 
     vi.stubEnv("CONVEX_HTTP_URL", "");
     resolveOrgModelConfig.mockClear();

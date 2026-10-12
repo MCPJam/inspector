@@ -1,6 +1,5 @@
 import { logger } from "../../utils/logger.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { isServiceCredentialUnavailableError } from "../service-credential.js";
 import {
   orgRequiresOwnKeys,
   resolveOrgModelConfig,
@@ -37,7 +36,6 @@ export async function orgPolicyConfigForClientKeys(
     const config = await resolveOrgModelConfig(target, auth);
     return orgRequiresOwnKeys(config) ? config : undefined;
   } catch (error) {
-    if (isServiceCredentialUnavailableError(error)) return undefined;
     logger.warn("[evals] Failed to read the org AI-key policy", {
       error: error instanceof Error ? error.message : String(error),
     });
