@@ -11,7 +11,7 @@ import type { ErrorCatalogEntry, ErrorOrigin } from "./catalog.js";
 export const ORG_POLICY_ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Each is a backend refusal that is permanent until someone changes the
   // organization's configuration: the org requires its own keys and this
-  // request would use another source, no org model is set for the role, the
+  // request would use another source, the org's default model is not set, the
   // feature has no org-credential adapter, the data-owning org could not be
   // resolved, or the org's own provider rejected its key. None pages.
   "org/keys_required": "user_config",
@@ -64,12 +64,12 @@ export function orgPolicyCatalogEntries(
     "org/model_unconfigured": entry(
       "org/model_unconfigured",
       "Organization model not configured",
-      "This feature needs a default organization model, and none is set for it.",
+      "This feature runs on the organization's default AI model, and none is set.",
       [
-        "The organization requires its own provider keys and has no default model for this role (Fast, Smart, Embedding or Transcription).",
+        "The organization requires its own provider keys, and work nobody picks a model for (insights, findings, generation, simulated users) runs on its default AI model.",
       ],
       [
-        "Organization admins can set a default model for the role under Organization → AI providers.",
+        "Organization admins can choose one under Organization → AI providers → Default AI model.",
         "Members: ask an organization admin to configure one.",
       ],
       "organization-model-not-configured",

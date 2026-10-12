@@ -78,7 +78,8 @@ const CANONICAL_PROVIDER_PREFIX: Readonly<Record<string, string>> = {
   alibaba: "qwen",
 };
 
-function canonicalPrefix(prefix: string): string {
+/** The canonical vendor prefix for a provider key (`xai` → `x-ai`). */
+export function canonicalPrefix(prefix: string): string {
   return CANONICAL_PROVIDER_PREFIX[prefix] ?? prefix;
 }
 
@@ -325,9 +326,9 @@ export function storedModelChoice(
  * with that id, hosted rows first, exactly as the legacy read did.
  *
  * Set `exactSelection` while the organization requires its own keys. A choice
- * with a selection then resolves only to the row with that same source and
- * connection, never to another row that lists the same id. Otherwise a saved
- * hosted model would look allowed whenever an org connection lists its id.
+ * must name a saved selection with that same source and connection; no
+ * legacy id fallback is allowed. Otherwise a hosted or legacy choice would
+ * look allowed whenever an org connection lists its id.
  */
 export function findModelForStoredChoice(
   choice: { modelId: string; selection?: RequestedModelSelection | null },
@@ -337,6 +338,9 @@ export function findModelForStoredChoice(
 ): ModelDefinition | undefined {
   const id = choice.modelId.trim();
   if (choice.selection?.source === "legacy") {
+    // A legacy selection names no connection, so a strict lookup has nothing
+    // to match it against.
+    if (exactSelection) return undefined;
     const hint = choice.selection.provider;
     const own = models.filter(
       (model) => String(model.id) === id && !isHostedRow(model),
@@ -354,6 +358,7 @@ export function findModelForStoredChoice(
     });
     if (match || exactSelection) return match;
   }
+  if (exactSelection) return undefined;
   return (
     models.find((model) => String(model.id) === id && isHostedRow(model)) ??
     models.find((model) => String(model.id) === id)
@@ -394,23 +399,77 @@ export type CaseModelEntry = {
  * that unchanged id ({@link selectionBesideLegacyId}). The row is the one the
  * chip names — same provider, same id — so an org OpenRouter row and the
  * hosted row of the same id (different providers) stay distinct.
+ *
+ * `orgCanonicalIds` (set while the organization requires its own keys): an
+ * organization row whose id is bare (`gpt-5` on an org OpenAI connection)
+ * is saved with its canonical id and its org connection,
+ * `{ provider, model: "openai/gpt-5", selection }`. Without that the entry
+ * would be the bare pair, which runs as a legacy id and is refused under
+ * the policy. {@link caseModelEntryValue} reads it back as the same row.
  */
 export function caseModelEntry(
   entry: { provider: string; model: string },
   models: readonly ModelDefinition[],
   /** The deployment stores selections; false ⇒ the legacy pair alone. */
   saveSelection = true,
+  options: { orgCanonicalIds?: boolean } = {},
 ): CaseModelEntry {
-  if (!saveSelection) return { provider: entry.provider, model: entry.model };
+  const legacy = { provider: entry.provider, model: entry.model };
+  if (!saveSelection) return legacy;
   const row = models.find(
     (model) =>
       String(model.provider) === entry.provider &&
       String(model.id) === entry.model,
   );
-  const selection = row
-    ? selectionBesideLegacyId(row, "evalTarget")
-    : undefined;
-  return selection
-    ? { provider: entry.provider, model: entry.model, selection }
-    : { provider: entry.provider, model: entry.model };
+  if (!row) return legacy;
+  const selection = selectionBesideLegacyId(row, "evalTarget");
+  if (selection) return { ...legacy, selection };
+  if (options.orgCanonicalIds) {
+    const canonical = modelSelectionFromDefinition(
+      row,
+      undefined,
+      "evalTarget",
+    );
+    if (canonical?.source === "org") {
+      return {
+        provider: entry.provider,
+        model: canonical.modelId,
+        selection: canonical,
+      };
+    }
+  }
+  return legacy;
+}
+
+/**
+ * The picker value (`provider/rowId`) a saved case `models[]` entry reads
+ * back as. An entry saved with an organization row's canonical id
+ * ({@link caseModelEntry}'s `orgCanonicalIds`) names no row directly, so it
+ * reads back as the row whose own selection it is: same connection, same
+ * model. Every other entry reads as `provider/model`, exactly as before.
+ */
+export function caseModelEntryValue(
+  entry: {
+    provider: string;
+    model: string;
+    selection?: RequestedModelSelection | null;
+  },
+  models: readonly ModelDefinition[],
+): string {
+  const direct = `${entry.provider}/${entry.model}`;
+  const selection = entry.selection;
+  if (!selection || selection.source !== "org") return direct;
+  if (models.some((row) => `${row.provider}/${String(row.id)}` === direct)) {
+    return direct;
+  }
+  const wanted = selectionKey(selection);
+  const row = models.find((candidate) => {
+    const own = modelSelectionFromDefinition(
+      candidate,
+      undefined,
+      "evalTarget",
+    );
+    return own !== null && selectionKey(own) === wanted;
+  });
+  return row ? `${row.provider}/${String(row.id)}` : direct;
 }

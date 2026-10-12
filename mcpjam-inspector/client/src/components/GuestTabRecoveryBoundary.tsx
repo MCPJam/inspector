@@ -1,3 +1,7 @@
+import {
+  projectTransitionRecovery,
+  currentProjectTransitionPath,
+} from "@/lib/auth/project-transition-recovery";
 import { authRefusalDiagnostics } from "@/lib/auth/auth-refusal-diagnostics";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { useEffect, useLayoutEffect, type ReactNode } from "react";
@@ -99,6 +103,10 @@ export function GuestTabTransitionListener() {
   const actor = useActorKey();
   useLayoutEffect(() => {
     if (isLoading || (!user && !actor)) return;
+    projectTransitionRecovery.observeActor(
+      user ? `workos:${user.id}` : `guest:${actor}`,
+      currentProjectTransitionPath(),
+    );
     // Invalidate the old guest even while Convex has unmounted the app gate.
     // Only the gate, after setup succeeds, may release a pending recovery.
     guestTabRecovery.setGuest(user ? null : actor, false);
