@@ -9,6 +9,11 @@ import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
 }));
@@ -338,8 +343,6 @@ describe("SuiteScorerTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
-    expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
-    expect(screen.getByTestId("groundedness-not-yet-run")).toBeTruthy();
   });
 
   it("disables the judge's Required segment with the panel's copy", () => {

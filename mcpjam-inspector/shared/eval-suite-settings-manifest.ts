@@ -119,7 +119,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "judge",
-    label: "Judge",
+    label: "Judge model",
     api: "settings.judge",
   },
   {
@@ -322,6 +322,12 @@ export const SETTINGS_PAGE_HIDDEN_KEYS = {
   schedule: "Triggers group, gated on the scheduled-evals feature flag",
   githubChecks: "Organization settings → GitHub Checks, per repository",
   deleteSuite: "Suite overview header",
+  // The judge section shows only the judge model for now. These keep their
+  // stored values and still apply to runs; they are just not edited on the
+  // page until they are simpler to explain.
+  judgeRubric: "API and CLI only for now; the page shows only the judge model",
+  judgeGroundedness: "Not shown for now; the page shows only the judge model",
+  judgeRubricChecks: "Not shown for now; the page shows only the judge model",
 } as const satisfies Record<string, string>;
 
 export const EVAL_SUITE_SETTING_KEYS: readonly EvalSuiteSettingKey[] =
