@@ -77,12 +77,29 @@ jobs:
           path: .authoring-backend
           persist-credentials: false
           sparse-checkout: convex/lib
+      # The backend commit whose AI refusal vocabulary
+      # (`convex/lib/aiKeyPolicy.ts`) the SDK's `sdk/src/ai-refusal-codes.ts`
+      # matches. It has its own pin because it moves on its own schedule. It
+      # is the head of the backend's refusal-code branch, not yet on `main`:
+      # once the backend refusal-code PRs merge, bump it to a backend `main`
+      # commit. Bump it again whenever the vocabulary changes there.
+      - name: Checkout pinned backend AI refusal vocabulary
+        uses: actions/checkout@v7
+        with:
+          repository: MCPJam/mcpjam-backend
+          ref: ba5363a0f97c40b9905d14778f1cd132eaee8a81
+          token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          path: .ai-refusal-backend
+          persist-credentials: false
+          sparse-checkout: convex/lib
       - name: Install contract checker dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
       - name: Compare authoring implementation and step fixtures
         run: |
           node --test scripts/authoring-contract-normalization.test.mjs
           node scripts/check-authoring-mirror.mjs --backend .authoring-backend
+      - name: Compare AI refusal vocabulary with backend
+        run: node scripts/check-ai-refusal-parity.mjs --backend .ai-refusal-backend
 
   test:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}

@@ -5,143 +5,61 @@
  * When an organization requires its own provider keys, every AI request must
  * run on an approved organization provider: MCPJam-provided (hosted) models,
  * personal local keys and keys exported for local execution are all refused.
- * The backend refuses with one of the codes below; its HTTP bodies are
+ * The backend refuses with one of the codes re-exported below; its HTTP
+ * bodies are
  * `{ ok: false, code, error, isRetryable, remediation, organizationId? }`.
  *
- * The array region below is mirrored byte-for-byte (ignoring quote style and
- * whitespace) from the backend's own vocabulary file. Do not reword, reorder
- * or extend it here; change it there first.
+ * The code list and which codes lift on their own come from the SDK
+ * (`sdk/src/ai-refusal-codes.ts`), the one copy the inspector, the CLI and
+ * the SDK read; this module re-exports them. The remediation table below is
+ * mirrored from the backend's own vocabulary file. Do not reword, reorder or
+ * extend it here; change it there first.
+ *
+ * The harness model proxy (`./harness-proxy-refusal-reasons`) sends
+ * `x-should-retry: false` for `ai_key_policy_unavailable` on its own replies;
+ * everywhere else that code stays temporary.
+ * `ai-execution-refusal-harness-proxy.test.ts` pins this.
  */
 
-export const AI_EXECUTION_REFUSAL_CODES = [
-  /** The org requires its own keys and this attempt would use another source. */
-  "org_keys_required",
-  /** Strict mode, no explicit selection, and no org default for this role. */
-  "org_model_unconfigured",
-  /** This operation has no org-credential adapter (yet) on this provider. */
-  "org_runtime_unsupported",
-  /** The data-owning organization could not be resolved, or disagreed. */
-  "ai_scope_unresolved",
-  /** The policy could not be read; fail closed. */
-  "ai_key_policy_unavailable",
-  /** The org provider rejected the credential (401/403). */
-  "provider_auth_failed",
-  /** The org provider is rate-limited or temporarily failing. */
-  "provider_unavailable",
-] as const;
-
-export type AiExecutionRefusalCode =
-  (typeof AI_EXECUTION_REFUSAL_CODES)[number];
-
-const AI_EXECUTION_REFUSAL_CODE_SET: ReadonlySet<string> = new Set(
+import {
+  AI_CONFIGURATION_REFUSAL_CODES,
   AI_EXECUTION_REFUSAL_CODES,
-);
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+  type AiExecutionRefusalCode,
+  type AiRefusalCode,
+} from "@mcpjam/sdk/browser";
 
-/** Exactly one of {@link AI_EXECUTION_REFUSAL_CODES}, spelled as the wire spells it. */
-export function isAiExecutionRefusalCode(
-  value: unknown,
-): value is AiExecutionRefusalCode {
-  return typeof value === "string" && AI_EXECUTION_REFUSAL_CODE_SET.has(value);
-}
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+  type AiExecutionRefusalCode,
+  type AiRefusalCode,
+} from "@mcpjam/sdk/browser";
 
 /**
- * The same seven codes, read tolerantly: a stored row or a log line can carry
- * the code in another case or with stray whitespace. True only for the codes
- * the org-key policy introduced, never for the reused ones
- * (`credential_missing`, `invalid_model`, …), which predate the policy.
+ * The seven policy codes (`AI_EXECUTION_REFUSAL_CODES`), read tolerantly: a
+ * stored row or a log line can carry the code in another case or with stray
+ * whitespace. True only for the codes the org-key policy introduced, never for
+ * the reused ones (`credential_missing`, `invalid_model`, …), which predate
+ * the policy.
  */
 export function isOrgKeyPolicyRefusalCode(
   code: string | null | undefined,
 ): boolean {
   if (typeof code !== "string") return false;
-  return AI_EXECUTION_REFUSAL_CODE_SET.has(code.trim().toLowerCase());
+  return isAiExecutionRefusalCode(code.trim().toLowerCase());
 }
 
 /**
- * Codes the policy reuses from model resolution, so they are not in
- * {@link AI_EXECUTION_REFUSAL_CODES}: the saved org connection is gone or has
- * no key (`credential_missing`), or the model can't do what the feature needs
- * or isn't available (the three model codes).
+ * See `AI_CONFIGURATION_REFUSAL_CODES`: permanent until someone changes the
+ * organization's configuration or the request's model. Tolerant of case and
+ * spacing.
  */
-export const AI_REUSED_REFUSAL_CODES = [
-  "credential_missing",
-  "capability_missing",
-  "capability_unknown",
-  "invalid_model",
-] as const;
-
-/**
- * Every code a policy-aware surface recognizes: the seven policy codes plus
- * the reused ones. The backend's `AiRefusalCode` is the same set.
- */
-export type AiRefusalCode =
-  | AiExecutionRefusalCode
-  | (typeof AI_REUSED_REFUSAL_CODES)[number];
-
-const AI_REFUSAL_CODES: readonly AiRefusalCode[] = [
-  ...AI_EXECUTION_REFUSAL_CODES,
-  ...AI_REUSED_REFUSAL_CODES,
-];
-
-const AI_REFUSAL_CODE_SET: ReadonlySet<string> = new Set(AI_REFUSAL_CODES);
-
-function isAiRefusalCode(key: string): key is AiRefusalCode {
-  return AI_REFUSAL_CODE_SET.has(key);
-}
-
-/** `code` in canonical lowercase, when it is one of {@link AiRefusalCode}. */
-export function recognizedAiRefusalCode(
-  code: string | null | undefined,
-): AiRefusalCode | undefined {
-  if (typeof code !== "string") return undefined;
-  const key = code.trim().toLowerCase();
-  return isAiRefusalCode(key) ? key : undefined;
-}
-
-/**
- * Whether each refusal lifts on its own, as the backend classifies it. Only
- * two do: the policy could not be read (the backend fails closed), or the
- * org's provider is throttling or failing; both arrive as 503 with
- * `isRetryable: true`. Every other code is permanent until someone changes
- * the organization's configuration or the request's model.
- *
- * The harness model proxy (`./harness-proxy-refusal-reasons`) uses two of
- * these codes, `org_keys_required` and `ai_key_policy_unavailable`. It sends
- * `x-should-retry: false` for both: the proxy never re-sends a call, and the
- * coding agent behind it must not either. That is a rule for the proxy's own
- * replies. Everywhere else `ai_key_policy_unavailable` stays temporary, as
- * here. `ai-execution-refusal-harness-proxy.test.ts` pins this.
- */
-const RETRYABLE_BY_CODE: Readonly<Record<AiRefusalCode, boolean>> = {
-  org_keys_required: false,
-  org_model_unconfigured: false,
-  org_runtime_unsupported: false,
-  ai_scope_unresolved: false,
-  ai_key_policy_unavailable: true,
-  provider_auth_failed: false,
-  provider_unavailable: true,
-  credential_missing: false,
-  capability_missing: false,
-  capability_unknown: false,
-  invalid_model: false,
-};
-
-/** The refusals that lift on their own; see {@link RETRYABLE_BY_CODE}. */
-export const AI_RETRYABLE_REFUSAL_CODES: ReadonlySet<string> = new Set(
-  AI_REFUSAL_CODES.filter((code) => RETRYABLE_BY_CODE[code]),
-);
-
-/**
- * Refusals that are permanent until someone changes the organization's
- * configuration or the request's model: never retried automatically, never
- * paged, and never an account limit or a refund. The same set as the
- * backend's (every code it classifies `permanentUntilConfigurationChange`).
- */
-export const AI_CONFIGURATION_REFUSAL_CODES: ReadonlySet<string> = new Set(
-  AI_REFUSAL_CODES.filter((code) => !RETRYABLE_BY_CODE[code]),
-);
-
-/** See {@link AI_CONFIGURATION_REFUSAL_CODES}; tolerant of case and spacing. */
 export function isAiConfigurationRefusalCode(
   code: string | null | undefined,
 ): boolean {
@@ -164,10 +82,8 @@ export function findOrgKeyPolicyRefusalCode(
   text: string | null | undefined,
 ): AiExecutionRefusalCode | undefined {
   if (typeof text !== "string" || !text) return undefined;
-  const match = ORG_KEY_POLICY_CODE_PATTERN.exec(text);
-  return match
-    ? (match[1]!.toLowerCase() as AiExecutionRefusalCode)
-    : undefined;
+  const code = ORG_KEY_POLICY_CODE_PATTERN.exec(text)?.[1]?.toLowerCase();
+  return isAiExecutionRefusalCode(code) ? code : undefined;
 }
 
 export type AiRefusalRemediation =
