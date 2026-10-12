@@ -210,6 +210,13 @@ export async function fulfillWithoutForwardingCredentials(
 ) {
   // Header overrides on continue() follow redirects. Fulfill one hop so the
   // browser creates the next request without the Cloudflare credentials.
-  const response = await route.fetch({ headers, maxRedirects: 0 });
-  await route.fulfill({ response });
+  // A failed fetch's error carries every request header, session cookie
+  // included, and Playwright prints it even after the test has ended. Fail the
+  // request quietly instead; the page shows what broke.
+  try {
+    const response = await route.fetch({ headers, maxRedirects: 0 });
+    await route.fulfill({ response });
+  } catch {
+    await route.abort().catch(() => {});
+  }
 }

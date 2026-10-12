@@ -86,6 +86,10 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
     throw new Error(
       `Staging authentication failed at: ${phase}. Cause: ${cause}. Blocked operations: ${rejected.join(", ") || "none"}. App headings: ${headings.join("; ").slice(0, 500)}`,
     );
+  } finally {
+    // Requests still in flight when the test ends would otherwise fail loudly,
+    // and their call logs list every request header.
+    await context.unrouteAll({ behavior: "ignoreErrors" });
   }
 });
 
