@@ -38,9 +38,8 @@ export function ByokCreditsPage() {
           MCPJam credits.
         </p>
         <p>
-          Features that can’t run on organization providers yet, such as Swarm,
-          User Testing, and Insights, show “Not supported yet” instead of
-          running on MCPJam-provided models.
+          Swarm, User Testing and Insights are unavailable until an admin sets
+          the organization’s default AI model in Organization → AI providers.
         </p>
         <p>
           MCPJam’s fixed product fees and usage limits still apply, so features

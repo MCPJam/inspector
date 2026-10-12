@@ -497,9 +497,10 @@ export function EvalModelChoices({
     [catalogModels, harness, requireOrgKeys],
   );
   const selectionsSupported = useModelSelectionsSupported();
-  // A target saved with a selection reads back as the row it names: an
-  // organization row picked under the policy is saved under its canonical id,
-  // not the row's own (see `pickedModelTarget`).
+  // A saved selection names its source and connection. Under the policy only
+  // that exact row is the target, so a hosted target never borrows an org row
+  // that lists the same id. The warning names the model from the catalog,
+  // since the menu would otherwise mark that org row as picked.
   const resolveModel = (
     id: string,
     saved = true,

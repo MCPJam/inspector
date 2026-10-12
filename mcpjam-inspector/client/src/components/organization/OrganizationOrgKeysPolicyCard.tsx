@@ -24,6 +24,7 @@ import {
   featureGuidance,
   featureLabel,
   listedBlockers,
+  operationModelFix,
   orderedFeatures,
   statusPresentation,
 } from "./org-ai-config-presentation";
@@ -309,6 +310,7 @@ function FeatureCoverage({
           const { label, tone } = statusPresentation(feature.status);
           const guidance = featureGuidance(feature, {
             eligibleConnectionIds,
+            operations,
             canManage,
           });
           // A blocked feature lists what blocks it (never itself); what
@@ -340,15 +342,24 @@ function FeatureCoverage({
               {blockedBy ? (
                 <p className="text-xs text-muted-foreground">{blockedBy}</p>
               ) : null}
-              {degradedBy.map((op) => (
-                <p key={op} className="text-xs text-muted-foreground">
-                  {degradationSentence(
-                    feature.id,
-                    op,
-                    operationById.get(op)?.status,
-                  )}
-                </p>
-              ))}
+              {degradedBy.map((op) => {
+                const readiness = operationById.get(op);
+                // "until the default model is set" only when it isn't set.
+                const modelFix = operationModelFix(
+                  readiness,
+                  eligibleConnectionIds,
+                );
+                return (
+                  <p key={op} className="text-xs text-muted-foreground">
+                    {degradationSentence(
+                      feature.id,
+                      op,
+                      readiness?.status,
+                      modelFix?.reason === "unset" ? modelFix.kind : undefined,
+                    )}
+                  </p>
+                );
+              })}
             </li>
           );
         })}
