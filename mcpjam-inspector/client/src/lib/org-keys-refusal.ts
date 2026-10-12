@@ -204,7 +204,8 @@ export function orgKeysRefusalNextStep(
  * providers; `member` is told to ask an admin; `visitor` (a share-link reader
  * outside the org) gets one neutral sentence with no admin detail.
  * `selection` is who chose the refused model: a person (`picked`, the
- * default) or an organization model role (`role`).
+ * default), or nobody, for background work on the organization's default
+ * model (`background`).
  */
 export function describeOrgKeysRefusal(
   code: string | null | undefined,

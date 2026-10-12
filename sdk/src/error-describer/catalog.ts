@@ -848,7 +848,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       // Named precisely because the generic advice costs people an afternoon:
       // a swarm's generation and persona-driver calls are platform-billed and
       // have no BYOK path, so adding a key does nothing for them.
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.",
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -863,7 +863,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the billing period to renew.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.",
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -878,7 +878,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Try a cheaper model or a shorter conversation.",
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.",
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -919,7 +919,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the allowance to reset.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.",
     ],
     "out-of-mcpjam-credits",
     "warning",
