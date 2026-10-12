@@ -619,6 +619,12 @@ export type SystemEventMap = {
     privacyUnresolved: number;
     /** Replay events the policy did not allow, dropped from forwarded requests. */
     privacyReplayDropped: number;
+    /** Requests refused because an event or metric could not be shown clean. */
+    scrubDrops: number;
+    /** Replay events dropped: they carried a credential URL. */
+    replayCredentialDrops: number;
+    /** Replay events dropped: their nested data could not be decoded. */
+    replayUndecodableDrops: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

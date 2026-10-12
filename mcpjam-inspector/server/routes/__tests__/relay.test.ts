@@ -366,7 +366,7 @@ describe("posthog relay proxy", () => {
     });
   });
 
-  it("strips cookie/host/session-auth/authorization headers and withholds the client IP from an unauthenticated capture", async () => {
+  it("strips cookie/host/session-auth/authorization/referer headers and withholds the client IP from an unauthenticated capture", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
@@ -382,6 +382,8 @@ describe("posthog relay proxy", () => {
         "X-MCP-Session-Auth": "token",
         "X-MCPJam-Telemetry-Context": "{}",
         "User-Agent": "test-agent",
+        // The page posthog-js runs on, which on a share link is the token.
+        Referer: "https://app.mcpjam.com/results/SENTINEL_tok_123",
         // Edge chain: first hop is the real client per client-ip.ts.
         "X-Forwarded-For": "1.2.3.4, 10.0.0.1",
         "X-Real-IP": "1.2.3.4",
@@ -403,6 +405,10 @@ describe("posthog relay proxy", () => {
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-mcp-session-auth")).toBeNull();
     expect(headers.get("host")).toBeNull();
+    expect(headers.get("referer")).toBeNull();
+    const forwardedValues: string[] = [];
+    headers.forEach((value) => forwardedValues.push(value));
+    expect(forwardedValues.join(" ")).not.toContain("SENTINEL");
     expect(headers.get("user-agent")).toBe("test-agent");
     // No bearer, so the conservative policy: no client address at all.
     expect(headers.get("x-forwarded-for")).toBeNull();

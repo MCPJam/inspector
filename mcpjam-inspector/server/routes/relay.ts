@@ -20,6 +20,12 @@ import {
   isRestricted,
   type PolicyDecision,
 } from "./relay-privacy.js";
+import {
+  ReplayCredentialInspector,
+  scrubEventCredentials,
+  scrubForwardedSearch,
+} from "./relay-credentials.js";
+import { scrubTelemetryValue } from "../../shared/credential-urls.js";
 
 /**
  * Same-origin PostHog reverse proxy.
@@ -52,6 +58,11 @@ import {
  * relay drops replay the policy turns `off`, and restricted replay whose
  * stamp does not declare it masked. No bearer, no stamp, or no answer means
  * the conservative policy. The bearer and the stamp never reach PostHog.
+ *
+ * Credential pass (relay-credentials.ts): at every policy, `full` included,
+ * no credential URL reaches PostHog through the relay. Each event that passes
+ * the gate goes through the credential walker, a replay event holding a
+ * credential is dropped, and the query string is scrubbed.
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -67,10 +78,13 @@ const REPLAY_MAX_BODY_BYTES = 20 * 1024 * 1024;
 // Hop-by-hop and app-specific headers that must not reach PostHog. Host is
 // derived by fetch() from the target URL; cookie may carry our session;
 // accept-encoding is dropped so undici negotiates (and transparently
-// decompresses) its own encoding.
+// decompresses) its own encoding. Referer is the page posthog-js runs on,
+// sent in full because the relay is same-origin: on a share link or an OAuth
+// callback that URL is the credential (`/results/<token>`, `?code=`).
 const STRIPPED_REQUEST_HEADERS = new Set([
   "host",
   "cookie",
+  "referer",
   "connection",
   "content-length",
   "accept-encoding",
@@ -144,6 +158,13 @@ const stats = {
   privacyRejected: 0,
   privacyUnresolved: 0,
   privacyReplayDropped: 0,
+  // Credential pass: requests refused because an event could not be shown
+  // clean (400, counted apart from a project rejection), and replay events
+  // dropped because one held a credential or its nested data could not be
+  // decoded.
+  scrubDrops: 0,
+  replayCredentialDrops: 0,
+  replayUndecodableDrops: 0,
   latenciesMs: [] as number[],
 };
 
@@ -184,6 +205,9 @@ export function flushRelayStats(): void {
     privacyRejected: stats.privacyRejected,
     privacyUnresolved: stats.privacyUnresolved,
     privacyReplayDropped: stats.privacyReplayDropped,
+    scrubDrops: stats.scrubDrops,
+    replayCredentialDrops: stats.replayCredentialDrops,
+    replayUndecodableDrops: stats.replayUndecodableDrops,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -204,6 +228,9 @@ export function flushRelayStats(): void {
   stats.privacyRejected = 0;
   stats.privacyUnresolved = 0;
   stats.privacyReplayDropped = 0;
+  stats.scrubDrops = 0;
+  stats.replayCredentialDrops = 0;
+  stats.replayUndecodableDrops = 0;
   stats.latenciesMs = [];
 }
 
@@ -771,7 +798,9 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
 // element of a top-level array, or an element of a top-level `batch` array.
 // Every occurrence is recorded, a repeated key included, and a value that is
 // not a string is recorded as null so it never matches. Malformed or
-// truncated JSON throws.
+// truncated JSON throws. Every string it reads, keys included, can also go
+// to a visitor, which is how nested replay data is read for credentials
+// without being built (relay-credentials.ts).
 // ---------------------------------------------------------------------------
 
 const JSON_OBJECT = 1;
@@ -921,6 +950,7 @@ export async function scanPayloadTokens(
   bytes: Buffer,
   tokens: unknown[],
   layout?: PayloadLayout,
+  visitString?: (value: string) => void | Promise<void>,
 ): Promise<void> {
   const kinds = new Uint8Array(SCAN_MAX_DEPTH);
   const eventOpenAt = [-1, -1, -1];
@@ -981,6 +1011,10 @@ export async function scanPayloadTokens(
       }
       if (end !== QUOTE) throw new Error("control character in a string");
       inside = IN_NOTHING;
+      if (visitString) {
+        const visiting = visitString(decodeString(bytes, stringOpen, i));
+        if (visiting) await visiting;
+      }
       if (stringIsKey) {
         const level = depth - 1;
         if (level < TRACKED_KEY_DEPTH) {
@@ -1178,14 +1212,24 @@ function captureShapeOf(payload: unknown): CapturePayload {
   };
 }
 
+// How a body arrived, so one rewritten as it came (a metrics body) leaves
+// the same way: gzip or not, and a form-encoded `data=` field (JSON, or
+// base64 JSON with `compression=base64`) or bare JSON.
+interface BodyEncoding {
+  gzip: boolean;
+  form: "json" | "base64" | null;
+}
+
 // posthog-js sends gzip (detected by its magic bytes — the SDK drops the
 // `compression` query param for gzip), a form-encoded `data=` body, or JSON.
-// Returns the payload's JSON bytes, leading whitespace skipped.
-async function decodeCaptureBody(
+// Returns the payload's JSON bytes, leading whitespace skipped, and how it
+// was wrapped.
+async function decodeBody(
   bytes: Uint8Array,
   textBytes: number,
-): Promise<Buffer> {
-  const text = isGzip(bytes)
+): Promise<{ json: Buffer; encoding: BodyEncoding }> {
+  const gzip = isGzip(bytes);
+  const text = gzip
     ? await gunzipAsync(bytes, { maxOutputLength: Math.max(1, textBytes) })
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const lookahead = Math.min(text.length, SCAN_SLICE_BYTES);
@@ -1196,11 +1240,37 @@ async function decodeCaptureBody(
     (start === lookahead && start < text.length)
   ) {
     // JSON, or a run of leading whitespace the JSON reader works through.
-    return text.subarray(start);
+    return { json: text.subarray(start), encoding: { gzip, form: null } };
   }
   const data = await formDataParam(text);
   if (data === null) throw new Error("no capture payload");
-  return dataParamBytes(data.toString("utf8"));
+  const value = data.toString("utf8");
+  const form = /^\s*[{[]/.test(value) ? "json" : "base64";
+  return { json: dataParamBytes(value), encoding: { gzip, form } };
+}
+
+async function decodeCaptureBody(
+  bytes: Uint8Array,
+  textBytes: number,
+): Promise<Buffer> {
+  return (await decodeBody(bytes, textBytes)).json;
+}
+
+// `json` wrapped the way `encoding` says. A form body is rebuilt as the one
+// `data=` field posthog-js sends; any other field the client added is not
+// forwarded, since nothing scrubbed it.
+async function encodeBody(
+  json: string,
+  encoding: BodyEncoding,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const value =
+    encoding.form === "base64"
+      ? Buffer.from(json, "utf8").toString("base64")
+      : json;
+  const text =
+    encoding.form === null ? json : `data=${encodeURIComponent(value)}`;
+  const bytes = Buffer.from(text, "utf8");
+  return new Uint8Array(encoding.gzip ? await gzipAsync(bytes) : bytes);
 }
 
 // Parses a large payload from the event ranges its scan recorded.
@@ -1309,7 +1379,7 @@ function checkProjectTokens(subpath: string, url: URL): ProjectCheck {
 }
 
 type CaptureOutcome =
-  | { kind: "busy" | "unreadable" | "other" | "restricted" }
+  | { kind: "busy" | "unreadable" | "other" | "restricted" | "scrub_drop" }
   | {
       kind: "forward";
       /** Replay events the policy did not allow, dropped from the payload. */
@@ -1389,9 +1459,18 @@ async function waitForPolicies(
   }
 }
 
-// Rewrites each event under its policy and serializes the payload: a POST
-// body gzip-compressed the way posthog-js sends it, a GET's `data` as JSON.
-// A request left with no event to forward is `restricted`.
+// The relay's JSON scanner as the replay credential check reads nested data.
+const scanJsonStrings = (
+  json: Buffer,
+  visit: (value: string) => void | Promise<void>,
+) => scanPayloadTokens(json, [], undefined, visit);
+
+// Rewrites each event under its policy, then takes every credential out of
+// what is left (relay-credentials.ts): an event or envelope the walker cannot
+// finish fails the request (`scrub_drop`), and a replay event holding a
+// credential, or nested data that cannot be read, is dropped. Serializes the
+// payload: a POST body gzip-compressed the way posthog-js sends it, a GET's
+// `data` as JSON. A request left with no event to forward is `restricted`.
 async function rewriteCapture(
   url: URL,
   method: string,
@@ -1399,19 +1478,44 @@ async function rewriteCapture(
   decision: PolicyDecision,
 ): Promise<CaptureOutcome> {
   const events: Record<string, unknown>[] = [];
+  const replay = new ReplayCredentialInspector(scanJsonStrings);
   let dropped = 0;
+  let credentialDropped = 0;
+  let envelope: Record<string, unknown>;
+  try {
+    envelope = scrubEventCredentials(payload.envelope);
+  } catch {
+    return { kind: "scrub_drop" };
+  }
   for (let i = 0; i < payload.events.length; i++) {
     const event = applyEventPolicy(
       payload.events[i],
       decision.policies[i],
       decision.declared[i],
     );
-    if (event === null) dropped++;
-    else events.push(event as Record<string, unknown>);
+    if (event === null) {
+      dropped++;
+    } else if ((event as Record<string, unknown>).event === "$snapshot") {
+      const verdict = await replay.inspect(event);
+      if (verdict === "clean") events.push(event as Record<string, unknown>);
+      else {
+        credentialDropped++;
+        if (verdict === "credential") stats.replayCredentialDrops++;
+        else stats.replayUndecodableDrops++;
+      }
+    } else {
+      try {
+        events.push(scrubEventCredentials(event as Record<string, unknown>));
+      } catch {
+        return { kind: "scrub_drop" };
+      }
+    }
     if (i > 0 && i % 64 === 0) await yieldToEventLoop();
   }
-  if (events.length === 0 && dropped > 0) return { kind: "restricted" };
-  const serialized = await serializeCapture({ ...payload, events });
+  if (events.length === 0 && dropped + credentialDropped > 0) {
+    return { kind: "restricted" };
+  }
+  const serialized = await serializeCapture({ ...payload, envelope, events });
   const isGet = method === "GET" || method === "HEAD";
   const params = new URLSearchParams(url.search);
   if (isGet) {
@@ -1419,6 +1523,9 @@ async function rewriteCapture(
     params.set("data", serialized);
   } else {
     params.set("compression", "gzip-js");
+    // The body is the payload; a `data=` in a POST's query would be a second
+    // one that nothing checked.
+    params.delete("data");
   }
   const query = params.toString();
   return {
@@ -1495,6 +1602,50 @@ async function processCapture(
 
   const outcome = await admitted(large, () =>
     rewriteCapture(url, method, read, decision),
+  );
+  return outcome === BUSY ? { kind: "busy" } : outcome;
+}
+
+type MetricsOutcome =
+  | { kind: "busy" | "unreadable" | "other" | "scrub_drop" }
+  | { kind: "forward"; body: Uint8Array<ArrayBuffer> };
+
+// OTLP metrics (`/i/v1/metrics`) name their project in the query alone. Their
+// attributes can carry the page URL, so the body is decoded whole, every
+// string goes through the credential walker, and it is re-encoded the way
+// it came. A body that cannot be shown clean is not forwarded.
+async function processMetrics(
+  subpath: string,
+  url: URL,
+  body: ArrayBuffer | undefined,
+): Promise<MetricsOutcome> {
+  const project = checkProjectTokens(subpath, url);
+  if (project !== "ours") return { kind: project };
+  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
+  let textBytes = bytes.length;
+  if (isGzip(bytes)) {
+    const declared = gzipDeclaredBytes(bytes);
+    const cap = capturePayloadCap(subpath);
+    if (declared === null || declared > inflateBudget(bytes.length, cap)) {
+      return { kind: "scrub_drop" };
+    }
+    textBytes = declared;
+  }
+  const outcome = await admitted(
+    textBytes > INFLATE_FLOOR_BYTES,
+    async (): Promise<MetricsOutcome> => {
+      try {
+        const { json, encoding } = await decodeBody(bytes, textBytes);
+        if (json.length > RELAY_MAX_EVENT_BYTES) return { kind: "scrub_drop" };
+        const clean = scrubTelemetryValue(JSON.parse(json.toString("utf8")));
+        return {
+          kind: "forward",
+          body: await encodeBody(JSON.stringify(clean), encoding),
+        };
+      } catch {
+        return { kind: "scrub_drop" };
+      }
+    },
   );
   return outcome === BUSY ? { kind: "busy" } : outcome;
 }
@@ -1599,6 +1750,12 @@ relayRoutes.all("*", async (c) => {
         c.header("Retry-After", "1");
         return c.json({ error: "relay_busy" }, 503);
       }
+      // An event the credential walker could not finish: not forwarded.
+      if (capture.kind === "scrub_drop") {
+        stats.scrubDrops++;
+        recordResponseStatus(400);
+        return c.json({ error: "unreadable_payload" }, 400);
+      }
       // Nothing the policy allows: a 4xx, which posthog-js does not retry.
       if (capture.kind === "restricted") {
         stats.privacyRejected++;
@@ -1637,6 +1794,38 @@ relayRoutes.all("*", async (c) => {
         headers.set("X-Forwarded-For", clientIp);
         headers.set("X-Real-IP", clientIp);
       }
+    } else if (/^\/i\/v1\/metrics\/?$/.test(subpath)) {
+      const metrics = await processMetrics(
+        subpath,
+        url,
+        body as ArrayBuffer | undefined,
+      );
+      if (metrics.kind === "busy") {
+        stats.busyRejects++;
+        recordResponseStatus(503);
+        c.header("Retry-After", "1");
+        return c.json({ error: "relay_busy" }, 503);
+      }
+      if (metrics.kind === "scrub_drop") {
+        stats.scrubDrops++;
+        recordResponseStatus(400);
+        return c.json({ error: "unreadable_payload" }, 400);
+      }
+      if (metrics.kind !== "forward") {
+        stats.projectRejects++;
+        const status = metrics.kind === "other" ? 403 : 400;
+        recordResponseStatus(status);
+        return c.json(
+          {
+            error:
+              metrics.kind === "other"
+                ? "unsupported_project"
+                : "unreadable_payload",
+          },
+          status,
+        );
+      }
+      body = metrics.body;
     } else {
       const project = checkProjectTokens(subpath, url);
       if (project !== "ours") {
@@ -1666,7 +1855,9 @@ relayRoutes.all("*", async (c) => {
     // unaffected in practice: every runtime script is compiled into the
     // client bundle (client/src/lib/posthog-bundled-extensions.ts).
     // Update the supported request set alongside SDK endpoint changes.
-    const target = `${upstreamBase}${subpath}${search}`;
+    // Every query parameter but the payload and the project key loses its
+    // credentials (relay-credentials.ts).
+    const target = `${upstreamBase}${subpath}${scrubForwardedSearch(search)}`;
     try {
       upstream = await fetch(target, {
         method,
