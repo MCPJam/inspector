@@ -788,6 +788,11 @@ local models are disabled for it, and nothing falls back to them: a feature
 without a compatible provider is unavailable instead. Only direct cloud
 providers count; OpenRouter and local-runtime connections do not.
 
+- **Default AI model.** Admins can set a default model for background AI work
+  under **Organization → AI providers**. On the Default AI model card, click
+  **Set** (or **Change**) next to the model kind, pick an eligible provider,
+  enter the model ID, and save. The saved selection always names the connection
+  and is never swapped for another model automatically.
 - **Model pickers** list only the organization's eligible models. A suite's
   judge must be chosen from an organization provider; there is no default
   judge, and a suite without one can't run.
