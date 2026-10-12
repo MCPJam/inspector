@@ -8,7 +8,10 @@ name: Warm node_modules caches
 #
 # Each job must match its consumers exactly: the key, the `path` list (the
 # cache's version is derived from it, so a different list is a different
-# entry), the runner image and NODE_VERSION.
+# entry), the container image, NODE_VERSION and `runs-on`. A cache lives with
+# the runner that saved it: Blacksmith routes actions/cache to its own store,
+# so the bare key is warmed twice, once there for lint.yml and once on GitHub
+# for the Meticulous and slop-deletion workflows.
 # .github/scripts/warm-node-modules.test.mjs checks that in Build and Test.
 #
 # On a hit, `lookup-only` skips the download, so a job ends after checkout.
@@ -33,7 +36,7 @@ env:
 jobs:
   playwright:
     name: Playwright container (test.yml)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     container: mcr.microsoft.com/playwright:v1.63.0-noble
 
@@ -75,6 +78,39 @@ jobs:
 
   bare:
     name: Bare runner (lint.yml)
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+  bare-github:
+    name: GitHub runner (Meticulous, slop deletion)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

@@ -43,11 +43,21 @@ env:
   # flaky) Electron binary download during npm ci.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
+# Every job runs on Blacksmith. GitHub's hosted runners are one pool of 60
+# concurrent jobs shared by every MCPJam repo, and at busy times these jobs
+# waited 30-80 minutes for a slot; Blacksmith has no concurrency cap. 4 vCPU /
+# 16 GB matches GitHub's public-repo runner, which the 6 GB test heap needs.
+#
+# TEST_RUNNER is the way back without a PR: if Blacksmith is down, no PR can
+# pass these required checks, a revert included. Set the repository variable to
+# `ubuntu-latest` and every job here, in lint.yml and in warm-node-modules.yml
+# moves together (their caches live with the runner that saved them).
+
 jobs:
   authoring-mirror:
     name: Compare authoring contracts with backend
     if: github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
     # install still fits and a hung step fails in minutes instead of six hours.
     timeout-minutes: 10
@@ -75,7 +85,7 @@ jobs:
           node scripts/check-authoring-mirror.mjs --backend .authoring-backend
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Run Tests
     # Pinned to the same Playwright version as the `@playwright/test` dependency.
@@ -177,7 +187,7 @@ jobs:
         run: npm run test:ci:rest
 
   packaging:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
@@ -239,7 +249,7 @@ jobs:
         run: npm run test:ci:packaging
 
   inspector:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
@@ -310,7 +320,7 @@ jobs:
         run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
@@ -469,7 +479,7 @@ jobs:
           if-no-files-found: ignore
 
   telemetry-privacy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Telemetry Privacy (browser)
     # Telemetry ON, unlike the smoke job above: the app's real PostHog and
