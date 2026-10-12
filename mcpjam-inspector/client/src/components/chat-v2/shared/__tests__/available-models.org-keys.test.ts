@@ -9,6 +9,8 @@ import {
   type OrgVisibleConfig,
 } from "../model-helpers";
 import { isUsableOrgConnection } from "../org-ai-policy";
+import { composeAvailableModels } from "../available-models";
+import { ORG_POLICY_LOADING_REASON } from "@/lib/org-keys-refusal";
 
 const hostedHaiku: ModelDefinition = {
   id: "anthropic/claude-haiku-4.5",
@@ -224,6 +226,33 @@ describe("buildAvailableModelsFromOrgConfig under the policy", () => {
         (row) =>
           row.orgProvider?.id === "orgprov_anthropic_refused" &&
           row.judgeEligible === undefined,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("pending organization policy", () => {
+  it("offers no usable hosted, personal or organization model before policy loads", () => {
+    const orgConfig = { providers: [], pending: true };
+    expect(buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku])).toEqual(
+      [],
+    );
+    const rows = composeAvailableModels({
+      orgConfig,
+      isAuthenticated: true,
+      isOllamaRunning: false,
+      ollamaModels: [],
+      hasToken: () => true,
+      getOpenRouterSelectedModels: () => [],
+      getAzureBaseUrl: () => "",
+      customProviders: [],
+      hostedCatalog: [hostedHaiku],
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.disabled && row.disabledReason === ORG_POLICY_LOADING_REASON,
       ),
     ).toBe(true);
   });

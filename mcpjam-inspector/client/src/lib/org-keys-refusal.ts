@@ -216,3 +216,7 @@ export const ASK_ORG_ADMIN = "Ask an organization admin";
 
 /** The admin's action: Organization → AI providers. */
 export const MANAGE_AI_PROVIDERS = "Manage AI providers";
+
+/** No picker row becomes usable before the organization policy is known. */
+export const ORG_POLICY_LOADING_REASON =
+  "Loading your organization's AI settings…";
