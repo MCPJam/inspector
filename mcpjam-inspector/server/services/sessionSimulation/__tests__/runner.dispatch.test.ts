@@ -90,6 +90,14 @@ const TURN_TRACE = {
   finishReason: "stop",
 };
 
+/** The fields the model-id tests read off the options the engine received. */
+type CapturedTurnOptions = {
+  endpointPath?: string;
+  harness?: string;
+  modelDefinition: ModelDefinition;
+  extraBodyFields?: Record<string, unknown>;
+};
+
 /**
  * Stub the hosted engine (`runAssistantTurn`): capture options, return the
  * input messages + a turnTrace as a successful headless turn.
@@ -237,7 +245,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       }) as Parameters<typeof drainAssistantTurn>[0],
     );
 
-    const opts = calls[0] as any;
+    const opts = calls[0] as CapturedTurnOptions;
     expect(opts.endpointPath).toBe("/stream");
     expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
     expect(opts.modelDefinition.provider).toBe("openai");
@@ -261,7 +269,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
         }) as Parameters<typeof drainAssistantTurn>[0],
       );
 
-      expect((calls[0] as any).modelDefinition.id).toBe(
+      expect((calls[0] as CapturedTurnOptions).modelDefinition.id).toBe(
         "openai/gpt-live-only",
       );
     } finally {
@@ -278,7 +286,9 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       baseArgs() as Parameters<typeof drainAssistantTurn>[0],
     );
 
-    expect((calls[0] as any).modelDefinition.id).toBe("openai/gpt-4o-mini");
+    expect((calls[0] as CapturedTurnOptions).modelDefinition.id).toBe(
+      "openai/gpt-4o-mini",
+    );
   });
 
   it("keeps a bare id bare on the org-BYOK rail, where the provider expects its own id", async () => {
@@ -300,7 +310,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       }) as Parameters<typeof drainAssistantTurn>[0],
     );
 
-    const opts = calls[0] as any;
+    const opts = calls[0] as CapturedTurnOptions;
     expect(opts.endpointPath).toBe("/stream/org");
     expect(opts.modelDefinition.id).toBe("gpt-5.6-luna");
   });
@@ -324,7 +334,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       }) as Parameters<typeof drainAssistantTurn>[0],
     );
 
-    const opts = calls[0] as any;
+    const opts = calls[0] as CapturedTurnOptions;
     expect(opts.harness).toBe("claude-code");
     expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
     expect(
@@ -1200,7 +1210,7 @@ describe("drainAssistantTurn — sponsored swarm claim", () => {
       }),
     );
 
-    const opts = calls[0] as any;
+    const opts = calls[0] as CapturedTurnOptions;
     expect(opts.endpointPath).toBe("/stream");
     expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
     expect(opts.extraBodyFields).toMatchObject({
