@@ -278,6 +278,7 @@ Rubric checks ask each of the suite's grading criteria on its own, as a yes or n
 - **Uncertain is not a pass.** A criterion answered with a probability of yes from 0.4 up to 0.6 shows as **Uncertain** on the trial scorecard, beside its value. The stored row still passes at 0.5 or more.
 - **Wording is identity.** Editing a criterion's or question's wording, options, levels or pass line starts a new rubric-check row, so a baseline comparison shows the old row removed and the new one added.
 - **App only, for now.** Rubric-check settings are edited in the app, and the API refuses `settings.judge.rubricChecks`. The criteria they ask come from `settings.judge.rubric`, which the API does accept.
+- **Grading instructions via API or CLI.** The suite settings page shows only the judge model picker. Grading instructions (`settings.judge.rubric`) are set via the API or CLI; any stored value still applies to runs.
 
 Each answer appears on the trial scorecard under User value, after the goal judge, and under **Score rows** as `judge:rubricChecks:c:<criterion id>` or `judge:rubricChecks:q:<question id>`.
 
