@@ -46,6 +46,9 @@ function renderTable(
     judgeConfig?: Parameters<typeof SuiteScorerTable>[0]["judgeConfig"];
     capabilities?: SuiteCapabilities | null;
     unavailableReason?: string;
+    requireOrgKeys?: boolean;
+    availableModels?: Parameters<typeof SuiteScorerTable>[0]["availableModels"];
+    onManageOrgProviders?: () => void;
     stageFacts?: Parameters<typeof SuiteScorerTable>[0]["stageFacts"];
   } = {},
 ) {
@@ -63,7 +66,9 @@ function renderTable(
       }}
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
-      availableModels={[]}
+      availableModels={overrides.availableModels ?? []}
+      requireOrgKeys={overrides.requireOrgKeys}
+      onManageOrgProviders={overrides.onManageOrgProviders}
       stageFacts={overrides.stageFacts}
       capabilities={overrides.capabilities}
       unavailableReason={overrides.unavailableReason}
@@ -605,4 +610,55 @@ it("opens every evaluator's settings from Edit evaluators, then closes them", ()
     container.querySelector('[data-setting-key="matchOptions"]'),
   ).not.toHaveAttribute("open");
   expect(container.querySelector('[data-setting-key="judge"]')).toBeTruthy();
+});
+
+describe("SuiteScorerTable organization judge control", () => {
+  it("requires an explicit judge instead of the managed default", () => {
+    renderTable({ requireOrgKeys: true });
+    expect(screen.getByTestId("suite-judge-model-trigger")).toHaveTextContent(
+      "Choose a judge model",
+    );
+  });
+
+  it("preserves the saved organization connection beside a hosted model twin", () => {
+    renderTable({
+      requireOrgKeys: true,
+      judgeConfig: {
+        goalCompletion: {
+          judgeModel: "openai/gpt-4o",
+          judgeSelection: {
+            modelId: "openai/gpt-4o",
+            nativeModelId: "gpt-4o",
+            source: "org",
+            connectionRef: { kind: "orgProvider", id: "conn_1" },
+            fallback: { provider: "none", model: "none" },
+          },
+        },
+      },
+      availableModels: [
+        { id: "gpt-4o", name: "Hosted GPT", provider: "openai", hosted: true },
+        {
+          id: "gpt-4o",
+          name: "Organization GPT",
+          provider: "openai",
+          hosted: false,
+          judgeEligible: true,
+          orgProvider: { providerKey: "openai", id: "conn_1" },
+        },
+      ],
+    });
+    expect(screen.getByTestId("suite-judge-model-trigger")).toHaveTextContent(
+      "Organization GPT",
+    );
+    expect(screen.queryByTestId("model-trigger-org-keys-warning")).toBeNull();
+  });
+
+  it("lets an admin repair an empty organization judge list", async () => {
+    const onManageOrgProviders = vi.fn();
+    renderTable({ requireOrgKeys: true, onManageOrgProviders });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("suite-judge-model-trigger"));
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onManageOrgProviders).toHaveBeenCalledOnce();
+  });
 });

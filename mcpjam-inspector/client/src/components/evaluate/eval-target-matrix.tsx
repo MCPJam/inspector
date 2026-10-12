@@ -4,8 +4,10 @@ import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
 import {
   ModelSelector,
+  OrgKeysDisallowedTriggerLabel,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -30,6 +32,10 @@ import {
   type ModelTarget,
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
+import {
+  pickedModelTarget,
+  resolveEvalModelChoice,
+} from "@/lib/org-keys-model-target";
 import { modelTargetLabel } from "@/lib/environment-label";
 import {
   reasoningEffortOptions,
@@ -176,10 +182,14 @@ export function EvalTargetMatrix({
 }) {
   const reduceMotion = useReducedMotion();
   const readHarnessByHost = useHostHarnessTargets(hostIds);
-  const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
+  const harnessFor = (
+    hostId: string,
+  ): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     return host?.harness !== undefined
-      ? (typeof host.harness === "string" ? { harnessId: host.harness } : host.harness)
+      ? typeof host.harness === "string"
+        ? { harnessId: host.harness }
+        : host.harness
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({
@@ -413,7 +423,8 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, requireOrgKeys, onManageOrgProviders } =
+    useAvailableModels({ projectId });
   return (
     <EvalModelChoices
       {...{
@@ -425,6 +436,8 @@ function EvalModelPicker({
         defaultModelId,
         availableModels,
         harness,
+        requireOrgKeys,
+        onManageOrgProviders,
       }}
     />
   );
@@ -440,6 +453,8 @@ export function EvalModelChoices({
   availableModels: catalogModels,
   harness,
   effortEditable = true,
+  requireOrgKeys = false,
+  onManageOrgProviders,
 }: {
   /**
    * Offer each model's reasoning efforts in the model menus. Off where the
@@ -447,6 +462,16 @@ export function EvalModelChoices({
    * strings).
    */
   effortEditable?: boolean;
+  /**
+   * The organization requires its own provider keys for AI features: a saved
+   * model the list no longer offers shows on its trigger as not allowed.
+   */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -462,24 +487,38 @@ export function EvalModelChoices({
    */
   harness?: HarnessModelTarget | null;
 }) {
+  // Under the organization's key policy a harness runs only on an
+  // organization connection to its own vendor; the lock says so.
   const availableModels = useMemo(
-    () => applyHarnessModelLocks(catalogModels, [harness], "eval"),
-    [catalogModels, harness],
+    () =>
+      applyHarnessModelLocks(catalogModels, [harness], "eval", {
+        requireOrgKeys,
+      }),
+    [catalogModels, harness, requireOrgKeys],
   );
   const selectionsSupported = useModelSelectionsSupported();
-  const resolveModel = (id: string): ModelDefinition =>
-    availableModels.find((model) => String(model.id) === id) ?? {
-      id,
-      name: compactModelLabel(id),
-      provider: "unknown",
-    };
+  // A target saved with a selection reads back as the row it names: an
+  // organization row picked under the policy is saved under its canonical id,
+  // not the row's own (see `pickedModelTarget`).
+  const resolveModel = (
+    id: string,
+    saved = true,
+    selection?: SavedModelSelection,
+  ): ModelDefinition =>
+    resolveEvalModelChoice(id, availableModels, requireOrgKeys, {
+      saved,
+      selection,
+    });
   const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
       ? [
           {
             key: "default",
-            model: resolveModel(defaultModelId ?? "Client default"),
+            model: resolveModel(
+              defaultModelId ?? "Client default",
+              defaultModelId !== undefined,
+            ),
             inherited: true,
             target: undefined as ModelTarget | undefined,
           },
@@ -487,7 +526,7 @@ export function EvalModelChoices({
       : []),
     ...targets.map((target) => ({
       key: modelTargetKey(target),
-      model: resolveModel(target.modelId),
+      model: resolveModel(target.modelId, true, target.selection),
       inherited: false,
       target: target as ModelTarget | undefined,
     })),
@@ -513,7 +552,7 @@ export function EvalModelChoices({
       {
         includeClientDefaults: inherited ? false : value.includeClientDefaults,
         explicitTargets: model
-          ? [...remaining, { modelId: String(model.id) }]
+          ? [...remaining, pickedModelTarget(model, requireOrgKeys)]
           : remaining,
       },
       model,
@@ -612,6 +651,8 @@ export function EvalModelChoices({
               currentModel={model}
               availableModels={availableModels}
               disabled={disabled}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -648,20 +689,34 @@ export function EvalModelChoices({
                   disabled={disabled}
                   className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
                 >
-                  <ProviderLogo
-                    provider={model.provider}
-                    customProviderName={model.customProviderName}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 break-words">
-                    {compactModelLabel(model.name)}
-                    {effort ? (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        {reasoningEffortLabel(effort)}
+                  {isOrgKeysDisallowedRow(model) ? (
+                    <>
+                      <OrgKeysDisallowedTriggerLabel model={model} />
+                      {/* Tells apart two targets of one model. */}
+                      {effort ? (
+                        <span className="shrink-0 text-muted-foreground">
+                          {reasoningEffortLabel(effort)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={model.provider}
+                        customProviderName={model.customProviderName}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 break-words">
+                        {compactModelLabel(model.name)}
+                        {effort ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {reasoningEffortLabel(effort)}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
+                    </>
+                  )}
                   <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </Button>
               }
@@ -692,13 +747,18 @@ export function EvalModelChoices({
         }}
         availableModels={availableModels.filter(addable)}
         disabled={disabled}
+        requireOrgKeys={requireOrgKeys}
+        onManageOrgProviders={onManageOrgProviders}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>
           emit(
             {
               ...value,
-              explicitTargets: [...targets, { modelId: String(model.id) }],
+              explicitTargets: [
+                ...targets,
+                pickedModelTarget(model, requireOrgKeys),
+              ],
             },
             model,
           )
