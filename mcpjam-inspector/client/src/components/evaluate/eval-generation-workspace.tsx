@@ -16,8 +16,35 @@ import {
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
-export function EvalGenerationWorkspace({
+export function EvalGenerationWorkspace(
+  props: Parameters<typeof MemberEvalGenerationWorkspace>[0],
+) {
+  const member = useIsMemberActor();
+  if (member === true) return <MemberEvalGenerationWorkspace {...props} />;
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-4">
+      {member === undefined ? (
+        <p role="status">Loading account…</p>
+      ) : (
+        <GuestSignInMessage
+          compact
+          message="Sign in to generate test cases."
+          location="eval_case_generation"
+        />
+      )}
+      {props.onDone && (
+        <Button type="button" variant="outline" onClick={props.onDone}>
+          Back to suite
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function MemberEvalGenerationWorkspace({
   projectId,
   suiteId,
   suiteName,

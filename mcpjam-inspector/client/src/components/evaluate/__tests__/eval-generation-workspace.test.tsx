@@ -14,6 +14,19 @@ import {
   NO_READ_ONLY_TOOLS_MESSAGE,
 } from "@/shared/eval-generation-errors";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
+import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
+
+const auth = vi.hoisted(() => ({
+  member: true as boolean | undefined,
+  signIn: vi.fn(),
+}));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => auth.member,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "signed-in-user" }, signIn: auth.signIn }),
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // Generation starts the shared authoring job, so "did it start?" is a request
 // on the wire rather than a call into the suite bridge. The poller that
@@ -56,10 +69,73 @@ function seed(
 beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
+  sessionStorage.clear();
+  window.history.replaceState({}, "", "/");
+  auth.member = true;
+  auth.signIn.mockClear();
   started.mockClear();
   useEvalGeneration.setState({ suites: {} });
 });
 afterEach(() => vi.useRealTimers());
+it("blocks guest workspace auto-start even when WorkOS reports a user", () => {
+  auth.member = false;
+  const onDone = vi.fn();
+  renderWithProviders(<EvalGenerationWorkspace {...target} onDone={onDone} />);
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+  expect(started).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Back to suite" }));
+  expect(onDone).toHaveBeenCalledOnce();
+});
+
+it("preserves the suite deep link when a guest signs in from the workspace", () => {
+  auth.member = false;
+  const returnPath = "/p/k5700000000000000000000000a/evals/suite/s?view=cases";
+  window.history.replaceState({}, "", returnPath);
+  renderWithProviders(<EvalGenerationWorkspace {...target} />);
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(auth.signIn).toHaveBeenCalledOnce();
+  expect(readAppSignInReturnPath()).toBe(returnPath);
+  expect(started).not.toHaveBeenCalled();
+});
+
+it("waits for the Convex actor before mounting auto-start generation", () => {
+  auth.member = undefined;
+  const unregister = registerEvalSuite(target, {
+    read: () => ({}),
+    save: vi.fn(),
+  });
+  const workspace = () => (
+    <StrictMode>
+      <EvalGenerationWorkspace {...target} />
+    </StrictMode>
+  );
+  const view = renderWithProviders(workspace());
+  expect(screen.getByRole("status")).toHaveTextContent("Loading account…");
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(started).not.toHaveBeenCalled();
+  auth.member = true;
+  view.rerender(workspace());
+  expect(screen.getByTestId("suite-case-generation-workspace")).toBeVisible();
+  expect(started).toHaveBeenCalledOnce();
+  unregister();
+});
+
+it("prevents retries if the workspace actor becomes a guest", () => {
+  seed("error", [], "Generation failed");
+  const workspace = () => (
+    <EvalGenerationWorkspace {...target} autoStart={false} />
+  );
+  const view = renderWithProviders(workspace());
+  expect(screen.getByRole("button", { name: "Retry generation" })).toBeVisible();
+  auth.member = false;
+  view.rerender(workspace());
+  expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(started).not.toHaveBeenCalled();
+});
+
 it("starts generation directly once and closes the chat even in Strict Mode", () => {
   const unregister = registerEvalSuite(target, {
     read: () => ({}),
