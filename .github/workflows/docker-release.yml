@@ -127,6 +127,8 @@ jobs:
           # A public repository defaults to mode=max, which records build-arg
           # values in an attestation published next to the image.
           provenance: mode=min
+          build-args: |
+            MCPJAM_BUILD_SURFACE=local
           tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
