@@ -2973,7 +2973,7 @@ export function useChatSession(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: Boolean(workOsUser),
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -2991,7 +2991,7 @@ export function useChatSession(
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
-      isAuthenticated,
+      workOsUser,
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
 import { getDefaultModel } from "@/components/chat-v2/shared/model-helpers";
+import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 
 /**
  * Local Claude Code execution, as the TRANSPORT sees it.
@@ -56,6 +57,7 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   convexAuth: { isAuthenticated: true, isLoading: false },
+  workOsUser: null as { id: string } | null,
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
     availableModels: [],
@@ -147,7 +149,10 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: mockState.getAccessToken,
+    user: mockState.workOsUser,
+  }),
 }));
 // Soft reads (billing, credits, quota, notifications) go through useQueries;
 // withUseQueries answers them from this mock's useQuery.
@@ -317,6 +322,23 @@ describe("useChatSession — local Claude Code transmission", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    mockState.workOsUser = null;
+  });
+
+  it("applies guest model locks even with a valid Convex guest session", async () => {
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: false }),
+    );
+  });
+
+  it("allows signed-in users through the guest model locks", async () => {
+    mockState.workOsUser = { id: "workos-user-1" };
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: true }),
+    );
+    mockState.workOsUser = null;
   });
 
   it("carries the ids in the body and the capability in the header", async () => {

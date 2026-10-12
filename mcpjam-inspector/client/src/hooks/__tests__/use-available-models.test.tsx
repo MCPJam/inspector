@@ -30,6 +30,10 @@ const PROJECT_VISIBLE_CONFIG = {
 };
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
+const authState = vi.hoisted(() => ({
+  user: null as { id: string } | null,
+  isAuthenticated: true,
+}));
 const projectConfigState: { current: unknown } = {
   current: PROJECT_VISIBLE_CONFIG,
 };
@@ -38,7 +42,10 @@ const projectConfigState: { current: unknown } = {
 // withUseQueries answers them from this mock's useQuery.
 vi.mock("convex/react", async () =>
   (await import("@/test/mocks/convex-use-queries")).withUseQueries({
-  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useConvexAuth: () => ({
+    isAuthenticated: authState.isAuthenticated,
+    isLoading: false,
+  }),
   useQuery: (name: string, args: unknown) => {
     queryCalls.push({ name, args });
     if (args === "skip") return undefined;
@@ -76,11 +83,30 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => sharedAppState,
 }));
 
-// useAvailableModels now reads the credit balance (to lock free models at 0
-// credits) which pulls in WorkOS auth — stub it as a signed-out session so the
-// balance query stays skipped and outOfCredits resolves false.
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: null, isLoading: false }),
+  useAuth: () => ({ user: authState.user, isLoading: false }),
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({
+    hostedCatalog: [
+      {
+        id: "amazon/nova-pro",
+        name: "Amazon Nova Pro",
+        provider: "bedrock",
+        hosted: true,
+        guestAllowed: false,
+      },
+      {
+        id: "amazon/nova-micro-v1",
+        name: "Amazon Nova Micro",
+        provider: "bedrock",
+        hosted: true,
+        guestAllowed: true,
+      },
+    ],
+    status: "live",
+  }),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -119,12 +145,56 @@ import { useAvailableModels } from "../use-available-models";
 describe("useAvailableModels", () => {
   beforeEach(() => {
     queryCalls.length = 0;
+    authState.user = null;
+    authState.isAuthenticated = true;
     projectConfigState.current = PROJECT_VISIBLE_CONFIG;
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: false,
       availableModels: [],
     });
     mockDetectOllamaToolCapableModels.mockResolvedValue([]);
+  });
+
+  it("locks frontier models for a Convex-authenticated guest without locking standard or BYOK models", () => {
+    const { result } = renderHook(() => useAvailableModels());
+    const model = (id: string) =>
+      result.current.availableModels.find((row) => String(row.id) === id);
+
+    expect(model("amazon/nova-pro")).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use this frontier model",
+    });
+    expect(model("amazon/nova-micro-v1")).toBeDefined();
+    expect(model("amazon/nova-micro-v1")?.disabled).not.toBe(true);
+    expect(model("custom:acme:acme-large")?.disabled).not.toBe(true);
+  });
+
+  it("updates frontier locks when the guest signs in and signs out", () => {
+    const { result, rerender } = renderHook(() => useAvailableModels());
+    const novaPro = () =>
+      result.current.availableModels.find((row) => row.id === "amazon/nova-pro");
+
+    expect(novaPro()?.disabled).toBe(true);
+    authState.user = { id: "workos-user-1" };
+    rerender();
+    expect(novaPro()?.disabled).not.toBe(true);
+
+    authState.user = null;
+    rerender();
+    expect(novaPro()?.disabled).toBe(true);
+  });
+
+  it("does not use a pending Convex connection to gate a signed-in user's models", () => {
+    authState.user = { id: "workos-user-1" };
+    authState.isAuthenticated = false;
+    const { result } = renderHook(() => useAvailableModels());
+    expect(
+      result.current.availableModels.find((row) => row.id === "amazon/nova-pro"),
+    ).toMatchObject({ guestAllowed: false });
+    expect(
+      result.current.availableModels.find((row) => row.id === "amazon/nova-pro")
+        ?.disabled,
+    ).not.toBe(true);
   });
 
   it("surfaces org Bedrock + custom BYOK models via the project-scoped config, even without a local organizationId", () => {
