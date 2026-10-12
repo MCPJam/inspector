@@ -2177,10 +2177,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -2190,18 +2192,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
@@ -2374,10 +2380,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "connect-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "font-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "frame-src": [
                 "'self'",
@@ -2387,18 +2395,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "img-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "media-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "script-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
               "style-src": [
                 "https://cdn.jsdelivr.net",
                 "https://unpkg.com",
+                "https://esm.sh",
               ],
             },
             "mode": "declared",
