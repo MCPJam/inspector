@@ -182,7 +182,7 @@ describe("prepareEvalRun on the request's own keys", () => {
       modelApiKeys: { openai: "sk-personal" },
     } as never).catch((caught: unknown) => caught);
 
-    // Same refusal as before the read moved.
+    // An unavailable policy refuses the run before it reserves any work.
     expect(failure).toBeInstanceOf(WebRouteError);
     expect(failure).toMatchObject({
       status: 503,
