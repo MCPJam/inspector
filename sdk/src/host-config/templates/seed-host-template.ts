@@ -688,6 +688,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
+            // Prober runs in claude.ai and Claude Desktop: the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
@@ -924,6 +929,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
+            // Prober runs in claude.ai and Claude Desktop: the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
@@ -1331,6 +1341,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               "allow-popups",
               "allow-popups-to-escape-sandbox",
             ],
+            // The same capture's inner iframe keeps `allow-same-origin`.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy extras on the
             // outer iframe. Real ChatGPT emits
             // `clipboard-write *; local-network-access *; microphone *;
@@ -2051,6 +2063,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // The prober saw the App iframe carry `allow-same-origin`, with a
+            // real origin of its own.
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             // Correction: absent through 2026-09-02; the 2026-09-29 capture
@@ -2367,6 +2382,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // refused even though Copilot advertises it.
               allow: { clipboardWrite: true },
             },
+            // The App iframe carries `allow-same-origin`, but the prober
+            // saw its origin as `"null"` (an opaque `about:srcdoc` frame),
+            // so the App gets no real origin of its own.
+            sameOriginAppIframe: false,
           },
         },
       };

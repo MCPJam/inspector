@@ -421,7 +421,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1790640000000,
+      verifiedAt: 1791676800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -668,6 +668,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
+            sameOriginAppIframe: true,
             allowFeatures: {
               fullscreen: "*",
             },
@@ -735,7 +736,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1790640000000,
+      verifiedAt: 1791676800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -982,6 +983,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
+            sameOriginAppIframe: true,
             allowFeatures: {
               fullscreen: "*",
             },
@@ -1328,7 +1330,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1790640000000,
+      verifiedAt: 1791763200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1587,6 +1589,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "allow-popups",
               "allow-popups-to-escape-sandbox",
             ],
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: true,
@@ -3174,6 +3177,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sessionStorage: true,
               indexedDB: true,
             },
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: true,
@@ -3643,6 +3647,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
+            sameOriginAppIframe: false,
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
