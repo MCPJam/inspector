@@ -14,6 +14,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AI_REFUSAL_CODES, aiRefusalClass } from "@mcpjam/sdk";
 import {
   classifyLaunchErrorExitCode,
   classifyWaitErrorExitCode,
@@ -128,6 +129,24 @@ test("classifyLaunchErrorExitCode — the policy's transient refusals are infras
       detailCode,
     );
     assert.equal(classifyLaunchErrorExitCode(detailCode), 4, detailCode);
+  }
+});
+
+test("classifyLaunchErrorExitCode — every refusal code's exit code follows its class in the SDK", () => {
+  // The CLI keeps no list of its own: configuration is 2, temporary is 4, for
+  // exactly the codes the SDK names.
+  for (const code of AI_REFUSAL_CODES) {
+    const expected = aiRefusalClass(code) === "configuration" ? 2 : 4;
+    assert.equal(
+      classifyLaunchErrorExitCode("FORBIDDEN", { code }),
+      expected,
+      code,
+    );
+    assert.equal(
+      classifyLaunchErrorExitCode(code.toUpperCase()),
+      expected,
+      code,
+    );
   }
 });
 

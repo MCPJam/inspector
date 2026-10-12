@@ -1,37 +1,19 @@
 /**
  * Recognizing the refusals MCPJam sends when an organization requires its own
  * provider keys for AI features. Kept apart from `describe.ts` so the
- * policy's codes and their text patterns live in one small module.
+ * policy's text patterns live in one small module. The codes themselves come
+ * from `../ai-refusal-codes.ts`.
  */
 
-/**
- * The organization AI-key policy's refusal codes ("Use your keys for all AI
- * features"). Mirrors `AI_EXECUTION_REFUSAL_CODES` in the inspector's
- * `shared/ai-execution-refusal.ts`.
- */
-const ORG_POLICY_REFUSAL_CODES = [
-  "org_keys_required",
-  "org_model_unconfigured",
-  "org_runtime_unsupported",
-  "ai_scope_unresolved",
-  "ai_key_policy_unavailable",
-  "provider_auth_failed",
-  "provider_unavailable",
-] as const;
-
-export type OrgPolicyRefusalCode = (typeof ORG_POLICY_REFUSAL_CODES)[number];
-
-const ORG_POLICY_REFUSAL_CODE_SET: ReadonlySet<string> = new Set(
-  ORG_POLICY_REFUSAL_CODES,
-);
-
-function isOrgPolicyRefusalCode(code: string): code is OrgPolicyRefusalCode {
-  return ORG_POLICY_REFUSAL_CODE_SET.has(code);
-}
+import {
+  AI_EXECUTION_REFUSAL_CODES,
+  isAiExecutionRefusalCode,
+  type AiExecutionRefusalCode,
+} from "../ai-refusal-codes.js";
 
 /** Each policy code's catalog slug. */
 const ORG_POLICY_SLUG_BY_CODE: Readonly<
-  Record<OrgPolicyRefusalCode, `org/${string}`>
+  Record<AiExecutionRefusalCode, `org/${string}`>
 > = {
   org_keys_required: "org/keys_required",
   org_model_unconfigured: "org/model_unconfigured",
@@ -47,28 +29,49 @@ const ORG_POLICY_SLUG_BY_CODE: Readonly<
  * `undefined` when `code` is not one. Case-insensitive.
  */
 export function orgPolicySlugForCode(
-  code: string | null | undefined,
+  code: string | null | undefined
 ): string | undefined {
   if (typeof code !== "string") return undefined;
   const key = code.trim().toLowerCase();
-  return isOrgPolicyRefusalCode(key) ? ORG_POLICY_SLUG_BY_CODE[key] : undefined;
+  return isAiExecutionRefusalCode(key)
+    ? ORG_POLICY_SLUG_BY_CODE[key]
+    : undefined;
 }
 
 /**
- * Codes distinctive enough to read out of free text: nothing but the policy
- * spells them.
+ * The two generic-sounding codes. They are read from text only where the text
+ * says it is a code: a JSON `"code"` field, the engine's `(code` /
+ * `(code, HTTP n)` suffix, or a `code:` lead. An MCP server's own prose saying
+ * "provider unavailable" must not become the org's provider refusing.
  */
-const DISTINCT_ORG_POLICY_CODE_IN_TEXT =
-  /\b(org_keys_required|org_model_unconfigured|org_runtime_unsupported|ai_scope_unresolved|ai_key_policy_unavailable)\b/i;
+const GENERIC_ORG_POLICY_CODES = [
+  "provider_auth_failed",
+  "provider_unavailable",
+] as const satisfies readonly AiExecutionRefusalCode[];
+
+const GENERIC_ORG_POLICY_CODE_SET: ReadonlySet<string> = new Set(
+  GENERIC_ORG_POLICY_CODES
+);
 
 /**
- * The two generic-sounding codes are read from text only where the text says
- * it is a code: a JSON `"code"` field, the engine's `(code` / `(code, HTTP n)`
- * suffix, or a `code:` lead. An MCP server's own prose saying "provider
- * unavailable" must not become the org's provider refusing.
+ * Every other policy code is distinctive enough to read out of free text:
+ * nothing but the policy spells them.
  */
-const GENERIC_ORG_POLICY_CODE_IN_TEXT =
-  /"code"\s*:\s*"(provider_auth_failed|provider_unavailable)"|\((provider_auth_failed|provider_unavailable)\b|(?:^|[\s—-])(provider_auth_failed|provider_unavailable):/i;
+const DISTINCT_ORG_POLICY_CODES = AI_EXECUTION_REFUSAL_CODES.filter(
+  (code) => !GENERIC_ORG_POLICY_CODE_SET.has(code)
+);
+
+const DISTINCT_ORG_POLICY_CODE_IN_TEXT = new RegExp(
+  `\\b(${DISTINCT_ORG_POLICY_CODES.join("|")})\\b`,
+  "i"
+);
+
+const GENERIC = GENERIC_ORG_POLICY_CODES.join("|");
+
+const GENERIC_ORG_POLICY_CODE_IN_TEXT = new RegExp(
+  `"code"\\s*:\\s*"(${GENERIC})"|\\((${GENERIC})\\b|(?:^|[\\s—-])(${GENERIC}):`,
+  "i"
+);
 
 /**
  * The policy refusal an error carries: a code field on the error (or its
@@ -82,7 +85,7 @@ const GENERIC_ORG_POLICY_CODE_IN_TEXT =
  */
 export function orgPolicyRefusal(
   error: unknown,
-  message: string,
+  message: string
 ): { slug: string; rawCode: string } | undefined {
   const seen = new Set<unknown>();
   let current = error;

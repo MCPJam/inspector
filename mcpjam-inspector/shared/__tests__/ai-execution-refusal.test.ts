@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as sdk from "@mcpjam/sdk/browser";
 import {
   AI_CONFIGURATION_REFUSAL_CODES,
   AI_EXECUTION_REFUSAL_CODES,
@@ -49,6 +50,25 @@ describe("AI_EXECUTION_REFUSAL_CODES", () => {
         "invalid_model",
       ].sort(),
     );
+  });
+});
+
+describe("the SDK's vocabulary", () => {
+  it("is re-exported here, not redefined", () => {
+    expect(AI_EXECUTION_REFUSAL_CODES).toBe(sdk.AI_EXECUTION_REFUSAL_CODES);
+    expect(AI_CONFIGURATION_REFUSAL_CODES).toBe(
+      sdk.AI_CONFIGURATION_REFUSAL_CODES,
+    );
+    expect(AI_RETRYABLE_REFUSAL_CODES).toBe(sdk.AI_RETRYABLE_REFUSAL_CODES);
+  });
+
+  it("has a remediation for every code, retry_later exactly for the temporary ones", () => {
+    for (const code of sdk.AI_REFUSAL_CODES) {
+      expect(isRecognizedAiRefusalCode(code), code).toBe(true);
+      expect(aiRefusalRemediation(code) === "retry_later", code).toBe(
+        sdk.aiRefusalClass(code) === "temporary",
+      );
+    }
   });
 });
 

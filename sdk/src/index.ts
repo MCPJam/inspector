@@ -1174,8 +1174,25 @@ export type {
   NormalizedError,
   ErrorCatalogEntry,
   ErrorCatalogSlug,
-  OrgPolicyRefusalCode,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; also exported from `@mcpjam/sdk/browser`.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 // OAuth conformance
 export {

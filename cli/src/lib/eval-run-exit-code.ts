@@ -1,4 +1,9 @@
-import type { OrgPolicyRefusalCode } from "@mcpjam/sdk";
+import {
+  aiRefusalClass,
+  recognizedAiRefusalCode,
+  type AiRefusalClass,
+  type AiRefusalCode,
+} from "@mcpjam/sdk";
 import {
   isNonVerdictRunResult,
   isNonVerdictRunStatus,
@@ -311,41 +316,20 @@ function isBillingShapedDetail(details: unknown): boolean {
   return typeof inner === "string" && BILLING_SHAPED_DETAIL_CODES.has(inner);
 }
 
-/** Codes the policy reuses from model resolution, so the SDK's list lacks them. */
-type ReusedAiRefusalCode =
-  | "credential_missing"
-  | "invalid_model"
-  | "capability_missing"
-  | "capability_unknown";
-
-type AiRefusalCode = OrgPolicyRefusalCode | ReusedAiRefusalCode;
-
 /**
- * The exit code for each organization AI-key policy refusal. 2 is a
- * configuration refusal, permanent until someone changes the organization's
- * AI configuration or the request's model selection; the reused model codes a
- * launch preflight can lead with are configuration too. 4 is one of the two
- * transient refusals: infrastructure, never a credential. Mirrors the
- * classification in the inspector's `shared/ai-execution-refusal.ts`. See
- * "Organization AI-key policy refusals → 2" above.
+ * The exit code for each class of organization AI-key policy refusal. The
+ * class comes from the SDK (`aiRefusalClass`), the same classification the
+ * backend and the inspector use. A configuration refusal is permanent until
+ * someone changes the organization's AI configuration or the request's model
+ * selection, so it is 2; that includes the reused model codes a launch
+ * preflight can lead with. A temporary refusal is infrastructure, never a
+ * credential, so it is 4. See "Organization AI-key policy refusals → 2"
+ * above.
  */
-const AI_REFUSAL_EXIT_CODE: Readonly<Record<AiRefusalCode, 2 | 4>> = {
-  org_keys_required: 2,
-  org_model_unconfigured: 2,
-  org_runtime_unsupported: 2,
-  ai_scope_unresolved: 2,
-  ai_key_policy_unavailable: 4,
-  provider_auth_failed: 2,
-  provider_unavailable: 4,
-  credential_missing: 2,
-  invalid_model: 2,
-  capability_missing: 2,
-  capability_unknown: 2,
+const AI_REFUSAL_EXIT_CODE: Readonly<Record<AiRefusalClass, 2 | 4>> = {
+  configuration: 2,
+  temporary: 4,
 };
-
-function isAiRefusalCode(code: string): code is AiRefusalCode {
-  return Object.prototype.hasOwnProperty.call(AI_REFUSAL_EXIT_CODE, code);
-}
 
 /** `details.code`, or the wire code itself when the route passed it through. */
 function aiRefusalCodeOf(
@@ -358,8 +342,8 @@ function aiRefusalCodeOf(
       : undefined;
   for (const candidate of [inner, code]) {
     if (typeof candidate !== "string") continue;
-    const normalized = candidate.trim().toLowerCase();
-    if (isAiRefusalCode(normalized)) return normalized;
+    const recognized = recognizedAiRefusalCode(candidate);
+    if (recognized) return recognized;
   }
   return undefined;
 }
@@ -386,7 +370,9 @@ export function classifyLaunchErrorExitCode(
 ): 2 | 3 | 4 {
   if (isBillingShapedDetail(details)) return 4;
   const aiRefusal = aiRefusalCodeOf(code, details);
-  if (aiRefusal !== undefined) return AI_REFUSAL_EXIT_CODE[aiRefusal];
+  if (aiRefusal !== undefined) {
+    return AI_REFUSAL_EXIT_CODE[aiRefusalClass(aiRefusal)];
+  }
   if (code !== undefined && AUTH_SHAPED_CODES.has(code)) return 3;
   if (code !== undefined && INVALID_SHAPED_CODES.has(code)) return 2;
   return 4;
