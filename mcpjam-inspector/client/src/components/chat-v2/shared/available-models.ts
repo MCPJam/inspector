@@ -693,7 +693,7 @@ export function composeAvailableModels(
 
   if (orgConfig?.pending) {
     return lockEveryRow(
-      composeUnrestrictedModels(params),
+      composeUnrestrictedModels({ ...params, orgConfig: undefined }),
       ORG_POLICY_LOADING_REASON,
     );
   }
@@ -736,6 +736,7 @@ function composeUnrestrictedModels(
     freeTierOnly = false,
     hostedCatalog,
   } = params;
+
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
     const orgModels = buildAvailableModelsFromOrgConfig(
