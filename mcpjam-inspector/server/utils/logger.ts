@@ -1,4 +1,4 @@
-import { buildStrictLogRow } from "../../shared/strict-log.js";
+import { buildLegacyLogRow, buildStrictLogRow } from "../../shared/strict-log.js";
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
 import { resolveEnvironment } from "./log-events.js";
@@ -108,14 +108,14 @@ type SentryOptions = { error?: unknown; sentry?: boolean };
  */
 function ingestToAxiom(
   level: "info" | "warn" | "error" | "debug",
-  _message: string,
+  message: string,
   context?: Record<string, unknown>,
   error?: unknown,
 ) {
   const axiom = getAxiom();
   if (!axiom) return;
   axiom.ingest(dataset(), [
-    buildStrictLogRow("log.unknown", { level, environment: environment() }, context, error),
+    buildLegacyLogRow(message, { ...context, level, environment: environment() }, error),
   ]);
 }
 

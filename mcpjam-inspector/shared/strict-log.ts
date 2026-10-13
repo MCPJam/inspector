@@ -37,6 +37,22 @@ export function strictLogError(error: unknown): string {
   }
 }
 
+/** Legacy callsites keep code-owned prefixes; their free text is never emitted. */
+export function buildLegacyLogRow(
+  message: string,
+  context: Fields,
+  error?: unknown,
+): Fields {
+  const event = message.startsWith("[harness][timing] ")
+    ? "harness.timing"
+    : message.startsWith("[harness][bootstrap] turn=failed")
+      ? "harness.bootstrap"
+      : message === "[harness] turn failed"
+        ? "harness.turn.failed"
+        : "log.unknown";
+  return buildStrictLogRow(event, context, {}, error);
+}
+
 /** Context is resolved by the server; event payload fields cannot replace it. */
 export function buildStrictLogRow(
   name: string,
