@@ -52,7 +52,7 @@ import {
   readClaimRefusal,
   type ClaimRefusalDetails,
 } from "@/shared/server-connection-claim-refusal";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { ClaimRefusal } from "./ClaimRefusal";
 import {
   bestEffortAccessToken,
@@ -76,7 +76,7 @@ export function ServerConnectionHandoff() {
     signIn,
     signOut,
     user,
-  } = useAuth();
+  } = useInspectorAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [usedLink, setUsedLink] = useState(false);
@@ -387,16 +387,9 @@ export function ServerConnectionHandoff() {
   }, [state]);
 
   /**
-   * Sign in and come back to THIS link.
-   *
-   * The return path is the link as it was opened (`claimLinkRef`), NOT the
-   * address bar: a refused claim has already taken the token out of the URL,
-   * and coming back needs it. `rememberHandoffSignInReturn` keeps that path
-   * same-origin and sends only a nonce through AuthKit; see its docblock.
-   *
-   * A `null` nonce means the return could not be stored, so the user signs in
-   * without one and lands on the app shell rather than back here. Refusing to
-   * sign them in at all would be a worse answer to "storage is unavailable".
+   * Store the original claimed link in same-origin storage and pass WorkOS
+   * only a nonce, so the handoff token never enters the callback URL.
+   * If storage is unavailable, sign in without a return nonce.
    */
   const signInAndReturn = useCallback(() => {
     setBusy(true);
@@ -407,10 +400,14 @@ export function ServerConnectionHandoff() {
     );
     void Promise.resolve(
       signIn(nonce ? { state: { [HANDOFF_SIGN_IN_STATE_KEY]: nonce } } : {}),
-    ).catch((cause) => {
-      setBusy(false);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    });
+    )
+      .then((result) => {
+        if (result === "blocked") setBusy(false);
+      })
+      .catch((cause) => {
+        setBusy(false);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
   }, [signIn]);
 
   /**

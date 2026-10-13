@@ -19,6 +19,7 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
+import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
@@ -238,6 +239,7 @@ if (isInIframe) {
         {...handoffWorkosOptions}
       >
         <ServerConnectionHandoff />
+        <WorkosAuthUnavailableDialog />
       </AuthKitProvider>
     </StrictMode>,
   );
@@ -464,6 +466,7 @@ if (isInIframe) {
           </SignOutBoundary>
         </ConvexProviderWithAuth>
       </HostedAuthEntry>
+      <WorkosAuthUnavailableDialog />
     </AuthKitProvider>
   );
 

@@ -2232,13 +2232,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
-        // Real Microsoft 365 Copilot routes through OpenAI's chat-class
-        // models under the hood, so the OpenAI-shaped Apps SDK is the
-        // right protocol bucket here. `openai/gpt-5.3-chat` is the closest
-        // MCPJam-guest-allowed analog (Copilot's flagship is chat-tuned,
-        // not nano-tier), so the App Builder works out-of-the-box without
-        // a BYOK while staying faithful to the host's real model class.
-        modelId: "openai/gpt-5.3-chat",
+        // Match the backend's supported default for Copilot so offline
+        // template creation uses the same model as the live catalog.
+        modelId: "openai/gpt-5.6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
