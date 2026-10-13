@@ -134,6 +134,20 @@ describe("initServerSentry", () => {
     ).toHaveLength(1);
   });
 
+  it("reconstructs every diagnostic family and clears attachment hints", async () => {
+    initServerSentry();
+    const config = lastConfig();
+    const sentinel = "PRIVATE_SENTINEL";
+    const hint = { attachments: [{ filename: sentinel, data: sentinel }] };
+    const event = await config.beforeSend({ exception: { values: [{ type: "TypeError", value: sentinel }] }, extra: { sentinel } }, hint);
+    expect(event.exception.values[0]).toEqual({ type: "TypeError", value: "TypeError" });
+    expect(hint.attachments).toEqual([]);
+    const transaction = await config.beforeSendTransaction({ type: "transaction", transaction: sentinel, spans: [{ description: sentinel, data: { sentinel } }] }, {});
+    const span = config.beforeSendSpan({ description: sentinel, data: { sentinel } });
+    expect(JSON.stringify({ event, transaction, span })).not.toContain(sentinel);
+    expect(transaction.transaction).toBe("unknown_operation");
+  });
+
   it("never opts into default PII", () => {
     initServerSentry();
     expect(lastConfig().sendDefaultPii).toBe(false);
@@ -153,10 +167,7 @@ describe("initServerSentry", () => {
       },
     });
 
-    expect(event.request).toEqual({
-      url: "https://app.mcpjam.com/api/web/tools/call",
-      data: "{toolName: string(14), parameters: {email: string(13), amount: number}}",
-    });
+    expect(event.request).toBeUndefined();
   });
 
   it("cuts outgoing-request breadcrumbs to the host", () => {
@@ -166,10 +177,7 @@ describe("initServerSentry", () => {
       data: { url: "https://mcp.acme.com/tenants/42/mcp", status_code: 500 },
     });
 
-    expect(crumb.data).toEqual({
-      url: "https://mcp.acme.com",
-      status_code: 500,
-    });
+    expect(crumb).toEqual({ category: "http" });
   });
 
   // The baked version is captured at module load (it has to stay a literal

@@ -3,6 +3,7 @@ export {
   rebuildSentryTransaction,
   rebuildSentrySpan,
   rebuildSentryBreadcrumb,
+  restrictSentryEnvelope,
   telemetryActorId,
   type SentryBoundaryOptions,
 } from "@mcpjam/sdk/internal/telemetry";

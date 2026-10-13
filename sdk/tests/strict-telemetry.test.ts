@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   rebuildSentryBreadcrumb,
+  restrictSentryEnvelope,
   rebuildSentryEvent,
   rebuildSentrySpan,
   rebuildSentryTransaction,
@@ -53,6 +54,48 @@ const dirty = {
 };
 
 describe("strict telemetry reconstruction", () => {
+  it("accepts only exact trusted frame aliases and drops non-diagnostic envelope families", () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            stacktrace: {
+              frames: [
+                { filename: "/trusted/server/example.ts", function: "handle" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const options = {
+      ...catalog,
+      frameAliases: { "/trusted/server/example.ts": "server/example.ts" },
+    };
+    const result = rebuildSentryEvent(event, options);
+    expect(JSON.stringify(result)).toContain('"filename":"server/example.ts"');
+    expect(JSON.stringify(result)).not.toContain("/trusted/");
+    const envelope: [object, unknown[]] = [
+      { trace: { secret } },
+      [
+        [{ type: "event" }, dirty],
+        [{ type: "transaction" }, { transaction: secret }],
+        ...[
+          "attachment",
+          "replay_event",
+          "replay_recording",
+          "profile",
+          "session",
+          "log",
+        ].map((type) => [{ type }, secret]),
+      ],
+    ];
+    restrictSentryEnvelope(envelope, options);
+    expect(envelope[0]).toEqual({});
+    expect(envelope[1]).toHaveLength(2);
+    expect(JSON.stringify(envelope)).not.toContain(secret);
+  });
   it("rebuilds exception chains without mutating the source or retaining unknown fields", () => {
     const output = rebuildSentryEvent(dirty, catalog);
     expect(JSON.stringify(output)).not.toContain(secret);
