@@ -34,6 +34,13 @@ describe("ranTurnSelection", () => {
     expect(result).not.toHaveProperty("settings");
   });
 
+  it("records an applied temperature without changing connection or fallback", () => {
+    expect(ranTurnSelection({
+      selection: saved, model: { id: "gpt-5", provider: "openai", hosted: false },
+      reasoningEffort: undefined, temperature: 0.7,
+    })).toEqual({ ...saved, settings: { temperature: 0.7 } });
+  });
+
   it("builds a hosted selection for a hosted model with no saved selection", () => {
     expect(
       ranTurnSelection({

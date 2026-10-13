@@ -3743,6 +3743,28 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamedTo()).toEqual(["/stream"]);
     });
 
+    it.each([{}, { source: "hosted", modelId: "other/model", fallback: none }])("refuses an explicit invalid selection before dispatch", async (modelSelection) => {
+      hostWith();
+      const res = await turn({ modelSelection });
+      expect(res.status).toBe(400);
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
+    it("forwards the explicit selection and applied effort to the backend and record", async () => {
+      const modelSelection = { modelId: HOSTED_ID, source: "hosted", fallback: none, settings: { reasoningEffort: "low" } };
+      hostWith({ ...modelSelection, settings: { reasoningEffort: "medium" } });
+      const res = await turn({ modelSelection, reasoningEffort: "high", chatSessionId: "chat-selected" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const body = JSON.parse(String((fetchMock.mock.calls.find(([url]) => String(url).endsWith("/stream"))![1] as RequestInit).body));
+      expect(body.modelSelection).toEqual({ ...modelSelection, settings: { reasoningEffort: "high" } });
+      expect(body.reasoningEffort).toBe("high");
+      const ingest = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+      expect(JSON.parse(String((ingest![1] as RequestInit).body)).modelSelection).toEqual(body.modelSelection);
+    });
+
     it("a hosted selection: MCPJam /stream", async () => {
       hostWith({ modelId: HOSTED_ID, source: "hosted", fallback: none });
       const res = await turn();
@@ -3779,6 +3801,23 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(res.status).toBe(200);
       await lastStreamExecution;
       expect(streamedTo()).toEqual(["/stream/org"]);
+    });
+
+    it.each([401, 403, 429])("an org refusal (%s) never retries on platform credentials", async (status) => {
+      const modelSelection = { modelId: HOSTED_ID, source: "org", connectionRef: { kind: "orgProvider", id: "selected-connection" }, fallback: { provider: "openrouter", model: "none" } };
+      hostWith();
+      fetchMock.mockImplementation(async (input) => {
+        if (String(input).endsWith("/stream/org")) return Response.json({ error: "connection refused", code: "org_keys_required" }, { status });
+        throw new Error(`Unexpected fetch: ${input}`);
+      });
+      const res = await turn({ modelSelection });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+      expect(body.modelSelection).toEqual(modelSelection);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
     });
 
     it("a local selection runs on the request's own key, never MCPJam or the org", async () => {
@@ -3824,7 +3863,8 @@ describe("POST /api/mcp/chat-v2", () => {
         apiKey: "local",
         projectId: "project-strict",
         modelSelection: {
-          modelId: "llama3",
+          modelId: "ollama/llama3",
+          nativeModelId: "llama3",
           source: "local",
           connectionRef: { kind: "localProvider", providerKey: "ollama" },
           fallback: none,
@@ -3855,7 +3895,8 @@ describe("POST /api/mcp/chat-v2", () => {
         apiKey: "local",
         projectId: "project-open",
         modelSelection: {
-          modelId: "llama3",
+          modelId: "ollama/llama3",
+          nativeModelId: "llama3",
           source: "local",
           connectionRef: { kind: "localProvider", providerKey: "ollama" },
           fallback: none,
