@@ -23,7 +23,7 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -110,6 +110,7 @@ import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-sessio
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
 import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -128,6 +129,8 @@ import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-av
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -242,7 +245,7 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -1789,7 +1792,13 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const compareHasDisallowedModel =
+    isMultiModelMode &&
+    modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model));
+  const submitBlocked = baseSubmitBlocked || compareHasDisallowedModel;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
     // Chat tab doesn't have a multi-host axis — its compare mode is
     // exactly multi-model. Pass through directly.
@@ -2004,8 +2013,15 @@ export function ChatTabV2({
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
   // that flag on failures a blind resend cannot help with.
+  //
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // they get the same resend. Every other policy refusal needs a
+  // configuration change first and offers no Retry.
   const canRetryLastMessage =
-    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+    isConcurrencyThrottle ||
+    errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+    isRetryableOrgKeysRefusal(errorMessage?.code);
   const errorRetryHandler = canRetryLastMessage
     ? handleRetryLastMessage
     : undefined;
@@ -2458,6 +2474,7 @@ export function ChatTabV2({
         : undefined,
     onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
@@ -2582,6 +2599,7 @@ export function ChatTabV2({
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2869,6 +2887,7 @@ export function ChatTabV2({
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
                             <TopupGatedErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -3022,6 +3041,7 @@ export function ChatTabV2({
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}

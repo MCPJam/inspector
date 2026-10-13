@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useRouteError } from "react-router";
 import { AlertTriangle, Lock, LogIn } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import { isAuthorizationRefusal } from "@/lib/authorization-refusal";
 import { reportCaught } from "@/lib/error-reporting";
@@ -90,7 +90,7 @@ export function RouteErrorScreen() {
   // AuthKit (iframe shell, connection handoff, the plan-limit preview, the
   // OAuth debug popup) render their own components and never the router, so
   // this hook cannot run outside a provider.
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn } = useInspectorAuth();
 
   // Which advice is correct depends on the VIEWER, not on which backend helper
   // refused — a signed-out visitor needs to sign in whether the refusal came

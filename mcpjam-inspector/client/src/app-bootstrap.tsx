@@ -1,5 +1,6 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
 import { AccessRequired } from "./components/AccessRequired";
@@ -18,10 +19,12 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
+import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { installRecorderNavigationGuard } from "./lib/recorder-navigation-guard.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
@@ -83,6 +86,11 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+// After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own
+// instrumentation: both recorders stop before a navigation onto a credential
+// URL reaches either of them. See the module comment.
+installRecorderNavigationGuard();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();
@@ -231,6 +239,7 @@ if (isInIframe) {
         {...handoffWorkosOptions}
       >
         <ServerConnectionHandoff />
+        <WorkosAuthUnavailableDialog />
       </AuthKitProvider>
     </StrictMode>,
   );
@@ -445,16 +454,19 @@ if (isInIframe) {
       }}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
-        <GuestTabTransitionListener />
-        <SignOutBoundary>
-          <AuthRecoveryBoundary>
-            <AuthBootstrap>
-              <AppRouterProvider />
-            </AuthBootstrap>
-          </AuthRecoveryBoundary>
-        </SignOutBoundary>
-      </ConvexProviderWithAuth>
+      <HostedAuthEntry>
+        <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
+          <GuestTabTransitionListener />
+          <SignOutBoundary>
+            <AuthRecoveryBoundary>
+              <AuthBootstrap>
+                <AppRouterProvider />
+              </AuthBootstrap>
+            </AuthRecoveryBoundary>
+          </SignOutBoundary>
+        </ConvexProviderWithAuth>
+      </HostedAuthEntry>
+      <WorkosAuthUnavailableDialog />
     </AuthKitProvider>
   );
 

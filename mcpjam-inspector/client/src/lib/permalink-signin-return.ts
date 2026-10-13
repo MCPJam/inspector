@@ -96,8 +96,11 @@ function mintNonce(): string {
     return crypto.randomUUID();
   } catch {
     // A correlator, never a capability: the marker it points at is already
-    // scoped to this tab and holds no token.
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    // scoped to this tab and holds no token. `randomUUID` needs a secure
+    // context (a LAN address over plain http is not one); `getRandomValues`
+    // does not.
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 }
 

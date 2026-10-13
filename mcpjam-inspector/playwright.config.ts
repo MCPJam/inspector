@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import {
+  communityBackendEnv,
+  NO_PRODUCTION_BROWSER_ARGS,
+} from "./e2e/community-backend";
 
 // When PLAYWRIGHT_BASE_URL is set (e.g. the post-deploy staging lane), tests run
 // against that deployed URL and no local server is booted. Otherwise we boot the
@@ -30,10 +34,11 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
-  // Both run under their own config. local-access.spec.ts needs a browser that
+  // Visual captures and these two specs run under their own configs.
+  // local-access.spec.ts needs a browser that
   // has NOT been handed the access key seeded below, and a local server, so it
   // can neither run here nor against a deployed URL.
-  testIgnore: /(oauth-debugger|local-access)\.spec\.ts/,
+  testIgnore: [/\/visual\//, /(oauth-debugger|local-access)\.spec\.ts/],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -54,6 +59,8 @@ export default defineConfig({
               },
             ],
           },
+          // A local boot must never reach production; see e2e/community-backend.ts.
+          launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
       : {}),
     ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
@@ -78,6 +85,7 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
+          ...communityBackendEnv(),
           NODE_ENV: "production",
           MCPJAM_SESSION_TOKEN: testSessionToken,
           MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",

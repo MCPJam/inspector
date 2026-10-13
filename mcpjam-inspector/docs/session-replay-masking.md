@@ -5,30 +5,63 @@ what session replay (PostHog and Sentry Replay) and product analytics may
 record. The policy lives in one module, `client/src/lib/session-privacy.ts`,
 and both recorders read the same state from it.
 
+Enterprise replay is **masked by default**, and an organization with
+**session replay off** is never recorded at all. A masked replay is viewable
+only by the MCPJam engineers and support staff who are named on the vendor
+projects (see [Access](#access-and-acceptance)). No debugging permission
+unmasks a replay.
+
+Three layers enforce the same policy:
+
+1. **The backend decides.** `telemetryPrivacy:getContext` (mcpjam-backend)
+   resolves the contexts in view, through the viewer's own project and
+   organization access, to two values: `recording` (`full` | `masked` |
+   `off`) and `identity` (`full` | `id_only`). Anything it cannot verify is
+   masked, and a private context in view or membership of a private
+   organization makes both restrictive. `off` beats `masked` beats `full`.
+2. **The client applies it** to both recorders, to identify calls, and to
+   every event it captures (this document). Masking happens here, in the
+   browser, as the replay is recorded.
+3. **The relay checks it again** for everything PostHog receives through
+   MCPJam (`server/routes/relay.ts`, [below](#the-relay-backstop)). It never
+   rebuilds a replay: it drops replay the policy turns off, and restricted
+   replay that its client did not declare masked, so an old client or one
+   that did not know the policy cannot upload an unmasked replay through it.
+
+Independently of the level, URLs that are credentials (share links, handoff
+links, OAuth and sign-in callbacks, secret query keys) are scrubbed from every
+telemetry exit, at every level, and never recorded at all. See
+[Credential URLs](#credential-urls). The public summary of this document is
+`docs/inspector/telemetry-privacy.mdx` at the repository root.
+
 ## The levels
 
 | Level    | Replay records                                                     | Product analytics                                    |
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| `off`    | Nothing. No recorder is constructed.                               | Unchanged                                            |
+| `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
 | `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
 
 ## Who gets which level
 
-| Session                                                              | Level     |
-| -------------------------------------------------------------------- | --------- |
-| npx / Docker self-hosted                                             | `off`     |
-| `electron-forge start` (dev)                                         | `off`     |
-| Any build with `VITE_DISABLE_POSTHOG_LOCAL`                          | `off`     |
-| Packaged desktop (Electron), everyone                                | `masked`  |
-| Hosted, share link of a published study (the tester chat)            | `masked`  |
-| Hosted, signed in, an organization in view has enterprise privacy    | `masked`  |
-| Hosted, signed in, organization posture not known within 10 seconds  | `masked`  |
-| Hosted, signed in, no organization in view has enterprise privacy    | `full`    |
-| Hosted, signed out: visitors, landing pages, guests                  | `full`    |
-| Hosted, signed in, organization list still loading                   | `pending` |
+| Session                                                                       | Level     |
+| ----------------------------------------------------------------------------- | --------- |
+| Any surface, the backend answered `off` (see [Session replay off](#session-replay-off)) | `off` |
+| npx / Docker self-hosted                                                      | `off`     |
+| `electron-forge start` (dev)                                                  | `off`     |
+| Any build with `VITE_DISABLE_POSTHOG_LOCAL`                                   | `off`     |
+| Packaged desktop (Electron), everyone else, once answered                     | `masked`  |
+| Hosted or desktop, share link of a published study (the tester chat)          | `off`     |
+| Hosted, the backend answered `masked` for the contexts in view                | `masked`  |
+| Hosted, no context in view, or no session to verify one with                  | `masked`  |
+| Hosted, every context in view verified non-private, viewer in no private org  | `full`    |
+| Hosted or desktop, waiting for the first answer, or it failed                 | `pending` |
 
 `resolveSessionPrivacy` encodes this table, and its tests walk every row.
+**Full replay requires a verified non-private context.** A visitor with no
+session, a page with nothing in view, and a context the viewer cannot reach
+all get `masked`. So does every page for a member of a private organization:
+the shell renders that organization's name and projects wherever they are.
 
 - **npx/Docker** installs run on someone else's machine against their own MCP
   servers. Recording those sessions is not ours to do, and the volume from every
@@ -37,11 +70,16 @@ and both recorders read the same state from it.
   own machines: the npx reasoning, with replay kept for crash debugging.
   Desktop is never `full`.
 - **"In view"** means the route's organization, the active one, and the active
-  project's. Any one with enterprise privacy is enough.
-- **Share links** show a project the viewer may not belong to, so its
-  organization's posture cannot be known from this side.
-- **Signed-out sessions** carry no organization's data. A guest's sandbox is
-  their own, and a guest belongs to no organization that could ask for privacy.
+  project. The backend resolves the project to its owning organization, so an
+  outside collaborator (a `guest` member with a project grant) is judged by
+  the project's organization, not their own. The most restrictive context
+  wins.
+- **Share links** show a project the viewer may not belong to. The backend
+  answers for the viewer, not for the page's owner, whose replay might be
+  off, so share-link pages record no replay at all, and their events are
+  stamped `off` so the relay drops any replay from them too.
+- **Guests** are authenticated with a guest token and their own personal
+  organization is in view, so their sandbox resolves like anyone's.
 
 The desktop half of "packaged" needs `import.meta.env.PROD` on top of
 `window.isElectron`, because `src/preload.ts` exposes `isElectron: true` in dev
@@ -52,12 +90,45 @@ sets.
 
 ## Enterprise privacy
 
-The organization row carries `enterprisePrivacy?: boolean`, and
-`organizations:getMyOrganizations` returns it. The client acts only on `true`.
+The organization row carries `enterprisePrivacy?: boolean`. Only `true`
+counts.
 
 - The backend turns it on when an organization becomes Enterprise.
 - Staff can set it explicitly, including an explicit `false`.
 - The plan does not decide it, so a downgrade or a renewal gap never changes it.
+
+### Session replay off
+
+For a customer whose agreement says session recording is disabled, staff set
+`organizations.sessionReplayOff: true`
+(`userOps/enterprisePrivacy:setSessionReplayOff`, reason required, audited in
+the customer's own log). It is never set automatically and is separate from
+`enterprisePrivacy`. While it is on:
+
+- the backend answers `recording: "off"` and `identity: "id_only"` for anyone
+  with that organization, or one of its projects, in view, and for every
+  member of it (guests included) wherever they are;
+- both recorders stop at once and never start, on every surface, desktop and
+  share links included; analytics stay masked;
+- the relay drops any replay captured under it, whatever the client claimed.
+
+The client remembers an `off` answer per person (`rememberReplayOff`, in
+memory and `localStorage`), so a reload, a navigation, or a slow or failing
+answer keeps that person unrecorded instead of falling back to `masked`.
+
+### How the client asks
+
+The client no longer reads the flag off its organization list. It asks
+`telemetryPrivacy:getContext` (via `useTelemetryPrivacyContext`) with the ids
+in view. The query uses the existing access checks (`resolveProjectAccess`,
+`getOrgMembership`), returns only the two policy values, and never says which
+organization asked for privacy or why a context was refused.
+
+The subscription is keyed on the actor and on the membership set. A change to
+either renders once with the query skipped — dropping the previous answer
+from Convex's cache — and subscribes again on the next commit, after
+`ConvexProviderWithAuth` has handed Convex the new token. An answer computed
+for a previous actor is therefore never read as the current actor's.
 
 ## Fail closed
 
@@ -66,21 +137,37 @@ The organization row carries `enterprisePrivacy?: boolean`, and
   integration, on every surface. `useSessionPrivacy` starts them once the level
   is known, with that level's profile. Until then the PostHog profile and the
   autocapture flags are the masked ones.
-- **`pending` records nothing.** A signed-in hosted session waits for its
-  organization list. The cost is roughly the first second of each page load.
-- **An answer that never comes is `masked`.** If the level is still `pending`
-  after 10 seconds (`PRIVACY_PENDING_TIMEOUT_MS`), the session records `masked`.
-  It never falls back to `full`.
+- **`pending` records nothing at startup.** A hosted session waits for the
+  backend's first answer. The cost is roughly the first second of each page
+  load.
+- **An answer that never comes records nothing.** Only the backend's own
+  answer can permit replay, because only it can say the organization has
+  replay `off`. A query that fails or never answers leaves the level
+  `pending`, with both recorders stopped; analytics and errors still go out,
+  masked and id-only. A person last answered `off` stays `off`, and a
+  remembered answer can only ever restrict.
 
 ## Changing level mid-session
 
-Switching organizations can change the level.
+Navigating to another organization or project changes the contexts in view,
+and the backend has to answer for the new ones.
+
+**Navigation** (`full` → `pending`) records `masked` at once, rather than
+stopping: the destination is unknown, so it is treated as private. This
+applies only after an answer has let the session record, and only for the
+actor and memberships that answer was for (`useTelemetryPrivacyContext`'s
+`scope`). Replay `off` follows membership, so on an organization's own pages
+anyone it applies to was already answered `off`. A sign-in change or a
+membership reload (joining an organization with replay off, say) starts a
+new scope, and `pending` then stops both recorders until the new answer
+arrives.
 
 **`full` → `masked`** is applied in a layout effect, in the same React commit
 that rendered the new organization. That is before rrweb's mutation observer
 reports the new DOM.
 
-1. PostHog's recorder stops. Pending mutation records are discarded.
+1. PostHog's recorder stops. Its buffer of frames recorded at `full` is
+   discarded, not sent.
 2. The masked profile is set.
 3. Recording restarts with a fresh, fully masked snapshot.
 
@@ -88,9 +175,20 @@ posthog-js reads its masking options only when the recorder starts, so stop →
 `set_config` → start is the only correct order. `syncSessionRecording` enforces
 it. Nothing recorded after the stop uses the old profile.
 
-**`masked` → `full`** waits 3 seconds (`MASKED_TO_FULL_SETTLE_MS`) and records
-masked meanwhile. The previous organization's content can stay on screen for a
-moment while the next one loads.
+Stopping makes posthog-js flush its buffer through `before_send`, after the
+level has already turned masked, and the relay passes a masked-labelled
+replay as it is. So `replayFramesToSend` drops that flush outright, and drops
+any later flush (posthog-js defers it while compression drains) of frames
+older than the masked recorder's start. The telemetry browser test fills the
+buffer with unmasked text before tightening and checks that none of it
+leaves under a masked label.
+
+**`masked` or `off` → `full`** needs the destination to have resolved to
+`full` AND finished loading (`contextReady`: Convex auth, the organization
+list and the project's server config). Then it still waits 3 seconds
+(`MASKED_TO_FULL_SETTLE_MS`) under the previous level. The previous
+organization's content can stay on screen for a moment while the next one
+loads.
 
 **Sentry Replay** needs no restart. Its options mask at both levels, and the
 masked-only extras are applied frame by frame (see below).
@@ -107,7 +205,7 @@ masked-only extras are applied frame by frame (see below).
 | `maskAllInputs: true`                                 | Every input masked                                              |
 | `blockSelector`                                       | `img, picture, video, audio, canvas, svg image, iframe, object, embed` replaced by placeholders |
 | `captureCanvas: { recordCanvas: false }`              | No canvas frames                                                |
-| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. |
+| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. A kept `style` has its `url(...)` and URL-like strings scrubbed and its other strings masked (`maskReplayStyle`). |
 | `recordHeaders: false`, `recordBody: false`           | No network headers or bodies. A client `false` overrides the project's remote setting. |
 | `maskCapturedNetworkRequestFn`                        | posthog-js sends the recorded page URL and every network request through this. Names are scrubbed and headers and bodies dropped. |
 | `captureJsonLd: false`, `recordCrossOriginIframes: false` | Off                                                          |
@@ -120,16 +218,28 @@ masked-only extras are applied frame by frame (see below).
 
 ### URLs
 
-`scrubNamesFromUrl` scrubs URLs at `masked` and `pending`:
+`scrubNamesFromUrl` (`shared/telemetry-privacy.ts`, used by the client and the
+relay alike) scrubs URLs at `masked` and `pending`:
 
 - In `$current_url`, `$pathname` and the other URL properties
   (`sanitizeAnalyticsProperties`).
 - In the `failed_request` attached to `$exception`.
-- In the replay page URL.
+- In the replay page URL, and in Sentry breadcrumbs, page URLs, replay events
+  and performance spans.
 
-Route words (read off `APP_ROUTES`) and ids (Convex ids, UUIDs, numbers) stay.
-Every other path segment and query value becomes `[name]`, and the fragment is
-dropped. For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
+Credentials come out of every URL first, at every level (see
+[Credential URLs](#credential-urls)): `scrubNamesFromUrl` runs the
+credential-URL sanitizer (`scrubSensitiveUrl`, `shared/credential-url.ts`,
+which applies the registry) before anything else, because a share token looks
+like an id.
+Route words (`APP_ROUTE_WORDS`, which a test keeps in step with `APP_ROUTES`),
+ids (Convex ids, UUIDs, numbers) and MCPJam's own hosts stay. Every other path
+segment and query value becomes `[name]`, every other host `[host]`, and the
+fragment and userinfo are dropped. A query key the app's own URLs do not use
+becomes `[key]` and its value `[name]` (a key can be the name itself, or a
+credential under another name), and a credential value (`code`, `state`,
+`token`, `t`, …, in any case) becomes `[redacted]` whatever its shape.
+For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 `/p/<projectId>/servers/[name]?tab=[name]`.
 
 ### Sentry Replay
@@ -137,51 +247,228 @@ dropped. For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
 `SENTRY_REPLAY_OPTIONS` apply at every level:
 
 - `maskAllText`, `maskAllInputs` and `blockAllMedia` are `true`.
-- `maskAttributes` adds `alt` and `aria-description` to Sentry's defaults.
+- `maskAttributes` masks `title`, `placeholder`, `aria-label`,
+  `aria-description`, `alt`, `action`, `formaction` and `poster` as they
+  are recorded.
+- Every other attribute is masked in Sentry's transport
+  (`sentry-recording-filter.ts`), in full snapshots and in later mutations,
+  down to what a masked PostHog replay keeps (`maskReplayAttribute`). Ids,
+  `name`, `data-testid` and other data attributes are built from customer data
+  (`prompt-arg-${name}`, `repo-row-${repoFullName}`), and Sentry's fixed list
+  cannot name them. rrweb's own `rr_*` and `_cssText` stay. The same filter
+  scrubs names from the page URL in Meta events, then takes every credential
+  out of the whole recording (`scrubRrwebCredentials`): stylesheet text, Meta,
+  custom and plugin events. A recording it cannot read is not sent.
+- `block` covers `a[href]`, `area[href]`, `iframe`, `source`, `track`, the
+  other elements whose URL attribute Sentry's rrweb records unmasked
+  (`[srcset]`, `object[data]`, `embed[src]`, `background`;
+  `SENTRY_UNMASKABLE_URL_ELEMENTS`), anything under the secret-surface
+  convention (`rr-block`, `data-ph-no-capture`), any element whose attribute
+  carries a credential URL (`credentialAttributeSelectors`), and any element
+  whose inline `style` holds a `url(`, `image-set(` or a quoted string. Sentry's rrweb never passes `href`, `src` or `style` through
+  attribute masking (it rewrites their URLs to absolute ones), so the
+  elements whose job is a URL, or whose style names one (an MCP server's icon
+  drawn as a CSS mask) or carries text (a custom property's label), are kept
+  as sized boxes instead. The telemetry browser test caught this.
 - `networkDetailAllowUrls: []` and `networkCaptureBodies: false`: no request or
   response detail for any URL.
 
+At every level, `beforeAddRecordingEvent` scrubs credentials out of the URLs
+in navigation and network frames and out of breadcrumb messages.
+
 Short of `full`:
 
-- `beforeAddRecordingEvent` drops console breadcrumbs.
-- It also scrubs URLs in navigation breadcrumbs and network spans.
+- `beforeAddRecordingEvent` drops console breadcrumbs from the replay and
+  scrubs URLs in navigation breadcrumbs and network spans. Click and key
+  frames lose the attribute and id parts of their selector
+  (`[aria-label="…"]`, `[title="…"]`, `[name="…"]`, `[alt="…"]`, `#…`: an id
+  can be built from a name), the node's text-bearing attributes, `id` and
+  `testId`, and the names in their page URL.
+- `beforeBreadcrumb` (`filterSentryBreadcrumb`) does the same for the
+  breadcrumbs error events carry, `ui.click` and `ui.input` selectors
+  included, as each breadcrumb is recorded.
+- Error events, transactions and replay events lose names from their page
+  URL, their `Referer` and their transaction name, which
+  `browserTracingIntegration` sets to the raw path on every navigation.
+  Transactions also lose resource URLs, peer host names and the attribute
+  values inside web-vitals element selectors (`lcp.element`, `cls.source.*`).
+  Standalone spans (web vitals such as INP, sent past `beforeSend` and
+  `beforeSendTransaction`) get the same in `beforeSendSpan`.
 - A `preprocessEvent` hook scrubs the replay event's `urls` list.
 
 ## Identity
 
-Identity follows membership, not the organization in view, because person
-properties outlive the page.
+Identity starts **id-only** and follows an explicit grant
+(`client/src/lib/telemetry-context.ts`):
 
-**PostHog.** A member of any organization with enterprise privacy is identified
-by id only. `usePostHogIdentify` sends name, email and occupation only once the
-organization list has loaded and shows no such membership. When it does show
-one, the hook calls `unsetPersonProperties` once per load to clear values sent
-earlier.
+- Names and email are allowed only after the backend answers
+  `identity: "full"` for the **current actor**. That needs no context in
+  view to be private and the actor to belong, in any role, to no
+  organization with enterprise privacy. Person properties outlive the page,
+  so membership counts even when the organization is not in view. A context
+  that does not resolve (stale, deleted, not the actor's) masks recording
+  but leaves identity alone, so identity does not flip as the person
+  navigates.
+- `setTelemetryActor` clears the grant at once on sign-in, sign-out, an
+  account change or a new guest. `setTelemetryIdentity` ignores an answer for
+  any actor but the current one. A membership reload clears the grant until
+  the next answer.
+- The identity answer carries across a change of contexts for the same actor
+  and memberships, so switching projects does not unname and rename anyone.
 
-**Sentry.** `setSentryIdOnlyIdentity` drops email and name from the user once
-membership is known. Before the list loads, a boot crash keeps its attribution.
+**PostHog.** `usePostHogIdentify` sends name, email and occupation only under
+the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
+clear values sent earlier: once per actor, and again whenever the actor turns
+id-only after a `full` answer. The `before_send` stamp also
+strips naming person properties from any event captured while id-only, so a
+caller that sends them anyway is caught.
 
-Desktop identity is unchanged for everyone else.
+**Sentry.** The initial scope carries at most the desktop installation id.
+`setSentryActor` adds email and name only under the grant, and re-applies the
+actor whenever the grant changes. Every outbound event — errors, transactions
+and replay events, which never reach `beforeSend` — is filtered again in
+`postprocessEvent`/`beforeSend` (`filterSentryEventIdentity`). An event keeps
+names only if they were allowed both when it was captured and when it is
+sent. Existing error processors still run first.
 
-## `/results/<token>` and other credential links
+## Credential URLs
 
-The token in `/results/<token>`, `/conformance/shared/<token>` and
-`/evals/shared/<token>` *is* the credential. A replay would capture it in the
-DOM snapshot, even though `scrubSensitiveUrl` already keeps it out of event
-properties. Neither recorder records on these paths, at any level.
+Some URLs are bearer credentials: the token in `/results/<token>` is the only
+access control on a run, an OAuth callback's `?code=` is a one-time
+authorization code, `?_token=` is a session. Every telemetry sink sees URLs, so
+every sink has to agree on what a credential URL is. They read one registry,
+at every privacy level, `full` included.
 
-- **Hard load.** Neither recorder is started on the route. When the user leaves
-  it, recording starts at the session's level. Sentry's integration is
+### The registry
+
+`shared/credential-urls.ts` defines:
+
+- **`CREDENTIAL_ROUTES`**: every route whose path, query or fragment carries a
+  secret, with an `id`, a `pattern` (`/results/:runToken`, `/oauth/callback*`),
+  where the secret sits (`path`, `query`, `fragment`), whether it is a `page`
+  or an `api` route, its TTL, and `reserved` values that are app vocabulary
+  rather than secrets (`/user-testing/<id>/edit`,
+  `/connect/server/request/<id>`). Today: score and bench results, shared
+  conformance and eval reports, tester links (and their pre-rename
+  `/chatbox/` shape), the server-connection handoff, the MCP OAuth, GitHub App
+  and sign-in callbacks, the local access link's `#token=`, the API reads
+  behind the share links, the SSE `?_token=`, and signed artifact links' `?t=`.
+- **`SECRET_PARAM_KEYS`**: query and fragment keys whose value is a credential
+  on any URL, ours or not (`code`, `state`, `token`, `_token`,
+  `access_token`, `client_secret`, `signature`, SAML and SSO keys, …), plus
+  the families no list can enumerate: presigned `X-Amz-*` / `X-Goog-*` and
+  anything ending in `token`, `secret`, `password`, `signature`, `apikey` or
+  `credential`. URL userinfo (`https://user:pass@host`) is always stripped.
+- **The scrubbers**: `scrubCredentialUrl` (one URL, spelling kept),
+  `scrubCredentialsInText` (URLs and credential paths anywhere in free text,
+  raw or percent-encoded), and `scrubTelemetryValue` (any JSON-ish value,
+  object keys included). The secret becomes `[redacted]`.
+  `scrubSensitiveUrl` (`shared/credential-url.ts`), which the client and the
+  relay share, is the URL scrubber plus organization-id redaction.
+
+The module is pure (no DOM, no Node APIs, no SDK, no lookbehind) so the
+browser, the server, Electron main and the relay all import the same code.
+
+### Where each sink applies it
+
+| Sink                         | Where the scrubber runs                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostHog events               | `before_send`, last, after the capture-context stamp: every property, `$set`/`$set_once`, `$elements_chain` and `$elements`, `$external_click_url`, web vitals, heatmap data (keys included), `$exception_list`. |
+| PostHog replay               | `maskCapturedNetworkRequestFn` at every level keeps the scrubbed URL and timing only; `before_send` scrubs stylesheet text and every URL in the recording. |
+| Sentry                       | `beforeSend`, `beforeSendTransaction`, `beforeSendSpan` and `beforeBreadcrumb`, last in each; replay events in `postprocessEvent`; the recording in the transport. A credential route names its span by template (`/results/:runToken`). |
+| Server logs (Axiom)          | Every log line and its context, before it is shipped.                                                                                                              |
+| `/relay` (PostHog proxy)     | Inside the privacy gate's rewrite: every event through the walker, a replay event holding a credential dropped, the query string scrubbed, `Referer` stripped. Metrics are scrubbed and re-encoded; logs are refused. |
+
+### Replay is blocked, not scrubbed
+
+A recorder snapshots the address bar, the DOM that renders the secret and the
+requests that send it. Scrubbing that afterwards is not a guarantee; not
+recording is. `isReplayBlockedLocation` is true for a registered credential
+path, a callback route, and any URL with a secret query or fragment key
+(including one nested in another parameter's value). Neither recorder records
+there, at any level.
+
+- **Hard load.** Neither recorder is started on a blocked URL. When the user
+  leaves it, recording starts at the session's level. Sentry's integration is
   constructed then too: starting it earlier and stopping it would flush the
   token-bearing page.
-- **In-app navigation.** `useSessionRecordingPathGuard` stops both recorders on
-  entry and resumes them on exit.
+- **In-app navigation.** `installRecorderNavigationGuard` stops both recorders
+  **before** a navigation onto a blocked URL commits, and
+  `useSessionRecordingPathGuard` resumes them on exit, once the page they are
+  leaving for has rendered.
   - PostHog resumes with `startSessionRecording()` without an override, which
     still honours the project's sampling.
   - Sentry resumes only a replay the guard itself stopped, because Sentry's
-    `replay.start()` bypasses `replaysSessionSampleRate`. Its armed flag is
-    never cleared on the way in, so `/results/a` → `/results/b` does not forget
-    that the guard is what stopped the replay.
+    `replay.start()` bypasses `replaysSessionSampleRate`, and in the mode it
+    was in (a buffering replay keeps buffering). It waits for the stop's
+    flush to finish first. Its armed flag is never cleared on the way in, so
+    `/results/a` → `/results/b` does not forget that the guard is what
+    stopped the replay.
+
+### Out of the address bar early
+
+- The OAuth callback inbox removes `code` and `state` from the address bar
+  before telemetry starts.
+- A failed share-link redeem, or a refused handoff claim, drops the token from
+  the address bar.
+- Credential pages are served with `Referrer-Policy: no-referrer`.
+
+### Fail closed on credentials
+
+A payload that cannot be shown clean is dropped, never forwarded:
+
+- `scrubTelemetryEvent` never throws. If the walker cannot finish (a cycle,
+  more than 64 levels, more than 200,000 nodes) it deletes the URL-bearing
+  fields (`URL_BEARING_FIELDS`) and scrubs the rest; if that fails too it
+  returns `null` and the caller drops the event.
+- The relay refuses a request whose event the walker cannot finish
+  (`400 unreadable_payload`, counted in `scrubDrops`). A replay event that
+  holds a credential, or nested data the relay cannot decode, is dropped
+  (`replayCredentialDrops`, `replayUndecodableDrops`); a request left with
+  nothing gets the gate's non-retryable `400 telemetry_restricted`.
+
+### Completeness in CI
+
+`client/src/lib/__tests__/credential-route-completeness.test.ts` and
+`server/routes/web/__tests__/credential-route-completeness.test.ts` walk every
+client route and every server route. A parameter whose name looks secret
+(`/token|secret|code|key|sig|cred/i`) fails the build unless it is in
+`CREDENTIAL_ROUTES` or allow-listed with a reason.
+
+`shared/__tests__/credential-leak-monitor.test.ts` checks the production leak
+monitor (`ops/credential-leak-monitor/`) against the same registry: every
+route has a pattern that catches its unredacted URL and misses its
+`[redacted]` form.
+
+The telemetry egress browser test (`npm run test:e2e:telemetry`, CI job
+"Telemetry egress") drives the hosted app at `full` with both vendors'
+transports intercepted, plants a credential in every place the app can show
+one, and fails on any that leaves.
+
+### Production monitor
+
+`.github/workflows/credential-leak-monitor.yml` runs daily. It counts PostHog
+events and Sentry events from the last 24 hours whose URL properties still
+carry an unredacted credential, by registry route id, and posts to the alerts
+channel when there are any, or when it could not check. Its patterns are
+generated from the registry at run time. Setup and runbook:
+`ops/credential-leak-monitor/README.md`.
+
+### Adding a credential route
+
+Add an entry to `CREDENTIAL_ROUTES` (a key that is a credential on any URL goes
+in `SECRET_PARAM_KEYS`). The secret must be the template's last parameter.
+Nothing else: the scrubbers, both replay guards, the relay and the monitor
+all read the registry.
+
+### Old desktop builds
+
+Installed desktop builds keep the code they shipped with. PostHog replay on
+those builds is blocked before capture by PostHog's remote URL blocklist
+(project settings), which old clients honour. Their events and error reports
+are contained after transmission by vendor-side scrubbing rules, and by the
+auto-update. We do not claim an old build never sends a credential; the
+monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
@@ -248,29 +535,128 @@ recording what the level forbids.
 If you change the boundary, change it in `session-privacy.ts` and test both
 recorders, or they drift.
 
+## Capture context: every event says where it was captured
+
+posthog-js queues events and sends them in batches, so a request can leave
+after the person has navigated somewhere laxer. PostHog's `before_send`
+(`stampPostHogEvent`) therefore stamps each event, at capture, with
+`$mcpjam_telemetry_context`: the project and organizations in view, and the
+level and identity mode the client applied. The relay checks the stamp and
+removes it. Sentry events get the same treatment through the hint object it
+threads through each event's stages.
+
+The relay bearer rides in posthog-js `request_headers` (`usePostHogRelayAuth`),
+never in a URL: the signed-in user's WorkOS token or the guest token already
+in memory, cleared the moment the actor changes. posthog-js records its whole
+config into the replay as a `$posthog_config` custom event, so the stamp and
+the relay both strip `request_headers` from it.
+
+## The relay backstop
+
+`/relay` and `/tlm` (`server/routes/relay.ts`, `server/routes/relay-privacy.ts`)
+gate every capture request — event batches, replay batches and GET ingestion:
+
+1. Decode the payload once (gzip, base64 form, JSON) and pin it to our
+   project, exactly as before. Large payloads are scanned, then parsed one
+   event at a time; an event over 8 MiB is refused.
+2. Group the events by their capture context and ask the backend
+   (`telemetryPrivacy:getContext`) once per distinct context, as the
+   request's bearer. An answer is kept for 15 seconds per bearer and
+   context: short next to a membership or privacy change, and an honest
+   client's own label tightens at once anyway. Each event gets the stricter
+   of that answer and its own label. A label can tighten, never authorize
+   full capture. An `off` surface (npx, Docker) labels nothing restricted,
+   so the backend decides.
+3. No bearer (an anonymous visitor, an old client, an unload beacon), no
+   stamp, more than eight contexts, or a backend that fails or does not
+   answer within 2 seconds: the conservative policy.
+4. Restricted events lose naming person properties, `$ip` (and get
+   `$geoip_disable`), and autocapture text and attributes. Every property,
+   `$set` and `$set_once` included, loses the names in its URLs, paths and
+   hosts — whatever it is called, since heatmaps and web vitals switch on
+   from PostHog's remote config — and every property named for a name
+   (`project_name`, `serverName`) is masked. Query strings keep only the
+   app's own keys, and credential values (`code`, `state`, `token`, …) are
+   redacted whatever their shape.
+5. Replay (`$snapshot`) is passed whole or dropped, never decoded or
+   rebuilt. Under `off` every replay is dropped. Under `masked` a replay
+   passes only if its own stamp declares it `masked`; a missing, malformed
+   or laxer stamp is dropped. The stamp is a declaration, not proof: this
+   catches a client recording under the wrong policy, while the masking
+   itself is the client's and is proven by the browser test on what it
+   actually sends. Every replay that passes loses the relay bearer from its
+   `$posthog_config` event. A request left with nothing to forward gets a
+   non-retryable `400 telemetry_restricted`.
+6. The client address is forwarded only when every event in the request
+   resolved to the full policy. `Authorization`, privacy-context headers and
+   client forwarding headers never reach PostHog. PostHog logs, which carry
+   console output that cannot be attributed or masked, are refused.
+
+It reuses the relay's size, decompression, concurrency and rate limits. A
+request reads its payload under an admission slot, gives the slot back while
+the backend answers (that wait has its own budget: 64 requests, 64 MiB), and
+is admitted again to rewrite it, so a slow backend never holds the slots
+sized for parsing. GET captures take a slot like any other. The rewritten
+payload is forwarded gzip-compressed with `compression=gzip-js`, as
+posthog-js sends it. The aggregate `relay.stats` line counts
+`privacyMasked`, `privacyRejected` and `privacyUnresolved` requests and
+`privacyReplayDropped` events; nothing logs payloads, credentials, names or
+emails.
+
+Sentry has no ingestion proxy: it is protected by its client capture options
+and the outbound filters above.
+
+## Testing
+
+- **Backend:** `tests/convex/telemetryPrivacy.test.ts` in mcpjam-backend.
+- **Client:** `session-privacy`, `telemetry-context`, `sentry`,
+  `sentry-identity`, `useTelemetryPrivacyContext`, `usePostHogRelayAuth`,
+  `usePostHogIdentify` and `useSessionPrivacy` suites.
+- **Relay:** `server/routes/__tests__/relay-privacy.test.ts`.
+- **Browser:** `npm run test:e2e:telemetry-privacy` (CI job "Telemetry Privacy
+  (browser)"). A harness page built from the real telemetry modules shows
+  seeded synthetic personal data (`shared/__tests__/fixtures/telemetry-pii.ts`);
+  the test intercepts PostHog and Sentry transports, decodes every payload to
+  its last compressed field, and asserts that none of it leaves under a
+  private context — while a useful layout and interaction recording, and an
+  error linked to its replay, do. An `off` run, and a first visit whose policy
+  never arrives, prove neither recorder sends anything while analytics and
+  errors still arrive. A `full` → masked run fills the recorder's buffer
+  with unmasked text before tightening and checks none of it leaves under a
+  masked label. A `full` run is the positive control.
+
 ## Known gaps
 
-- **Sentry's page URL.** Sentry's rrweb meta event still carries the page URL.
-  Sentry offers no hook to edit rrweb events, only its own frames.
-- **Sentry email at boot.** Before the organization list loads, Sentry still
-  has the signed-in email.
-- **Viewers outside the organization.** The posture of an organization the
-  viewer does not belong to is unknown. Share links are `masked` for that
-  reason, but a project shared to a non-member outside a share link is judged
-  by the viewer's own organizations.
-- **Heatmaps.** Heatmap data keyed by URL is not scrubbed.
+- **Sentry's DOM events.** Sentry offers no hook to edit rrweb events as
+  they are recorded, only its own frames, so its DOM masking is fixed at init
+  and applies at every level. Attributes and the page URL are cleaned later,
+  in its transport.
+- **Stylesheet URLs in a masked replay.** Both recorders record stylesheets
+  (CSS-in-JS rules included) as written, so a `url(...)` in a rule — an
+  icon drawn as a CSS mask — keeps its host. Inline `style` attributes are
+  scrubbed (`maskReplayStyle`). An organization that cannot accept this
+  gets session replay off. A credential URL in stylesheet text is scrubbed
+  at every level, in both recorders: PostHog's `before_send` and Sentry's
+  transport run the same pass (`scrubRrwebCredentials`).
+- **Exception messages.** On restricted PostHog events, URLs inside error
+  messages are scrubbed, but other text in error messages and stack traces
+  is not; general log sanitization is out of scope here. Credentials in them
+  are scrubbed at every level.
+- **Edge request logs.** The hosting provider's edge and CDN keep their own
+  request logs. Nothing here runs before them.
+- **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
-## Follow-up: a server-side backstop
+## Access and acceptance
 
-Everything above runs in the browser. A modified or stale client could still
-send unmasked data.
-
-A backstop in the same-origin `/relay` proxy (`server/routes/relay.ts`) could:
-
-- refuse or scrub `$snapshot` payloads from sessions that declared `masked`;
-- strip name-like URL segments server-side.
-
-Not built yet.
+- Replay and error data live in the MCPJam PostHog and Sentry projects.
+  Access is restricted to named debugging staff, including privileged roles
+  and sharing capabilities, and an unauthorized account must not be able to
+  view recordings. That is a vendor configuration, verified at rollout.
+- The default for enterprise organizations is **masked replay with
+  restricted staff access**. An organization whose agreement says recording
+  is disabled gets **session replay off**, which records nothing at all.
+- A privacy rollback disables the affected replay rather than restoring
+  unrestricted forwarding.
 
 ## Cost
 

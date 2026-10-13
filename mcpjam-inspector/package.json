@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.15.0",
+  "version": "3.16.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -106,6 +106,8 @@
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:local-access": "playwright test -c playwright.local-access.config.ts",
+    "build:client:telemetry-e2e": "cross-env VITE_MCPJAM_HOSTED_MODE=true VITE_DISABLE_POSTHOG_LOCAL=false VITE_DISABLE_SENTRY=false VITE_CONVEX_URL=https://telemetry-e2e.convex.cloud VITE_WORKOS_CLIENT_ID=client_telemetry_e2e VITE_WORKOS_REDIRECT_URI=https://app.mcpjam.com/callback NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts --outDir ../dist/telemetry-client",
+    "test:e2e:telemetry": "playwright test -c playwright.telemetry.config.ts",
     "test:github-checks-cleanup:e2b": "cross-env RUN_GITHUB_CHECKS_E2B_CLEANUP=1 vitest run server/services/github-checks/__tests__/cleanup.e2b.integration.test.ts",
     "test:e2e:oauth-debugger": "npm run sdk:build && playwright test -c playwright.oauth-debugger.config.ts",
     "ship": "bash scripts/ship.sh",
@@ -113,12 +115,15 @@
     "pretest:watch": "npm run build -w @mcpjam/evaluators",
     "pretest:coverage": "npm run build -w @mcpjam/evaluators",
     "test:swarm-reporting:smoke": "playwright test --config playwright.swarm-reporting.config.ts",
+    "test:e2e:telemetry-privacy": "playwright test --config playwright.telemetry-privacy.config.ts",
     "dev:processes": "run-script-os",
     "dev:processes:default": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:app:processes": "run-script-os",
     "dev:app:processes:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:app:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\""
+    "dev:app:processes:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
+    "test:visual:app": "node scripts/visual/build.mjs && playwright test --config playwright.visual.config.ts && node scripts/visual/check-app-archives.mjs",
+    "visual:app:upload": "node scripts/visual/check-app-archives.mjs && CHROMATIC_ARCHIVE_LOCATION=.playwright/visual-results chromatic --playwright --exit-zero-on-changes"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.106",
@@ -153,7 +158,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@lezer/highlight": "^1.2.5",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^9.2.0",
+    "@mcpjam/sdk": "^9.3.0",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -238,6 +243,7 @@
   },
   "devDependencies": {
     "@alwaysmeticulous/recorder-plugin": "^2.346.0",
+    "@chromatic-com/playwright": "1.0.0",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
@@ -271,6 +277,7 @@
     "@vitest/coverage-v8": "^4.1.11",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
+    "chromatic": "18.12.0",
     "concurrently": "^10.0.5",
     "electron": "43.6.0",
     "es-module-lexer": "1.7.0",

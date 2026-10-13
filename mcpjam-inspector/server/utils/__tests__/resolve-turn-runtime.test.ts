@@ -324,7 +324,12 @@ describe("resolveTurnRuntime — runtime shape", () => {
     );
     expect(rt.runtime).toEqual({
       kind: "direct",
-      llmModel: { localModel: true },
+      // The built model, wrapped so each provider attempt asks the backend
+      // first (`local-org-attempt-admission.ts`).
+      llmModel: expect.objectContaining({
+        specificationVersion: "v4",
+        doStream: expect.any(Function),
+      }),
       modelId: "llama3",
     });
     // Byte-parity: no provider string is forwarded (spans carried none before).
@@ -476,6 +481,25 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
       },
     });
     expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: ORG_SELECTION,
+    });
+  });
+
+  it("a harness turn's runtime carries its org selection, typed", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: ORG_SELECTION,
+        harness: "claude-code",
+      }),
+    );
+    expect(rt.runtime).toMatchObject({
+      endpointPath: "/stream/org",
+      harness: "claude-code",
       modelSelection: ORG_SELECTION,
     });
   });

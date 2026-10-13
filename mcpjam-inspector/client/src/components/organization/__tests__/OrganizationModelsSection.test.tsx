@@ -20,6 +20,57 @@ vi.mock("convex/react", () => ({
   useAction: mocks.useAction,
 }));
 
+// The AI keys card reads its own hook; `convex/react` above serves only the
+// provider and usage queries. `aiConfig` is what the hook returns — or
+// throws, the way `useQuery` does on a backend that lacks the function.
+const aiConfigState = vi.hoisted(() => ({
+  value: undefined as unknown,
+  throws: null as Error | null,
+}));
+
+vi.mock("@/hooks/useOrgAiConfig", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/useOrgAiConfig")>();
+  return {
+    ...actual,
+    useOrgAiConfig: () => {
+      if (aiConfigState.throws) throw aiConfigState.throws;
+      return {
+        config: aiConfigState.value,
+        isLoading: aiConfigState.value === undefined,
+        unsupported: false,
+        error: null,
+        isSaving: false,
+        testError: null,
+        isTesting: false,
+        setRequireOrgKeys: vi.fn(),
+        setAiModel: vi.fn(),
+        testAiModel: vi.fn(),
+      };
+    },
+  };
+});
+
+// The default model card, made to throw on demand: a render bug in it must
+// never hide the AI keys switch.
+const defaultModelCardState = vi.hoisted(() => ({
+  throws: null as Error | null,
+}));
+
+vi.mock("../OrganizationDefaultModelCard", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../OrganizationDefaultModelCard")>();
+  return {
+    ...actual,
+    OrganizationDefaultModelCard: (
+      props: Parameters<typeof actual.OrganizationDefaultModelCard>[0],
+    ) => {
+      if (defaultModelCardState.throws) throw defaultModelCardState.throws;
+      return <actual.OrganizationDefaultModelCard {...props} />;
+    },
+  };
+});
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -33,6 +84,20 @@ describe("OrganizationModelsSection", () => {
     mocks.navigate.mockClear();
     mocks.useQuery.mockReset();
     mocks.useAction.mockClear();
+    aiConfigState.throws = null;
+    defaultModelCardState.throws = null;
+    aiConfigState.value = {
+      organizationId: "org_1",
+      aiKeyPolicy: { requireOrgKeys: false, revision: 0 },
+      readiness: {
+        requireOrgKeys: false,
+        features: [],
+        operations: [],
+        eligibleConnectionIds: [],
+      },
+      canEnable: true,
+      canManage: true,
+    };
     mocks.useQuery.mockImplementation((name: string, args: unknown) => {
       if (name === "organizationModelProviders:getVisibleConfig") {
         return { providers: [] };
@@ -212,6 +277,132 @@ describe("OrganizationModelsSection", () => {
       "organizationModelProviders:getUsageSummary",
       "skip",
     );
+  });
+
+  describe("AI keys", () => {
+    beforeEach(() => {
+      mocks.pathname = "/organizations/org_1/models";
+    });
+
+    it("mounts the AI keys card between the header and the provider list", () => {
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      const header = screen.getByRole("heading", { name: "AI providers" });
+      const policy = screen.getByTestId("org-ai-keys-card");
+      const providers = screen.getByRole("heading", { name: "Providers" });
+      const firstProvider = screen.getByText("OpenAI");
+
+      const follows = (a: Element, b: Element) =>
+        Boolean(
+          a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      expect(follows(header, policy)).toBe(true);
+      expect(follows(policy, providers)).toBe(true);
+      expect(follows(providers, firstProvider)).toBe(true);
+      expect(
+        screen.getByRole("switch", {
+          name: "Use your keys for all AI features",
+        }),
+      ).not.toBeChecked();
+    });
+
+    it("has no model roles card", () => {
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(
+        screen.queryByRole("button", { name: "Advanced" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Default model roles/)).not.toBeInTheDocument();
+    });
+
+    it("mounts the default model card under the AI keys card", () => {
+      aiConfigState.value = {
+        ...(aiConfigState.value as object),
+        supportedModelKinds: ["default"],
+        aiModels: { default: null },
+      };
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      const policy = screen.getByTestId("org-ai-keys-card");
+      const defaultModel = screen.getByTestId("org-ai-default-model-card");
+      const providers = screen.getByRole("heading", { name: "Providers" });
+      const follows = (a: Element, b: Element) =>
+        Boolean(
+          a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      expect(follows(policy, defaultModel)).toBe(true);
+      expect(follows(defaultModel, providers)).toBe(true);
+      expect(
+        within(defaultModel).getByTestId("org-ai-model-default"),
+      ).toBeInTheDocument();
+    });
+
+    it("shows no default model card on a backend without organization AI models", () => {
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(screen.getByTestId("org-ai-keys-card")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("org-ai-default-model-card"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the AI keys switch when the default model card throws", () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      aiConfigState.value = {
+        ...(aiConfigState.value as object),
+        supportedModelKinds: ["default"],
+        aiModels: { default: null },
+      };
+      defaultModelCardState.throws = new TypeError(
+        "Cannot read properties of undefined (reading 'selection')",
+      );
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(screen.getByTestId("org-ai-keys-card")).toBeInTheDocument();
+      expect(
+        screen.getByRole("switch", {
+          name: "Use your keys for all AI features",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("org-ai-default-model-error"),
+      ).toHaveTextContent("Couldn't show the default AI model");
+      expect(
+        screen.queryByTestId("org-ai-default-model-card"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("org-ai-config-error")).toBeNull();
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+
+    it("shows an error in place of the AI keys setting when the query fails", () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      aiConfigState.throws = new Error(
+        "[CONVEX Q(aiExecutionAdmission:getOrganizationAiConfig)] [Request ID: 5eb87f6c9d3ef8d5] Server Error\n  Called by client",
+      );
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(screen.getAllByTestId("org-ai-config-error")).toHaveLength(1);
+      expect(screen.queryByTestId("org-ai-keys-card")).not.toBeInTheDocument();
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+
+    it("renders the providers without the AI keys setting on an older backend", () => {
+      aiConfigState.throws = new Error(
+        "[CONVEX Q(aiExecutionAdmission:getOrganizationAiConfig)] [Request ID: abc] Could not find public function for 'aiExecutionAdmission:getOrganizationAiConfig'",
+      );
+      render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+      expect(screen.queryByTestId("org-ai-keys-card")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("switch", {
+          name: "Use your keys for all AI features",
+        }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add Custom Provider" }),
+      ).toBeInTheDocument();
+    });
   });
 
   describe("provider configuration", () => {

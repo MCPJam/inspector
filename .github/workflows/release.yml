@@ -183,10 +183,10 @@ jobs:
               if (!run) {
                 core.setFailed(
                   `No successful ${workflowId} run found for ${context.sha}. ` +
-                    `That workflow runs on every push to main, so this usually means ` +
-                    `it is still running, failed, or was cancelled because a newer ` +
-                    `commit superseded this one. Re-run it for this SHA, or release ` +
-                    `the newer HEAD.`
+                    `That workflow runs in the merge queue on every commit before it ` +
+                    `lands on main, so this commit either did not come through the ` +
+                    `queue or its run is older than the pages searched here. Re-run ` +
+                    `that queue run for this SHA, or release a newer HEAD.`
                 );
                 return;
               }
@@ -740,6 +740,30 @@ jobs:
             ./sdk/dist
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # The Docker Hub image at the Inspector version npm just got. No job here
+  # waits on it, so a Docker Hub outage or a rejected token cannot hold back
+  # the webapp or the GitHub release; the run still ends red so the failure is
+  # seen. The run, and with it the `release` concurrency group, stays open
+  # until the image is pushed, so a release dispatched meanwhile starts after
+  # it. Retry with "Re-run failed jobs", or dispatch docker-release.yml.
+  # `always()` and the explicit result check are needed because
+  # publish-packages often runs after a skipped deploy-backend-prod, and a
+  # skipped ancestor would otherwise skip this job too.
+  docker-release:
+    needs:
+      - preflight
+      - publish-packages
+    if: |
+      always() &&
+      needs.preflight.outputs.publish_inspector == 'true' &&
+      needs.publish-packages.result == 'success'
+    uses: ./.github/workflows/docker-release.yml
+    with:
+      sha: ${{ github.sha }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   deploy-backend-prod:
     needs:
