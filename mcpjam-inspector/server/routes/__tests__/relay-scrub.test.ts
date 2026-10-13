@@ -52,7 +52,7 @@ const ORIGINAL_FETCH = global.fetch;
 const KEY = POSTHOG_PROJECT_KEY;
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
 const BEARER = { Authorization: "Bearer relay-test-bearer" };
-const FULL = { recording: "full", identity: "full" } as const;
+const FULL = { recording: "full", identity: "full", content: "full" } as const;
 const FULL_STAMP = encodeCaptureContext({
   projectIds: [],
   organizationIds: ["org_public_00000000000000001"],

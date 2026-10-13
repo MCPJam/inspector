@@ -2,8 +2,7 @@
  * Just enough of Convex's sync protocol for the hosted app to mount, over
  * Playwright's `page.routeWebSocket` — no deployment, no network.
  *
- * Why it exists: in hosted mode even a signed-out visitor is a Convex-
- * authenticated guest, and `App` (which owns `useSessionPrivacy`) does not
+ * Why it exists: the hosted `App` (which owns `useSessionPrivacy`) does not
  * mount until `users:ensureUser` has run for that identity. Without a backend
  * the page stops at "Loading", no privacy level is ever resolved, and nothing
  * records — so a telemetry test against it would pass by observing nothing.
@@ -24,6 +23,8 @@
  */
 import type { Page, WebSocketRoute } from "@playwright/test";
 
+export const TELEMETRY_ACTOR_ID = "user_01K00000000000000000000000";
+
 /** Convex encodes its u64 timestamps as little-endian base64. */
 function encodeTs(value: bigint): string {
   const bytes = Buffer.alloc(8);
@@ -42,12 +43,12 @@ function wire(version: Version) {
 }
 
 /** Ids in Convex's shape (lowercase base32-ish, digits included). */
-const GUEST_USER_ID = "k17telemetrye2eguestuser0001";
+const USER_ID = "k17telemetrye2ememberuser001";
 const PROJECT_ID = "k17telemetrye2eproject000001";
 const ORGANIZATION_ID = "k17telemetrye2eorganization1";
 
 /**
- * The data a signed-out guest's shell needs to get past its gates: a user row
+ * The data a signed-in member's shell needs to get past its gates: a user row
  * (`currentUser === null` is the "Could not finish setup" screen) and, once
  * `projects:ensureDefaultProject` has run, one project. Every other query
  * resolves to `null` — "none" — which the app renders as an empty state.
@@ -56,23 +57,59 @@ interface StandInState {
   projects: Array<Record<string, unknown>>;
 }
 
-function queryResult(udfPath: string, state: StandInState): unknown {
+function queryResult(
+  udfPath: string,
+  state: StandInState,
+  args: unknown,
+): unknown {
   switch (udfPath) {
     case "users:getCurrentUser":
       return {
-        _id: GUEST_USER_ID,
+        _id: USER_ID,
         _creationTime: 1_700_000_000_000,
-        isGuest: true,
-        name: "Guest",
+        isGuest: false,
+        externalId: TELEMETRY_ACTOR_ID,
+        name: "Telemetry Member",
       };
     case "projects:getMyProjects":
       return state.projects;
-    case "telemetryPrivacy:getContext":
+    case "telemetryPrivacy:getContext": {
+      const context = Array.isArray(args) ? args[0] : undefined;
+      const projects = Array.isArray(context?.projectIds)
+        ? context.projectIds
+        : [];
+      const organizations = Array.isArray(context?.organizationIds)
+        ? context.organizationIds
+        : [];
+      if (
+        context?.shareLink ||
+        (!projects.includes(PROJECT_ID) &&
+          !organizations.includes(ORGANIZATION_ID))
+      ) {
+        return { recording: "off", identity: "id_only", content: "strict" };
+      }
       // The backend's answer for a verified non-private context: replay at
       // `full`, identity by id. `full` is where the most reaches the
       // vendors, so it is the level the credential proof runs at.
-      return { recording: "full", identity: "id_only" };
+      return {
+        recording: "full",
+        identity: "id_only",
+        content: "full",
+        telemetryActorId: TELEMETRY_ACTOR_ID,
+      };
+    }
     case "organizations:getMyOrganizations":
+      return [
+        {
+          _id: ORGANIZATION_ID,
+          name: "Telemetry workspace",
+          createdBy: USER_ID,
+          myRole: "owner",
+          isCreator: true,
+          createdAt: 1_700_000_000_000,
+          updatedAt: 1_700_000_000_000,
+        },
+      ];
     case "servers:getProjectServers":
       return [];
     case "servers:listForProjects":
@@ -89,7 +126,7 @@ function serve(ws: WebSocketRoute, log?: (line: string) => void) {
   const version: Version = { querySet: 0, identity: 0, ts: 0n };
   const state: StandInState = { projects: [] };
   /** Live subscriptions, so a mutation can push what it changed. */
-  const subscriptions = new Map<number, string>();
+  const subscriptions = new Map<number, { path: string; args: unknown }>();
 
   const transition = (
     next: Partial<Omit<Version, "ts">>,
@@ -110,10 +147,10 @@ function serve(ws: WebSocketRoute, log?: (line: string) => void) {
     );
   };
 
-  const updated = (queryId: number, udfPath: string) => ({
+  const updated = (queryId: number, udfPath: string, args: unknown) => ({
     type: "QueryUpdated",
     queryId,
-    value: queryResult(udfPath, state),
+    value: queryResult(udfPath, state, args),
     logLines: [],
     journal: null,
   });
@@ -146,8 +183,11 @@ function serve(ws: WebSocketRoute, log?: (line: string) => void) {
           if (modification.type === "Add") {
             const udfPath = String(modification.udfPath);
             log?.(`query ${udfPath}`);
-            subscriptions.set(queryId, udfPath);
-            results.push(updated(queryId, udfPath));
+            subscriptions.set(queryId, {
+              path: udfPath,
+              args: modification.args,
+            });
+            results.push(updated(queryId, udfPath, modification.args));
           } else if (modification.type === "Remove") {
             subscriptions.delete(queryId);
             results.push({ type: "QueryRemoved", queryId });
@@ -171,7 +211,7 @@ function serve(ws: WebSocketRoute, log?: (line: string) => void) {
               name: "Default",
               servers: {},
               organizationId: ORGANIZATION_ID,
-              ownerId: GUEST_USER_ID,
+              ownerId: USER_ID,
               createdAt: 1_700_000_000_000,
               updatedAt: 1_700_000_000_000,
             });
@@ -193,7 +233,9 @@ function serve(ws: WebSocketRoute, log?: (line: string) => void) {
         );
         transition(
           {},
-          [...subscriptions].map(([queryId, path]) => updated(queryId, path)),
+          [...subscriptions].map(([queryId, query]) =>
+            updated(queryId, query.path, query.args),
+          ),
         );
         break;
       }
@@ -229,19 +271,15 @@ export async function installConvexStandIn(
   );
 }
 
-/**
- * A guest session the app accepts: `/api/web/guest-session`'s shape, with an
- * unsigned JWT the Convex client can decode for its refresh schedule. Only
- * the stand-in ever sees the token.
- */
-export function guestSessionBody(): string {
+/** AuthKit's real response shape; only the local browser stand-in sees it. */
+export function authenticatedSessionBody(): string {
   const now = Math.floor(Date.now() / 1000);
   const segment = (value: unknown) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   const token = [
     segment({ alg: "none", typ: "JWT" }),
     segment({
-      sub: "guest_telemetry_e2e",
+      sub: TELEMETRY_ACTOR_ID,
       iss: "https://telemetry-e2e.invalid",
       aud: "convex",
       iat: now,
@@ -250,8 +288,19 @@ export function guestSessionBody(): string {
     "unsigned",
   ].join(".");
   return JSON.stringify({
-    guestId: "guest_telemetry_e2e",
-    token,
-    expiresAt: (now + 3600) * 1000,
+    access_token: token,
+    refresh_token: "local-test-refresh",
+    authentication_method: "Password",
+    user: {
+      object: "user",
+      id: TELEMETRY_ACTOR_ID,
+      email: "telemetry@example.invalid",
+      email_verified: true,
+      first_name: "Telemetry",
+      last_name: "Member",
+      profile_picture_url: null,
+      created_at: "2024-01-01T00:00:00.000Z",
+      updated_at: "2024-01-01T00:00:00.000Z",
+    },
   });
 }
