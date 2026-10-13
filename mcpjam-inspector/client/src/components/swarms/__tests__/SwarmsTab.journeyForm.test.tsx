@@ -1,11 +1,6 @@
 /** Manual goals inherit validated targets or resolve explicit replacements. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  emptyComposerState,
-  type EnvironmentComposerState,
-} from "@/components/environment-composer/environment-stack";
-
 // The harness × model picker locks read each host's config; these tests mock
 // convex/react without that query, so the reads answer "not known yet".
 vi.mock("@/hooks/use-host-harness-targets", () => ({
@@ -90,6 +85,9 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 const swarmPreflight = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const attachmentRows = vi.hoisted(() => ({
+  value: [] as Array<{ _id: string; name: string; serverIds: string[] }>,
+}));
 
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: swarmPreflight }),
@@ -125,9 +123,7 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
-    serverAttachments: [
-      { _id: "att-manual", name: "Servers", serverIds: ["srv-1"] },
-    ],
+    serverAttachments: attachmentRows.value,
     isLoading: false,
   }),
   useProjectServers: () => ({ servers: [], isLoading: false }),
@@ -150,24 +146,7 @@ vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
 }));
 vi.mock("@/components/environment-composer/environment-composer", () => ({
   SWARM_COMPOSER_SLOTS: {},
-  EnvironmentComposer: ({
-    onChange,
-  }: {
-    onChange: (state: EnvironmentComposerState) => void;
-  }) => (
-    <button
-      type="button"
-      onClick={() => {
-        const next = emptyComposerState();
-        next.stack.hostIds = ["host-1"];
-        next.stack.serverAttachmentId = "att-manual";
-        next.customized = true;
-        onChange(next);
-      }}
-    >
-      Pick a server or group
-    </button>
-  ),
+  EnvironmentComposer: () => <div>Unexpected target picker</div>,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -183,6 +162,9 @@ beforeEach(() => {
   environmentsEnabled.value = false;
   siblingGoals.value = [];
   hostRows.value = [host];
+  attachmentRows.value = [
+    { _id: "att-manual", name: "Servers", serverIds: ["srv-1"] },
+  ];
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
   ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
 });
@@ -378,13 +360,13 @@ describe("SwarmsTab — new goal form", () => {
     await openGoalForm();
     await createGoal("buy a plan");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /pick a server or group/i,
+      /server setup is missing or invalid/i,
     );
     expect(createJourneyMutation).not.toHaveBeenCalled();
     expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
 
-  it("keeps inherited ad-hoc targets distinct until explicitly replaced", async () => {
+  it("keeps inherited ad-hoc targets distinct without target controls", async () => {
     siblingGoals.value = [
       {
         _id: "old-goal",
@@ -395,8 +377,8 @@ describe("SwarmsTab — new goal form", () => {
       },
     ];
     await openGoalForm();
-    expect(screen.getByText(/Target 1:/)).toBeInTheDocument();
-    expect(screen.getByText(/Target 2:/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace targets" })).toBeNull();
+    expect(screen.queryByText("Unexpected target picker")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Pick a server or group" }),
     ).toBeNull();
@@ -414,41 +396,37 @@ describe("SwarmsTab — new goal form", () => {
     ).toEqual(["env-sibling", "env-1"]);
   });
 
-  it("resolves the edited picker after replacing an inherited target", async () => {
+  it("rejects a missing inherited environment without switching to the default", async () => {
     siblingGoals.value = [
       {
         _id: "old-goal",
         goal: "Existing",
         hostIds: [],
-        environmentIds: ["env-sibling"],
+        environmentIds: ["missing-env"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
       },
     ];
-    await openGoalForm();
-    fireEvent.click(screen.getByRole("button", { name: "Replace targets" }));
-    fireEvent.change(screen.getByLabelText("Goal"), {
-      target: { value: "replace target" },
+    swarmPreflight.mockRejectedValue({
+      data: { code: "ENV_NOT_FOUND", message: "Environment not found." },
     });
-    expect(screen.getByRole("button", { name: /create goal/i })).toBeDisabled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Pick a server or group" }),
+    await openGoalForm();
+    await createGoal("keep the selected setup");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This goal’s server setup is missing or invalid. Make sure its servers still exist and are explicitly selected.",
     );
-    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
-    await waitFor(() =>
-      expect(createJourneyMutation).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentIds: ["env-adhoc-1"] }),
-      ),
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not use configured client servers when no group is selected", async () => {
+    attachmentRows.value = [];
+    await openGoalForm();
+    await createGoal("buy a plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This goal’s server setup is missing or invalid. Make sure its servers still exist and are explicitly selected.",
     );
-    expect(ensureAdhocMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stacks: [{ hostId: "host-1", serverAttachmentId: "att-manual" }],
-      }),
-    );
-    expect(
-      swarmPreflight.mock.calls
-        .filter((call) => call[1].serverSource === "swarm_explicit")
-        .map((call) => call[1].environmentId),
-    ).toEqual(["env-adhoc-1"]);
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(createJourneyMutation).not.toHaveBeenCalled();
   });
 
   it("creates against the siblings even when the default cannot run", async () => {

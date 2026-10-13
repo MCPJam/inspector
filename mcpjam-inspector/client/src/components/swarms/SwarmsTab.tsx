@@ -14,7 +14,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
-import { ManualSwarmTargetPicker } from "./manual-swarm-target-picker";
+import { newGoalErrorMessage } from "./new-goal-server-setup";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
@@ -1932,16 +1932,13 @@ function NewJourneyForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const goalsLoading = siblingGoals === undefined;
-  const [targetEdited, setTargetEdited] = useState(false);
   const target = useSwarmDefaultTarget({
     projectId,
     active: true,
     environments,
     hosts,
   });
-  const inherited = targetEdited
-    ? null
-    : inheritedGoalTarget(siblingGoals, target.liveEnvironmentIds);
+  const inherited = inheritedGoalTarget(siblingGoals);
   useEffect(() => {
     setGoal(goalSeed);
   }, [goalSeed]);
@@ -1980,14 +1977,6 @@ function NewJourneyForm({
         </p>
       ) : null}
 
-      <ManualSwarmTargetPicker
-        projectId={projectId}
-        target={target}
-        inherited={inherited}
-        onEdit={() => setTargetEdited(true)}
-        disabled={saving}
-      />
-
       <div className="flex justify-end gap-2">
         <Button
           type="button"
@@ -2003,7 +1992,6 @@ function NewJourneyForm({
           disabled={
             !goal.trim() ||
             goalsLoading ||
-            (!inherited && !target.ready) ||
             saving
           }
           onClick={async () => {
@@ -2022,11 +2010,7 @@ function NewJourneyForm({
               setGoal("");
             } catch (err) {
               // Keep the form and its text: the goal is retried, not retyped.
-              setError(
-                err instanceof Error
-                  ? err.message
-                  : "Could not create the goal",
-              );
+              setError(newGoalErrorMessage(err));
             } finally {
               setSaving(false);
             }
