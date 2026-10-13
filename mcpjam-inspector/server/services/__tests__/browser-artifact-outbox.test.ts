@@ -242,6 +242,89 @@ describe("createBrowserArtifactOutbox", () => {
     expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(21);
   });
 
+  it("serializes overlapping flushes and retries only the failed chunk", async () => {
+    const outbox = makeOutbox();
+    outbox.take(
+      fakeBrowser([
+        {
+          observations: Array.from({ length: 21 }, (_, i) =>
+            observation({ toolCallId: `tc-${i}` }),
+          ),
+          steps: [],
+        },
+      ]),
+      0,
+    );
+    let acknowledgeFirst!: (value: { observations: number; steps: number }) => void;
+    const firstWrite = new Promise<{ observations: number; steps: number }>(
+      (resolve) => {
+        acknowledgeFirst = resolve;
+      },
+    );
+    mutationMock
+      .mockReturnValueOnce(firstWrite)
+      .mockRejectedValueOnce(new Error("last chunk failed"));
+
+    const firstFlush = outbox.flush();
+    await vi.waitFor(() => expect(mutationMock).toHaveBeenCalledTimes(1));
+    const secondFlush = outbox.flush();
+    // Yield so an overlapping flush can reach its mutation before checking.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mutationMock).toHaveBeenCalledTimes(1);
+
+    acknowledgeFirst({ observations: 20, steps: 0 });
+    expect(await firstFlush).toMatchObject({ written: 0, pending: 1 });
+    expect(await secondFlush).toMatchObject({ written: 1, pending: 0 });
+    expect(
+      mutationMock.mock.calls.map(([, args]) =>
+        args.widgetRenderObservations.map(
+          (row: { toolCallId: string }) => row.toolCallId,
+        ),
+      ),
+    ).toEqual([
+      Array.from({ length: 20 }, (_, i) => `tc-${i}`),
+      ["tc-20"],
+      ["tc-20"],
+    ]);
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(21);
+  });
+
+  it("queues a flush during serialization without re-uploading or losing new steps", async () => {
+    const outbox = makeOutbox();
+    outbox.enqueueSteps([step({ stepIndex: 0 })] as never, 0);
+    let finishUpload!: (blobId: string) => void;
+    const firstUpload = new Promise<string>((resolve) => {
+      finishUpload = resolve;
+    });
+    uploadScreenshotBlobMock.mockReturnValueOnce(firstUpload);
+
+    const firstFlush = outbox.flush();
+    await vi.waitFor(() =>
+      expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1),
+    );
+    const secondFlush = outbox.flush();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1);
+
+    outbox.enqueueSteps([step({ stepIndex: 1, promptIndex: 1 })] as never, 1);
+    finishUpload("blob-0");
+    await Promise.all([firstFlush, secondFlush]);
+
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(2);
+    expect(
+      mutationMock.mock.calls.map(([, args]) => ({
+        promptIndex: args.promptIndex,
+        stepIndexes: args.browserInteractionSteps.map(
+          (row: { stepIndex: number }) => row.stepIndex,
+        ),
+      })),
+    ).toEqual([
+      { promptIndex: 0, stepIndexes: [0] },
+      { promptIndex: 1, stepIndexes: [1] },
+    ]);
+    expect(outbox.pendingBatchCount).toBe(0);
+  });
+
   it("groups by each artifact's own promptIndex, not the draining turn", async () => {
     const outbox = makeOutbox();
     // A turn-3 drain that sweeps up a turn-0 artifact (the exact

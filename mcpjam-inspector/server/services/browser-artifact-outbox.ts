@@ -287,7 +287,7 @@ export function createBrowserArtifactOutbox(args: {
     }
   };
 
-  return {
+  const outbox: BrowserArtifactOutbox = {
     get pendingBatchCount() {
       return new Set([...raw.keys(), ...wire.keys()]).size;
     },
@@ -495,4 +495,19 @@ export function createBrowserArtifactOutbox(args: {
       };
     },
   };
+
+  // A deadline abandons a caller, not its uploads or mutations. Queue complete
+  // flushes so acknowledgements cannot release another flush's unsaved rows,
+  // and each queued caller also serializes artifacts added while it waited.
+  const flush = outbox.flush;
+  let pendingFlush: ReturnType<BrowserArtifactOutbox["flush"]> | undefined;
+  outbox.flush = () => {
+    const next = pendingFlush ? pendingFlush.then(flush, flush) : flush();
+    const settled = next.finally(() => {
+      if (pendingFlush === settled) pendingFlush = undefined;
+    });
+    pendingFlush = settled;
+    return settled;
+  };
+  return outbox;
 }
