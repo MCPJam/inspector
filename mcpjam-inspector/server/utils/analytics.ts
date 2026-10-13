@@ -1,4 +1,5 @@
 import { PostHog } from "posthog-node";
+import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
@@ -74,6 +75,13 @@ function getClient(forFeatureFlags = false): PostHog | null {
   if (!client) {
     client = new PostHog(POSTHOG_PROJECT_KEY, {
       host: POSTHOG_HOST,
+      disableCompression: true,
+      enableExceptionAutocapture: false,
+      fetch: analyticsTransport(
+        POSTHOG_HOST,
+        POSTHOG_PROJECT_KEY,
+        isAnalyticsDisabled,
+      ),
       // Low-volume, high-value stream: flush each event promptly rather than
       // batching, so a process exit can't drop a queued critical event.
       flushAt: 1,
