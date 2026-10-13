@@ -700,8 +700,8 @@ export const OAuthFlowTab = ({
             return buildAdvanceResult(previousStep, after);
           }
         } else {
-          // Known race, accepted: the 500ms post-callback exchange timer can
-          // auto-advance concurrently — identical exposure to the human button.
+          // The post-callback redemption can't interleave: its steps run back
+          // to back under isInitiatingAuth, which the guard above refuses.
           await proceedToNextStep();
           return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }
