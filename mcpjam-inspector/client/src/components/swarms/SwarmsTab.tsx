@@ -1989,11 +1989,7 @@ function NewJourneyForm({
         <Button
           type="button"
           size="sm"
-          disabled={
-            !goal.trim() ||
-            goalsLoading ||
-            saving
-          }
+          disabled={!goal.trim() || goalsLoading || saving}
           onClick={async () => {
             setSaving(true);
             setError(null);

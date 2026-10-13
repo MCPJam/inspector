@@ -45,9 +45,6 @@ export type SwarmDefaultTarget = {
   /** Mints or reuses the environments this target resolves to. */
   resolve: () => Promise<string[]>;
   resolveExisting: (environmentIds: string[]) => Promise<string[]>;
-  /** Live environment ids, or undefined when the query does not run. */
-  liveEnvironmentIds: ReadonlySet<string> | undefined;
-  liveEnvironments: ProjectEnvironmentView[];
 };
 
 export function useSwarmDefaultTarget({
@@ -82,14 +79,6 @@ export function useSwarmDefaultTarget({
   const usageRows = useProjectEnvironments(projectId, { includeAdhoc: true });
   const usageQueryEnabled =
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
-  // The same rows double as the live set: this query excludes archived ones.
-  const liveEnvironmentIds = useMemo(
-    () =>
-      usageRows
-        ? new Set(usageRows.map((row) => row.environmentId))
-        : undefined,
-    [usageRows],
-  );
   const { servers: catalog } = useProjectServers({
     isAuthenticated,
     projectId,
@@ -209,7 +198,5 @@ export function useSwarmDefaultTarget({
     noServers,
     resolve,
     resolveExisting,
-    liveEnvironmentIds,
-    liveEnvironments: usageRows ?? envList,
   };
 }

@@ -216,7 +216,7 @@ export async function materializeSwarmTargets(
   }
 
   const stack = {
-    serverAttachmentId: legos.serverAttachmentId ?? null,
+    serverAttachmentId: legos.serverAttachmentId,
     skillSelection: skillsEnabled ? (legos.skillSelection ?? null) : null,
     computerEnvironmentId: computersEnabled
       ? (legos.computerEnvironmentId ?? null)
