@@ -24,6 +24,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   ensure: vi.fn(),
+  report: vi.fn(),
   role: { canManage: true, isLoading: false },
 }));
 vi.mock("@/hooks/useClients", () => ({
@@ -32,7 +33,7 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/hooks/useProjects", () => ({
   useCanManageProjectClients: () => mocks.role,
 }));
-vi.mock("@/lib/error-reporting", () => ({ reportCaught: vi.fn() }));
+vi.mock("@/lib/error-reporting", () => ({ reportCaught: mocks.report }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
     select({ themeMode: "dark" }),
@@ -311,6 +312,24 @@ describe("usePlaygroundClientInitialization", () => {
     expect(result.current.comparisonInit.state).toMatchObject({
       status: "failed",
       refused: false,
+    });
+    expect(result.current.defaultInit.state.status).toBe("idle");
+  });
+
+  it("settles for the default alone on a backend that predates initializeComparison", async () => {
+    // The deploy-order window: this browser ships before mcpjam-backend#1996.
+    mocks.ensure.mockRejectedValue(
+      new Error(
+        "[CONVEX M(projectClients:ensureProjectClient)] [Request ID: 0123456789abcdef] ArgumentValidationError: Object contains extra field `initializeComparison` that is not in the validator.",
+      ),
+    );
+    const { result } = renderInit([MCPJAM]);
+    await exhaustRetries();
+    expect(mocks.ensure).toHaveBeenCalledTimes(1);
+    expect(mocks.report).not.toHaveBeenCalled();
+    expect(result.current.comparisonInit.state).toMatchObject({
+      status: "failed",
+      refused: true,
     });
     expect(result.current.defaultInit.state.status).toBe("idle");
   });

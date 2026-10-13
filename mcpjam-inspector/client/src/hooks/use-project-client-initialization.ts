@@ -33,12 +33,32 @@ const DONE: ProjectClientInitState = { status: "done" };
 
 type Failure = { refused: boolean; message: string; retryAfterMs?: number };
 
+/**
+ * A deployment behind the browser rejects an argument it has not learnt yet
+ * (`initializeComparison` before mcpjam-backend#1996) before the function
+ * runs. Convex discloses this one in production, unlike a throw from the
+ * function itself, so the text can be matched: a browser ahead of its backend
+ * then settles for what the backend can do instead of retrying and reporting
+ * on every visit.
+ */
+function isArgumentUnknownToBackend(error: Error): boolean {
+  const message = typeof error.message === "string" ? error.message : "";
+  return (
+    message.includes("ArgumentValidationError") &&
+    message.includes("extra field")
+  );
+}
+
 function classifyFailure(error: unknown): Failure {
   if (isAuthorizationRefusal(error)) {
     return { refused: true, message: NO_ACCESS_MESSAGE };
   }
-  // A backend without the function: retrying and reporting cannot help.
-  if (error instanceof Error && isConvexQueryUnavailable(error)) {
+  // A backend without the function, or without an argument this browser
+  // sends: retrying and reporting cannot help.
+  if (
+    error instanceof Error &&
+    (isConvexQueryUnavailable(error) || isArgumentUnknownToBackend(error))
+  ) {
     return {
       refused: true,
       message: "Client setup isn't available right now. Try again later.",
