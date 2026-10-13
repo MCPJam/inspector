@@ -950,8 +950,35 @@ describe("ChatTabV2 history sync", () => {
 
       expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
         provider === "openrouter" ? openRouterSonnet : hostedSonnet,
+        { selection: undefined },
       );
     });
+  });
+
+  it("restores the recorded connection and settings even if its row is unavailable", async () => {
+    const selection = {
+      modelId: "openai/gpt-4o",
+      nativeModelId: "gpt-4o",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "connection-removed" },
+      settings: { temperature: 0.2 },
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    mockUseChatSession.availableModels = [];
+    mockUseChatSession.setSelectedModel = vi.fn();
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: { ...mockHistorySession, modelId: selection.modelId, modelSelection: selection,
+        messagesBlobUrl: "https://storage.test/blob" },
+      widgetSnapshots: [],
+    });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
+      mockUseChatSession.selectedModel, { selection },
+    );
   });
 
   it("keeps the active resumed thread selected when servers change", async () => {

@@ -84,7 +84,10 @@ import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
+import { chatRequestSelection } from "@/lib/chat-request-selection";
+import { compareSelectionForRow, replaceLeadCompareSelection, resolveCompareSelectionRow } from "@/lib/compare-cards";
 import {
   reasoningEffortMemoryKey,
   reasoningEffortOptions,
@@ -104,6 +107,8 @@ import {
   loadLeadModelProviderHint,
   saveLastOwnProviderModelId,
   saveLeadModelProviderHint,
+  loadSelectedModelSelections,
+  saveSelectedModelSelections,
   type LeadModelProviderHint,
 } from "@/lib/selected-model-storage";
 import { resolveModelSelection } from "@/lib/model-selection";
@@ -449,6 +454,9 @@ function pluginGlobalTurnFields(
 }
 
 export interface UseChatSessionOptions {
+  /** A card's saved choice; its connection and settings remain authoritative. */
+  pickedModelSelection?: RequestedModelSelection;
+  selectionIntent?: "picked" | "inherit";
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
   /**
    * The Playground's global extension owner. Its Apps have no chat of their
@@ -648,6 +656,7 @@ export interface TokenUsage {
 }
 
 export interface SetSelectedModelOptions {
+  selection?: RequestedModelSelection | null;
   /**
    * True only when this came from the model menu. Restores — a history
    * session, an eval hand-off — go through the same setter but must not
@@ -2002,6 +2011,8 @@ export function useChatSession(
     reasoningEffortEnabled = false,
     fixedReasoningEffort,
     pinnedModelProvider,
+    pickedModelSelection,
+    selectionIntent = "picked",
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2075,6 +2086,10 @@ export function useChatSession(
   // silently receive a message composed for the previous one.
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
+  const [pickedTarget, setPickedTarget] = useState<string | null>(null);
+  const effectiveSelectionIntent = hostedScenarioId
+    ? "inherit"
+    : pickedTarget === hostedTargetKeyValue ? "picked" : selectionIntent;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedScenarioSurface = hostedContext?.scenarioSurface;
   // Published-scenario runtime sessions must use the org-aware web engine
@@ -2143,7 +2158,7 @@ export function useChatSession(
   const setSystemPrompt = useCallback((prompt: string) => {
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
-  const [temperature, setTemperature] = useState(initialTemperature);
+  const [temperatureOverride, setTemperature] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
    * null for every other surface.
@@ -2942,6 +2957,7 @@ export function useChatSession(
   // Model selection with persistence
   const {
     selectedModelId,
+    selectedModelSelection: savedLeadSelection,
     setSelectedModelId,
     selectedModelIds,
     setSelectedModelIds: persistSelectedModelIds,
@@ -3050,7 +3066,16 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
+  const savedSelection = pickedModelSelection ?? (!initialModelId ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
+    if (savedSelection) {
+      const candidates = initialModelId
+        ? availableModels.filter((row) => String(row.id) === initialModelId &&
+            (!pinnedModelProvider || row.provider === pinnedModelProvider))
+        : availableModels;
+      return resolveCompareSelectionRow(savedSelection, candidates, hostedOrgModelConfig) ??
+        { ...createLockedInitialModel(savedSelection.modelId), disabledReason: "The saved model or connection is unavailable. Choose a model again." };
+    }
     const fallback =
       (harnessId
         ? harnessDefaultModel(
@@ -3118,7 +3143,11 @@ export function useChatSession(
     requireOrgKeys,
     selectableModels,
     selectedModelId,
+    savedSelection,
+    hostedOrgModelConfig,
   ]);
+  const temperature = temperatureOverride ??
+    (savedSelection?.source !== "legacy" ? savedSelection?.settings?.temperature : undefined) ?? initialTemperature;
 
   // Reasoning effort, per model. The state holds only what this hook session
   // set or was seeded with; anything else reads the remembered pick. Derived
@@ -3154,7 +3183,9 @@ export function useChatSession(
       ? (fixedReasoningEffort ?? undefined)
       : effortKey in effortByModel
         ? effortByModel[effortKey]
-        : rememberedEffort;
+        : savedSelection && savedSelection.source !== "legacy"
+          ? savedSelection.settings?.reasoningEffort
+          : rememberedEffort;
   // Never report (so never send) a level the model does not offer here.
   const reasoningEffort =
     reasoningEffortEnabled &&
@@ -3209,6 +3240,7 @@ export function useChatSession(
     // The organization's AI settings are still loading: the list is a locked
     // placeholder, and its default must not be written back as a choice.
     if (hostedOrgModelConfig?.pending) return false;
+    if (savedSelection) return !selectedModel.disabled;
     // Nothing to offer at all: the placeholder is not a choice either.
     if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
@@ -3225,6 +3257,7 @@ export function useChatSession(
     isPersistedModelInitialized,
     selectedModel,
     selectedModelId,
+    savedSelection,
   ]);
 
   // Whether the organization's AI key policy leaves this chat no model to
@@ -3285,12 +3318,20 @@ export function useChatSession(
       // both together. Every caller here hands over a full definition — the
       // picker, a history session, an eval hand-off — so each restores the
       // exact row it means, not the first row that shares its id.
-      const hint = { modelId: String(model.id), provider: model.provider };
+      const saved = loadSelectedModelSelections() ?? [];
+      const existing = saved[0];
+      const selection = options?.selection ??
+        (existing && resolveCompareSelectionRow(existing, [model], hostedOrgModelConfig)
+          ? existing : compareSelectionForRow(model, hostedOrgModelConfig));
+      if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
+      if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
+      const modelId = selection?.modelId ?? String(model.id);
+      const hint = { modelId, provider: model.provider };
       saveLeadModelProviderHint(hint);
       setLeadProviderHint(hint);
-      setSelectedModelId(String(model.id));
+      setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue],
   );
 
   const setSelectedModelIds = useCallback(
@@ -3413,6 +3454,20 @@ export function useChatSession(
       // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
       // the turn on the route that can honour it.
       !localHarnessRequested);
+  const requestChoice = useMemo(() => chatRequestSelection({
+    intent: effectiveSelectionIntent,
+    selection: savedSelection,
+    model: selectedModel,
+    orgConfig: hostedOrgModelConfig,
+    allowLocal: !shouldUseOrgAwareChatApi,
+    effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
+      effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+    shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel]);
+  const requestChoiceRef = useRef(requestChoice);
+  requestChoiceRef.current = requestChoice;
+  const requestEffort = requestChoice.kind === "picked" && requestChoice.selection.source !== "legacy"
+    ? requestChoice.selection.settings?.reasoningEffort : reasoningEffort;
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -3796,6 +3851,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
         // `buildHostedBody` (which hard-requires the project id): hosted
         // turns scope created tasks by the turn's project, non-hosted turns
@@ -3821,6 +3877,7 @@ export function useChatSession(
             : undefined;
         return {
           model: selectedModel,
+          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -3830,7 +3887,7 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(reasoningEffort ? { reasoningEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -4021,6 +4078,8 @@ export function useChatSession(
     });
   }, [
     selectedModel,
+    requestChoice,
+    requestEffort,
     getToken,
     getCustomProviderByName,
     customProviders,
@@ -4933,6 +4992,10 @@ export function useChatSession(
         toast.error(orgPolicySendRefusal(orgPolicy.model, orgPolicy.pending));
         return Promise.resolve(false);
       }
+      if (requestChoiceRef.current.kind === "blocked") {
+        toast.error(requestChoiceRef.current.reason);
+        return Promise.resolve(false);
+      }
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -5696,7 +5759,7 @@ export function useChatSession(
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setTemperature(executionTemperature ?? 0.7);
+    setTemperature(executionTemperature);
   }, [isExecutionConfigControlled, executionTemperature]);
 
   useEffect(() => {
@@ -6148,6 +6211,7 @@ export function useChatSession(
     isAuthLoading ||
     authHeadersNotReady ||
     hostedContextNotReady ||
+    requestChoice.kind === "blocked" ||
     isNoRunnableHarnessModel(selectedModel) ||
     // The organization's AI key policy leaves no model to send to.
     orgPolicyBlocksSend;
