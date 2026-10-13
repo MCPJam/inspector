@@ -728,6 +728,15 @@ describe("App call backend trips", () => {
     expect([response.status, body]).toEqual([200, expect.anything()]);
     return Math.round((performance.now() - started) * SCALE);
   };
+  /** The completion records landed and no trip is still in flight. */
+  const drained = async (completed: number) => {
+    await vi.waitFor(() =>
+      expect(f.log.filter((entry) => entry === AFTER_ANSWER[0])).toHaveLength(
+        completed,
+      ),
+    );
+    await vi.waitFor(() => expect(f.flight).toBe(0));
+  };
 
   const driveSimulatedTime = async (scenario: Promise<void>) => {
     let done = false;
@@ -765,7 +774,7 @@ describe("App call backend trips", () => {
       // right after it loads. Each request leases its own connection, so the
       // second pays one connection authorization.
       const raced = await open("thread-latency-race");
-      f.toolCalls = [];
+      reset();
       const race = await Promise.all([
         timed(() => execute(raced)),
         (async () => {
@@ -777,6 +786,8 @@ describe("App call backend trips", () => {
       // 15 s an OpenAI SDK App waits for an answer.
       expect(f.toolCalls.sort()).toEqual([appTool.name, tool.name].sort());
       expect(Math.max(...race)).toBeLessThan(3_000);
+      // Drain before the fake clock goes: its pending trips never finish.
+      await drained(2);
 
       // Six round trips (90-100 ms) and the catalog: about 600 ms.
       for (const ms of [threadExecute, globalExecute, steady, race[0]])
@@ -805,6 +816,7 @@ describe("App call backend trips", () => {
       reset();
       const pastWindow = await timed(() => call(app));
       expect(f.counts["target-authorization"]).toBeUndefined();
+      await drained(1);
 
       expect(refreshing).toBeLessThan(750);
       expect(pastWindow).toBeLessThan(750);
