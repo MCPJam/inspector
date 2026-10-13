@@ -7,9 +7,24 @@ import {
   replaceLeadModelId,
   saveSelectedModelId,
   saveSelectedModelIds,
+  saveSelectedModelSelections,
 } from "@/lib/selected-model-storage";
 
 describe("usePersistedModel", () => {
+  it("refreshes a same-id lead connection without resetting the compare array", () => {
+    localStorage.clear();
+    saveSelectedModelId("openai/gpt-4o");
+    saveSelectedModelIds(["openai/gpt-4o", "openai/gpt-5"]);
+    const { result } = renderHook(() => usePersistedModel());
+    const choice = {
+      modelId: "openai/gpt-4o", source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "connection-b" },
+      fallback: { provider: "none", model: "none" } as const,
+    };
+    act(() => saveSelectedModelSelections([choice]));
+    expect(result.current.selectedModelSelection).toEqual(choice);
+    expect(result.current.selectedModelIds).toEqual(["openai/gpt-4o", "openai/gpt-5"]);
+  });
   beforeEach(() => {
     localStorage.clear();
   });

@@ -109,6 +109,7 @@ export function resolveCompareSelectionRow(
     { modelId: selection.modelId, selection },
     models,
     orgConfig,
+    { exactSelection: true },
   );
   if (!row) return undefined;
   return (selection.source === "hosted") === isHostedRow(row) ? row : undefined;

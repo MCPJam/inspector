@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import {
   loadSelectedModelId,
   loadSelectedModelIds,
+  loadSelectedModelSelections,
   saveSelectedModelId,
   saveSelectedModelIds,
   subscribeSelectedModelId,
   subscribeSelectedModelIds,
+  subscribeSelectedModelSelections,
 } from "@/lib/selected-model-storage";
 
 const MULTI_MODEL_ENABLED_STORAGE_KEY = "mcp-inspector-multi-model-enabled";
@@ -32,6 +35,7 @@ function normalizeSelectedModelIds(modelIds: string[]): string[] {
 }
 
 export interface UsePersistedModelReturn {
+  selectedModelSelection: RequestedModelSelection | null;
   selectedModelId: string | null;
   setSelectedModelId: (modelId: string | null) => void;
   selectedModelIds: string[];
@@ -61,6 +65,8 @@ export interface UsePersistedModelReturn {
  * The multi-model toggle stays owned by this hook.
  */
 export function usePersistedModel(): UsePersistedModelReturn {
+  const [selectedModelSelection, setSelectedModelSelection] =
+    useState<RequestedModelSelection | null>(null);
   const [selectedModelId, setSelectedModelIdState] = useState<string | null>(
     null,
   );
@@ -76,6 +82,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
       return;
     }
     setSelectedModelIdState(loadSelectedModelId());
+    setSelectedModelSelection(loadSelectedModelSelections()?.[0] ?? null);
     setSelectedModelIdsState(loadSelectedModelIds());
     try {
       const storedMultiModelEnabled = localStorage.getItem(
@@ -96,6 +103,10 @@ export function usePersistedModel(): UsePersistedModelReturn {
     // rationale.
     const unsubscribeLead = subscribeSelectedModelId(() => {
       setSelectedModelIdState(loadSelectedModelId());
+      setSelectedModelSelection(loadSelectedModelSelections()?.[0] ?? null);
+    });
+    const unsubscribeSelections = subscribeSelectedModelSelections(() => {
+      setSelectedModelSelection(loadSelectedModelSelections()?.[0] ?? null);
     });
     // Array channel: fires only from `replaceLeadModelId` (outside-seam
     // host-switch primitive) and cross-tab `storage` events on the
@@ -106,6 +117,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
     });
     return () => {
       unsubscribeLead();
+      unsubscribeSelections();
       unsubscribeIds();
     };
   }, []);
@@ -165,6 +177,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
   }, []);
 
   return {
+    selectedModelSelection,
     selectedModelId,
     setSelectedModelId,
     selectedModelIds,
