@@ -15,7 +15,8 @@
  * fails, because a silent skip there would mean the only real-browser test of
  * this feature quietly stopped running.
  */
-import { expect, test, type CDPSession, type Page } from "@playwright/test";
+import type { CDPSession, Page } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 test.use({ launchOptions: { args: ["--enable-features=WebMCP"] } });
 
