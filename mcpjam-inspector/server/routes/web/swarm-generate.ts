@@ -36,7 +36,7 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   return url;
@@ -70,7 +70,7 @@ export const generateBaseSchema = z.object({
       z.object({
         name: z.string().trim().min(1),
         role: z.string().trim().min(1),
-      })
+      }),
     )
     .max(30)
     .optional(),
@@ -194,11 +194,18 @@ export function rethrowAsRouteError(c: Context, err: unknown): never {
         // deployment's own logs to tell a provider outage from a
         // misconfigured deployment.
         errorCode: upstreamErrorCode(err.bodyText) ?? "upstream_server_error",
-      }
+      },
     );
-    if (err.status === 502 && upstreamErrorCode(err.bodyText) === "GENERATION_FAILED") {
-      throw new WebRouteError(502, ErrorCode.GENERATION_FAILED,
-        "Generation failed. Please try again.", requestId ? { requestId } : undefined);
+    if (
+      err.status === 502 &&
+      upstreamErrorCode(err.bodyText) === "GENERATION_FAILED"
+    ) {
+      throw new WebRouteError(
+        502,
+        ErrorCode.GENERATION_FAILED,
+        "Generation failed. Please try again.",
+        requestId ? { requestId } : undefined,
+      );
     }
     throw new WebRouteError(
       500,
@@ -206,7 +213,7 @@ export function rethrowAsRouteError(c: Context, err: unknown): never {
       requestId
         ? `${MASKED_UPSTREAM_MESSAGE} (reference: ${requestId})`
         : MASKED_UPSTREAM_MESSAGE,
-      requestId ? { requestId } : undefined
+      requestId ? { requestId } : undefined,
     );
   }
   throw err;
@@ -217,7 +224,7 @@ swarmGenerate.post("/generate/persona", async (c) =>
     const bearerToken = await getConvexBearerForRequest(c);
     const body = parseWithSchema(
       generatePersonaSchema,
-      await readJsonBody<unknown>(c)
+      await readJsonBody<unknown>(c),
     );
     const convexHttpUrl = requireConvexHttpUrl();
     const grounding = {
@@ -244,7 +251,7 @@ swarmGenerate.post("/generate/persona", async (c) =>
     } catch (err) {
       rethrowAsRouteError(c, err);
     }
-  })
+  }),
 );
 
 swarmGenerate.post("/generate/journeys", async (c) =>
@@ -252,7 +259,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
     const bearerToken = await getConvexBearerForRequest(c);
     const body = parseWithSchema(
       generateJourneysSchema,
-      await readJsonBody<unknown>(c)
+      await readJsonBody<unknown>(c),
     );
     const convexHttpUrl = requireConvexHttpUrl();
     try {
@@ -267,12 +274,12 @@ swarmGenerate.post("/generate/journeys", async (c) =>
         persona: body.persona,
         ...(body.description ? { description: body.description } : {}),
         signal: c.req.raw.signal,
-      inspectorRequestId: c.var.requestLogContext?.requestId,
+        inspectorRequestId: c.var.requestLogContext?.requestId,
       });
     } catch (err) {
       rethrowAsRouteError(c, err);
     }
-  })
+  }),
 );
 
 export default swarmGenerate;
