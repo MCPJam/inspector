@@ -10,7 +10,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "token",
 }));
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(function () {
+  ConvexHttpClient: vi.fn(function () {
     return { setAuth: vi.fn(), query, mutation };
   }),
 }));
@@ -42,9 +42,9 @@ function app() {
   return root;
 }
 
-async function listClients() {
+async function listClients(surface = "clients") {
   const response = await app().request(
-    `/api/v1/projects/${PROJECT_ID}/clients`,
+    `/api/v1/projects/${PROJECT_ID}/${surface}`,
   );
   return { status: response.status, body: await response.json() };
 }
@@ -62,7 +62,7 @@ describe("GET /projects/:projectId/clients on a project with no client", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("gives the project its default client and lists it", async () => {
@@ -86,6 +86,17 @@ describe("GET /projects/:projectId/clients on a project with no client", () => {
 
     const { body } = await listClients();
 
+    expect(body.items.map((item: { id: string }) => item.id)).toEqual(["h1"]);
+    expect(mutation).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs the deprecated /hosts list too", async () => {
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([CLIENT]);
+    mutation.mockResolvedValue({ hostId: "h1", created: true });
+
+    const { status, body } = await listClients("hosts");
+
+    expect(status).toBe(200);
     expect(body.items.map((item: { id: string }) => item.id)).toEqual(["h1"]);
     expect(mutation).toHaveBeenCalledTimes(1);
   });
@@ -121,5 +132,29 @@ describe("GET /projects/:projectId/clients on a project with no client", () => {
     const { status } = await listClients();
 
     expect(status).toBe(429);
+  });
+
+  it.each([
+    ["a FORBIDDEN refusal", new ConvexError({ code: "FORBIDDEN" })],
+    [
+      "an authorization refusal",
+      new ConvexError({ kind: "forbidden", message: "No access" }),
+    ],
+    ["a production-masked role refusal", new Error("Server Error")],
+    [
+      "a backend without the function",
+      new Error(
+        "[CONVEX M(projectClients:ensureProjectClient)] Could not find public function for 'projectClients:ensureProjectClient'",
+      ),
+    ],
+  ])("lists what is there after %s", async (_case, error) => {
+    query.mockResolvedValue([]);
+    mutation.mockRejectedValue(error);
+
+    const { status, body } = await listClients();
+
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });

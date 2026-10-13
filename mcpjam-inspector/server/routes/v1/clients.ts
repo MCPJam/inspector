@@ -63,7 +63,10 @@ import { markDeprecated as markDeprecatedResponse } from "./deprecation.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
-import { redactedReadRefusalError } from "./convex-read-errors.js";
+import {
+  isMissingConvexFunction,
+  redactedReadRefusalError,
+} from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   requestedModelSelectionSchema,
@@ -366,23 +369,6 @@ async function readHostDetail(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
   }
   return detail;
-}
-
-/**
- * Does this failure mean the backend has no such Convex function?
- *
- * Narrow ON PURPOSE. Treating any error from `resolveHostByNameOrId` as skew
- * would swallow an authorization refusal, an ambiguity error, and every
- * ordinary backend failure into a list-and-scan that answers a different
- * question — including, for the ambiguity case, silently picking one of two
- * clients. Only a genuinely absent function falls back.
- */
-function isMissingConvexFunction(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    /could not find (public )?function/i.test(message) ||
-    /function not found/i.test(message)
-  );
 }
 
 /**
