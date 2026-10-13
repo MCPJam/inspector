@@ -560,7 +560,6 @@ function buildLocalScopeStepUpCancellation(input: {
  * is the SSE terminal — it wraps the helper's trace-event callbacks in
  * `createUIMessageStream` writer events and drives the result through
  * `result.toUIMessageStream(...)` into the writer.
- *
  * Eval's local-BYOK suite path (PR 4b) uses the same helper with the
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
@@ -2771,8 +2770,6 @@ chatV2.post("/", async (c) => {
         : undefined;
 
       if (runtime.runtimeLocation === "local") {
-        // The inspector calls the provider on this runtime, so the effort is
-        // applied here as provider options, or refused before any spend.
         const localEffort = directChatEffort({
           providerKey: runtime.provider.providerKey,
           modelId,
@@ -2783,6 +2780,9 @@ chatV2.post("/", async (c) => {
         return handleLocalOrgChatModel({
           provider: runtime.provider,
           admission: runtime.admission,
+          modelSelection: routingSelection?.source === "org" ? routingSelection : undefined,
+          modelSelectionOrigin: selected.origin,
+          reasoningEffort,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
