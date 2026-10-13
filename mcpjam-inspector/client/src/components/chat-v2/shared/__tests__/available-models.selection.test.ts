@@ -579,6 +579,14 @@ describe("stored choices", () => {
         orgConfig,
       ),
     ).toBeUndefined();
+    // A locked twin does not make the runnable row ambiguous.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, { ...twin, disabled: true }],
+        orgConfig,
+      ),
+    ).toBe(byok);
     // A strict lookup (the organization requires its own keys) needs a
     // saved connection, which a legacy selection does not name.
     expect(

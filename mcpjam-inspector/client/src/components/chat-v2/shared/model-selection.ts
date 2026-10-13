@@ -320,10 +320,12 @@ export function storedModelChoice(
  * hosted catalog and under an org OpenRouter connection resolves to the row
  * that was actually picked. With a stored legacy selection ("own key only"):
  * the one own-key row with that id (narrowed by the provider hint when it
- * has one); none when several qualify, since the legacy fields cannot say
- * which connection ran it, and none rather than the hosted twin, which would
- * move the model onto MCPJam credits. Without one (a legacy row): the row
- * with that id, hosted rows first, exactly as the legacy read did.
+ * has one; a disabled row does not count against an enabled one); none when
+ * several qualify, since the legacy fields cannot say which connection ran
+ * it, and none rather than the hosted twin, which would move the model onto
+ * MCPJam credits. With no selection at all (a bare id saved before
+ * selections): the row with that id, hosted rows first, exactly as the
+ * legacy read did.
  *
  * Set `exactSelection` while the organization requires its own keys. A choice
  * must name a saved selection with that same source and connection; no
@@ -348,7 +350,11 @@ export function findModelForStoredChoice(
     const named = hint
       ? own.filter((model) => String(model.provider) === hint)
       : own;
-    return named.length === 1 ? named[0] : undefined;
+    // A locked twin (an org connection out of credits beside a personal key)
+    // cannot run the model, so it does not make the runnable row ambiguous.
+    const enabled = named.filter((model) => model.disabled !== true);
+    const candidates = enabled.length > 0 ? enabled : named;
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);
