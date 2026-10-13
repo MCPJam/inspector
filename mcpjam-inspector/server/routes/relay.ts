@@ -1483,7 +1483,8 @@ async function rewriteCapture(
   let credentialDropped = 0;
   let envelope: Record<string, unknown>;
   try {
-    envelope = scrubEventCredentials(payload.envelope);
+    envelope = decision.policies.some((policy) => policy.content === "strict")
+      ? { api_key: POSTHOG_PROJECT_KEY } : scrubEventCredentials(payload.envelope);
   } catch {
     return { kind: "scrub_drop" };
   }
@@ -1491,8 +1492,7 @@ async function rewriteCapture(
     const event = applyEventPolicy(
       payload.events[i],
       decision.policies[i],
-      decision.declared[i],
-    );
+      decision.declared[i], decision.actorIds[i]);
     if (event === null) {
       dropped++;
     } else if ((event as Record<string, unknown>).event === "$snapshot") {
@@ -1517,7 +1517,7 @@ async function rewriteCapture(
   }
   const serialized = await serializeCapture({ ...payload, envelope, events });
   const isGet = method === "GET" || method === "HEAD";
-  const params = new URLSearchParams(url.search);
+  const params = new URLSearchParams(decision.policies.some((policy) => policy.content === "strict") ? "" : url.search);
   if (isGet) {
     params.delete("compression");
     params.set("data", serialized);
