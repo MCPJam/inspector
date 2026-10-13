@@ -51,7 +51,14 @@ Some MCPJam URLs are credentials. Anyone holding the link has access, so a copy 
 - **Share links**: score and benchmark results (`/results/…`, `/bench/results/…`), shared conformance and eval reports, and published study tester links.
 - **Handoff links** that pass a server connection from one device to another.
 - **Sign-in and authorization callbacks**: the MCP OAuth callback, the GitHub App install callback and the sign-in callback, which carry one-time codes.
-- **Secret parameters on any URL**: `code`, `state`, `token`, `access_token`, `client_secret`, `signature`, presigned storage parameters (`X-Amz-*`, `X-Goog-*`) and similar, plus a username and password embedded in a URL.
+- **Secret parameters on any URL**: the query and fragment keys below, compared case-insensitively, plus a username and password embedded in a URL. The list is `SECRET_PARAM_KEYS` in `mcpjam-inspector/shared/credential-urls/registry.ts`, which is the source of truth.
+  - OAuth and OIDC: `code`, `state`, `access_token`, `refresh_token`, `id_token`, `client_secret`, `code_verifier`, `assertion`, `client_assertion`
+  - MCPJam session and link tokens: `token`, `_token`, `t`, `k`
+  - API keys and passwords: `api_key`, `apikey`, `key`, `password`
+  - Bearer tokens and one-time passcodes: `jwt`, `auth`, `authorization`, `otp`
+  - Signed URLs: `signature`, `sig`
+  - SSO: `ticket`, `SAMLResponse`, `SAMLRequest`, `RelayState`
+  - Any key that starts with `X-Amz-` or `X-Goog-` (presigned storage URLs), or ends in `token`, `secret`, `password`, `signature`, `apikey`, `api_key` or `credential`
 
 One registry in the source code lists every such route and parameter, and every telemetry path uses it. The secret part is replaced with `[redacted]` wherever a URL appears: an event property, a breadcrumb, an exception message, a log line or free text, raw or percent-encoded.
 
