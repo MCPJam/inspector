@@ -182,6 +182,33 @@ it.each([
   },
 );
 
+it.each([undefined, false])(
+  "retains a startup failure after actor %s resolves so it can be retried",
+  (member) => {
+    const workspace = () => <EvalGenerationWorkspace {...target} />;
+    const view = renderWithProviders(workspace());
+    const message = screen.getByRole("alert").textContent ?? "";
+    expect(message).not.toBe("");
+    expect(started).not.toHaveBeenCalled();
+    auth.member = member;
+    view.rerender(workspace());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+    const unregister = registerEvalSuite(target, {
+      read: () => ({}),
+      save: vi.fn(),
+    });
+    auth.member = true;
+    view.rerender(workspace());
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByTestId("generating-case-skeleton")).toBeNull();
+    expect(started).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
+    expect(started).toHaveBeenCalledOnce();
+    unregister();
+  },
+);
+
 it("allows a new generation when the workspace is deliberately reopened", () => {
   const unregister = registerEvalSuite(target, {
     read: () => ({}),

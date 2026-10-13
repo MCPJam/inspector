@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, within } from "@testing-library/react";
+import { within } from "@testing-library/react";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { GenerateCasesDialog } from "../generate-cases-dialog";
 import { SuiteDetailOverview } from "../suite-detail-overview";
@@ -102,6 +102,18 @@ it("waits for the actor before showing generation or a sign-in prompt", () => {
     <GenerateCasesDialog suiteId="s" onGenerate={onGenerate} onClose={vi.fn()} />,
   );
   expect(screen.getByRole("button", { name: "Generate cases" })).toBeEnabled();
+});
+
+it("allows cancellation while the actor is unresolved", async () => {
+  auth.member = undefined;
+  const onClose = vi.fn();
+  const onGenerate = vi.fn();
+  renderWithProviders(
+    <GenerateCasesDialog suiteId="s" onGenerate={onGenerate} onClose={onClose} />,
+  );
+  await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(onGenerate).not.toHaveBeenCalled();
 });
 
 it("stops offering generation when the actor becomes a guest", () => {

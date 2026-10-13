@@ -20,13 +20,24 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 export function EvalGenerationWorkspace(
-  props: Omit<Parameters<typeof MemberEvalGenerationWorkspace>[0], "started">,
+  props: Omit<
+    Parameters<typeof MemberEvalGenerationWorkspace>[0],
+    "started" | "startError" | "onStartError"
+  >,
 ) {
   const member = useIsMemberActor();
-  // Auth changes must not reset the once-per-entry generation attempt.
+  // Auth changes must not restart generation or hide startup failures.
   const started = useRef(false);
+  const [startError, setStartError] = useState<string>();
   if (member === true)
-    return <MemberEvalGenerationWorkspace {...props} started={started} />;
+    return (
+      <MemberEvalGenerationWorkspace
+        {...props}
+        started={started}
+        startError={startError}
+        onStartError={setStartError}
+      />
+    );
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-4">
       {member === undefined ? (
@@ -57,6 +68,8 @@ function MemberEvalGenerationWorkspace({
   onChangeSettings,
   onDone,
   started,
+  startError,
+  onStartError,
 }: {
   projectId: string;
   suiteId: string;
@@ -70,6 +83,8 @@ function MemberEvalGenerationWorkspace({
   /** Back to the suite, once there is nothing left to do here. */
   onDone?: () => void;
   started: RefObject<boolean>;
+  startError?: string;
+  onStartError: (error: string | undefined) => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
@@ -80,7 +95,6 @@ function MemberEvalGenerationWorkspace({
   const [visibleIds, setVisibleIds] = useState(
     () => new Set(initialIds.current),
   );
-  const [startError, setStartError] = useState<string>();
   const [expectedCount] = useState(() => {
     const selected = config ?? loadGenerateConfig(suiteId);
     // Show placeholders for the lower bound; the final count is model-selected.
@@ -90,7 +104,7 @@ function MemberEvalGenerationWorkspace({
   const start = () => {
     initialIds.current = new Set(generation?.drafts.map((draft) => draft.id));
     setVisibleIds(new Set(initialIds.current));
-    setStartError(undefined);
+    onStartError(undefined);
     try {
       startEvalGeneration(
         {
@@ -106,7 +120,7 @@ function MemberEvalGenerationWorkspace({
         environmentId,
       );
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : String(error));
+      onStartError(error instanceof Error ? error.message : String(error));
     }
   };
   useEffect(() => {
