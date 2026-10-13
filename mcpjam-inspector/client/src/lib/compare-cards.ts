@@ -89,7 +89,10 @@ export function compareSelectionForRow(
  * A hosted selection only resolves to a hosted row and an own-key selection
  * (org, local, stored legacy) only to an own-key row: a card never silently
  * changes who pays. `findModelForStoredChoice` already keeps a stored legacy
- * selection off hosted rows.
+ * selection off hosted rows, and resolves one only when exactly one own-key
+ * row matches its id (and provider hint): a legacy selection cannot say which
+ * of two such rows ran it, so the card drops out of the line-up rather than
+ * run on a connection nobody picked (`mergePickedRows` keeps the saved entry).
  */
 export function resolveCompareSelectionRow(
   selection: RequestedModelSelection,

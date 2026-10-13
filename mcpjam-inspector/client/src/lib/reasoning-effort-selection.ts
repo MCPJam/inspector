@@ -140,6 +140,10 @@ export function setEffortForRow(args: {
 }): { modelId: string; selection: ModelSelection | undefined } | null {
   const { row, effort, purpose, bareIds = "keep-id" } = args;
   const selection = nonLegacySelection(args.selection);
+  // A stored legacy selection carries no effort, so clearing one is nothing
+  // to write; minting a selection for it here would change its connection
+  // without a pick.
+  if (args.selection && !selection && !effort) return null;
   const base =
     selection ??
     (bareIds === "canonicalize"

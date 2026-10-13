@@ -186,6 +186,29 @@ describe("setEffortForRow", () => {
     ).toBe(byokGpt5);
   });
 
+  it("clears nothing on a stored legacy selection instead of minting one", () => {
+    // A row whose id is already canonical would otherwise yield a full `local`
+    // selection from a no-op clear, changing the host's connection.
+    const localGpt5 = {
+      id: "openai/gpt-5",
+      name: "GPT-5",
+      provider: "openai",
+      hosted: false,
+    } as ModelDefinition;
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    for (const bareIds of ["canonicalize", "keep-id"] as const) {
+      expect(
+        setEffortForRow({
+          purpose: "evalTarget",
+          row: localGpt5,
+          selection: legacy,
+          effort: undefined,
+          bareIds,
+        }),
+      ).toBeNull();
+    }
+  });
+
   it("edits the existing selection of a hosted row in place", () => {
     const out = setEffortForRow({
       purpose: "evalTarget",

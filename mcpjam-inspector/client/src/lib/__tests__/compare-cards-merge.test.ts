@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { comparisonKey } from "@mcpjam/sdk/browser";
-import { mergePickedRows, type CompareCard } from "@/lib/compare-cards";
+import {
+  mergePickedRows,
+  resolveCompareSelectionRow,
+  type CompareCard,
+} from "@/lib/compare-cards";
 import type { ModelDefinition } from "@/shared/types";
 
 const fallback = { provider: "none", model: "none" } as const;
@@ -34,6 +38,40 @@ const card = (model: ModelDefinition, selection: typeof gpt5Selection) =>
     selection,
     editableSelection: selection,
   }) as unknown as CompareCard;
+
+describe("resolveCompareSelectionRow", () => {
+  const orgGrok: ModelDefinition = {
+    id: "grok-3",
+    name: "Grok 3 (org)",
+    provider: "xai",
+    hosted: false,
+  } as ModelDefinition;
+  const localGrok: ModelDefinition = {
+    id: "grok-3",
+    name: "Grok 3 (local)",
+    provider: "xai",
+    hosted: false,
+  } as ModelDefinition;
+  const legacy = {
+    source: "legacy" as const,
+    modelId: "grok-3",
+    provider: "xai",
+  };
+
+  it("resolves a stored legacy card to its one own-key row", () => {
+    expect(resolveCompareSelectionRow(legacy, [gpt5, orgGrok], undefined)).toBe(
+      orgGrok,
+    );
+  });
+
+  it("drops a stored legacy card whose provider and id sit on two own-key rows", () => {
+    // The legacy fields cannot say which connection ran it; the saved entry
+    // survives in mergePickedRows, the card just does not render.
+    expect(
+      resolveCompareSelectionRow(legacy, [orgGrok, localGrok], undefined),
+    ).toBeUndefined();
+  });
+});
 
 describe("mergePickedRows", () => {
   it("keeps a saved card whose row has not loaded yet", () => {
