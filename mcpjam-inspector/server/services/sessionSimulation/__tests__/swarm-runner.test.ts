@@ -663,6 +663,60 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["an unclassified handshake failure", "xaa_handshake_failed", "Couldn't complete the handshake."],
+    [
+      "a timeout at the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request. Check the server\'s auth settings.',
+    ],
+    [
+      "a 5xx from the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 503). Check the server\'s auth settings.',
+    ],
+  ])(
+    "%s may clear on the next try, so it does not stop the host",
+    async (_name, errorReason, errorMessage) => {
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+        adapter.chatSessionId === "synth_run-1_host-1_0"
+          ? { outcome: "failed", errorMessage, errorReason }
+          : { outcome: "succeeded" },
+      );
+
+      await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 3 }));
+
+      expect(executedForHost("host-1")).toHaveLength(3);
+    },
+  );
+
+  it("does not fail a remaining session another runner already claimed", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.chatSessionId === "synth_run-1_host-1_0"
+        ? {
+            outcome: "failed",
+            errorMessage:
+              'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.',
+            errorReason: "xaa_authorization_rejected",
+          }
+        : { outcome: "succeeded" },
+    );
+    reportAttemptMock.mockImplementation(async (_u, _b, args: any) =>
+      args.sessionIdx === 1 && args.status === "running"
+        ? { ok: true, applied: false }
+        : { ok: true, applied: true },
+    );
+
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 3 }));
+
+    const failedIdx = terminals()
+      .filter((t) => t.status === "failed")
+      .map((t) => t.sessionIdx)
+      .sort();
+    // 0 failed itself; 2 was swept; 1 belongs to the runner that claimed it.
+    expect(failedIdx).toEqual([0, 2]);
+  });
+
   it("a sign-in that only needs re-running does not stop the host's other sessions", async () => {
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
       if (adapter.chatSessionId === "synth_run-1_host-1_0") {

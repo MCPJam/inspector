@@ -15,7 +15,10 @@ import type { JourneyManagerFactory } from "./swarm-runner";
 import { abortable, probeReadOnlyTools } from "./target-discovery";
 import { runSwarmSetupTurn, SwarmSetupError } from "./swarm-setup-turn";
 import type { SponsoredPlatformFailure } from "../../../shared/swarm-sponsorship";
-import { xaaConnectFailureReasonOf } from "../../../shared/xaa-connect-failure";
+import {
+  isStandingXaaFailure,
+  xaaConnectFailureReasonOf,
+} from "../../../shared/xaa-connect-failure";
 export async function prepareTargetGrounding(args: {
   runId: string;
   projectId: string;
@@ -69,11 +72,15 @@ export async function prepareTargetGrounding(args: {
       cause = error.cause;
       // A refused server sign-in is not retried: a second setup turn signs in
       // again, and an authorization server that refused (or throttled) the
-      // first request refuses the second the same way.
+      // first request refuses the second the same way. A sign-in that may
+      // clear on the next try (a timeout, say) keeps its retry.
       if (
         !args.signal.aborted &&
         !error.platformFailure &&
-        !xaaConnectFailureReasonOf(cause) &&
+        !isStandingXaaFailure(
+          xaaConnectFailureReasonOf(cause),
+          (cause as { message?: string } | undefined)?.message,
+        ) &&
         setup.writeCallsDispatched === 0
       ) {
         try {

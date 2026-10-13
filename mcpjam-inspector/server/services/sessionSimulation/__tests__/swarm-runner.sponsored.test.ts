@@ -438,6 +438,35 @@ describe("sponsored swarm conversations: the org spend cap is scoped to credit-f
 });
 
 describe("sponsored swarm conversations: a provider rate limit still stops the target", () => {
+  it("stops a target's later sponsored conversations after its server refuses the sign-in", async () => {
+    const message =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "failed",
+      errorMessage: message,
+      errorReason: "xaa_authorization_rejected",
+    });
+
+    await startJourneyRun(
+      opts({
+        sessionsPerTarget: 3,
+        sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+      }) as never,
+    );
+
+    // Only the first conversation signed in; the rest never did.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(claimed()).toHaveLength(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "failed",
+      errorCode: "xaa_authorization_rejected",
+      errorMessage: message,
+      fundingScope: "sponsored",
+      targetId: "target-a",
+    });
+  });
+
   it("stops a target's later sponsored conversations after its provider throttles one, without claiming them", async () => {
     runSyntheticHostSessionMock.mockResolvedValue({
       outcome: "rate_limited",

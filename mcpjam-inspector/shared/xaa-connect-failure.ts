@@ -70,3 +70,27 @@ export function isRerunnableXaaFailure(
 ): boolean {
   return reason === XaaConnectFailureReason.REAUTH_REQUIRED;
 }
+
+/**
+ * True for a sign-in failure that will fail the same way if tried again right
+ * away, so a run should stop signing in to that server rather than repeat it:
+ * a configuration the server cannot use, or an authorization server that
+ * answered MCPJam with a 4xx (a refusal, or 429 for asking too often). An
+ * unclassified handshake failure, a timeout or an unreachable authorization
+ * server may clear on the next try, and an expired sign-in is re-run.
+ */
+export function isStandingXaaFailure(
+  reason: string | null | undefined,
+  message?: string | null
+): boolean {
+  switch (reason) {
+    case XaaConnectFailureReason.CONFIGURATION_INVALID:
+    case XaaConnectFailureReason.NOT_SUPPORTED_HERE:
+    case XaaConnectFailureReason.AUTHORIZATION_SERVER_UNKNOWN:
+      return true;
+    case XaaConnectFailureReason.AUTHORIZATION_REJECTED:
+      return /\(HTTP 4\d\d\b/.test(message ?? "");
+    default:
+      return false;
+  }
+}

@@ -75,8 +75,7 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
-  isRerunnableXaaFailure,
-  isXaaConnectFailureReason,
+  isStandingXaaFailure,
   xaaConnectFailureReasonOf,
 } from "../../../shared/xaa-connect-failure.js";
 import {
@@ -1874,6 +1873,12 @@ async function runJourneyFanOut(
           // platform budget pays for it, so an organization cap says nothing
           // about it, and its own limit (platform capacity) is a sponsored-only
           // stop: the credit-funded conversations of the same run carry on.
+          // A sign-in to the server that will be refused again (see the target
+          // stop below). Read before the sponsored branch, which otherwise
+          // moves on to the next conversation and signs in again.
+          const standingSignInFailure =
+            terminal.status === "failed" &&
+            isStandingXaaFailure(terminal.errorCode, terminal.errorMessage);
           if (sponsored) {
             const platform = sponsoredPlatformFailure({
               code: errorReason,
@@ -1907,9 +1912,11 @@ async function runJourneyFanOut(
             // per-target short-circuit a credit-funded conversation gets, so
             // the target's later conversations stop hammering the provider.
             if (
-              platform ||
-              outcome !== "rate_limited" ||
-              classifyRateLimit(errorMessage, errorRefusal) === "org_spend_cap"
+              !standingSignInFailure &&
+              (platform ||
+                outcome !== "rate_limited" ||
+                classifyRateLimit(errorMessage, errorRefusal) ===
+                  "org_spend_cap")
             ) {
               continue;
             }
@@ -2003,13 +2010,10 @@ async function runJourneyFanOut(
           // session of this target signs in to the same authorization server
           // and would be refused the same way (or throttled for asking again),
           // so stop THIS target and close its remaining sessions with the same
-          // reason and sentence. Other targets keep running. A sign-in that
-          // only needs re-running is not a refusal and does not stop anything.
-          if (
-            terminal.status === "failed" &&
-            isXaaConnectFailureReason(terminal.errorCode) &&
-            !isRerunnableXaaFailure(terminal.errorCode)
-          ) {
+          // reason and sentence. Other targets keep running. A failure that may
+          // clear on the next try (a timeout, an unclassified handshake, an
+          // expired sign-in) stops nothing: see `isStandingXaaFailure`.
+          if (standingSignInFailure && terminal.errorCode) {
             logEvent("target.sign_in_short_circuit", {
               runId,
               hostId,
@@ -2032,6 +2036,7 @@ async function runJourneyFanOut(
               sessionsPerTarget,
               terminal.errorCode,
               terminal.errorMessage,
+              true,
             );
             if (targetHasSponsored(target)) {
               await finalizeTargetAttempts(
@@ -2712,6 +2717,13 @@ async function markRemainingTargetAttemptsFailed(
   errorCode = "host_worker_failed",
   /** Stored on every swept attempt, so none of them reads as "unknown". */
   errorMessage?: string,
+  /**
+   * Leave an attempt alone when its claim did not apply: another runner owns
+   * it and its terminal. Only for a sweep that starts PAST this runner's own
+   * attempts. The worker-failure sweep re-claims this runner's in-flight
+   * attempt, whose idempotent re-claim also reports `applied: false`.
+   */
+  onlyUnclaimed = false,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
@@ -2733,6 +2745,7 @@ async function markRemainingTargetAttemptsFailed(
         chatSessionId,
       });
       if (claim.canceled) return;
+      if (onlyUnclaimed && !claim.applied) continue;
       const terminal = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,

@@ -373,6 +373,12 @@ describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
     expect(card.oneLine).toBe(stored);
     expect(card.oneLine).not.toMatch(/rate-limited this key|switch models/i);
     expect(card.slug).toBe("swarm/attempt_failed");
+    // Nothing on the card is the provider-quota entry's.
+    expect([...card.likelyCauses, ...card.nextSteps].join(" ")).not.toMatch(
+      /provider|plan|quota|rate limit/i,
+    );
+    expect(card.nextSteps).toContain("Check the server's auth settings.");
+    expect(card.docsAnchor).not.toBe(ERROR_CATALOG["provider/quota"].docsAnchor);
   });
 
   it("offers another run for a transient refusal", () => {
