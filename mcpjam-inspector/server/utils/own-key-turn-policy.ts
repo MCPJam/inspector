@@ -100,17 +100,39 @@ function ownKeyRefusals(
   ];
 }
 
-/** Re-read the policy before every retry and tool-loop provider request. */
+/**
+ * How long a turn trusts the policy answer it last read before a provider
+ * request reads it again. A self-hosted Inspector reads the policy from the
+ * backend's bearer-only route, which allows each user 60 reads a minute.
+ * Reading before every tool-loop step spent that budget on a single
+ * multi-model turn, and the next read's 429 refused the turn as
+ * `ai_key_policy_unavailable`.
+ */
+export const OWN_KEY_POLICY_RECHECK_MS = 15_000;
+
+/**
+ * Re-read the policy before a retry or tool-loop provider request, at most
+ * once per `OWN_KEY_POLICY_RECHECK_MS`, so a policy change still reaches a
+ * running turn within seconds.
+ */
 export function withOwnKeyTurnPolicy(model: LanguageModel, turn: OwnKeyTurn) {
   if (typeof model === "string") {
     throw new Error("A local model must be an explicit provider model.");
   }
+  let allowedAt: number | undefined;
   return wrapLanguageModel({
     model,
     middleware: {
       transformParams: async ({ params }) => {
+        if (
+          allowedAt !== undefined &&
+          Date.now() - allowedAt < OWN_KEY_POLICY_RECHECK_MS
+        ) {
+          return params;
+        }
         const refusal = await ownKeyTurnRefusal(turn);
         if (refusal) throw refusal;
+        allowedAt = Date.now();
         return params;
       },
     },

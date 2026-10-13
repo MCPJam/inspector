@@ -8,6 +8,7 @@ vi.mock("../org-model-config", async (importOriginal) => ({
 }));
 
 import {
+  OWN_KEY_POLICY_RECHECK_MS,
   ownKeyTurnRefusal,
   withOwnKeyTurnPolicy,
   type OwnKeyTurn,
@@ -35,6 +36,7 @@ describe("ownKeyTurnRefusal", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("refuses a local selection while the organization requires its own keys", async () => {
@@ -129,8 +131,10 @@ describe("ownKeyTurnRefusal", () => {
           return { stream: new ReadableStream() };
         },
       });
+      vi.useFakeTimers();
       const guarded = withOwnKeyTurnPolicy(model, turn());
       await guarded[method]({ prompt: [] });
+      vi.advanceTimersByTime(OWN_KEY_POLICY_RECHECK_MS);
       await expect(guarded[method]({ prompt: [] })).rejects.toMatchObject({
         status: 403,
         details: { code: "org_keys_required" },
@@ -139,4 +143,40 @@ describe("ownKeyTurnRefusal", () => {
       expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("reads the policy once for a burst of tool-loop steps", async () => {
+    // The bearer-only route allows 60 reads a minute per user, and a 3-model
+    // turn reading before every step spent it and refused itself as
+    // `ai_key_policy_unavailable`.
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    for (let step = 0; step < 20; step += 1) {
+      await guarded.doStream({ prompt: [] });
+    }
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not trust a read that refused the turn", async () => {
+    resolveOrgModelConfig.mockRejectedValueOnce(new Error("429"));
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 503,
+      details: { code: "ai_key_policy_unavailable" },
+    });
+    await guarded.doStream({ prompt: [] });
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+  });
 });

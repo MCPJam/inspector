@@ -2875,7 +2875,7 @@ chatV2.post("/", async (c) => {
     // attempt we don't support; reject it regardless of the caller's identity.
     //
     // Ollama and custom endpoints use the local path. Their organization
-    // policy is checked below and again before every provider attempt.
+    // policy is checked below and again during the turn's provider attempts.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
