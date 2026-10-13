@@ -377,6 +377,47 @@ describe("createBrowserArtifactOutbox", () => {
     expect((mutationMock.mock.calls[0]![1] as any).videoBlobId).toBe("video-1");
   });
 
+  it("keeps the video staged when its chunk fails and attaches it on the next flush", async () => {
+    const outbox = makeOutbox();
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+
+    // The backend is down for the whole first flush: the first chunk (which
+    // carries the video) and the video-only fallback both fail.
+    mutationMock
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockRejectedValueOnce(new Error("boom"));
+    // Pending counts the held batch and the still-unattached video.
+    expect(await outbox.flush()).toMatchObject({
+      written: 0,
+      pending: 2,
+      videoAttached: false,
+    });
+
+    mutationMock
+      .mockResolvedValueOnce({ observations: 20, steps: 0, videoAttached: true })
+      .mockResolvedValueOnce({ observations: 1, steps: 0 });
+    expect(await outbox.flush()).toMatchObject({
+      written: 1,
+      pending: 0,
+      videoAttached: true,
+    });
+
+    expect(mutationMock).toHaveBeenCalledTimes(4);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    // Still staged after the failure, so the retried first chunk carries it;
+    // once acknowledged, no later chunk repeats it.
+    expect(calls[2].videoBlobId).toBe("video-1");
+    expect(calls[2].widgetRenderObservations).toHaveLength(20);
+    expect(calls[3].videoBlobId).toBeUndefined();
+    expect(calls[3].widgetRenderObservations).toHaveLength(1);
+    // The replay uploaded once; a failed write never re-stages it.
+    expect(uploadVideoBlobMock).toHaveBeenCalledTimes(1);
+  });
+
   it("attaches a video on its own when every batch already landed", async () => {
     const outbox = makeOutbox();
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);

@@ -56,6 +56,10 @@ import {
 } from "./browser-artifact-serialization.js";
 
 // Per-call caps of `recordBrowserArtifacts`; a call over either is refused.
+// Copied by hand from the backend (`convex/chatSessions.ts`,
+// `MAX_BROWSER_ARTIFACT_OBSERVATIONS_PER_CALL` / `..._STEPS_PER_CALL`): the
+// two repos share no package, so a backend cap change must be mirrored here
+// or over-cap chunks are refused on every retry again.
 const MAX_OBSERVATIONS_PER_WRITE = 20;
 const MAX_STEPS_PER_WRITE = 120;
 
