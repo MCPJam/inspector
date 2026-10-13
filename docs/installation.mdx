@@ -102,7 +102,7 @@ A native (`npx`) install binds to localhost. You can reach a remote installation
 For direct LAN access, the Docker image binds `0.0.0.0` inside the container. Set `MCPJAM_ALLOWED_HOSTS` to the address you use and publish the port on the host address that clients will connect to:
 
 ```bash
-docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector
 ```
 
 A bare `-p 6274:6274` publishes the port on every host interface, IPv4 and IPv6. Anything that can route to a published address can reach the inspector, so publish it only on a network you trust and only for as long as you need it. On Linux, Docker writes its own firewall rules for published ports, so ufw and firewalld rules do not block them.
