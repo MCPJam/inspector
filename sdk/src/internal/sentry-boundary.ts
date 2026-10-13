@@ -1,6 +1,7 @@
 import type { NodeOptions } from "@sentry/node";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { packagedTelemetryCatalog } from "./packaged-telemetry.js";
 import catalog from "./telemetry-catalog.generated.json" with { type: "json" };
 import {
   rebuildSentryBreadcrumb,
@@ -23,7 +24,15 @@ export function sdkDiagnosticBoundary(release: string) {
     [fileURLToPath(import.meta.url), "dist/index.js"],
     [resolve(directory, "../sentry.ts"), "src/sentry.ts"],
   ]);
-  const options = { ...catalog, frameAliases, release };
+  const packaged = packagedTelemetryCatalog(import.meta.url);
+  const sourceFrames: Record<string, readonly string[]> = { ...catalog.frames };
+  delete sourceFrames["dist/index.js"];
+  const options = {
+    ...catalog,
+    frames: { ...sourceFrames, ...packaged.frames },
+    frameAliases,
+    release,
+  };
   const hooks: Pick<
     NodeOptions,
     | "beforeSend"

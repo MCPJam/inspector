@@ -85,3 +85,30 @@ it.each(["1", "true"])(
     expect(boundary.hooks.beforeSend?.({}, { attachments: [] })).toBeNull();
   }
 );
+
+it("does not fall back to source names when the executing bundle has no valid sidecar", () => {
+  const boundary = sdkDiagnosticBoundary("@mcpjam/sdk@1.2.3");
+  const event = {
+    exception: {
+      values: [
+        {
+          type: "Error",
+          stacktrace: {
+            frames: [
+              { filename: "dist/index.js", function: "getApiKeyHash" },
+              {
+                filename: fileURLToPath(
+                  new URL("../src/internal/sentry-boundary.ts", import.meta.url)
+                ),
+                function: "getApiKeyHash",
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const result = boundary.hooks.beforeSend?.(event, {});
+  expect(result).toMatchObject({ extra: { dropped_frames: 2 } });
+  expect(JSON.stringify(result)).not.toContain("getApiKeyHash");
+});
