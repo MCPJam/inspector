@@ -126,6 +126,9 @@ describe("strict telemetry reconstruction", () => {
       breadcrumbs: [{ category: "http", type: "http" }],
     });
     expect(rebuildSentryEvent(dirty)).not.toHaveProperty("user");
+    expect(rebuildSentryEvent(output, catalog).extra).toEqual({
+      dropped_frames: 2,
+    });
   });
   it("rebuilds transactions and child spans separately", () => {
     const span = {

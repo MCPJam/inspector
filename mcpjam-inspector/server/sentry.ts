@@ -1,8 +1,12 @@
 import * as Sentry from "@sentry/node";
+import { buildServerSentryConfig } from "../shared/sentry-config.js";
 import {
-  buildServerSentryConfig,
-} from "../shared/sentry-config.js";
-import { rebuildSentryEvent, rebuildSentryTransaction, rebuildSentrySpan, rebuildSentryBreadcrumb, restrictSentryEnvelope } from "../shared/strict-sentry.js";
+  rebuildSentryEvent,
+  rebuildSentryTransaction,
+  rebuildSentrySpan,
+  rebuildSentryBreadcrumb,
+  restrictSentryEnvelope,
+} from "../shared/strict-sentry.js";
 import { strictServerSentryOptions } from "./utils/strict-sentry-options.js";
 import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
 
@@ -49,15 +53,20 @@ export function initServerSentry(): void {
     sampleRate: resolveErrorSampleRate(),
     beforeSend: (event, hint = {}) => {
       hint.attachments = [];
-      return process.env.DO_NOT_TRACK === "1" || process.env.DO_NOT_TRACK === "true"
-        ? null : rebuildSentryEvent(event, strictServerSentryOptions());
+      return process.env.DO_NOT_TRACK === "1" ||
+        process.env.DO_NOT_TRACK === "true"
+        ? null
+        : rebuildSentryEvent(event, strictServerSentryOptions());
     },
     beforeSendTransaction: (event, hint = {}) => {
       hint.attachments = [];
-      return process.env.DO_NOT_TRACK === "1" || process.env.DO_NOT_TRACK === "true"
-        ? null : rebuildSentryTransaction(event, strictServerSentryOptions());
+      return process.env.DO_NOT_TRACK === "1" ||
+        process.env.DO_NOT_TRACK === "true"
+        ? null
+        : rebuildSentryTransaction(event, strictServerSentryOptions());
     },
-    beforeSendSpan: (span) => rebuildSentrySpan(span, strictServerSentryOptions()),
+    beforeSendSpan: (span) =>
+      rebuildSentrySpan(span, strictServerSentryOptions()),
     beforeBreadcrumb: rebuildSentryBreadcrumb,
     integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that
@@ -84,7 +93,11 @@ export function initServerSentry(): void {
     ],
   });
 
-  client?.on("beforeEnvelope", (envelope) => restrictSentryEnvelope(envelope, strictServerSentryOptions()));
+  client?.on("beforeEnvelope", (envelope) => {
+    if (["1", "true"].includes(process.env.DO_NOT_TRACK ?? ""))
+      envelope[1].splice(0);
+    else restrictSentryEnvelope(envelope, strictServerSentryOptions());
+  });
 
   if (!enabled) {
     process.stderr.write(
