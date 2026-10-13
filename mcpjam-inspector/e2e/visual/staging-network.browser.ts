@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./staging-test";
 import { fulfillWithoutForwardingCredentials } from "./staging-network";
 
 test("Cloudflare credentials do not follow a staging redirect", async ({

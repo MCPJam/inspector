@@ -357,7 +357,7 @@ const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
   [XaaConnectFailureReason.NOT_SUPPORTED_HERE]:
     "This server's enterprise authorization mode can't run on this deployment — use pre-registered credentials in the server's auth settings.",
   [XaaConnectFailureReason.AUTHORIZATION_REJECTED]:
-    "The authorization server rejected MCPJam's access request — check the server's XAA client credentials and issuer in its auth settings.",
+    "The authorization server rejected MCPJam's access request. Check the server's auth settings.",
   [XaaConnectFailureReason.CONFIGURATION_INVALID]:
     "This server isn't fully configured for enterprise-managed authorization — finish its XAA settings, or set an explicit auth method.",
   [XaaConnectFailureReason.HANDSHAKE_FAILED]:

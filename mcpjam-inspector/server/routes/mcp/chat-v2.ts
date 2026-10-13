@@ -59,8 +59,8 @@ import type { ModelProvider } from "@/shared/types";
 import {
   decideTurnRail,
   harnessTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  resolveChatSelection,
+  forwardableSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
@@ -126,7 +126,6 @@ import {
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import {
   directChatEffort,
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
@@ -1204,7 +1203,6 @@ chatV2.post("/", async (c) => {
       resolvedModelOverride = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1251,19 +1249,21 @@ chatV2.post("/", async (c) => {
     // takes the host's alone: a share-link visitor owns the body. A stored
     // legacy selection is "own key only"; NO selection keeps today's
     // hosted-list routing, byte for byte.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(
-              (body as { modelSelection?: unknown }).modelSelection,
-            ),
-            unroutedModelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        unroutedModelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: (body as { modelSelection?: unknown }).modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      model: unroutedModelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: true,
+    });
+    if (!selected.ok) {
+      return c.json({ error: selected.error, code: "invalid_model_selection" }, 400);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? bodyTemperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     // A non-hosted selection stamps `hosted: false`, so every downstream check
     // (harness eligibility, skills, the dispatch) agrees with the rail.
     const modelDefinition = withSelectionRouting(
@@ -1290,17 +1290,15 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn takes the host's alone.
+    // A picked selection owns its settings, including a cleared effort.
+    // Only a scenario forces host settings; other turns allow a body override.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
     // What the session records for this turn: the selection it ran, effort
@@ -1309,7 +1307,9 @@ chatV2.post("/", async (c) => {
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort,
+      ...(routingSelection && reasoningEffort === undefined ? { temperature } : {}),
     });
+    if (routingSelection) routingSelection = sessionModelSelection;
     // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
     // host default (or the slider value a client sends with a host's saved
     // effort) yields to the effort; an explicit pair is refused on the direct
@@ -2526,8 +2526,10 @@ chatV2.post("/", async (c) => {
           taskCreatedBridge?.attachStreamWriter(writer);
           emitBrowserReadiness(writer);
         },
-        // The org selection the harness's lease is minted for.
-        ...(rail.orgSelection ? { modelSelection: rail.orgSelection } : {}),
+        // Preserve the resolved selection for hosted steps and harness leases.
+        ...(forwardableSelection(routingSelection)
+          ? { modelSelection: forwardableSelection(routingSelection) }
+          : {}),
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
@@ -2827,6 +2829,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(routingSelection?.source === "org"
+          ? { modelSelection: { ...routingSelection, source: "org" as const } }
+          : {}),
         ...(typeof modelDefinition.nativeModelId === "string"
           ? { nativeModelId: modelDefinition.nativeModelId }
           : {}),
