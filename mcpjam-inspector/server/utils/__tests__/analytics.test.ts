@@ -38,7 +38,7 @@ function fakeContext(overrides: {
   return {
     var: { requestLogContext: overrides.requestLogContext },
     get: (key: string) =>
-      key === "guestId" ? overrides.guestId ?? undefined : undefined,
+      key === "guestId" ? (overrides.guestId ?? undefined) : undefined,
   } as unknown as Context;
 }
 
@@ -57,7 +57,7 @@ describe("captureServerEvent", () => {
     captureServerEvent(
       fakeContext({
         requestLogContext: {
-          userExternalId: "user_workos_1",
+          userExternalId: "user_01H00000000000000000000000",
           userId: "convex_internal_id",
         },
       }),
@@ -67,7 +67,7 @@ describe("captureServerEvent", () => {
 
     expect(captureMock).toHaveBeenCalledTimes(1);
     const call = captureMock.mock.calls[0][0];
-    expect(call.distinctId).toBe("user_workos_1");
+    expect(call.distinctId).toBe("user_01H00000000000000000000000");
     expect(call.event).toBe("send_message_server");
     expect(call.properties.origin).toBe("playground");
     expect(call.properties.$insert_id).toEqual(expect.any(String));
@@ -80,16 +80,24 @@ describe("captureServerEvent", () => {
 
   it("falls back to guestExternalId then the guestId context var", () => {
     captureServerEvent(
-      fakeContext({ requestLogContext: { guestExternalId: "guest_ctx" } }),
+      fakeContext({
+        requestLogContext: {
+          guestExternalId: "a1234567-1234-4234-8234-123456789abc",
+        },
+      }),
       "execute_tool_server",
     );
     captureServerEvent(
-      fakeContext({ guestId: "guest_var" }),
+      fakeContext({ guestId: "b1234567-1234-4234-8234-123456789abc" }),
       "execute_tool_server",
     );
 
-    expect(captureMock.mock.calls[0][0].distinctId).toBe("guest_ctx");
-    expect(captureMock.mock.calls[1][0].distinctId).toBe("guest_var");
+    expect(captureMock.mock.calls[0][0].distinctId).toBe(
+      "a1234567-1234-4234-8234-123456789abc",
+    );
+    expect(captureMock.mock.calls[1][0].distinctId).toBe(
+      "b1234567-1234-4234-8234-123456789abc",
+    );
   });
 
   it("drops events with no resolvable actor instead of capturing anonymously", () => {
@@ -102,15 +110,26 @@ describe("captureServerEvent", () => {
     async (setting) => {
       process.env[setting] = "true";
       flagMock.mockResolvedValueOnce(true);
-      expect(await evaluateBrowserRollout("local-browser-enabled", "u1")).toBe(
-        true,
+      expect(
+        await evaluateBrowserRollout(
+          "local-browser-enabled",
+          "user_01H00000000000000000000000",
+        ),
+      ).toBe(true);
+      expect(flagMock).toHaveBeenLastCalledWith(
+        "local-browser-enabled",
+        "user_01H00000000000000000000000",
+        {
+          sendFeatureFlagEvents: false,
+          personProperties: { local_browser_security_version: "1" },
+        },
       );
-      expect(flagMock).toHaveBeenLastCalledWith("local-browser-enabled", "u1", {
-        sendFeatureFlagEvents: false,
-        personProperties: { local_browser_security_version: "1" },
-      });
       captureServerEvent(
-        fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+        fakeContext({
+          requestLogContext: {
+            userExternalId: "user_01H00000000000000000000000",
+          },
+        }),
         "send_message_server",
       );
       expect(captureMock).not.toHaveBeenCalled();
@@ -120,7 +139,11 @@ describe("captureServerEvent", () => {
   it("honors DO_NOT_TRACK", () => {
     process.env.DO_NOT_TRACK = "1";
     captureServerEvent(
-      fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+      fakeContext({
+        requestLogContext: {
+          userExternalId: "user_01H00000000000000000000000",
+        },
+      }),
       "send_message_server",
     );
     expect(captureMock).not.toHaveBeenCalled();
@@ -129,17 +152,21 @@ describe("captureServerEvent", () => {
   it("honors VITE_DISABLE_POSTHOG_LOCAL", () => {
     process.env.VITE_DISABLE_POSTHOG_LOCAL = "true";
     captureServerEvent(
-      fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+      fakeContext({
+        requestLogContext: {
+          userExternalId: "user_01H00000000000000000000000",
+        },
+      }),
       "send_message_server",
     );
     expect(captureMock).not.toHaveBeenCalled();
   });
 
-  it("attaches org/project attribution when present", () => {
+  it("drops arbitrary org/project attribution", () => {
     captureServerEvent(
       fakeContext({
         requestLogContext: {
-          userExternalId: "u1",
+          userExternalId: "user_01H00000000000000000000000",
           orgId: "org_1",
           projectId: "proj_1",
         },
@@ -147,12 +174,14 @@ describe("captureServerEvent", () => {
       "eval_suite_run_started_server",
     );
     const props = captureMock.mock.calls[0][0].properties;
-    expect(props.organization_id).toBe("org_1");
-    expect(props.project_id).toBe("proj_1");
+    expect(props.organization_id).toBeUndefined();
+    expect(props.project_id).toBeUndefined();
   });
 
   it("generates a fresh $insert_id per event", () => {
-    const ctx = fakeContext({ requestLogContext: { userExternalId: "u1" } });
+    const ctx = fakeContext({
+      requestLogContext: { userExternalId: "user_01H00000000000000000000000" },
+    });
     captureServerEvent(ctx, "send_message_server");
     captureServerEvent(ctx, "send_message_server");
     expect(captureMock.mock.calls[0][0].properties.$insert_id).not.toBe(
