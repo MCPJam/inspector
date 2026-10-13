@@ -85,3 +85,58 @@ it("forwards approved counters with authoritative identity, rebuilding batch and
     ],
   });
 });
+
+it.each([undefined, "strict", "invalid"])(
+  "rebuilds old queued full events when live policy is %s",
+  async (live) => {
+    setTelemetryPolicyQueryForTests(async () => ({
+      recording: "full",
+      identity: "full",
+      content: "full",
+    }));
+    const upstream = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", upstream);
+    const app = new Hono();
+    app.route("/tlm", relayRoutes);
+    const stamp = encodeCaptureContext({
+      projectIds: [],
+      organizationIds: ["org_test"],
+      policy: { recording: "full", identity: "full", content: "full" },
+    });
+    const properties = {
+      token,
+      prompt: "SENTINEL",
+      location: "chat_tab",
+      multi_model_count: 2,
+      [TELEMETRY_CONTEXT_PROPERTY]: stamp,
+    };
+    const response = await app.request("http://localhost/tlm/e/", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test",
+        ...(live ? { "x-mcpjam-telemetry-policy": live } : {}),
+      },
+      body: JSON.stringify({
+        api_key: token,
+        batch: [
+          { event: "send_message", properties },
+          { event: "$snapshot", properties },
+        ],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+    const [, options] = upstream.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const text = gunzipSync(Buffer.from(options.body as Uint8Array)).toString();
+    expect(text).not.toContain("SENTINEL");
+    expect(
+      JSON.parse(text).batch.map((event: { event: string }) => event.event),
+    ).toEqual(["send_message"]);
+    expect(new Headers(options.headers).has("x-mcpjam-telemetry-policy")).toBe(
+      false,
+    );
+  },
+);

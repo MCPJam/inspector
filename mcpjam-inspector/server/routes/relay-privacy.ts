@@ -361,3 +361,18 @@ export function applyEventPolicy(
   }
   return out;
 }
+
+/** A live request can only tighten its original capture/backend decisions. */
+export function restrictPoliciesAtSend(
+  decision: PolicyDecision,
+  live: string | undefined,
+): PolicyDecision {
+  return live === "full"
+    ? decision
+    : {
+        ...decision,
+        policies: decision.policies.map((policy) =>
+          mostRestrictivePolicy(policy, CONSERVATIVE_TELEMETRY_POLICY),
+        ),
+      };
+}

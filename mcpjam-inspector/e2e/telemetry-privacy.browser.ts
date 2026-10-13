@@ -338,6 +338,7 @@ test.describe("telemetry privacy in the browser", () => {
       expect(request.headers.authorization).toBe(
         `Bearer ${HARNESS_RELAY_TOKEN}`,
       );
+      expect(request.headers["x-mcpjam-telemetry-policy"]).toBe("strict");
     }
     const error = JSON.parse(
       sentryItems(captured, "event")[0].payload.toString("utf8"),

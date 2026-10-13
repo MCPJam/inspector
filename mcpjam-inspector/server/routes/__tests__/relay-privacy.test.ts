@@ -361,6 +361,7 @@ async function post(
     method: "POST",
     body: body as BodyInit,
     headers: {
+      "x-mcpjam-telemetry-policy": "full",
       "content-length": String(Buffer.byteLength(body as string)),
       "cf-connecting-ip": "198.51.100.7",
       "x-forwarded-for": "198.51.100.7",

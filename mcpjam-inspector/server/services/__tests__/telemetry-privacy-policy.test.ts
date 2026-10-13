@@ -79,12 +79,12 @@ describe("resolveTelemetryPolicy", () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  it("keeps a resolved answer briefly, per bearer and context", async () => {
+  it("keeps only restrictive answers briefly, per bearer and context", async () => {
     vi.useFakeTimers();
     const query = vi.fn(async () => ({
-      recording: "full",
-      identity: "full",
-      content: "full",
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
     }));
     setTelemetryPolicyQueryForTests(query);
     await resolveTelemetryPolicy("t", CONTEXT);
@@ -189,5 +189,25 @@ describe("resolveTelemetryPolicy", () => {
       if (saved.http !== undefined) process.env.CONVEX_HTTP_URL = saved.http;
       if (saved.vite !== undefined) process.env.VITE_CONVEX_URL = saved.vite;
     }
+  });
+  it("does not reuse a previously permissive answer after policy tightens", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({
+        recording: "full",
+        identity: "full",
+        content: "full",
+      })
+      .mockResolvedValue({
+        recording: "off",
+        identity: "id_only",
+        content: "strict",
+      });
+    setTelemetryPolicyQueryForTests(query);
+    await resolveTelemetryPolicy("actor", CONTEXT);
+    expect(
+      (await resolveTelemetryPolicy("actor", CONTEXT)).policy.content,
+    ).toBe("strict");
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });
