@@ -205,6 +205,11 @@ describe("FeatureSignUpNudgeDialog", () => {
       "/p/abcdef0123456789/user-testing/",
       "/p/abcdef0123456789/user-testing/new",
     ],
+    [
+      "swarms",
+      "/p/abcdef0123456789/swarms?x=1#h",
+      "/p/abcdef0123456789/swarms/new?x=1#h",
+    ],
   ] as const)("%s from %s", (feature, start, destination) => {
     it.each(["Create free account", "Sign in"])(
       "%s keeps the project scope on the creation flow",
