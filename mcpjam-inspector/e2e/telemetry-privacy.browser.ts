@@ -5,7 +5,7 @@ import {
   findSyntheticPii,
   SYNTHETIC_PII,
 } from "../shared/__tests__/fixtures/telemetry-pii";
-import { CREDENTIAL_PATH_PREFIXES, scrubSensitiveUrl } from "../shared/credential-url";
+import { CREDENTIAL_PATH_PREFIXES } from "../shared/credential-url";
 import { TELEMETRY_CONTEXT_PROPERTY } from "../shared/telemetry-privacy";
 import {
   HARNESS_ACTOR_ID,
@@ -422,7 +422,7 @@ test.describe("telemetry privacy in the browser", () => {
       posthogEvents(r.json),
     )) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
-        r: "masked",
+        r: "off",
         c: "strict",
         i: "id_only",
       });
@@ -470,6 +470,8 @@ test.describe("telemetry privacy in the browser", () => {
     expect(snapshotEvents(after)).toEqual([]);
     expect(sentryItems(after, "replay_recording")).toEqual([]);
     expect(sentryItems(after, "replay_event")).toEqual([]);
+    expect(findSyntheticPii(allPayloadText(after))).toEqual([]);
+    expect(allPayloadText(after)).not.toContain(HARNESS_UNMASKED_MARKER);
   });
 
   test("a share-link page records no replay, even with a full answer for the viewer", async ({
@@ -495,6 +497,7 @@ test.describe("telemetry privacy in the browser", () => {
     expect(sentryItems(captured, "replay_event")).toEqual([]);
     // Share contexts restrict both identity and content.
     const text = allPayloadText(captured);
+    expect(findSyntheticPii(text)).toEqual([]);
     for (const needle of [
       SYNTHETIC_PII.domText,
       SYNTHETIC_PII.serverName,
@@ -511,6 +514,7 @@ test.describe("telemetry privacy in the browser", () => {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         v: 2,
         r: "off",
+        i: "id_only",
         c: "strict",
       });
     }
@@ -542,7 +546,7 @@ test.describe("telemetry privacy in the browser", () => {
       .flatMap((r) => posthogEvents(r.json))
       .find((e) => e.event === "edit_message");
     expect(navigated?.properties.location).toBe("chat_tab");
-    expect(navigated?.properties.$current_url).toContain(scrubSensitiveUrl(path));
+    expect(navigated?.properties.$current_url).toBeUndefined();
     expect(allPayloadText(captured)).not.toContain(HARNESS_RESULT_TOKEN);
     // Recording stopped on the credential page: nothing new after it.
     await page.waitForTimeout(3_000);
