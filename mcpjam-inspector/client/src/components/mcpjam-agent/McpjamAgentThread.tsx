@@ -50,6 +50,7 @@ import {
 import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
+import { isGuestInputTooLargeMessage } from "@/lib/mcpjam-limit";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
@@ -518,7 +519,7 @@ export function McpjamAgentThread({
               {describeFlow?.phase !== "reviewing" && composer}
             </div>
             {session.error && (
-              <p
+              <div
                 className={cn(
                   "text-xs text-destructive",
                   isFull && "mx-auto w-full max-w-4xl px-4",
@@ -537,7 +538,26 @@ export function McpjamAgentThread({
                   describeMCPJamLimitMessage(session.error.message) ??
                   session.error.message ??
                   "Something went wrong."}
-              </p>
+                {isGuestInputTooLargeMessage(session.error.message) &&
+                  session.messages.some(
+                    (message) => message.role === "user",
+                  ) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 block text-foreground"
+                      onClick={() => {
+                        const text = session.editRejectedMessage();
+                        if (text === null) return;
+                        setDraft(text);
+                        textareaRef.current?.focus();
+                      }}
+                    >
+                      Edit message
+                    </Button>
+                  )}
+              </div>
             )}
             {!session.error && session.autoResumeNotice && (
               <p

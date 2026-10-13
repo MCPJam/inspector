@@ -10,7 +10,8 @@
  * sendAutomaticallyWhen are therefore asserted on the captured Chat init,
  * not on `useChat` options (the hook attaches via `useChat({ chat })`).
  */
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import type { UIMessage } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   stop: vi.fn(),
   setMessages: vi.fn(),
+  clearError: vi.fn(),
   sendAutomaticallyWhenSentinel: vi.fn(),
   approvalsCompleteSentinel: vi.fn(),
 }));
@@ -31,6 +33,7 @@ vi.mock("@ai-sdk/react", () => ({
     id: string;
     messages: unknown[] = [];
     status = "ready";
+    error: Error | undefined;
     addToolOutput = mockState.addToolOutput;
     constructor(init: { id: string }) {
       mockState.lastChatInit = init;
@@ -47,6 +50,7 @@ vi.mock("@ai-sdk/react", () => ({
       error: undefined,
       stop: mockState.stop,
       setMessages: mockState.setMessages,
+      clearError: mockState.clearError,
     };
   }),
 }));
@@ -154,6 +158,45 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     render();
     await waitFor(() => expect(mockState.lastUseChatOptions).not.toBeNull());
     expect(mockState.lastUseChatOptions.chat).toBe(mockState.lastChatInstance);
+  });
+
+  it("removes rejected input before sending a shorter replacement", async () => {
+    const { result } = render();
+    const completed = { id: "completed", role: "assistant", parts: [] };
+    mockState.lastChatInstance.messages = [completed, {
+      id: "rejected", role: "user", parts: [{ type: "text", text: "too long" }],
+    }];
+    mockState.lastChatInstance.error = new Error(
+      JSON.stringify({ code: "guest_input_too_large" }),
+    );
+    mockState.setMessages.mockImplementationOnce((messages: UIMessage[]) => {
+      mockState.lastChatInstance.messages = messages;
+    });
+    await act(() => result.current.submit("shorter"));
+    expect(mockState.setMessages).toHaveBeenCalledWith([completed]);
+    expect(mockState.clearError).toHaveBeenCalledOnce();
+    expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      parts: expect.arrayContaining([{ type: "text", text: "shorter" }]),
+    }));
+    expect(mockState.setMessages.mock.invocationCallOrder[0]).toBeLessThan(
+      mockState.sendMessage.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("returns a rejected message for editing without sending it", async () => {
+    const { result } = render();
+    mockState.lastChatInstance.messages = [{
+      id: "rejected", role: "user", parts: [{ type: "text", text: "original" }],
+    }];
+    mockState.lastChatInstance.error = new Error(
+      JSON.stringify({ code: "guest_input_too_large" }),
+    );
+    let draft: string | null = null;
+    act(() => { draft = result.current.editRejectedMessage(); });
+    expect(draft).toBe("original");
+    expect(mockState.setMessages).toHaveBeenCalledWith([]);
+    expect(mockState.clearError).toHaveBeenCalledOnce();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
   it("ships the registry snapshot in the transport body", async () => {

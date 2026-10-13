@@ -13,6 +13,7 @@
  * agent through it instead.
  */
 import { pinEvalTurn, readEvalScope } from "@/lib/mcpjam-agent/eval-scope";
+import { rejectedInputTurn } from "@/lib/mcpjam-agent/rejected-input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
@@ -186,6 +187,7 @@ export interface UseMcpjamAgentSessionResult {
    * promise; it is exposed so tests can await the full sequence.
    */
   submit: (text: string) => Promise<void>;
+  editRejectedMessage: () => string | null;
   /** Stop in-flight generation. */
   stop: ReturnType<typeof useChat>["stop"];
   /** Resolved active model — exposed for headers / debugging. */
@@ -351,9 +353,15 @@ export function useMcpjamAgentSession(
   // Transport, `onToolCall` (WebMCP UI tool fulfillment), and
   // `sendAutomaticallyWhen` are wired at instance creation in
   // `agent-chat-instances.ts` — they read the mutable `config` synced above.
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
-    chat,
-  });
+  const {
+    messages,
+    sendMessage,
+    status,
+    error,
+    stop,
+    setMessages,
+    clearError,
+  } = useChat({ chat });
 
   // Lifecycle telemetry — track each user message round-trip so we can read
   // engagement (message_sent), latency (response_finished.duration_ms), tool
@@ -509,10 +517,21 @@ export function useMcpjamAgentSession(
     status,
   ]);
 
+  const editRejectedMessage = useCallback(() => {
+    const rejected = rejectedInputTurn(chat.messages, chat.error?.message);
+    if (!rejected) return null;
+    setMessages(rejected.messages);
+    clearError();
+    return rejected.text;
+  }, [chat, setMessages, clearError]);
+
   const submit = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // A refused turn must not ride on the next request, even when the user
+      // types a replacement instead of using Edit message.
+      editRejectedMessage();
       // Typing instead of answering IS an answer to the clarifying question:
       // the user moved on. The message is NOT fed in as the answer — it's the
       // next thing they wanted to say, and the model should read it as such
@@ -542,7 +561,7 @@ export function useMcpjamAgentSession(
       // Turn timing/attribution lives on the shared Chat entry so a hand-off
       // to another surface mid-turn still reports the right duration and
       // emits the completion exactly once.
-      const priorMessages = messagesForDeferRef.current;
+      const priorMessages = chat.messages;
       const boundaryMessageId =
         priorMessages.length > 0
           ? priorMessages[priorMessages.length - 1]?.id ?? null
@@ -572,7 +591,15 @@ export function useMcpjamAgentSession(
         metadata: withMessageTimestampMetadata(undefined, Date.now()),
       });
     },
-    [chat, chatSessionId, config, providedSessionId, sendMessage, surface],
+    [
+      chat,
+      chatSessionId,
+      config,
+      providedSessionId,
+      sendMessage,
+      surface,
+      editRejectedMessage,
+    ],
   );
 
   // Stopping generation abandons the turn a parked question belongs to, so
@@ -596,6 +623,7 @@ export function useMcpjamAgentSession(
     error,
     autoResumeNotice,
     submit,
+    editRejectedMessage,
     stop: stopWithPendingQuestions,
     model: resolvedModel,
     hydrating,
