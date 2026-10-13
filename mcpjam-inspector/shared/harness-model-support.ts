@@ -167,7 +167,7 @@ export type HarnessKeyPolicy = { requireOrgKeys?: boolean };
 /** The refusal copy for an org connection the harness cannot run on. */
 export function harnessOrgProviderUnsupportedReason(
   harnessId: string,
-  policy: HarnessKeyPolicy = {},
+  policy: HarnessKeyPolicy | null = {},
 ): string {
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
@@ -175,6 +175,9 @@ export function harnessOrgProviderUnsupportedReason(
     return `the ${name} harness does not run on an organization's provider key`;
   }
   const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  if (policy === null) {
+    return `the ${name} harness requires a supported model and an eligible ${vendor} connection`;
+  }
   return policy.requireOrgKeys
     ? `the ${name} harness runs only on your organization's ${vendor} key`
     : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;

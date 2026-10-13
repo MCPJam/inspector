@@ -41,12 +41,12 @@ import {
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
+import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import {
   decideTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  resolveChatSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import {
@@ -95,7 +95,6 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import {
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
@@ -1135,39 +1134,46 @@ chatV2.post("/", async (c) => {
     // hosted-list routing, byte for byte. A non-hosted selection stamps
     // `hosted: false` so the harness gate, skill gating and the dispatch in
     // `streamWebChatTurn` all agree with the rail.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(rawBody.modelSelection),
-            modelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        modelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: rawBody.modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      model: modelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: false,
+    });
+    if (!selected.ok) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? body.temperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     modelDefinition = withSelectionRouting(modelDefinition, routingSelection);
     const turnRail = decideTurnRail({
       selection: routingSelection,
       model: modelDefinition,
     });
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn (share link) takes the host's alone.
+    // A picked selection owns its settings, including a cleared effort.
+    // Only a scenario forces host settings; other turns allow a body override.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) {
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
     }
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
+    if (routingSelection) {
+      routingSelection = ranTurnSelection({
+        selection: routingSelection, model: modelDefinition, reasoningEffort,
+        ...(reasoningEffort === undefined ? { temperature } : {}),
+      });
+    }
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =

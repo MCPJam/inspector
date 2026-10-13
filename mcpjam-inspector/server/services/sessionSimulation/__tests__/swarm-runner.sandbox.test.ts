@@ -1150,7 +1150,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(runAssistantTurnMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({
       status: "failed",
-      errorMessage: expect.stringMatching(/MCPJam-provided/i),
+      errorMessage: expect.stringMatching(/supported model and an eligible Anthropic connection/i),
     });
   });
 
@@ -1169,7 +1169,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     const terminals = terminalReports();
     expect(terminals[0]!.status).toBe("failed");
-    expect(String(terminals[0]!.errorMessage)).toMatch(/MCPJam-provided/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(/supported model and an eligible Anthropic connection/i);
   });
 
   it("refuses an enterprise-managed (XAA) target", async () => {

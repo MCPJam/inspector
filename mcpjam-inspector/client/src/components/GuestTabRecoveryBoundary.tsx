@@ -7,7 +7,7 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { useEffect, useLayoutEffect, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { useStore } from "zustand";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useActorKey } from "@/hooks/use-actor-key";
 import {
   guestTabRecovery,
@@ -27,7 +27,7 @@ export function GuestTabRecoveryBoundary({
   children: ReactNode;
   ready?: boolean;
 }) {
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn } = useInspectorAuth();
   const actor = useActorKey();
   const { isAuthenticated, isLoading: convexLoading } = useConvexAuth();
   const confirmed = useSessionRefreshStore((s) => s.authConfirmed);
@@ -99,7 +99,7 @@ export function GuestTabRecoveryBoundary({
 
 /** Listen even while Convex's boundary is waiting for authentication. */
 export function GuestTabTransitionListener() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading } = useInspectorAuth();
   const actor = useActorKey();
   useLayoutEffect(() => {
     if (isLoading || (!user && !actor)) return;
