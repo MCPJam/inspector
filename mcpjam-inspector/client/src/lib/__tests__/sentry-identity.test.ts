@@ -11,7 +11,11 @@ import {
   setTelemetryIdentity,
 } from "../telemetry-context";
 
+import { setSessionPrivacy } from "../session-privacy";
+
+beforeEach(() => setSessionPrivacy("full"));
 afterEach(() => {
+  setSessionPrivacy("pending");
   delete window.electronAPI;
   setTelemetryActor(null);
 });

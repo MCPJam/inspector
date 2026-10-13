@@ -6,11 +6,11 @@ import {
   scrubTelemetryValue,
 } from "../../../shared/credential-urls";
 import { scrubRrwebCredentials } from "./rrweb-credential-scrub";
+import { getLastFailedRequest } from "./failed-request-tracker";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
-import { getLastFailedRequest } from "./failed-request-tracker";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
 import {
@@ -43,8 +43,8 @@ export function getPostHogApiHost(): string {
     // RELAY_MOUNT_PREFIXES in server/routes/relay.ts.
     return `${window.location.origin}/tlm`;
   }
-  // Non-browser context (tests) — no relay origin to derive.
-  return VITE_PUBLIC_POSTHOG_HOST;
+  // Unknown origins have no approved serializer; never fall back to the vendor.
+  return "/tlm";
 }
 
 // Guest identity bootstrap. Without it, posthog-js mints a random anonymous
@@ -321,7 +321,8 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 
 // Check if PostHog should be disabled
 export const isPostHogDisabled =
-  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
+  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
+  getPostHogApiHost() === "/tlm";
 
 // The credential-URL sanitizer lives in shared/ so the relay can use it too.
 export { scrubSensitiveUrl };
@@ -357,17 +358,14 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
-  // In order: drop browser-injected crashes, stamp what survives with the
-  // context it was captured under (lib/telemetry-context.ts), which the relay
-  // checks against the backend before forwarding, then scrub every
-  // credential out of the whole event (fail closed: an event that cannot be
-  // shown clean is dropped). The scrub replaces the deprecated
-  // `sanitize_properties` and runs last, so nothing added before it leaves
-  // unscrubbed.
+  // Capture records policy only; the relay owns the final vendor serializer.
   before_send: [
     dropInjectedScriptException,
     stampPostHogEvent,
-    scrubCaptureEvent,
+    (event: CaptureResult | null) => {
+      scrubPostHogPersistence();
+      return event;
+    },
   ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.
@@ -376,7 +374,21 @@ export const options = {
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
   // on every platform, so it is not gated like replay/exceptions.
-  capture_dead_clicks: true,
+  get capture_dead_clicks() {
+    return !shouldMaskAnalytics();
+  },
+  get autocapture() {
+    return !shouldMaskAnalytics();
+  },
+  get rageclick() {
+    return !shouldMaskAnalytics();
+  },
+  get disable_surveys() {
+    return shouldMaskAnalytics();
+  },
+  get enable_heatmaps() {
+    return !shouldMaskAnalytics();
+  },
 
   // Getters, not eager calls. `options` is a module-scope literal, so calling
   // these at literal-creation time made merely IMPORTING this module read
@@ -388,7 +400,7 @@ export const options = {
   // feeds PostHog Error Tracking. Boundary-caught errors reach it through
   // lib/error-reporting.ts instead, so there is no double-count.
   get capture_exceptions() {
-    return isErrorCaptureSurface();
+    return isErrorCaptureSurface() && !shouldMaskAnalytics();
   },
   // Replay never starts at init, on any surface: `syncSessionRecording`
   // (lib/session-privacy.ts) starts it once the session's privacy level is
@@ -503,7 +515,14 @@ export const getPostHogOptions = (
         opt_out_capturing_by_default: true,
         // Nothing is sent from here by default, but anything that opts in
         // later still goes through the same scrubber.
-        before_send: [dropInjectedScriptException, scrubCaptureEvent],
+        before_send: [
+          dropInjectedScriptException,
+          stampPostHogEvent,
+          (event: CaptureResult | null) => {
+            scrubPostHogPersistence();
+            return event;
+          },
+        ],
         disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {

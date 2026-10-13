@@ -21,20 +21,20 @@
  *     (`resetTelemetryIdentity`). Sentry's scope (`sentry-identity.ts`) and
  *     PostHog's identify both read it.
  */
+import { setTelemetryTransportPolicyReader } from "./telemetry-transport-policy";
 import {
   encodeCaptureContext,
-  stripPostHogConfigHeaders,
+  CONSERVATIVE_TELEMETRY_POLICY,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryIdentity,
-  type TelemetryRecording,
-  withoutIdentifyingProperties,
 } from "../../../shared/telemetry-privacy";
 import {
   currentSessionPrivacy,
-  recordingSurface,
+  isCredentialBearingPath,
   replayFramesToSend,
 } from "./session-privacy";
+
 
 // ── Identity grant ─────────────────────────────────────────────────────
 
@@ -109,7 +109,11 @@ export function telemetryIdentityFor(
 export function telemetryNamesAllowed(
   actorId: string | null = currentActorId,
 ): boolean {
-  return telemetryIdentityFor(actorId) === "full";
+  return (
+    telemetryIdentityFor(actorId) === "full" &&
+    currentSessionPrivacy() === "full" &&
+    !contextIds.sharedLink
+  );
 }
 
 export function subscribeTelemetryIdentity(listener: () => void): () => void {
@@ -119,7 +123,11 @@ export function subscribeTelemetryIdentity(listener: () => void): () => void {
 
 // ── Capture context ────────────────────────────────────────────────────
 
-let contextIds: { projectIds: string[]; organizationIds: string[] } = {
+let contextIds: {
+  projectIds: string[];
+  organizationIds: string[];
+  sharedLink?: boolean;
+} = {
   projectIds: [],
   organizationIds: [],
 };
@@ -128,8 +136,10 @@ let contextIds: { projectIds: string[]; organizationIds: string[] } = {
 export function setTelemetryCaptureContext(ids: {
   projectIds: ReadonlyArray<string | null | undefined>;
   organizationIds: ReadonlyArray<string | null | undefined>;
+  sharedLink?: boolean;
 }): void {
   contextIds = {
+    sharedLink: ids.sharedLink,
     projectIds: ids.projectIds.filter((id): id is string => !!id),
     organizationIds: ids.organizationIds.filter((id): id is string => !!id),
   };
@@ -143,18 +153,22 @@ export function setTelemetryCaptureContext(ids: {
  * restriction and the backend's answer decides at the relay.
  */
 export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
-  const level = currentSessionPrivacy();
-  let recording: TelemetryRecording = "full";
-  if (level === "masked" || level === "pending") recording = "masked";
-  else if (level === "off" && recordingSurface() !== "off") recording = "off";
+  const full =
+    currentSessionPrivacy() === "full" &&
+    currentActorId !== null &&
+    !contextIds.sharedLink &&
+    !isCredentialBearingPath() &&
+    contextIds.projectIds.length + contextIds.organizationIds.length > 0;
   return {
     projectIds: [...contextIds.projectIds],
     organizationIds: [...contextIds.organizationIds],
-    policy: {
-      recording,
-      content: recording === "full" ? "full" : "strict",
-      identity: telemetryNamesAllowed() ? "full" : "id_only",
-    },
+    policy: full
+      ? {
+          recording: "full",
+          identity: telemetryNamesAllowed() ? "full" : "id_only",
+          content: "full",
+        }
+      : { ...CONSERVATIVE_TELEMETRY_POLICY },
   };
 }
 
@@ -190,31 +204,12 @@ export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
     if (event.event === "$snapshot" && "$snapshot_data" in properties) {
       const frames = replayFramesToSend(properties.$snapshot_data);
       if (frames === null) return null as T;
-      properties.$snapshot_data = stripPostHogConfigHeaders(frames);
+      properties.$snapshot_data = frames;
     }
-    const next: PostHogCaptureEvent = { ...event, properties };
-    if (context.policy.identity !== "full") {
-      if (event.$set) {
-        next.$set = withoutIdentifyingProperties(event.$set) as Record<
-          string,
-          unknown
-        >;
-      }
-      if (event.$set_once) {
-        next.$set_once = withoutIdentifyingProperties(
-          event.$set_once,
-        ) as Record<string, unknown>;
-      }
-      for (const key of ["$set", "$set_once"]) {
-        if (properties[key]) {
-          properties[key] = withoutIdentifyingProperties(properties[key]);
-        }
-      }
-    }
-    return next as T;
+    return { ...event, properties } as T;
   } catch {
-    // An event we failed to stamp reaches the relay unstamped, which handles
-    // it conservatively. Dropping it here would lose more than it protects.
-    return event;
+    return null as T;
   }
 }
+
+setTelemetryTransportPolicyReader(() => currentTelemetryCaptureContext().policy.content);

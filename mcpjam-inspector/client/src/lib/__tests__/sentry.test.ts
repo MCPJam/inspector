@@ -66,9 +66,6 @@ describe("client sentry init", () => {
     });
   });
   it("reports the build surface as dist so artifacts resolve per build", async () => {
-    // The release alone is the bare app version, which the web, npm and
-    // desktop builds all share. Without `dist` here, Sentry symbolicates this
-    // bundle's events against whichever of those uploaded last.
     const { resolveClientSentryConfig } = await import("../sentry");
 
     expect(resolveClientSentryConfig().dist).toBe("npm");
@@ -100,10 +97,6 @@ describe("client sentry init", () => {
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
     const { resolveClientSentryConfig } = await import("../sentry");
-    // Asserted against the literal the dev/test bundle must produce, NOT
-    // against `import.meta.env.PROD ? ... : ...` — mirroring the
-    // implementation expression would make this pass no matter what the
-    // implementation did.
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");
   });
@@ -323,7 +316,7 @@ describe("syncSentryReplay", () => {
 
     it("not on a hard load onto /results/, only after leaving it", async () => {
       clientWithoutReplay();
-      const { syncSentryReplay } = await loadAt("masked");
+      const { syncSentryReplay } = await loadAt("full");
 
       syncSentryReplay("/results/secret-token");
       expect(addIntegration).not.toHaveBeenCalled();
@@ -399,7 +392,7 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  it("needs no restart between full and masked: it masks at both", async () => {
+  it("stops at masked and restarts only when full returns", async () => {
     const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
     const replay = stubReplay(true);
 
@@ -409,8 +402,8 @@ describe("syncSentryReplay", () => {
     setSessionPrivacy("full");
     syncSentryReplay("/servers");
 
-    expect(replay.stop).not.toHaveBeenCalled();
-    expect(replay.start).not.toHaveBeenCalled();
+    expect(replay.stop).toHaveBeenCalledOnce();
+    expect(replay.start).toHaveBeenCalledOnce();
   });
 
   it("resumes a buffering replay as a buffering replay", async () => {
@@ -453,6 +446,9 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).toHaveBeenCalledTimes(1);
 
     setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+    setSessionPrivacy("full");
     syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
@@ -619,6 +615,7 @@ describe("identity at the outbound boundary", () => {
     const { config, run, telemetry } = await setup();
     telemetry.setTelemetryActor("workos-1");
     telemetry.setTelemetryIdentity("workos-1", "full");
+    (await import("../session-privacy")).setSessionPrivacy("full");
     const hint = {};
     const event = userEvent();
     run("preprocessEvent", event, hint);
