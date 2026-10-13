@@ -41,8 +41,10 @@ export function chatRequestSelection(args: {
     return blocked("Choose a model available in this workspace before sending.");
   }
   const row = resolveCompareSelectionRow(selection, [args.model], args.orgConfig);
+  const rowSelection = row && compareSelectionForRow(row, args.orgConfig);
   if (!row || row.disabled || (selection.source !== "legacy" &&
-      selection.nativeModelId && row.nativeModelId && selection.nativeModelId !== row.nativeModelId)) {
+      selection.nativeModelId && rowSelection?.source !== "legacy" &&
+      selection.nativeModelId !== (rowSelection?.nativeModelId ?? rowSelection?.modelId))) {
     return blocked("The saved model or connection is unavailable. Choose a model again.");
   }
   // Hosted synthesis is enabled after browser propagation is in place.

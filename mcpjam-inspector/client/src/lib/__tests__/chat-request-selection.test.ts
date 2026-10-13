@@ -71,4 +71,10 @@ describe("chat request selection", () => {
     expect(chatRequestSelection({ ...args, model: { ...model, nativeModelId: "other-deployment" } }).kind)
       .toBe("blocked");
   });
+  it("rejects a native mismatch even when the row has no explicit native id", () => {
+    expect(chatRequestSelection({ ...args,
+      selection: { ...selection, nativeModelId: "other-deployment" },
+    }).kind).toBe("blocked");
+  });
+
 });
