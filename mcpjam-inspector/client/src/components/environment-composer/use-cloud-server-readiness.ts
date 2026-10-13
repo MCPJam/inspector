@@ -38,8 +38,10 @@ export function useCloudServerReadiness({
   projectId,
   state,
   environments,
+  requireServerSelection = false,
 }: {
   projectId: string;
+  requireServerSelection?: boolean;
   state: EnvironmentComposerState;
   /** The project's environments — the rows behind `state.environmentIds`. */
   environments: readonly ProjectEnvironmentView[];
@@ -61,9 +63,10 @@ export function useCloudServerReadiness({
 
   return useMemo(() => {
     const hostById = new Map(hosts.map((host) => [host.hostId, host]));
-    const isLocalClient = (hostId: string) => !HOSTED_MODE && hostById.get(hostId)?.harness === "claude-code";
+    const isLocalClient = (hostId: string) =>
+      !HOSTED_MODE && hostById.get(hostId)?.harness === "claude-code";
     const groupById = new Map(
-      serverAttachments.map((group) => [group._id, group])
+      serverAttachments.map((group) => [group._id, group]),
     );
     // Passed through undefined on purpose: an unanswered query is not an
     // empty project, and the two lead to opposite advice.
@@ -72,16 +75,22 @@ export function useCloudServerReadiness({
     /** A client's own set, as a target. Absent count stays UNKNOWN. */
     const hostTarget = (
       hostId: string,
-      label?: string
+      label?: string,
     ): CloudLaunchTarget | null => {
       const host = hostById.get(hostId);
-      if (!host) return null;
+      if (!host)
+        return requireServerSelection
+          ? { label: label ?? "Selected client", serverIds: [], serverCount: 0 }
+          : null;
       return {
         label: label ?? clientDisplayName(host),
         localExecution: isLocalClient(hostId),
         serverIds: null,
-        serverCount:
-          typeof host.serverCount === "number" ? host.serverCount : null,
+        serverCount: requireServerSelection
+          ? 0
+          : typeof host.serverCount === "number"
+            ? host.serverCount
+            : null,
       };
     };
 
@@ -89,7 +98,7 @@ export function useCloudServerReadiness({
     const groupTarget = (
       label: string,
       serverAttachmentId: string,
-      localExecution = false
+      localExecution = false,
     ): CloudLaunchTarget | null => {
       const group = groupById.get(serverAttachmentId);
       if (!group) return null;
@@ -109,7 +118,12 @@ export function useCloudServerReadiness({
       if (serverAttachmentId) {
         const group = groupById.get(serverAttachmentId);
         const target = group
-          ? groupTarget(group.name, serverAttachmentId, state.stack.hostIds.length > 0 && state.stack.hostIds.every(isLocalClient))
+          ? groupTarget(
+              group.name,
+              serverAttachmentId,
+              state.stack.hostIds.length > 0 &&
+                state.stack.hostIds.every(isLocalClient),
+            )
           : null;
         if (target) targets.push(target);
       } else {
@@ -123,7 +137,7 @@ export function useCloudServerReadiness({
         environments.map((environment) => [
           environment.environmentId,
           environment,
-        ])
+        ]),
       );
       for (const environmentId of state.environmentIds) {
         const environment = envById.get(environmentId);
@@ -143,12 +157,23 @@ export function useCloudServerReadiness({
           continue;
         }
         const target = environment.serverAttachmentId
-          ? groupTarget(label, environment.serverAttachmentId, isLocalClient(environment.hostId))
+          ? groupTarget(
+              label,
+              environment.serverAttachmentId,
+              isLocalClient(environment.hostId),
+            )
           : hostTarget(environment.hostId, label);
         if (target) targets.push(target);
       }
     }
 
     return assessCloudServerReadiness({ targets, servers: catalog });
-  }, [environments, hosts, serverAttachments, servers, state]);
+  }, [
+    environments,
+    hosts,
+    requireServerSelection,
+    serverAttachments,
+    servers,
+    state,
+  ]);
 }
