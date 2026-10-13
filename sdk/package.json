@@ -7,6 +7,11 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./internal/telemetry": {
+      "types": "./dist/internal/telemetry.d.ts",
+      "import": "./dist/internal/telemetry.js",
+      "default": "./dist/internal/telemetry.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
@@ -124,7 +129,8 @@
     "check:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts --check",
     "check:host-catalog-fallback:remote": "node --import tsx scripts/check-host-catalog-fallback-remote.ts",
     "dev": "tsup --watch",
-    "sentry:sourcemaps": "sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
+    "sentry:inject": "sentry-cli sourcemaps inject ./dist",
+    "sentry:sourcemaps": "npm run sentry:inject && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
