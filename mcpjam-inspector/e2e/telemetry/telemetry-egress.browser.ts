@@ -72,15 +72,6 @@ const ROUND_TRIP_DWELLS_MS: ReadonlyArray<{ away: number; back: number }> = [
 ];
 const SENTRY_LATENCY_MS = 800;
 
-/**
- * Credential pages that are share links. A share link records no replay,
- * and the way back to `full` waits `MASKED_TO_FULL_SETTLE_MS` (3s,
- * hooks/useSessionPrivacy.ts) — Sentry Replay, which records only at `full`,
- * is held off until then. A return from one lasts past that.
- */
-const SHARE_LINK_ROUTES = new Set<string>(["tester-link"]);
-const SHARE_LINK_RETURN_MS = 4_500;
-
 /** A public page every signed-out visitor can open: the score landing. */
 const NORMAL_PAGE = "/embed/score";
 const NORMAL_PAGE_TEXT = "Know where your MCP server stands";
@@ -261,14 +252,14 @@ test("SPA navigation from a normal page onto every credential page and back", as
     if (new URL(page.url()).pathname !== NORMAL_PAGE) {
       await spaNavigate(page, NORMAL_PAGE);
     }
+    await expect(page.getByText(NORMAL_PAGE_TEXT)).toBeVisible();
     // An interaction straight away: posthog-js holds a new recording's
     // first flush until there is one.
     await page.mouse.click(5, 5);
-    await page.waitForTimeout(
-      SHARE_LINK_ROUTES.has(id)
-        ? Math.max(dwell.back, SHARE_LINK_RETURN_MS)
-        : dwell.back,
-    );
+    await page.waitForTimeout(dwell.back);
+    // Every unresolved destination can stop replay. Require a new full
+    // recording after this return, beyond the conservative settling delay.
+    await waitForFullReplay(page, recorder, 30_000, mark, from);
     const error = `liveness check after ${id}`;
     await throwUncaught(page, error);
     returns.push({ id, from, until: await pageNow(page), mark, error });

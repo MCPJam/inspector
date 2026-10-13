@@ -47,6 +47,7 @@ import {
   containsSentinel,
   posthogEvents,
   posthogRemoteConfigScript,
+  RRWEB,
   scanAll,
   SENTINEL_STEM,
   sinkOf,
@@ -332,14 +333,31 @@ export async function waitForFullReplay(
   page: Page,
   recorder: EgressRecorder,
   timeoutMs = 30_000,
+  since = 0,
+  recordedSince = 0,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (let step = 0; Date.now() < deadline; step++) {
-    const atFull = posthogEvents(scanAll(recorder.telemetry).decoded).some(
-      (event) =>
-        event.event === "$snapshot" &&
-        (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })?.r ===
-          "full",
+    const atFull = posthogEvents(recorder.scanSince(since).decoded).some(
+      (event) => {
+        const frames = event.properties.$snapshot_data;
+        return (
+          event.event === "$snapshot" &&
+          (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })
+            ?.r === "full" &&
+          Array.isArray(frames) &&
+          frames.some((frame: unknown) => {
+            if (!frame || typeof frame !== "object") return false;
+            const value = frame as { type?: unknown; timestamp?: unknown };
+            return (
+              (value.type === RRWEB.FullSnapshot ||
+                value.type === RRWEB.IncrementalSnapshot) &&
+              typeof value.timestamp === "number" &&
+              value.timestamp >= recordedSince
+            );
+          })
+        );
+      },
     );
     if (atFull) return;
     await page.mouse.move(20 + (step % 40), 20 + (step % 40));
