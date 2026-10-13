@@ -70,6 +70,7 @@ export type RailModel = {
   provider?: string;
   hosted?: boolean;
   nativeModelId?: string;
+  customProviderName?: string;
   orgProvider?: { id?: string; providerKey: string };
 };
 
@@ -91,6 +92,10 @@ export function routingSelectionForModel(
   if (
     connection?.kind === "localProvider" && model.provider &&
     connection.providerKey !== model.provider
+  ) return undefined;
+  if (
+    connection?.kind === "localProvider" && model.customProviderName &&
+    connection.customProviderName !== model.customProviderName
   ) return undefined;
   if (
     connection?.kind === "orgProvider" && model.orgProvider?.id &&

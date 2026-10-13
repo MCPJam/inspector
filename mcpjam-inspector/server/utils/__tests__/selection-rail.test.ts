@@ -419,6 +419,13 @@ describe("native selection identity and stream fields", () => {
       { id: selection.modelId, orgProvider: { providerKey: "anthropic", id: "other" } },
     ]) expect(routingSelectionForModel(selection, model)).toBeUndefined();
   });
+  it("refuses a different custom connection even when model ids match", () => {
+    const selection = {
+      ...selections("custom/my-model").local,
+      connectionRef: { kind: "localProvider" as const, providerKey: "custom", customProviderName: "selected" },
+    };
+    expect(routingSelectionForModel(selection, { id: selection.modelId, provider: "custom", customProviderName: "other" })).toBeUndefined();
+  });
   it("does not use a native alias to replace another canonical row", () => {
     const selection = org("anthropic/selected", "anthropic/other");
     expect(routingSelectionForModel(selection, { id: "anthropic/other", provider: "anthropic" })).toBeUndefined();
