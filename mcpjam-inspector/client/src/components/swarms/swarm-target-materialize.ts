@@ -209,6 +209,12 @@ export async function materializeSwarmTargets(
     );
   }
 
+  if (!legos.serverAttachmentId) {
+    throw new SwarmTargetMaterializeError(
+      "Pick a server or group before continuing.",
+    );
+  }
+
   const stack = {
     serverAttachmentId: legos.serverAttachmentId ?? null,
     skillSelection: skillsEnabled ? (legos.skillSelection ?? null) : null,

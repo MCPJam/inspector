@@ -6,7 +6,7 @@
  * reason this is shared: each has been a bug, and one copy is enough.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import {
   composerHasTarget,
   defaultComposerState,
@@ -30,6 +30,10 @@ import {
 } from "@/hooks/useViews";
 import { serversAreRunnable } from "@/lib/cloud-server-readiness";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
+import {
+  preflightSwarmTargets,
+  resolveSwarmEnvironment,
+} from "./swarm-target-preflight";
 
 export type SwarmDefaultTarget = {
   state: EnvironmentComposerState;
@@ -40,8 +44,10 @@ export type SwarmDefaultTarget = {
   noServers: { labels: string[] } | null;
   /** Mints or reuses the environments this target resolves to. */
   resolve: () => Promise<string[]>;
+  resolveExisting: (environmentIds: string[]) => Promise<string[]>;
   /** Live environment ids, or undefined when the query does not run. */
   liveEnvironmentIds: ReadonlySet<string> | undefined;
+  liveEnvironments: ProjectEnvironmentView[];
 };
 
 export function useSwarmDefaultTarget({
@@ -60,6 +66,7 @@ export function useSwarmDefaultTarget({
   const [state, setState] =
     useState<EnvironmentComposerState>(emptyComposerState);
   const envList = useMemo(() => environments ?? [], [environments]);
+  const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const { serverAttachments, isLoading: attachmentsLoading } =
@@ -67,7 +74,10 @@ export function useSwarmDefaultTarget({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Null outside an AppStateProvider — then there is no connection history.
   const appState = useOptionalSharedAppState();
-  const resolveTargets = useComposerResolver(projectId);
+  const resolveTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+    allowEmptyServerSelection: false,
+  });
   // Ad-hoc rows carry `lastUsedAt`, and the caller's list is named-only.
   const usageRows = useProjectEnvironments(projectId, { includeAdhoc: true });
   const usageQueryEnabled =
@@ -103,6 +113,10 @@ export function useSwarmDefaultTarget({
 
   useEffect(() => {
     if (!active || seededRef.current) return;
+    if (state.customized) {
+      seededRef.current = true;
+      return;
+    }
     if (environmentsEnabled && environments === undefined) return;
     // The attachments query reports an empty list while it loads; seeding off
     // that would latch the default to "no server group".
@@ -147,6 +161,7 @@ export function useSwarmDefaultTarget({
     isUserReady,
     offerable,
     projectId,
+    state.customized,
     usageQueryEnabled,
     usageRows,
   ]);
@@ -156,21 +171,35 @@ export function useSwarmDefaultTarget({
   const readiness = useCloudServerReadiness({
     projectId,
     state,
-    environments: envList,
+    environments: usageRows ?? envList,
+    requireServerSelection: true,
   });
   const noServers = readiness.status === "no_servers" ? readiness : null;
+
+  const resolveExisting = useCallback(
+    async (environmentIds: string[]) => {
+      await preflightSwarmTargets({
+        environmentIds,
+        targets: usageRows ?? envList,
+        hosts: [],
+        resolve: (id) => resolveSwarmEnvironment(convex, projectId, id),
+      });
+      return environmentIds;
+    },
+    [convex, envList, projectId, usageRows],
+  );
 
   const resolve = useCallback(async () => {
     const resolved = await resolveTargets({
       state,
-      liveEnvironments: envList,
+      liveEnvironments: usageRows ?? envList,
       max: MAX_ENVIRONMENTS_PER_JOURNEY,
     });
     if (resolved.environmentIds.length === 0) {
       throw new Error("Could not resolve where this should run.");
     }
-    return resolved.environmentIds;
-  }, [envList, resolveTargets, state]);
+    return resolveExisting(resolved.environmentIds);
+  }, [envList, resolveExisting, resolveTargets, state, usageRows]);
 
   return {
     state,
@@ -178,6 +207,8 @@ export function useSwarmDefaultTarget({
     ready: composerHasTarget(state) && !noServers,
     noServers,
     resolve,
+    resolveExisting,
     liveEnvironmentIds,
+    liveEnvironments: usageRows ?? envList,
   };
 }

@@ -87,7 +87,10 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabledState: () => environmentsEnabled.value,
 }));
 
+const swarmPreflight = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: swarmPreflight }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {
@@ -120,7 +123,9 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
-    serverAttachments: [],
+    serverAttachments: [
+      { _id: "att-manual", name: "Servers", serverIds: ["srv-1"] },
+    ],
     isLoading: false,
   }),
   useProjectServers: () => ({ servers: [], isLoading: false }),
@@ -141,6 +146,11 @@ vi.mock("@/lib/scenario-session", () => ({
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
   SwarmsSessionsPanel: () => null,
 }));
+vi.mock("@/components/environment-composer/environment-composer", () => ({
+  SWARM_COMPOSER_SLOTS: {},
+  EnvironmentComposer: () => <div>Pick a server or group</div>,
+}));
+
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -150,6 +160,7 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  swarmPreflight.mockResolvedValue({});
   environmentsEnabled.value = false;
   siblingGoals.value = [];
   hostRows.value = [host];
@@ -197,7 +208,9 @@ describe("SwarmsTab — new goal form", () => {
 
     await waitFor(() => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
-        expect.objectContaining({ stacks: [{ hostId: "host-1" }] }),
+        expect.objectContaining({
+          stacks: [{ hostId: "host-1", serverAttachmentId: "att-manual" }],
+        }),
       );
     });
     const payload = createJourneyMutation.mock.calls[0]![0] as Record<
@@ -325,6 +338,31 @@ describe("SwarmsTab — new goal form", () => {
       target: { value: "buy a plan, carefully" },
     });
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("validates a sibling target before copying it into a new goal", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["env-sibling"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    swarmPreflight.mockRejectedValue({
+      data: {
+        code: "ENV_NO_SERVERS",
+        message: "Pick a server or group before running this swarm.",
+      },
+    });
+    await openGoalForm();
+    await createGoal("buy a plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /pick a server or group/i,
+    );
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
 
   it("creates against the siblings even when the default cannot run", async () => {

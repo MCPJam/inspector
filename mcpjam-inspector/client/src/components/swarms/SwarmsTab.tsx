@@ -1,39 +1,4 @@
-/**
- * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
- *
- * Replaces the old host-anchored `ScenariosTab product="swarm"`. Personas and
- * journeys live at the project level; a journey targets one-or-more hosts and,
- * when run, fans out one single-host session per (host × sessionsPerTarget).
- *
- * Top-level views (ViewModeSelector) on `/swarms`. Overview is the landing tab;
- * a deep link naming a session or a run overrides it, because those name a place:
- *   - Overview — Swarm Runs list; row click opens `/swarms/:swarmId`
- *   - Personas — persona sidebar, journey cards, run matrix / live stream
- *   - Sessions — flat chatSessions browser with top-bar persona filter
- *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
- *
- * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Insights / Sessions
- * scoped to that wave) instead of the list header. Per-wave Insights owns the
- * session-flow Sankey; there is no project-wide Insights tab.
- *
-
- * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
- *
- * ## Agent bridge (v1 scope)
- *
- * This is the surface component that calls `useSurfaceAgentBridge` for the
- * `swarms` tool group (create persona, open journey form, launch run). Two
- * scoping decisions, both grounded in the actual UI:
- *
- * - **Promote-to-eval is OUT of v1.** The promotable session is lazily
- *   paginated inside `RunSessionsView` (per expanded run) and there is no
- *   top-level "selected session"; an agent tool couldn't resolve one without a
- *   large lift of run/session state that would diverge the snapshot from the
- *   multi-card view. The human uses the in-view "Promote to test case" button.
- * - **Host CRUD is OUT of v1.** Journeys attach existing project hosts; create
- *   / edit / delete hosts live on Connect. The snapshot still surfaces host
- *   TARGETS (names) via the journey→hosts mapping.
- */
+/** Project-scoped swarm authoring and run history. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { Loader2, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
@@ -49,7 +14,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
-import { joinLabels } from "@/lib/cloud-server-readiness";
+import { ManualSwarmTargetPicker } from "./manual-swarm-target-picker";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
@@ -1967,17 +1932,16 @@ function NewJourneyForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const goalsLoading = siblingGoals === undefined;
+  const [targetEdited, setTargetEdited] = useState(false);
   const target = useSwarmDefaultTarget({
     projectId,
     active: true,
     environments,
     hosts,
   });
-  const inherited = inheritedGoalTarget(
-    siblingGoals,
-    target.liveEnvironmentIds,
-  );
-  // The agent bridge can re-prefill an already-open form.
+  const inherited = targetEdited
+    ? null
+    : inheritedGoalTarget(siblingGoals, target.liveEnvironmentIds);
   useEffect(() => {
     setGoal(goalSeed);
   }, [goalSeed]);
@@ -2016,15 +1980,13 @@ function NewJourneyForm({
         </p>
       ) : null}
 
-      {!error && !inherited && target.noServers ? (
-        <p
-          role="alert"
-          className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
-        >
-          {joinLabels(target.noServers.labels)} has no servers assigned. Pick a
-          server group for it.
-        </p>
-      ) : null}
+      <ManualSwarmTargetPicker
+        projectId={projectId}
+        target={target}
+        inherited={inherited}
+        onEdit={() => setTargetEdited(true)}
+        disabled={saving}
+      />
 
       <div className="flex justify-end gap-2">
         <Button
@@ -2051,8 +2013,9 @@ function NewJourneyForm({
               await onCreate({
                 goal,
                 hostIds: [],
-                environmentIds: inherited ?? (await target.resolve()),
-                // Matches the generated goals and the swarm flow's default.
+                environmentIds: inherited
+                  ? await target.resolveExisting(inherited)
+                  : await target.resolve(),
                 config: { sessionsPerTarget: 1, maxTurns: 6 },
               });
               setOpen(false);
