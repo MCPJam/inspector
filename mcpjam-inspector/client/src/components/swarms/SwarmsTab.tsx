@@ -1345,10 +1345,14 @@ export function SwarmsTab({
                           }}
                           goalSeed={journeyGoalSeed}
                           onCreate={async (draft) => {
+                            const { environmentIds, ...target } = draft;
                             await createJourney({
                               projectId,
                               personaRefId: selectedPersona._id,
-                              ...draft,
+                              ...target,
+                              ...(environmentIds.length
+                                ? { environmentIds }
+                                : {}),
                             } as any);
                           }}
                         />

@@ -473,10 +473,12 @@ describe("SwarmsTab — new goal form", () => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
         expect.objectContaining({
           hostIds: ["host-2", "host-1"],
-          environmentIds: [],
           serverAttachmentId: "att-legacy",
         }),
       ),
+    );
+    expect(createJourneyMutation.mock.calls[0][0]).not.toHaveProperty(
+      "environmentIds",
     );
     expect(swarmPreflight).toHaveBeenCalledWith(expect.anything(), {
       projectId: "proj-1",
