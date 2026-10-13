@@ -1,3 +1,4 @@
+import { getFunctionName } from "convex/server";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganizationModelsSection } from "../OrganizationModelsSection";
@@ -17,6 +18,10 @@ vi.mock("@/lib/app-navigation", () => ({
 
 vi.mock("convex/react", () => ({
   useQuery: mocks.useQuery,
+  usePaginatedQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const value = mocks.useQuery(getFunctionName(query), args);
+    return { results: value ? [value] : [], status: "Exhausted", loadMore: vi.fn() };
+  },
   useAction: mocks.useAction,
 }));
 
@@ -103,7 +108,7 @@ describe("OrganizationModelsSection", () => {
         return { providers: [] };
       }
       if (
-        name === "organizationModelProviders:getUsageSummary" &&
+        name === "organizationUsagePages:page" &&
         args !== "skip"
       ) {
         return {
@@ -165,7 +170,7 @@ describe("OrganizationModelsSection", () => {
       "/organizations/org_1/models/usage",
     );
     expect(mocks.useQuery).not.toHaveBeenCalledWith(
-      "organizationModelProviders:getUsageSummary",
+      "organizationUsagePages:page",
       expect.anything(),
     );
     expect(
@@ -181,7 +186,7 @@ describe("OrganizationModelsSection", () => {
     expect(screen.getByText("$0.1234")).toBeTruthy();
     expect(screen.getAllByText("OpenAI").length).toBeGreaterThanOrEqual(1);
     expect(mocks.useQuery).toHaveBeenCalledWith(
-      "organizationModelProviders:getUsageSummary",
+      "organizationUsagePages:page",
       expect.objectContaining({
         organizationId: "org_1",
         rangeDays: 30,
@@ -215,7 +220,7 @@ describe("OrganizationModelsSection", () => {
     });
     mocks.useQuery.mockImplementation((name: string, args: unknown) => {
       const result = base(name, args);
-      if (name !== "organizationModelProviders:getUsageSummary" || !result) {
+      if (name !== "organizationUsagePages:page" || !result) {
         return result;
       }
       return {
@@ -274,7 +279,7 @@ describe("OrganizationModelsSection", () => {
 
     expect(screen.queryByText("Usage")).toBeNull();
     expect(mocks.useQuery).toHaveBeenCalledWith(
-      "organizationModelProviders:getUsageSummary",
+      "organizationUsagePages:page",
       "skip",
     );
   });
