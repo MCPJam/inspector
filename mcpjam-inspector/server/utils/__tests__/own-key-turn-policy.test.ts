@@ -197,13 +197,52 @@ describe("ownKeyTurnRefusal", () => {
     expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("trusts the route's own check when told it just allowed the turn", async () => {
+  it("trusts the route's own check while it is fresh", async () => {
     const model = new MockLanguageModelV3({
       doStream: async () => ({ stream: new ReadableStream() }),
     });
-    const guarded = withOwnKeyTurnPolicy(model, turn(), { allowedNow: true });
+    const guarded = withOwnKeyTurnPolicy(model, turn(), {
+      allowedAt: performance.now(),
+    });
     await guarded.doStream({ prompt: [] });
     expect(resolveOrgModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("re-reads before the first request when the route's check is already stale", async () => {
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn(), {
+      allowedAt: performance.now() - OWN_KEY_POLICY_RECHECK_MS,
+    });
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+  });
+
+  it("dates a slow read from when it started, not when it answered", async () => {
+    vi.useFakeTimers();
+    const allow = { aiKeyPolicy: { requireOrgKeys: false }, providers: [] };
+    resolveOrgModelConfig.mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve(allow), 14_000)),
+    );
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    const first = guarded.doStream({ prompt: [] });
+    await vi.advanceTimersByTimeAsync(14_000);
+    await first;
+
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    vi.advanceTimersByTime(1_000);
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
   });
 
   it("does not trust a read that refused the turn", async () => {

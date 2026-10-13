@@ -2902,6 +2902,7 @@ chatV2.post("/", async (c) => {
         serverIds: hostConfigServerIds,
       },
     };
+    const ownKeyCheckedAt = performance.now();
     const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
     if (ownKeyRefusal) {
       return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
@@ -2914,7 +2915,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
-      { allowedNow: true },
+      { allowedAt: ownKeyCheckedAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
