@@ -120,7 +120,7 @@ Inventing values silently misrepresents the host. A widget that works in MCPJam-
     // templates.ts
     yourhost: {
       hostStyle: "yourhost",
-      modelId: "anthropic/claude-haiku-4.5",
+      modelId: "anthropic/claude-haiku-5.5",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,
@@ -175,6 +175,10 @@ Inventing values silently misrepresents the host. A widget that works in MCPJam-
             },
             sandboxAttrs: ["allow-forms"],
             allowFeatures: { fullscreen: "*" },
+            // Probe whether the host mounts app iframes with allow-same-origin.
+            // true = same-origin (Claude, Claude Desktop, ChatGPT, Codex).
+            // false = opaque origin / srcdoc (Copilot).
+            sameOriginAppIframe: true,
           },
         },
       },
@@ -211,15 +215,16 @@ Inventing values silently misrepresents the host. A widget that works in MCPJam-
 
 A non-exhaustive reference for the fields most often gotten wrong:
 
-| Field                              | What to capture                                                                                     | Common mistake                                                                                                          |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `clientInfo.name`                  | Verbatim from the host's MCP `initialize` request.                                                  | Inventing a "friendly" name. Apps that branch on this string break under your preset.                                   |
-| `hostInfo.name`                    | Verbatim from `ui/initialize`. **Different protocol layer from `clientInfo`.**                      | Reusing `clientInfo.name`. ChatGPT uses `openai-mcp` and `chatgpt` respectively.                                        |
-| `mcpProfile.apps.mcpAppsOverrides` | Only what the host's MCP Apps surface actually supports.                                            | Advertising capabilities the renderer can't honor. If `listChanged` notifications aren't forwarded, omit the sub-field. |
-| `cspDirectives`                    | Verbatim from the host's response CSP header.                                                       | Hand-curating a "reasonable" set. Real hosts ship surprising values (e.g. real ChatGPT emits only `frame-src`).         |
-| `sandboxAttrs`                     | From the iframe `sandbox=` attribute, **minus** `allow-scripts` + `allow-same-origin` (baseline).   | Including the baseline. The schema layers your entries on top of the renderer's required-by-spec set.                   |
-| `permissions.allow`                | The intersection of the outer iframe `allow=` and what `ui/initialize.hostCapabilities` advertises. | Granting permissions the host advertises but doesn't actually attach.                                                   |
-| `containerDimensions`              | The host's intent (e.g. 720px chat column), not your inspector's iframe size.                       | Treating it as a literal viewport. Views interpret it as policy intent.                                                 |
+| Field                                    | What to capture                                                                                     | Common mistake                                                                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `clientInfo.name`                        | Verbatim from the host's MCP `initialize` request.                                                  | Inventing a "friendly" name. Apps that branch on this string break under your preset.                                   |
+| `hostInfo.name`                          | Verbatim from `ui/initialize`. **Different protocol layer from `clientInfo`.**                      | Reusing `clientInfo.name`. ChatGPT uses `openai-mcp` and `chatgpt` respectively.                                        |
+| `mcpProfile.apps.mcpAppsOverrides`       | Only what the host's MCP Apps surface actually supports.                                            | Advertising capabilities the renderer can't honor. If `listChanged` notifications aren't forwarded, omit the sub-field. |
+| `cspDirectives`                          | Verbatim from the host's response CSP header.                                                       | Hand-curating a "reasonable" set. Real hosts ship surprising values (e.g. real ChatGPT emits only `frame-src`).         |
+| `sandboxAttrs`                           | From the iframe `sandbox=` attribute, **minus** `allow-scripts` + `allow-same-origin` (baseline).   | Including the baseline. The schema layers your entries on top of the renderer's required-by-spec set.                   |
+| `permissions.allow`                      | The intersection of the outer iframe `allow=` and what `ui/initialize.hostCapabilities` advertises. | Granting permissions the host advertises but doesn't actually attach.                                                   |
+| `containerDimensions`                    | The host's intent (e.g. 720px chat column), not your inspector's iframe size.                       | Treating it as a literal viewport. Views interpret it as policy intent.                                                 |
+| `sandbox.sameOriginAppIframe`            | Probe whether the host's app iframe carries `allow-same-origin`. `true` = same-origin (Claude, Claude Desktop, ChatGPT, Codex — probe-measured). `false` = opaque origin / `srcdoc` (Copilot — probe-measured). | Defaulting to `true` without probing. An app that relies on `localStorage`, cookies, or a real `Origin` header will silently break on hosts where this is `false`. |
 
 ## Gotchas
 
