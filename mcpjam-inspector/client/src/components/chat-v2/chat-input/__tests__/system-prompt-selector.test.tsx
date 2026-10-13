@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ModelDefinition } from "@/shared/types";
 import { SystemPromptSelector } from "../system-prompt-selector";
 
@@ -128,4 +128,19 @@ describe("SystemPromptSelector temperature control", () => {
     expect(sliderIsDisabled()).toBe(false);
     expect(screen.queryByTestId("temperature-disabled-by-effort")).toBeNull();
   });
+  it("does not turn an unchanged temperature into a user override on save", () => {
+    const onTemperatureChange = vi.fn();
+    renderSelector({ onTemperatureChange });
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+    expect(onTemperatureChange).not.toHaveBeenCalled();
+  });
+
+  it("sends a changed temperature when saving", () => {
+    const onTemperatureChange = vi.fn();
+    renderSelector({ onTemperatureChange });
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+    expect(onTemperatureChange).toHaveBeenCalledWith(0.8);
+  });
+
 });

@@ -100,6 +100,9 @@ export function resolveCompareSelectionRow(
     { modelId: selection.modelId, selection },
     models,
     orgConfig,
+    // A legacy selection names no connection, so the strict lookup could never
+    // match it; its own-key-only rule lives in `findModelForStoredChoice`.
+    { exactSelection: !isLegacySelection(selection) },
   );
   if (!row) return undefined;
   return (selection.source === "hosted") === isHostedRow(row) ? row : undefined;

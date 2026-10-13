@@ -78,6 +78,7 @@ import {
   mergePickedRows,
   replaceLeadCompareSelection,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
@@ -128,7 +129,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
@@ -700,7 +701,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -1413,6 +1414,7 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
         flag: extensionsFlag,
@@ -1689,7 +1691,7 @@ export function PlaygroundMain({
         undefined,
       );
       if (match) {
-        setSelectedModel(match);
+        setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
         // A host with none clears what the previous host seeded (High must
@@ -1707,7 +1709,7 @@ export function PlaygroundMain({
         // the lead card keeps a level the USER chose for this row, but not
         // one the previous host seeded.
         const cards = compareCardsRef.current;
-        const leadSelection = compareSelectionForRow(
+        const leadSelection = cfg.modelSelection ?? compareSelectionForRow(
           match,
           hostedOrgModelConfig,
         );
@@ -2170,10 +2172,11 @@ export function PlaygroundMain({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections],
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections],
   );
 
   const compareCardsRef = useRef(compareCards);
@@ -3666,13 +3669,12 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource,
@@ -3691,6 +3693,7 @@ export function PlaygroundMain({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -3707,8 +3710,8 @@ export function PlaygroundMain({
           sessionId: detail.chatSessionId,
           engine: "cloud",
         });
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -3723,6 +3726,8 @@ export function PlaygroundMain({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       adoptRestoredConversationTarget,
       readRecordedTarget,
@@ -4146,7 +4151,7 @@ export function PlaygroundMain({
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
-        pendingRestoredModelRef.current = detail.session.modelId
+        pendingRestoredModelRef.current = !detail.session.modelSelection && detail.session.modelId
           ? {
               chatSessionId: detail.session.chatSessionId,
               modelId: detail.session.modelId,
@@ -6249,7 +6254,7 @@ export function PlaygroundMain({
     ? {
         reasoningEffort,
         reasoningEffortLevels,
-        onReasoningEffortChange: setReasoningEffort,
+        onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
       }
     : leadCompareCard?.editableSelection
       ? {
@@ -6314,7 +6319,7 @@ export function PlaygroundMain({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     ...composerEffortProps,
     onResetChat: handleResetAllChats,
     submitDisabled:
@@ -7360,6 +7365,7 @@ export function PlaygroundMain({
                             compareLabel={entry.label}
                             compareKind="model"
                             model={model}
+                            selection={card?.selection}
                             reasoningEffort={card?.reasoningEffort}
                             reasoningEffortHarness={compareEffortHarness}
                             effort={

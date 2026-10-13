@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alreadyReviewed, collectContext, main, reviewBody } from "./adversarial-review.mjs";
+import { alreadyReviewed, collectContext, main, ReviewBudgetError, reviewBody } from "./adversarial-review.mjs";
 
 test("collects full before/after blobs and treats additions, deletions and symlinks as data", () => {
   const readBlobs = [];
@@ -23,12 +23,25 @@ test("collects full before/after blobs and treats additions, deletions and symli
   assert.deepEqual(readBlobs, ["head:added.js", "base:deleted.js"]);
 });
 
-test("oversized context fails rather than silently truncating the review", () => {
+test("a file too large for the budget is sent as its diff and marked, smallest files first", () => {
+  const sizes = { "large.js": 300_000, "medium.js": 150_000, "small.js": 10 };
+  const files = collectContext("base", "head", ([command, ...args]) => {
+    if (command === "diff") return args.includes("--name-only") ? "large.js\0medium.js\0small.js\0" : "patch";
+    if (command === "ls-tree") return "100644 blob abc\tfile";
+    return "x".repeat(sizes[args[0].split(":")[1]]);
+  });
+  assert.deepEqual(files.map((file) => [file.path, file.diffOnly === true]),
+    [["large.js", true], ["medium.js", false], ["small.js", false]]);
+  assert.equal(files[0].diff, "patch");
+  assert.match(files[0].after, /omitted to fit the review budget/);
+});
+
+test("a diff over the budget on its own skips the review instead of truncating it", () => {
   assert.throws(() => collectContext("base", "head", ([command, ...args]) => {
-    if (command === "diff") return args.includes("--name-only") ? "large.js\0" : "patch";
+    if (command === "diff") return args.includes("--name-only") ? "large.js\0" : "x".repeat(500_001);
     if (command === "ls-tree") return "100644 blob abc\tlarge.js";
-    return "x".repeat(500_001);
-  }), /review budget/);
+    return "small";
+  }), (error) => error instanceof ReviewBudgetError && /review budget/.test(error.message));
 });
 
 test("review validation rejects missing, multiple, empty and oversized results", () => {
@@ -40,6 +53,8 @@ test("review validation rejects missing, multiple, empty and oversized results",
   for (const label of ["do", "try", "nit"]) {
     assert.match(reviewBody([{ body: `[${label}] Finding` }], "abc"), /adversarial-review:abc/);
   }
+  assert.doesNotMatch(reviewBody([{ body: "[nit] Finding" }], "abc"), /diff only/);
+  assert.match(reviewBody([{ body: "[nit] Finding" }], "abc", ["big.ts"]), /diff only.*`big\.ts`/);
 });
 
 test("deduplication paginates and ignores markers posted by other users", async () => {
@@ -96,4 +111,30 @@ test("posts a COMMENT on the reviewed SHA and refuses stale or failed model resu
       assert.equal(posts.length, 0);
     }
   }
+});
+
+test("a PR over the budget skips with a notice: no model call, no review, no failure", async (t) => {
+  const env = {
+    ANTHROPIC_API_KEY: "test", GITHUB_TOKEN: "test", GITHUB_REPOSITORY: "test/repo",
+    PR_NUMBER: "1", HEAD_SHA: "a".repeat(40), GITHUB_STEP_SUMMARY: "",
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const posts = [];
+  let calls = 0;
+  const request = async (path, method, body) => {
+    if (method === "POST") { posts.push(body); return {}; }
+    if (path.includes("reviews?")) return [];
+    return { state: "open", head: { sha: env.HEAD_SHA } };
+  };
+  await main(async () => { calls++; }, request, () => { throw new ReviewBudgetError("over budget"); });
+  assert.equal(calls, 0);
+  assert.equal(posts.length, 0);
+  await assert.rejects(main(async () => { calls++; }, request, () => { throw new Error("git failed"); }), /git failed/);
 });

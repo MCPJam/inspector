@@ -315,6 +315,7 @@ describe("streamWebChatTurn model dispatch", () => {
         expect.anything(),
         expect.objectContaining({ modelSelection: org }),
       );
+      expect(handlers.hostedOrg).toHaveBeenCalledWith(expect.objectContaining({ modelSelection: org }));
       expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
       expect(handlers.mcpjamFree).not.toHaveBeenCalled();
     });

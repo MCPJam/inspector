@@ -23,7 +23,7 @@ import {
   type ComponentProps,
   type ReactElement,
 } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
@@ -31,6 +31,7 @@ import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -1773,7 +1774,7 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
   // document is served with `__MCP_GUEST_BOOTSTRAP__` injected regardless of
   // session cookie, so a signed-in user's first render carries a GUEST bearer:
   // WorkOS says "member", Convex says "authenticated", and the socket holds a
-  // guest. Anything reading `useAuth().user` answers "member" for a caller the
+  // guest. Anything reading `useInspectorAuth().user` answers "member" for a caller the
   // backend will treat as a guest. This hook asks `users:getCurrentUser`, whose
   // answer is resolved from the JWT actually received, so it reports the
   // identity a member-only function would see.
@@ -1946,7 +1947,7 @@ function SwarmsRouteContent() {
   // which never get a WorkOS `user.email` — but those actors still own a
   // personal-org project and pass `requireProjectRole('member')` server-side
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   // The sidebar filters the Swarms nav item on this flag, but a filtered nav
   // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
@@ -2085,7 +2086,7 @@ export function EnvironmentsRoute() {
   const { environmentId: routeEnvironmentId } = useParams<{
     environmentId?: string;
   }>();
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
     isAuthenticated,
@@ -2919,7 +2920,7 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const guestSessionRefusal = useSyncExternalStore(
     subscribeGuestSessionChanges,
@@ -5545,15 +5546,15 @@ export default function App() {
       consumeCheckoutIntent();
       return;
     }
-
-    // Convex guest sessions are authenticated too, so WorkOS is the source of
-    // truth for whether this actor may begin a paid checkout.
     if (!workOsUser) {
       if (isWorkOsLoading || billingSignInStartedRef.current) return;
       billingSignInStartedRef.current = true;
       writeBillingSignInReturnPath(routePaths.billing);
       void Promise.resolve()
         .then(() => signIn())
+        .then((result) => {
+          if (result === "blocked") consumeCheckoutIntent();
+        })
         .catch(() => {
           billingSignInStartedRef.current = false;
           toast.error("Could not start sign in. Try again.");
@@ -6557,6 +6558,7 @@ export default function App() {
               settings={settingsShellActive}
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
+              <PendingOrganizationDeletions />
               {showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>

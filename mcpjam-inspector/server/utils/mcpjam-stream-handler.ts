@@ -1,3 +1,4 @@
+import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
@@ -919,8 +920,8 @@ export interface MCPJamHandlerOptions {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
-   * The turn's saved model selection, typed. Read by `runHarnessTurn`: a
-   * `source: 'org'` selection runs the harness on the organization's own
+   * The turn's saved selection, forwarded on every hosted step and read by
+   * `runHarnessTurn`: an org selection runs the harness on the organization's own
    * provider key (its canonical id is the turn's model, its connection is
    * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
    */
@@ -4944,10 +4945,15 @@ export async function runChatEngineLoop(
   // The turn's effort rides every per-step hosted body as the top-level field
   // (which the backend prefers over a forwarded selection's). Set last so a
   // caller-supplied extra field cannot contradict the typed one.
-  const extraBodyFields: Record<string, unknown> | undefined =
-    options.reasoningEffort !== undefined
-      ? { ...(callerExtraBodyFields ?? {}), reasoningEffort: options.reasoningEffort }
-      : callerExtraBodyFields;
+  const extraBodyFields = {
+    ...callerExtraBodyFields,
+    ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...streamSelectionFields(
+      options.modelSelection ?? callerExtraBodyFields?.modelSelection,
+      { id: modelId, provider },
+      endpointPath ?? "/stream",
+    ),
+  };
   // One typed route.operation.failed per turn, whatever combination of the
   // three failure sites fires; the system fallback covers eval/swarm runs
   // that have no request context. Later failures in the same turn still get
