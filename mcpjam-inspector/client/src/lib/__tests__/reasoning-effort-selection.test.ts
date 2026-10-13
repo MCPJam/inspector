@@ -209,6 +209,34 @@ describe("setEffortForRow", () => {
     }
   });
 
+  it("an effort pick on a legacy host never mints a hosted selection", () => {
+    // What the hosts page does: resolve the row through
+    // findModelForStoredChoice, then write the effort for that row. With the
+    // hosted twin listed first, the legacy host still lands on its own key.
+    const localGpt5 = {
+      id: "openai/gpt-5",
+      name: "GPT-5",
+      provider: "openai",
+      hosted: false,
+    } as ModelDefinition;
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    const row = findModelForStoredChoice(
+      { modelId: legacy.modelId, selection: legacy },
+      [gpt5, localGpt5],
+      undefined,
+    )!;
+    expect(row).toBe(localGpt5);
+    const set = setEffortForRow({
+      purpose: "chat",
+      row,
+      selection: legacy,
+      effort: "high",
+      bareIds: "canonicalize",
+    })!;
+    expect(set.selection?.source).toBe("local");
+    expect(set.selection?.settings?.reasoningEffort).toBe("high");
+  });
+
   it("edits the existing selection of a hosted row in place", () => {
     const out = setEffortForRow({
       purpose: "evalTarget",
