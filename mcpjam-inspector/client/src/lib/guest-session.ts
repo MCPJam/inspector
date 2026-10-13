@@ -112,9 +112,13 @@ export function getGuestSessionRefusal(): GuestSessionRefusal | null {
 
 function setCachedSession(session: GuestSession | null): void {
   const previousGuestId = cachedSession?.guestId ?? null;
+  const previousToken = cachedSession?.token ?? null;
   cachedSession = session;
   const nextGuestId = cachedSession?.guestId ?? null;
-  if (previousGuestId !== nextGuestId) {
+  if (
+    previousGuestId !== nextGuestId ||
+    previousToken !== (session?.token ?? null)
+  ) {
     notifySessionListeners();
   }
 }
