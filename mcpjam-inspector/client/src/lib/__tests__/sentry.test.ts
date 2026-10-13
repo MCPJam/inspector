@@ -226,6 +226,7 @@ describe("client sentry init", () => {
     });
 
     setSessionPrivacy("full");
+    await allowFullContext();
     const full = config.beforeSendSpan(inp());
     expect(JSON.stringify(full)).not.toContain("tok_secret");
     expect(full.data.transaction).toContain("/servers/acme/");
@@ -233,7 +234,7 @@ describe("client sentry init", () => {
     setSessionPrivacy("masked");
     const masked = config.beforeSendSpan(inp());
     expect(JSON.stringify(masked)).not.toContain("tok_secret");
-    expect(masked.data.transaction).not.toContain("acme");
+    expect(masked.data).toEqual({});
   });
 
   it("names spans by credential template and scrubs transactions last", async () => {
@@ -295,7 +296,8 @@ describe("syncSentryReplay", () => {
     level: import("../session-privacy").SessionPrivacy | null,
   ) {
     const privacy = await import("../session-privacy");
-    if (level) privacy.setSessionPrivacy(level);
+    await allowFullContext();
+    privacy.setSessionPrivacy(level ?? (privacy.recordingSurface() === "off" ? "off" : "pending"));
     return { ...(await import("../sentry")), ...privacy };
   }
 
@@ -326,7 +328,7 @@ describe("syncSentryReplay", () => {
 
     it("not on a hard load onto /results/, only after leaving it", async () => {
       clientWithoutReplay();
-      const { syncSentryReplay } = await loadAt("masked");
+      const { syncSentryReplay } = await loadAt("full");
 
       syncSentryReplay("/results/secret-token");
       expect(addIntegration).not.toHaveBeenCalled();
@@ -402,7 +404,7 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  it("needs no restart between full and masked: it masks at both", async () => {
+  it("stops at masked and starts a new replay only when full returns", async () => {
     const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
     const replay = stubReplay(true);
 
@@ -412,8 +414,8 @@ describe("syncSentryReplay", () => {
     setSessionPrivacy("full");
     syncSentryReplay("/servers");
 
-    expect(replay.stop).not.toHaveBeenCalled();
-    expect(replay.start).not.toHaveBeenCalled();
+    expect(replay.stop).toHaveBeenCalledOnce();
+    expect(replay.start).toHaveBeenCalledOnce();
   });
 
   it("resumes a buffering replay as a buffering replay", async () => {
@@ -456,6 +458,9 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).toHaveBeenCalledTimes(1);
 
     setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+    setSessionPrivacy("full");
     syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
@@ -826,29 +831,15 @@ describe("performance transactions short of full", () => {
       {},
     );
 
-    // A request to a relative URL, and its query and fragment kept apart.
-    expect(event.spans[1]).toEqual({
-      description: "GET /api/web/servers/[name]?tab=[name]",
-      data: { "http.query": "?q=[name]", "http.fragment": "" },
-      start_timestamp: 2,
-      timestamp: 3,
-    });
-    expect(event.transaction).toBe("/results/[redacted]");
-    expect(event.contexts.trace.data).toEqual({
-      "url.full": "https://app.mcpjam.com/servers/[name]",
-      "lcp.element": "h1.title",
-      "cls.source.1": "img.avatar",
-    });
-    expect(event.spans[0]).toEqual({
-      description: "GET https://[host]/[name]/[name]",
-      data: {
-        "server.address": "[host]",
-        "url.full": "https://[host]/[name]/[name]",
-        "http.response_transfer_size": 1057,
-      },
-      start_timestamp: 1,
-      timestamp: 2,
-    });
+    expect(event.spans).toHaveLength(2);
+    expect(event.spans[0].start_timestamp).toBe(1);
+    expect(event.spans[0].timestamp).toBe(2);
+    expect(
+      event.spans.every(
+        (span: { data: object }) => Object.keys(span.data).length === 0,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(event)).not.toMatch(/acme|Zelda|zelda/);
     getClient.mockReset();
   });
 });
@@ -865,6 +856,7 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     vi.resetModules();
     const { syncSentryReplay } = await import("../sentry");
     const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
     setSessionPrivacy("full");
     let finishStop: () => void = () => {};
     const replay = {
@@ -889,6 +881,7 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     vi.resetModules();
     const { syncSentryReplay } = await import("../sentry");
     const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
     setSessionPrivacy("full");
     const events: string[] = [];
     let finishFirstStop: () => void = () => {};
@@ -929,6 +922,7 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     vi.resetModules();
     const { syncSentryReplay } = await import("../sentry");
     const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
     setSessionPrivacy("full");
     // Every stop issued so far finishes flushing together.
     const flushing: (() => void)[] = [];
