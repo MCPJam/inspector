@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { EvalReportingError } from "./errors.js";
+import {
+  sdkDiagnosticBoundary,
+  sdkTelemetryDisabled,
+} from "./internal/sentry-boundary.js";
 
 // Injected at build time by tsup (see sdk/tsup.config.ts). Declared here so
 // TypeScript recognizes the identifier; esbuild replaces it with a string
@@ -53,13 +57,6 @@ let sentryStatePromise: Promise<LoadedSentry | null> | null = null;
 let sdkSentryDsn = SDK_SENTRY_DSN;
 let sentryModuleLoader: () => Promise<SentryModule | null> = async () =>
   await import("@sentry/node");
-
-function isTelemetryDisabled(): boolean {
-  return (
-    process.env.DO_NOT_TRACK === "1" ||
-    process.env.MCPJAM_TELEMETRY_DISABLED === "1"
-  );
-}
 
 function normalizeError(error: unknown): Error {
   if (error instanceof Error) {
@@ -139,7 +136,7 @@ function findEvalReportingError(error: unknown): EvalReportingError | null {
 }
 
 async function loadSentry(): Promise<LoadedSentry | null> {
-  if (isTelemetryDisabled() || !sdkSentryDsn) {
+  if (sdkTelemetryDisabled() || !sdkSentryDsn) {
     return null;
   }
 
@@ -150,7 +147,9 @@ async function loadSentry(): Promise<LoadedSentry | null> {
           return null;
         }
 
+        const boundary = sdkDiagnosticBoundary(SDK_RELEASE);
         const client = new sentry.NodeClient({
+          ...boundary.hooks,
           dsn: sdkSentryDsn,
           integrations: [],
           release: SDK_RELEASE,
@@ -159,6 +158,7 @@ async function loadSentry(): Promise<LoadedSentry | null> {
           stackParser: sentry.defaultStackParser,
           transport: sentry.makeNodeTransport,
         });
+        client.on("beforeEnvelope", boundary.envelope);
         client.init();
 
         const scope = new sentry.Scope();
