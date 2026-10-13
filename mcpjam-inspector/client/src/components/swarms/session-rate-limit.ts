@@ -20,6 +20,7 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { isXaaConnectFailureReason } from "@/shared/xaa-connect-failure";
 import {
   describeProviderNotAllowlisted,
   isProviderNotAllowlistedCode,
@@ -225,8 +226,11 @@ export function describeSwarmAttemptFailure(
     };
   }
   const base = describeError(info.message);
+  // A server sign-in (XAA) the authorization server throttled says "(HTTP
+  // 429)" too, but no AI provider was involved: it keeps its own sentence.
   if (
     base.slug === "provider/quota" &&
+    !isXaaConnectFailureReason(code) &&
     !isAccountLimit(info.message, errorCode ?? info.code)
   ) {
     return {

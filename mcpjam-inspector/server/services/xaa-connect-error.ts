@@ -38,7 +38,7 @@ function extractRejectionDetail(message: string): string | undefined {
     status ? `HTTP ${status}` : undefined,
     detail ? asClause(detail) : undefined,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" — ") : undefined;
+  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 const CREDENTIAL_REFUSAL_KEYS = [
@@ -140,8 +140,7 @@ export function toXaaConnectFailure(
     const detail = extractRejectionDetail(raw);
     message =
       `The authorization server for "${name}" rejected MCPJam's access request` +
-      `${detail ? ` (${detail})` : ""} — check the server's XAA client` +
-      ` credentials and issuer in its auth settings.`;
+      `${detail ? ` (${detail})` : ""}. Check the server's auth settings.`;
   } else if (routeError?.code === ErrorCode.VALIDATION_ERROR) {
     status = 400;
     code = ErrorCode.VALIDATION_ERROR;

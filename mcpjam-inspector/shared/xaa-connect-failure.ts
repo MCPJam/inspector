@@ -43,6 +43,23 @@ export function isXaaConnectFailureReason(
 }
 
 /**
+ * The XAA reason a thrown connect failure classified itself with
+ * (`details.reason`, as `toXaaConnectFailure` writes it), or `undefined` for
+ * any other error. Read structurally: the error can cross a route boundary, or
+ * ride as the `cause` of a wrapper such as a failed swarm setup turn.
+ */
+export function xaaConnectFailureReasonOf(
+  error: unknown
+): XaaConnectFailureReason | undefined {
+  const details = (error as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== "object") return undefined;
+  const reason = (details as { reason?: unknown }).reason;
+  return typeof reason === "string" && isXaaConnectFailureReason(reason)
+    ? reason
+    : undefined;
+}
+
+/**
  * True for the failures whose fix is "run the handshake again", not "something
  * is broken". The single input a surface needs to choose a calm treatment over
  * a red one: an authorization handshake that needs re-running is not an

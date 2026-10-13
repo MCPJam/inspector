@@ -51,6 +51,7 @@ import {
   sponsoredPlatformFailure,
 } from "../../../shared/swarm-sponsorship.js";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
+import { isXaaConnectFailureReason } from "../../../shared/xaa-connect-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -1582,7 +1583,16 @@ export async function runSyntheticHostSession(
     // it to distinguish a provider 429 (stop THIS host) from an org spend-cap
     // breach (stop the WHOLE run). The scenario runner ignores it for
     // rate-limited outcomes, so this is a safe additive change.
-    if (classifyTurnFailure(message) === "rate_limited") {
+    //
+    // A server's enterprise sign-in (XAA) failure is never a rate limit, even
+    // when its authorization server answered 429: the "(HTTP 429)" in its
+    // sentence would otherwise card it as the user's AI provider throttling
+    // their key. It keeps its structured reason and fails below.
+    const errorReason = readErrorReason(error);
+    if (
+      !isXaaConnectFailureReason(errorReason) &&
+      classifyTurnFailure(message) === "rate_limited"
+    ) {
       emit?.({
         type: "session_complete",
         status: "rate_limited",
@@ -1601,7 +1611,6 @@ export async function runSyntheticHostSession(
       status: "failed",
       errorMessage: message,
     });
-    const errorReason = readErrorReason(error);
     return {
       outcome: "failed",
       errorMessage: message,

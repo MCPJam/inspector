@@ -75,6 +75,11 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
+  isRerunnableXaaFailure,
+  isXaaConnectFailureReason,
+  xaaConnectFailureReasonOf,
+} from "../../../shared/xaa-connect-failure.js";
+import {
   sponsoredPlatformFailure,
   unstartedSponsoredStopMessage,
   type SponsoredPlatformFailure,
@@ -1994,6 +1999,61 @@ async function runJourneyFanOut(
             }
             return;
           }
+          // The server's enterprise sign-in (XAA) was refused. Every later
+          // session of this target signs in to the same authorization server
+          // and would be refused the same way (or throttled for asking again),
+          // so stop THIS target and close its remaining sessions with the same
+          // reason and sentence. Other targets keep running. A sign-in that
+          // only needs re-running is not a refusal and does not stop anything.
+          if (
+            terminal.status === "failed" &&
+            isXaaConnectFailureReason(terminal.errorCode) &&
+            !isRerunnableXaaFailure(terminal.errorCode)
+          ) {
+            logEvent("target.sign_in_short_circuit", {
+              runId,
+              hostId,
+              targetId,
+              reason: terminal.errorCode,
+              fromSessionIdx: sessionIdx + 1,
+              remaining: sessionsPerTarget - (sessionIdx + 1),
+            });
+            await markRemainingTargetAttemptsFailed(
+              {
+                convexHttpUrl,
+                bearer,
+                projectId,
+                runId,
+                target,
+                skip: (idx) => isSponsored(target, idx),
+                reportAttemptFn: reportRunAttempt,
+              },
+              sessionIdx + 1,
+              sessionsPerTarget,
+              terminal.errorCode,
+              terminal.errorMessage,
+            );
+            if (targetHasSponsored(target)) {
+              await finalizeTargetAttempts(
+                {
+                  convexHttpUrl,
+                  bearer,
+                  projectId,
+                  runId,
+                  target,
+                  fundingScope: "sponsored",
+                },
+                {
+                  terminalStatus: "failed",
+                  errorCode: terminal.errorCode,
+                  ...(terminal.errorMessage
+                    ? { errorMessage: terminal.errorMessage }
+                    : {}),
+                },
+              );
+            }
+            return;
+          }
         } finally {
           // Release the attempt's box on EVERY exit — success, session error,
           // an early `return` from a rate-limit short-circuit, and a run-level
@@ -2134,10 +2194,26 @@ async function runJourneyFanOut(
         err instanceof SwarmSetupError ? err.platformFailure : undefined;
       if (platformFailure?.code === "platform_capacity" && !sponsoredStop)
         sponsoredStop = platformFailure;
-      const failureCode =
+      // A setup turn that could not sign in to the server is that sign-in
+      // failure, not missing prerequisites: it keeps the reason and the
+      // sentence the sessions themselves would have stored.
+      const signInFailure =
         err instanceof SwarmSetupError
+          ? xaaConnectFailureReasonOf(err.cause)
+          : undefined;
+      const causeMessage =
+        signInFailure && err instanceof SwarmSetupError
+          ? (err.cause as { message?: unknown }).message
+          : undefined;
+      const signInMessage =
+        typeof causeMessage === "string" && causeMessage.trim()
+          ? humanizeSwarmAttemptErrorMessage(causeMessage)
+          : undefined;
+      const failureCode =
+        signInFailure ??
+        (err instanceof SwarmSetupError
           ? "prerequisites_unavailable"
-          : "host_worker_failed";
+          : "host_worker_failed");
       // Sponsored conversations are never claimed here: claiming one counts as
       // execution and would spend the allowance for a conversation that never
       // ran. They are closed below instead.
@@ -2154,6 +2230,7 @@ async function runJourneyFanOut(
         sessionIdx,
         sessionsPerTarget,
         failureCode,
+        signInMessage,
       );
       // Capacity leaves them for the run-level finalize. A sponsorship refusal
       // closes only this target, preserving healthy targets. Other failures close this target's
@@ -2178,7 +2255,11 @@ async function runJourneyFanOut(
                 errorCode: platformFailure.code,
                 errorMessage: unstartedSponsoredStopMessage(platformFailure),
               }
-            : { terminalStatus: "failed", errorCode: failureCode },
+            : {
+                terminalStatus: "failed",
+                errorCode: failureCode,
+                ...(signInMessage ? { errorMessage: signInMessage } : {}),
+              },
         );
       }
     }
@@ -2629,6 +2710,8 @@ async function markRemainingTargetAttemptsFailed(
   fromIdx: number,
   toIdx: number,
   errorCode = "host_worker_failed",
+  /** Stored on every swept attempt, so none of them reads as "unknown". */
+  errorMessage?: string,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
@@ -2659,6 +2742,7 @@ async function markRemainingTargetAttemptsFailed(
         status: "failed",
         chatSessionId,
         errorCode,
+        ...(errorMessage ? { errorMessage } : {}),
       });
       if (terminal.canceled) return;
     } catch (err) {
