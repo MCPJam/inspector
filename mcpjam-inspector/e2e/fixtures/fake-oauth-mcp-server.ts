@@ -312,20 +312,22 @@ export async function startFakeOAuthMcpServer(
         }
 
         const tokenBody = parsedBody as Record<string, string> | undefined;
-        if (
-          codeLifetimeMs !== undefined &&
-          tokenBody?.grant_type === "authorization_code"
-        ) {
-          const issuedAt = issuedCodes.get(tokenBody.code);
-          issuedCodes.delete(tokenBody.code);
-          if (
-            issuedAt === undefined ||
-            Date.now() - issuedAt > codeLifetimeMs
-          ) {
-            sendJson(response, 400, {
-              error: "invalid_grant",
-              error_description: "Authorization code not found or expired",
-            });
+        if (codeLifetimeMs !== undefined) {
+          if (tokenBody?.grant_type === "authorization_code") {
+            const issuedAt = issuedCodes.get(tokenBody.code);
+            issuedCodes.delete(tokenBody.code);
+            if (
+              issuedAt === undefined ||
+              Date.now() - issuedAt > codeLifetimeMs
+            ) {
+              sendJson(response, 400, {
+                error: "invalid_grant",
+                error_description: "Authorization code not found or expired",
+              });
+              return;
+            }
+          } else if (tokenBody?.grant_type !== "refresh_token") {
+            sendJson(response, 400, { error: "unsupported_grant_type" });
             return;
           }
         }
