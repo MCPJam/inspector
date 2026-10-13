@@ -85,7 +85,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { decideTurnRail, harnessTurnRail } from "./selection-rail.js";
+import { decideTurnRail, harnessTurnRail, forwardableSelection } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
@@ -1633,6 +1633,9 @@ export async function streamWebChatTurn(
       failureReporter,
       providerKey: orgRuntime.providerKey,
       modelId,
+      ...(prepare.routingSelection?.source === "org"
+        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const } }
+        : {}),
       ...(typeof prepare.modelDefinition.nativeModelId === "string"
         ? { nativeModelId: prepare.modelDefinition.nativeModelId }
         : {}),
@@ -1779,9 +1782,10 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
-    // The org selection the harness's lease is minted for (its canonical id
-    // and connection). Only on an org-key harness turn.
-    ...(rail.orgSelection ? { modelSelection: rail.orgSelection } : {}),
+    // Preserve the resolved selection for hosted steps and harness leases.
+    ...(forwardableSelection(prepare.routingSelection)
+      ? { modelSelection: forwardableSelection(prepare.routingSelection) }
+      : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),
