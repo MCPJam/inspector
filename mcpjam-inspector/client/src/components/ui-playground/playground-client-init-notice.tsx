@@ -28,7 +28,7 @@ export function playgroundClientInitNotice({
   return (
     <div role="alert" className="flex items-center gap-2 px-1 text-xs">
       <span className="text-muted-foreground">
-        Couldn’t set up the comparison clients. MCPJam is ready to use.
+        Could not set up the comparison clients. Try again.
       </span>
       <Button
         type="button"

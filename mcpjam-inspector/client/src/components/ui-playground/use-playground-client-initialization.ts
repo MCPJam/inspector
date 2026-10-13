@@ -111,7 +111,7 @@ export function usePlaygroundClientInitialization({
       });
       // An empty answer is not a success: it goes through the failure path.
       if (typeof result?.hostId !== "string") {
-        throw new Error("ensureProjectClient returned no client");
+        throw new Error("Could not set up a client. Try again.");
       }
       return { projectId: pid, before, result };
     };

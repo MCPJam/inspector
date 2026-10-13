@@ -261,7 +261,7 @@ import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-to
 import { clientDisplayName } from "@/lib/client-display-name";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
-import { playgroundClientInitNotice } from "@/components/playground/PlaygroundClientInitNotice";
+import { playgroundClientInitNotice } from "./playground-client-init-notice";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
