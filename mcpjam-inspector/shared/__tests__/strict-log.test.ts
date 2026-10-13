@@ -3,6 +3,10 @@ import { buildStrictLogRow } from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it("retains full mounted templates and rejects concrete customer paths", () => {
+    expect(buildStrictLogRow("http.request.failed", { method: "POST", route: "/api/web/chat-v2" }, { statusCode: 500 })).toMatchObject({ route: "/api/web/chat-v2", errorClass: "UnknownError", errorCode: "unknown" });
+    expect(buildStrictLogRow("http.request.failed", { method: "POST", route: "/api/web/private-customer-path" })).toMatchObject({ route: "unknown_route" });
+  });
   it("preserves catalog diagnostics and rejects prose and payload context overrides", () => {
     const sentinel = "PRIVATE_SENTINEL";
     const row = buildStrictLogRow(

@@ -83,7 +83,17 @@ export function buildStrictLogRow(
             : ua.startsWith("Mozilla/")
               ? "browser"
               : "other";
-  row.route = approved(context.route, catalog.routes) ?? "unknown_route";
+  const path =
+    typeof context.route === "string"
+      ? context.route.replace(/\/$/, "") || "/"
+      : "";
+  row.route = catalog.routeEntries.some(
+    (entry) =>
+      entry.path === path &&
+      (entry.method === "ALL" || entry.method === context.method),
+  )
+    ? path
+    : "unknown_route";
   const release = context.release;
   if (
     typeof release === "string" &&
@@ -100,13 +110,15 @@ export function buildStrictLogRow(
     "unknown",
   ]);
   if (code) row.errorCode = code;
-  if (error !== undefined) {
+  if (error !== undefined || event.endsWith(".failed")) {
     row.errorClass = strictLogError(error);
     row.knownError = row.errorClass !== "UnknownError";
+    row.errorCode = code ?? "unknown";
   }
   row.fingerprint = [
     event,
     row.route,
+    row.statusCode ?? "none",
     row.errorClass ?? "none",
     code ?? "none",
   ].join(":");

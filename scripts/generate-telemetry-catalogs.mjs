@@ -1,3 +1,4 @@
+import { mountedRoutes } from "./telemetry-route-catalog.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import ts from "typescript";
@@ -84,7 +85,7 @@ for (const file of files) {
     ) {
       const members = ts.isTypeLiteralNode(node.type) ? node.type.members : [];
       for (const member of members)
-        if (member.name && ts.isStringLiteral(member.name))
+        if (member.name && (ts.isStringLiteral(member.name) || ts.isIdentifier(member.name)))
           events.push(member.name.text);
     }
     if (
@@ -114,6 +115,13 @@ for (const file of files) {
     catalog.frames[file.replace(/^(?:sdk|mcpjam-inspector)\//, "")] = [
       ...names,
     ].sort();
+}
+
+catalogs.inspector.routeEntries = mountedRoutes("mcpjam-inspector/server/app.ts");
+catalogs.inspector.routes = catalogs.inspector.routeEntries.map((entry) => entry.path);
+for (const [group, bundle] of [["sdk", "dist/index.js"], ["inspector", "dist/server/index.js"], ["inspector", ".vite/build/main.cjs"]]) {
+  const names = Object.entries(catalogs[group].frames).filter(([file]) => group === "sdk" || file.startsWith("server/") || file.startsWith("shared/") || file.startsWith("src/")).flatMap(([, functions]) => functions);
+  catalogs[group].frames[bundle] = [...new Set(names)].sort();
 }
 
 const outputs = {
