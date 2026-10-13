@@ -19,7 +19,8 @@ import {
 import type { EvalSuiteEnvironmentTarget } from "../evals/types";
 import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
-import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
+import { GuestSignInButton } from "@/components/auth/GuestSignInMessage";
+import { JamIllustration } from "@/components/billing/JamIllustration";
 
 export function GenerateCasesDialog({
   suiteId,
@@ -61,6 +62,7 @@ export function GenerateCasesDialog({
         }}
       >
         <DialogContent className="sm:max-w-md">
+          {member === false && <JamIllustration />}
           <DialogHeader>
             <DialogTitle>Generate test cases</DialogTitle>
             {member === undefined ? (
@@ -69,19 +71,24 @@ export function GenerateCasesDialog({
               </DialogDescription>
             ) : (
               <DialogDescription>
-                AI case generation requires an account.
+                Sign in to generate test cases. You can still add test cases
+                manually.
               </DialogDescription>
             )}
           </DialogHeader>
-          {member === false && (
-            <GuestSignInMessage
-              compact
-              message="Sign in to generate test cases."
-              location="eval_case_generation"
-            />
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+          <DialogFooter className="sm:flex-row-reverse">
+            {member === false && (
+              <GuestSignInButton
+                location="eval_case_generation"
+                className="flex-1"
+              />
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className={member === false ? "flex-1" : undefined}
+              onClick={onClose}
+            >
               Cancel
             </Button>
           </DialogFooter>

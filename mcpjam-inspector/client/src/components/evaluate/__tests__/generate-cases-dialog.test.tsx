@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { fireEvent } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { GenerateCasesDialog } from "../generate-cases-dialog";
 import { SuiteDetailOverview } from "../suite-detail-overview";
@@ -57,7 +57,25 @@ it("offers sign-in instead of configuration for a guest actor, even while WorkOS
   renderWithProviders(
     <GenerateCasesDialog suiteId="s" onGenerate={onGenerate} onClose={onClose} />,
   );
-  expect(screen.getByText("Sign in to generate test cases.")).toBeVisible();
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveAccessibleName("Generate test cases");
+  expect(dialog).toHaveAccessibleDescription(
+    "Sign in to generate test cases. You can still add test cases manually.",
+  );
+  expect(screen.getByText(/Sign in to generate test cases\./)).toBeVisible();
+  expect(dialog.querySelector("img")).toHaveAttribute(
+    "src",
+    "/guest-credit-wall.png",
+  );
+  expect(dialog.querySelector("img")).toHaveAttribute("aria-hidden", "true");
+  const footer = dialog.querySelector<HTMLElement>(
+    '[data-slot="dialog-footer"]',
+  );
+  expect(footer).not.toBeNull();
+  if (!footer) throw new Error("Missing modal footer");
+  expect(within(footer).getByRole("button", { name: "Sign in" })).toBeEnabled();
+  expect(within(footer).getByRole("button", { name: "Sign in" })).toHaveFocus();
+  expect(within(footer).getByRole("button", { name: "Cancel" })).toBeEnabled();
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.queryByRole("button", { name: "Generate cases" })).toBeNull();
   await userEvent.setup().click(screen.getByRole("button", { name: "Sign in" }));
@@ -75,6 +93,7 @@ it("waits for the actor before showing generation or a sign-in prompt", () => {
     <GenerateCasesDialog suiteId="s" onGenerate={onGenerate} onClose={vi.fn()} />,
   );
   expect(screen.getByRole("status")).toHaveTextContent("Loading account…");
+  expect(screen.queryByText(/You can still add test cases manually\./)).toBeNull();
   expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Generate cases" })).toBeNull();
   expect(onGenerate).not.toHaveBeenCalled();
@@ -128,7 +147,7 @@ it("gates a project-backed guest before authoring while keeping manual case crea
   );
   const user = userEvent.setup();
   await user.click(screen.getByTestId("suite-empty-action-generate"));
-  expect(screen.getByText("Sign in to generate test cases.")).toBeVisible();
+  expect(screen.getByText(/Sign in to generate test cases\./)).toBeVisible();
   expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Generate cases" })).toBeNull();
   expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();

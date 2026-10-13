@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { Button } from "@mcpjam/design-system/button";
@@ -34,18 +35,6 @@ export function GuestSignInMessage({
   /** Inline (in-tab) layout instead of a full-height centered pane. */
   compact?: boolean;
 }) {
-  const { signIn } = useInspectorAuth();
-
-  const handleSignIn = () => {
-    // track() injects platform/environment/location (standardEventProps); the
-    // analytics ratchet forbids raw posthog.capture outside lib/analytics.ts.
-    track("login_button_clicked", {
-      location: location ?? "guest_signin_message",
-    });
-    captureAppSignInReturnPath();
-    signIn(permalinkSignInOptions());
-  };
-
   return (
     <div
       className={
@@ -57,9 +46,38 @@ export function GuestSignInMessage({
       <span className={compact ? "max-w-md" : "max-w-md text-center"}>
         {message}
       </span>
-      <Button size="sm" onClick={handleSignIn}>
-        Sign in
-      </Button>
+      <GuestSignInButton location={location} size="sm" />
     </div>
+  );
+}
+
+export function GuestSignInButton({
+  location,
+  size,
+  className,
+}: {
+  location?: string;
+  size?: ComponentProps<typeof Button>["size"];
+  className?: string;
+}) {
+  const { signIn } = useInspectorAuth();
+
+  const handleSignIn = () => {
+    track("login_button_clicked", {
+      location: location ?? "guest_signin_message",
+    });
+    captureAppSignInReturnPath();
+    signIn(permalinkSignInOptions());
+  };
+
+  return (
+    <Button
+      type="button"
+      size={size}
+      className={className}
+      onClick={handleSignIn}
+    >
+      Sign in
+    </Button>
   );
 }
