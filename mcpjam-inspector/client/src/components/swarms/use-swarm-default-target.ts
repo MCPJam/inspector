@@ -113,7 +113,7 @@ export function useSwarmDefaultTarget({
 
   useEffect(() => {
     if (!active || seededRef.current) return;
-    if (state.customized) {
+    if (state.customized || state.environmentIds.length > 0) {
       seededRef.current = true;
       return;
     }
@@ -162,6 +162,7 @@ export function useSwarmDefaultTarget({
     offerable,
     projectId,
     state.customized,
+    state.environmentIds,
     usageQueryEnabled,
     usageRows,
   ]);

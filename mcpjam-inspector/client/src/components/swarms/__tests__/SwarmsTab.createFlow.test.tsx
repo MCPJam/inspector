@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 import type { Predicate } from "@/shared/eval-matching";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
@@ -45,12 +46,7 @@ vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => [],
 }));
 
-/**
- * Clients and the project server catalog, as refs: the cloud-reachability
- * preflight reads BOTH (a client's `serverCount`, and what those servers are),
- * so a case has to be able to re-point them. Defaults deliberately omit
- * `serverCount` — an older backend does, and "unknown" must not read as zero.
- */
+/** Defaults omit serverCount: unknown enrollment must not read as zero. */
 const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   hostsRef: {
     current: [
@@ -1200,7 +1196,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       (await screen.findAllByText(/Claude has no model/)).length,
     ).toBeGreaterThan(0);
-    expect(convexQueryMock).toHaveBeenCalledWith(expect.anything(), {
+    const [ref, args] = convexQueryMock.mock.calls.find(
+      ([, args]) => args.serverSource === "swarm_explicit",
+    )!;
+    expect(getFunctionName(ref)).toBe(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+    );
+    expect(args).toEqual({
       projectId: "proj-1",
       environmentId: "env-1",
       serverSource: "swarm_explicit",

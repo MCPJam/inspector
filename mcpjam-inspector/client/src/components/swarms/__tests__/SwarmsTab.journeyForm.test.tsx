@@ -1,9 +1,10 @@
-/**
- * New-goal form: the goal text is the only field. Where it runs and how hard
- * it pushes follow the same defaults the swarm create flow and Generate use.
- */
+/** Manual goals inherit validated targets or resolve explicit replacements. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
 
 // The harness × model picker locks read each host's config; these tests mock
 // convex/react without that query, so the reads answer "not known yet".
@@ -53,6 +54,7 @@ const environments = [
     projectId: "proj-1",
     hostId: "host-1",
     origin: "adhoc" as const,
+    pluginVersionIds: ["plugin-pin"],
     revision: 1,
   },
 ];
@@ -148,7 +150,24 @@ vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
 }));
 vi.mock("@/components/environment-composer/environment-composer", () => ({
   SWARM_COMPOSER_SLOTS: {},
-  EnvironmentComposer: () => <div>Pick a server or group</div>,
+  EnvironmentComposer: ({
+    onChange,
+  }: {
+    onChange: (state: EnvironmentComposerState) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => {
+        const next = emptyComposerState();
+        next.stack.hostIds = ["host-1"];
+        next.stack.serverAttachmentId = "att-manual";
+        next.customized = true;
+        onChange(next);
+      }}
+    >
+      Pick a server or group
+    </button>
+  ),
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -181,7 +200,7 @@ async function createGoal(text: string): Promise<void> {
 }
 
 describe("SwarmsTab — new goal form", () => {
-  it("offers the goal text and nothing else", async () => {
+  it("offers a goal and target without extra run settings", async () => {
     await openGoalForm();
 
     expect(screen.queryByTestId("journey-environments-picker")).toBeNull();
@@ -191,7 +210,7 @@ describe("SwarmsTab — new goal form", () => {
     expect(screen.queryByText(/add check/i)).toBeNull();
   });
 
-  it("gates Create on the goal text alone", async () => {
+  it("requires goal text once the default target is ready", async () => {
     await openGoalForm();
     const create = screen.getByRole("button", { name: /create goal/i });
     expect(create).toBeDisabled();
@@ -363,6 +382,73 @@ describe("SwarmsTab — new goal form", () => {
     );
     expect(createJourneyMutation).not.toHaveBeenCalled();
     expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps inherited ad-hoc targets distinct until explicitly replaced", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["env-sibling", "env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    expect(screen.getByText(/Target 1:/)).toBeInTheDocument();
+    expect(screen.getByText(/Target 2:/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Pick a server or group" }),
+    ).toBeNull();
+    await createGoal("keep both targets");
+    await waitFor(() =>
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["env-sibling", "env-1"] }),
+      ),
+    );
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(
+      swarmPreflight.mock.calls
+        .filter((call) => call[1].serverSource === "swarm_explicit")
+        .map((call) => call[1].environmentId),
+    ).toEqual(["env-sibling", "env-1"]);
+  });
+
+  it("resolves the edited picker after replacing an inherited target", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["env-sibling"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    fireEvent.click(screen.getByRole("button", { name: "Replace targets" }));
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "replace target" },
+    });
+    expect(screen.getByRole("button", { name: /create goal/i })).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick a server or group" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
+    await waitFor(() =>
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["env-adhoc-1"] }),
+      ),
+    );
+    expect(ensureAdhocMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stacks: [{ hostId: "host-1", serverAttachmentId: "att-manual" }],
+      }),
+    );
+    expect(
+      swarmPreflight.mock.calls
+        .filter((call) => call[1].serverSource === "swarm_explicit")
+        .map((call) => call[1].environmentId),
+    ).toEqual(["env-adhoc-1"]);
   });
 
   it("creates against the siblings even when the default cannot run", async () => {
