@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   granted: true,
   grant: vi.fn(async () => true),
   hosted: false,
+  localAvailable: true,
 }));
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -38,7 +39,7 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
     selectedEngine: "local",
-    localAvailable: true,
+    localAvailable: mocks.localAvailable,
     consent: { granted: mocks.granted, token: "consent", grant: mocks.grant },
   }),
 }));
@@ -119,6 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.granted = true;
   mocks.hosted = false;
+  mocks.localAvailable = true;
   mocks.read.mockResolvedValue(snapshot());
   mocks.send.mockResolvedValue({ ok: true });
   store.setState({ clients: {}, selected: {} });
@@ -143,6 +145,29 @@ describe("one combined browser strip", () => {
   it("keeps local installation and recovery available when a started client has no snapshot", () => {
     register("a", 0);
     mocks.read.mockResolvedValue(null);
+    mount();
+    expect(screen.getByTestId("local-body")).toHaveAttribute(
+      "data-session",
+      "a",
+    );
+  });
+  it("shows the unavailable state, not local setup, when Local is unavailable and no client has started", () => {
+    mocks.localAvailable = false;
+    register("a", 0);
+    store.setState((state) => ({
+      clients: { a: { ...state.clients.a, started: false } },
+      selected: {},
+    }));
+    mount();
+    expect(screen.queryByTestId("local-body")).toBeNull();
+    expect(
+      screen.getByText(/Browser is unavailable on this machine/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a started local client's browser when Local reads unavailable", () => {
+    mocks.localAvailable = false;
+    register("a", 0);
     mount();
     expect(screen.getByTestId("local-body")).toHaveAttribute(
       "data-session",

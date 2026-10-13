@@ -276,6 +276,13 @@ export function ComparisonBrowser({
               location="playground_browser"
             />
           </div>
+        ) : localClient?.engine === "local" &&
+          !engine.localAvailable &&
+          !localClient.started ? (
+          <p role="status" className="p-4 text-sm text-muted-foreground">
+            Browser is unavailable on this machine. Check Browser settings or
+            choose Cloud for a new chat.
+          </p>
         ) : localClient?.engine === "local" ? (
           <LocalBrowserBody
             key={localClient.sessionId}
