@@ -24,7 +24,7 @@ import {
  * on data whose policy is unknown.
  *
  * Shared by suite runs, single-case runs (`routes/shared/evals.ts`) and
- * replays (`replay-suite-run.ts`), so it lives apart from the route module.
+ * replays (`replay-suite-run.ts`) and chat turns (`utils/own-key-turn-policy.ts`).
  */
 export async function orgPolicyConfigForClientKeys(
   target: ResolveOrgModelConfigTarget,

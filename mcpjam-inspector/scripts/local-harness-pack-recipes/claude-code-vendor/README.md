@@ -6,6 +6,10 @@ native CLI it shares a version with), plus the SDK's declared peers at the
 versions the adapter's own lockfile resolves them to. Frozen by
 `pnpm-lock.yaml`; the pack build installs it with `--frozen-lockfile`.
 
+A security bump may pin a peer ahead of the adapter's lockfile (the MCP SDK is
+at 1.31.0 here while the adapter still resolves 1.30.0). Nothing checks peers
+against the adapter, so an adapter bump must not move one back down.
+
 The adapter's bridge is **not** here: it is the Inspector layer
 (`server/utils/harness/local/inspector-layer.ts`), shipped with the Inspector,
 with the MCP SDK, `zod` and `ws` compiled in. So an adapter bump is an Inspector

@@ -25,6 +25,13 @@ import {
   isProviderNotAllowlistedCode,
 } from "@/lib/provider-not-allowlisted";
 import { getProviderDisplayName } from "@/lib/provider-registry";
+import {
+  describeOrgKeysRefusal,
+  isRetryableOrgKeysRefusal,
+  orgKeysRefusalCodeInText,
+  orgKeysRefusalCodeOf,
+  orgKeysRefusalNextStep,
+} from "@/lib/org-keys-refusal";
 
 /** Used whenever the model id does not name a provider outright. */
 const GENERIC_PROVIDER_LABEL = "Your provider";
@@ -125,6 +132,43 @@ export function describeHeldCredits(message: string): NormalizedError {
   };
 }
 
+/**
+ * The card for a session the organization's AI key policy (or its own
+ * provider) refused, or `undefined`. A stored code is the answer; the message
+ * is read only when the row has none, since it may mention a code
+ * incidentally.
+ */
+function describeOrgKeysSwarmRefusal(
+  rawMessage: string | null | undefined,
+  errorCode: string | null | undefined,
+  info: ReturnType<typeof humanizeSwarmAttemptError>,
+): NormalizedError | undefined {
+  const orgKeysCode =
+    orgKeysRefusalCodeOf(errorCode) ??
+    (errorCode == null
+      ? (orgKeysRefusalCodeOf(info.code) ??
+        orgKeysRefusalCodeInText(rawMessage))
+      : undefined);
+  if (!orgKeysCode) return undefined;
+  const described = describeOrgKeysRefusal(orgKeysCode, "member");
+  const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
+  return {
+    ...describeError(info.message),
+    slug: "swarm/ai_refused",
+    title: described.title,
+    oneLine: described.body,
+    severity: retryable ? "info" : "warning",
+    likelyCauses: [],
+    nextSteps: [
+      retryable
+        ? "Run the session again in a moment."
+        : orgKeysRefusalNextStep(described.remediation),
+    ],
+    rawMessage: rawMessage ?? info.message,
+    rawCode: orgKeysCode,
+  };
+}
+
 /** Use the producer's humanized meaning, while retaining raw diagnostics. */
 export function describeSwarmAttemptFailure(
   rawMessage: string | null | undefined,
@@ -133,6 +177,16 @@ export function describeSwarmAttemptFailure(
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
   const code = errorCode ?? info.code;
+  // The organization's AI key policy (or its own provider) refused the
+  // session's model. Checked first: read by status it would card as a
+  // provider credential failure or an MCPJam limit, and offer a top-up for
+  // what is configuration.
+  const orgKeysRefusal = describeOrgKeysSwarmRefusal(
+    rawMessage,
+    errorCode,
+    info,
+  );
+  if (orgKeysRefusal) return orgKeysRefusal;
   // The hosted gateway refused the host's model provider. Checked before the
   // status-driven paths below: read as a 401/403 it would card as a provider
   // credential failure and send the user to fix a key that was never used.

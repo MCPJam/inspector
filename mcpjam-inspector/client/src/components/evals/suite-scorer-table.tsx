@@ -102,6 +102,8 @@ export function SuiteScorerTable({
   judgeConfig,
   onJudgeConfigChange,
   availableModels = [],
+  requireOrgKeys = false,
+  onManageOrgProviders,
   scenarioMigrationNotice,
   stageFacts,
   capabilities,
@@ -119,6 +121,13 @@ export function SuiteScorerTable({
   /** Suite scope only: a case reads the judge's config and may only skip it. */
   onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void;
   availableModels?: ModelDefinition[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   scenarioMigrationNotice?: React.ReactNode;
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
@@ -575,6 +584,8 @@ export function SuiteScorerTable({
               value={judgeConfig}
               onChange={onJudgeConfigChange}
               availableModels={availableModels}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
             />
           </div>
         </section>

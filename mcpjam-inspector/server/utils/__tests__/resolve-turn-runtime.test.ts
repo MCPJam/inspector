@@ -324,7 +324,12 @@ describe("resolveTurnRuntime — runtime shape", () => {
     );
     expect(rt.runtime).toEqual({
       kind: "direct",
-      llmModel: { localModel: true },
+      // The built model, wrapped so each provider attempt asks the backend
+      // first (`local-org-attempt-admission.ts`).
+      llmModel: expect.objectContaining({
+        specificationVersion: "v4",
+        doStream: expect.any(Function),
+      }),
       modelId: "llama3",
     });
     // Byte-parity: no provider string is forwarded (spans carried none before).

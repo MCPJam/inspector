@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { guardStagingNetwork, SYNTHETIC_ROLE } from "./staging-network";
+import {
+  declineStagingAnalytics,
+  guardStagingNetwork,
+  SYNTHETIC_ROLE,
+} from "./staging-network";
+
+// Stop new browser traffic before removing guards, then let intercepted
+// fetches finish while the context and their responses are still alive.
+test.afterEach(async ({ context }) => {
+  await context.setOffline(true);
+  await context.unrouteAll({ behavior: "wait" });
+});
 
 test("staging synthetic user logs in and refreshes through the same-origin proxy", async ({
   page,
@@ -13,6 +24,7 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
   let phase = "configure network guards";
   try {
     await guardStagingNetwork(context, rejected);
+    await declineStagingAnalytics(context);
     phase = "open staging login";
     await page.goto(`${origin}/login`);
     phase = "enter synthetic email";
@@ -81,6 +93,10 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
     throw new Error(
       `Staging authentication failed at: ${phase}. Cause: ${cause}. Blocked operations: ${rejected.join(", ") || "none"}. App headings: ${headings.join("; ").slice(0, 500)}`,
     );
+  } finally {
+    // Requests still in flight when the test ends would otherwise fail loudly,
+    // and their call logs list every request header.
+    await context.unrouteAll({ behavior: "ignoreErrors" });
   }
 });
 

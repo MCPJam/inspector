@@ -481,6 +481,8 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId: _deletingRunId,
   availableModels,
+  requireOrgKeys = false,
+  onManageOrgProviders,
   route,
   userMap,
   projectId = null,
@@ -573,6 +575,13 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -2212,6 +2221,8 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -3231,6 +3242,8 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   judgeAccessory={
                     <JudgeGatePanel
                       suiteId={suite._id}

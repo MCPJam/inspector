@@ -204,6 +204,8 @@ function EvaluateTabContent({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -1577,6 +1579,8 @@ function EvaluateTabContent({
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
           availableModels={availableModels}
+          requireOrgKeys={requireOrgKeys}
+          onManageOrgProviders={onManageOrgProviders}
           route={route}
           userMap={userMap}
           projectId={projectId}
