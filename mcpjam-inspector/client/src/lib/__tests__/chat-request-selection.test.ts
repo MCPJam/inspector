@@ -55,9 +55,9 @@ describe("chat request selection", () => {
     expect(chatRequestSelection({ ...args, model: { ...model, id: hosted.modelId, hosted: true }, selection: hosted }))
       .toEqual({ kind: "picked", selection: hosted });
   });
-  it("stages new hosted synthesis while retaining compatibility", () => {
+  it("uses the chat fallback default for a new hosted choice", () => {
     expect(chatRequestSelection({ ...args, model: { ...model, id: "openai/gpt-4o", hosted: true }, selection: null }))
-      .toEqual({ kind: "compatibility" });
+      .toMatchObject({ kind: "picked", selection: { source: "hosted", modelId: "openai/gpt-4o", fallback: { provider: "openrouter" } } });
   });
   it("supports local choices only on the MCP route", () => {
     const local: ModelSelection = {
@@ -88,4 +88,8 @@ describe("chat request selection", () => {
       .toMatchObject({ kind: "picked", selection: { ...selection, settings: { temperature: 0.9 } } });
   });
 
+  it("never substitutes another provider for an explicit legacy provider", () => {
+    expect(chatRequestSelection({ ...args, allowLocal: true, model: { ...model, orgProvider: undefined },
+      selection: { source: "legacy", modelId: String(model.id), provider: "anthropic" } }).kind).toBe("blocked");
+  });
 });

@@ -257,7 +257,7 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ model: { id: "acme/private-llm", provider: "custom" } }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCPJam-provided models/);
+    if (!r.ok) expect(r.reason).toMatch(/supported model and an eligible Anthropic connection/);
   });
 
   // The gate derives eligibility itself precisely so this cannot be got wrong
@@ -1074,6 +1074,17 @@ describe("organization-key selections", () => {
     });
     expect(r.refusal?.kind).toBe("model-provider-unsupported");
     expect(r.refusal?.reason).toMatch(/OpenAI/);
+    expect(r.refusal?.reason).not.toMatch(/MCPJam/);
+  });
+  it("uses the shared organization-only refusal when its policy is available", () => {
+    const r = harnessModelRefusal({
+      adapter: getHarnessAdapter("codex"),
+      model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+      purpose: "chat",
+      selection: orgSel("anthropic/claude-sonnet-4.5"),
+      keyPolicy: { requireOrgKeys: true },
+    });
+    expect(r.refusal?.reason).toBe("the Codex harness runs only on your organization's OpenAI key");
   });
 
   it("reads evidence on the CANONICAL id, not the org row's native one", () => {
