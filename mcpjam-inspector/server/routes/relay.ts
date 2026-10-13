@@ -27,7 +27,6 @@ import {
   scrubEventCredentials,
   scrubForwardedSearch,
 } from "./relay-credentials.js";
-import { scrubTelemetryValue } from "../../shared/credential-urls.js";
 
 /**
  * Same-origin PostHog reverse proxy.
@@ -1214,9 +1213,7 @@ function captureShapeOf(payload: unknown): CapturePayload {
   };
 }
 
-// How a body arrived, so one rewritten as it came (a metrics body) leaves
-// the same way: gzip or not, and a form-encoded `data=` field (JSON, or
-// base64 JSON with `compression=base64`) or bare JSON.
+// Capture body wrappers: gzip, a form-encoded data field, or bare JSON.
 interface BodyEncoding {
   gzip: boolean;
   form: "json" | "base64" | null;
@@ -1256,23 +1253,6 @@ async function decodeCaptureBody(
   textBytes: number,
 ): Promise<Buffer> {
   return (await decodeBody(bytes, textBytes)).json;
-}
-
-// `json` wrapped the way `encoding` says. A form body is rebuilt as the one
-// `data=` field posthog-js sends; any other field the client added is not
-// forwarded, since nothing scrubbed it.
-async function encodeBody(
-  json: string,
-  encoding: BodyEncoding,
-): Promise<Uint8Array<ArrayBuffer>> {
-  const value =
-    encoding.form === "base64"
-      ? Buffer.from(json, "utf8").toString("base64")
-      : json;
-  const text =
-    encoding.form === null ? json : `data=${encodeURIComponent(value)}`;
-  const bytes = Buffer.from(text, "utf8");
-  return new Uint8Array(encoding.gzip ? await gzipAsync(bytes) : bytes);
 }
 
 // Parses a large payload from the event ranges its scan recorded.
@@ -1606,50 +1586,6 @@ async function processCapture(
   return outcome === BUSY ? { kind: "busy" } : outcome;
 }
 
-type MetricsOutcome =
-  | { kind: "busy" | "unreadable" | "other" | "scrub_drop" }
-  | { kind: "forward"; body: Uint8Array<ArrayBuffer> };
-
-// OTLP metrics (`/i/v1/metrics`) name their project in the query alone. Their
-// attributes can carry the page URL, so the body is decoded whole, every
-// string goes through the credential walker, and it is re-encoded the way
-// it came. A body that cannot be shown clean is not forwarded.
-async function processMetrics(
-  subpath: string,
-  url: URL,
-  body: ArrayBuffer | undefined,
-): Promise<MetricsOutcome> {
-  const project = checkProjectTokens(subpath, url);
-  if (project !== "ours") return { kind: project };
-  const bytes = new Uint8Array(body ?? new ArrayBuffer(0));
-  let textBytes = bytes.length;
-  if (isGzip(bytes)) {
-    const declared = gzipDeclaredBytes(bytes);
-    const cap = capturePayloadCap(subpath);
-    if (declared === null || declared > inflateBudget(bytes.length, cap)) {
-      return { kind: "scrub_drop" };
-    }
-    textBytes = declared;
-  }
-  const outcome = await admitted(
-    textBytes > INFLATE_FLOOR_BYTES,
-    async (): Promise<MetricsOutcome> => {
-      try {
-        const { json, encoding } = await decodeBody(bytes, textBytes);
-        if (json.length > RELAY_MAX_EVENT_BYTES) return { kind: "scrub_drop" };
-        const clean = scrubTelemetryValue(JSON.parse(json.toString("utf8")));
-        return {
-          kind: "forward",
-          body: await encodeBody(JSON.stringify(clean), encoding),
-        };
-      } catch {
-        return { kind: "scrub_drop" };
-      }
-    },
-  );
-  return outcome === BUSY ? { kind: "busy" } : outcome;
-}
-
 const relayRoutes = new Hono();
 
 // Anonymous by design, like PostHog capture, and charged to the same ingest
@@ -1697,9 +1633,9 @@ relayRoutes.all("*", async (c) => {
     : INGEST_HOST;
   const method = c.req.method;
 
-  // Logs carry console output, which the gate can neither mask nor tie to a
-  // capture context. The client never enables them; nothing forwards them.
-  if (/^\/i\/v1\/logs\/?$/.test(subpath)) {
+  // OTLP logs and metrics have arbitrary attributes and no capture-policy
+  // stamp. They are not approved families at this boundary.
+  if (/^\/i\/v1\/(logs|metrics)\/?$/.test(subpath)) {
     stats.privacyRejected++;
     recordResponseStatus(403);
     return c.json({ error: "telemetry_restricted" }, 403);
@@ -1795,38 +1731,6 @@ relayRoutes.all("*", async (c) => {
         headers.set("X-Forwarded-For", clientIp);
         headers.set("X-Real-IP", clientIp);
       }
-    } else if (/^\/i\/v1\/metrics\/?$/.test(subpath)) {
-      const metrics = await processMetrics(
-        subpath,
-        url,
-        body as ArrayBuffer | undefined,
-      );
-      if (metrics.kind === "busy") {
-        stats.busyRejects++;
-        recordResponseStatus(503);
-        c.header("Retry-After", "1");
-        return c.json({ error: "relay_busy" }, 503);
-      }
-      if (metrics.kind === "scrub_drop") {
-        stats.scrubDrops++;
-        recordResponseStatus(400);
-        return c.json({ error: "unreadable_payload" }, 400);
-      }
-      if (metrics.kind !== "forward") {
-        stats.projectRejects++;
-        const status = metrics.kind === "other" ? 403 : 400;
-        recordResponseStatus(status);
-        return c.json(
-          {
-            error:
-              metrics.kind === "other"
-                ? "unsupported_project"
-                : "unreadable_payload",
-          },
-          status,
-        );
-      }
-      body = metrics.body;
     } else {
       const project = checkProjectTokens(subpath, url);
       if (project !== "ours") {

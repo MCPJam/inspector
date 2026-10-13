@@ -288,7 +288,6 @@ describe("posthog relay proxy", () => {
       ["POST", "/e/"],
       ["POST", "/i/v0/e/?compression=gzip-js"],
       ["POST", "/s/?compression=gzip-js"],
-      ["POST", `/i/v1/metrics?token=${key}`],
       ["GET", `/array/${key}/config`],
       ["GET", `/array/${key}/config.js`],
       ["GET", "/static/recorder.js"],
@@ -327,9 +326,9 @@ describe("posthog relay proxy", () => {
       expect(mockedFetchInit().method).toBe(method);
     });
 
-    it("refuses PostHog logs, which carry console output the gate cannot vouch for", async () => {
+    it.each(["logs", "metrics"])("refuses unapproved OTLP %s", async (family) => {
       const response = await createTestApp().request(
-        `${prefix}/i/v1/logs?token=${key}`,
+        `${prefix}/i/v1/${family}?token=${key}`,
         { method: "POST", body: "{}" },
       );
       expect(response.status).toBe(403);
