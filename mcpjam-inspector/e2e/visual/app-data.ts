@@ -38,6 +38,14 @@ export const queries: Record<string, unknown> = {
   "projects:getProjectMembers": { members: [], canManageMembers: false },
 };
 
+// `hosts:listHosts` is empty, so the client selector asks for the default client.
+export const mutations: Record<string, unknown> = {
+  "projectClients:ensureProjectClient": {
+    hostId: "visual-client",
+    created: true,
+  },
+};
+
 export const responses: Record<string, unknown> = {
   "/api/session-token": { ok: true },
   "/api/web/guest-session": {
