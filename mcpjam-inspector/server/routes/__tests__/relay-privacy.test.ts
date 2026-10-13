@@ -58,7 +58,7 @@ const FULL: TelemetryPolicy = {
 const MASKED: TelemetryPolicy = {
   recording: "masked",
   identity: "id_only",
-  content: "strict",
+  content: "full",
 };
 const OFF: TelemetryPolicy = {
   recording: "off",
@@ -178,6 +178,18 @@ function identifyEvent(context: ReturnType<typeof stamp> | undefined) {
       $set: { last_name: SYNTHETIC_PII.lastName },
       $el_text: SYNTHETIC_PII.domText,
       $elements_chain: `button.btn:attr__class="btn"attr__title="${SYNTHETIC_PII.title}"nth-child="2"nth-of-type="1"text="${SYNTHETIC_PII.domText}"`,
+      ...(context ? { [TELEMETRY_CONTEXT_PROPERTY]: context } : {}),
+    },
+  };
+}
+
+function productEvent(context?: ReturnType<typeof stamp>) {
+  return {
+    event: "send_message",
+    properties: {
+      token: POSTHOG_PROJECT_KEY,
+      location: "chat_tab",
+      prompt: SYNTHETIC_PII.domText,
       ...(context ? { [TELEMETRY_CONTEXT_PROPERTY]: context } : {}),
     },
   };
@@ -334,7 +346,14 @@ describe("relay privacy gate", () => {
       "/tlm/s/",
       batch([
         snapshotEvent(stamp([PUBLIC_ORG], FULL)),
-        identifyEvent(stamp([PUBLIC_ORG], FULL)),
+        {
+          event: "send_message",
+          properties: {
+            [TELEMETRY_CONTEXT_PROPERTY]: stamp([PUBLIC_ORG], FULL),
+            multi_model_count: 2,
+            prompt: "SENTINEL",
+          },
+        },
       ]),
       { Authorization: `Bearer expired` },
     );
@@ -342,7 +361,7 @@ describe("relay privacy gate", () => {
     const sent = forwarded();
     // The full replay is dropped; the rest is restricted.
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(sent.headers.get("x-forwarded-for")).toBeNull();
@@ -433,14 +452,14 @@ describe("relay privacy gate", () => {
       batch([
         snapshotEvent(stamp([PRIVATE_ORG], MASKED)),
         snapshotEvent(stamp([PRIVATE_ORG], FULL)),
-        identifyEvent(stamp([PRIVATE_ORG], FULL)),
+        productEvent(stamp([PRIVATE_ORG], FULL)),
       ]),
       { Authorization: `Bearer ${TOKEN}` },
     );
     expect(response.status).toBe(200);
     const sent = forwarded();
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(sent.headers.get("x-forwarded-for")).toBeNull();
@@ -516,14 +535,12 @@ describe("relay privacy gate", () => {
 
   it("drops a legacy client's unstamped replay and restricts its other events", async () => {
     backend({ [PUBLIC_ORG]: FULL });
-    await post(
-      "/relay/s/",
-      batch([snapshotEvent(undefined), identifyEvent(undefined)]),
-      { Authorization: `Bearer ${TOKEN}` },
-    );
+    await post("/relay/s/", batch([snapshotEvent(undefined), productEvent()]), {
+      Authorization: `Bearer ${TOKEN}`,
+    });
     const sent = forwarded();
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(privacyCounts()).toMatchObject({
@@ -534,7 +551,12 @@ describe("relay privacy gate", () => {
   });
 
   it("removes identifying person fields, IP and autocapture text from restricted events", async () => {
-    await post("/tlm/i/v0/e/", batch([identifyEvent(undefined)]));
+    backend({ [PRIVATE_ORG]: MASKED });
+    await post(
+      "/tlm/i/v0/e/",
+      batch([identifyEvent(stamp([PRIVATE_ORG], MASKED))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
     const [event] = forwarded().json.batch;
     expect(event.$set).toEqual({ deployment: "hosted" });
     expect(event.$set_once).toEqual({});
@@ -552,6 +574,7 @@ describe("relay privacy gate", () => {
   });
 
   it("scrubs URLs, hosts and names from every property of a restricted event, $set_once included", async () => {
+    backend({ [PRIVATE_ORG]: MASKED });
     const serverUrl = `https://app.mcpjam.com/servers/${SYNTHETIC_PII.serverName}`;
     await post(
       "/tlm/e/",
@@ -565,6 +588,7 @@ describe("relay privacy gate", () => {
           },
           properties: {
             token: POSTHOG_PROJECT_KEY,
+            [TELEMETRY_CONTEXT_PROPERTY]: stamp([PRIVATE_ORG], MASKED),
             distinct_id: "user_1",
             project_name: SYNTHETIC_PII.projectName,
             serverName: SYNTHETIC_PII.serverName,
@@ -596,6 +620,7 @@ describe("relay privacy gate", () => {
           },
         },
       ]),
+      { Authorization: `Bearer ${TOKEN}` },
     );
     const [event] = forwarded().json.batch;
     expect(findSyntheticPii(JSON.stringify(event))).toEqual([]);
@@ -652,35 +677,23 @@ describe("relay privacy gate", () => {
     }));
     await post("/tlm/e/", batch(events));
     const sent = forwarded().json.batch as Array<{
-      properties: { $current_url: string };
+      properties: { $pathname: string };
     }>;
     expect(sent).toHaveLength(CREDENTIAL_PATH_PREFIXES.length);
-    const placeholder = scrubSensitiveUrl("/results/x").slice(
-      "/results/".length,
+    sent.forEach((event) =>
+      expect(["/:path", "/evals"]).toContain(event.properties.$pathname),
     );
-    sent.forEach((event) => {
-      expect(event.properties.$current_url).not.toContain(
-        "kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
-      );
-      // The secret segment is the shared sanitizer's placeholder. The route
-      // words before it may be name-masked themselves (`/connect/server/`).
-      expect(event.properties.$current_url.endsWith(`/${placeholder}`)).toBe(
-        true,
-      );
-    });
   });
 
   it("gates and rewrites GET ingestion", async () => {
-    const data = Buffer.from(batch([identifyEvent(undefined)])).toString(
-      "base64",
-    );
+    const data = Buffer.from(batch([productEvent()])).toString("base64");
     const response = await createTestApp().request(
       `http://localhost:6274/tlm/e/?data=${encodeURIComponent(data)}&compression=base64&ver=1`,
     );
     expect(response.status).toBe(200);
     const sent = forwarded();
     expect(sent.url.searchParams.has("compression")).toBe(false);
-    expect(sent.url.searchParams.get("ver")).toBe("1");
+    expect(sent.url.searchParams.has("ver")).toBe(false);
     const payload = sent.url.searchParams.get("data") ?? "";
     expect(findSyntheticPii(payload)).toEqual([]);
     expect(JSON.parse(payload).batch[0].properties.$geoip_disable).toBe(true);
@@ -703,7 +716,7 @@ describe("relay privacy gate", () => {
   it("asks about at most eight distinct contexts per request", async () => {
     const calls = backend({});
     const events = Array.from({ length: 9 }, (_, i) =>
-      identifyEvent(stamp([`org_${String(i).padStart(24, "0")}`])),
+      productEvent(stamp([`org_${String(i).padStart(24, "0")}`])),
     );
     await post("/tlm/i/v0/e/", batch(events), {
       Authorization: `Bearer ${TOKEN}`,
@@ -750,7 +763,7 @@ describe("relay privacy gate", () => {
     const answerInTurn = await waitingOnBackend(RELAY_MAX_PAYLOAD_CHECKS + 4);
 
     // Every admission slot is free while those wait on the backend.
-    const anonymous = await post("/tlm/e/", batch([identifyEvent(undefined)]));
+    const anonymous = await post("/tlm/e/", batch([productEvent()]));
     expect(anonymous.status).toBe(200);
 
     expect(new Set(await answerInTurn())).toEqual(new Set([200]));

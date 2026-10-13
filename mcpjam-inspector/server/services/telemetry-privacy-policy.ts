@@ -34,6 +34,7 @@ export interface TelemetryPolicyContextIds {
 }
 
 export interface TelemetryPolicyResolution {
+  telemetryActorId?: string;
   policy: TelemetryPolicy;
   /** False when the policy is conservative because nothing answered. */
   resolved: boolean;
@@ -140,6 +141,10 @@ async function ask(
                   identity: value.identity,
                   content: value.content,
                 },
+                ...("telemetryActorId" in value &&
+                typeof value.telemetryActorId === "string"
+                  ? { telemetryActorId: value.telemetryActorId }
+                  : {}),
                 resolved: true,
               }
             : UNRESOLVED,

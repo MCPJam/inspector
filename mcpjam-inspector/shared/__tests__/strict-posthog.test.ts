@@ -3,6 +3,12 @@ import {
   rebuildStrictPostHogEvent,
   telemetryRouteTemplate,
 } from "../strict-posthog";
+import { applyEventPolicy } from "../../server/routes/relay-privacy";
+import {
+  CONSERVATIVE_TELEMETRY_POLICY,
+  FULL_TELEMETRY_POLICY,
+} from "../telemetry-privacy";
+
 const secret = "customer.example/PROJECT_SENTINEL?token=TOKEN_SENTINEL";
 const product = {
   event: "send_message",
@@ -86,4 +92,23 @@ describe("strict PostHog reconstruction", () => {
     expect(JSON.stringify(result)).not.toContain("SENTINEL");
   });
 
+  it("applies strict reconstruction regardless of a permissive replay field, retaining full behavior only for full policy", () => {
+    expect(
+      applyEventPolicy(
+        product,
+        { ...CONSERVATIVE_TELEMETRY_POLICY, recording: "full" },
+        "full",
+      ),
+    ).toEqual(rebuildStrictPostHogEvent(product));
+    expect(
+      applyEventPolicy(product, FULL_TELEMETRY_POLICY, "full"),
+    ).toMatchObject({ timestamp: secret, properties: { model_name: secret } });
+    expect(
+      applyEventPolicy(
+        { event: "$snapshot" },
+        CONSERVATIVE_TELEMETRY_POLICY,
+        "full",
+      ),
+    ).toBeNull();
+  });
 });

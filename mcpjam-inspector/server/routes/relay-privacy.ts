@@ -1,3 +1,4 @@
+import { rebuildStrictPostHogEvent } from "../../shared/strict-posthog.js";
 import {
   captureContextKey,
   CONSERVATIVE_TELEMETRY_POLICY,
@@ -68,12 +69,17 @@ export type ResolvePolicy = (
 
 /** Anything short of full recording with full identity. */
 export function isRestricted(policy: TelemetryPolicy): boolean {
-  return policy.recording !== "full" || policy.identity !== "full";
+  return (
+    policy.content === "strict" ||
+    policy.recording !== "full" ||
+    policy.identity !== "full"
+  );
 }
 
 export interface PolicyDecision {
   /** One policy per event, in order. */
   policies: TelemetryPolicy[];
+  actorIds: Array<string | undefined>;
   /**
    * What each event's own stamp says the client recorded under, in order;
    * `null` when the event has no readable stamp.
@@ -131,7 +137,12 @@ export async function decideEventPolicies(
     }
     return mostRestrictivePolicy(answer.policy, context.policy);
   });
-  return { policies, declared, unresolved };
+  const actorIds = contexts.map((context) =>
+    context
+      ? answers.get(captureContextKey(context))?.telemetryActorId
+      : undefined,
+  );
+  return { policies, actorIds, declared, unresolved };
 }
 
 // ── Events ─────────────────────────────────────────────────────────────
@@ -278,6 +289,7 @@ export function replayAllowed(
   policy: TelemetryPolicy,
   declared: TelemetryRecording | null,
 ): boolean {
+  if (policy.content === "strict") return false;
   if (policy.recording === "full") return true;
   return policy.recording === "masked" && declared === "masked";
 }
@@ -291,8 +303,11 @@ export function applyEventPolicy(
   event: unknown,
   policy: TelemetryPolicy,
   declared: TelemetryRecording | null,
+  actorId?: string,
 ): unknown {
-  if (!isRecord(event)) return event;
+  if (policy.content === "strict")
+    return rebuildStrictPostHogEvent(event, actorId);
+  if (!isRecord(event)) return null;
   if (event.event === "$snapshot" && !replayAllowed(policy, declared)) {
     return null;
   }
