@@ -6,7 +6,7 @@ import {
   type ModelDefinition,
   type ModelObservationKey,
 } from "@/shared/types";
-import type { CustomProvider } from "@mcpjam/sdk/browser";
+import type { CustomProvider, ModelSelection } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   ORG_KEYS_MODEL_REASON,
@@ -20,12 +20,7 @@ import {
   type OrgVisibleConfig,
 } from "./model-helpers";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
-import {
-  findModelForStoredChoice,
-  modelRowKey,
-  modelSelectionFromDefinition,
-} from "./model-selection";
-import { selectionKey, type ModelSelection } from "@mcpjam/sdk/browser";
+import { findModelForStoredChoice, modelRowKey } from "./model-selection";
 
 export { ORG_KEYS_MODEL_REASON, ORG_POLICY_LOADING_REASON };
 
@@ -523,13 +518,12 @@ export function judgeModelOptions(
   // connection's row is the current judge: the same model on another
   // connection is not, and an id fallback would hide a removed connection.
   const current = savedSelection
-    ? requireOrgKeys
-      ? rowForExactSelection(savedSelection, rows)
-      : findModelForStoredChoice(
-          { modelId: currentModelId, selection: savedSelection },
-          rows,
-          undefined,
-        )
+    ? findModelForStoredChoice(
+        { modelId: currentModelId, selection: savedSelection },
+        rows,
+        undefined,
+        { exactSelection: requireOrgKeys },
+      )
     : requireOrgKeys
       ? undefined
       : (rows.find(
@@ -555,18 +549,6 @@ export function judgeModelOptions(
   };
   rows.push(ineligible);
   return { models: rows, currentIneligible: true, current: ineligible };
-}
-
-/** The row whose own selection is exactly `selection`. */
-function rowForExactSelection(
-  selection: ModelSelection,
-  rows: readonly ModelDefinition[],
-): ModelDefinition | undefined {
-  const wanted = selectionKey(selection);
-  return rows.find((row) => {
-    const own = modelSelectionFromDefinition(row, undefined, "chat");
-    return own !== null && selectionKey(own) === wanted;
-  });
 }
 
 /**

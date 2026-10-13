@@ -37,11 +37,11 @@ const COPY_BY_CODE: Readonly<Record<AiRefusalCode, AudienceCopy>> = {
       "This organization requires its own provider keys for AI features. Choose a model from an organization provider, or ask an organization admin to add one.",
   },
   org_model_unconfigured: {
-    title: "Unavailable: no organization model set",
+    title: "Unavailable: no default AI model set",
     admin:
-      "This feature needs a default organization model and none is set. Choose one in Organization → AI providers.",
+      "This feature needs a default AI model and none is set. Choose one in Organization → AI providers.",
     member:
-      "This feature needs a default organization model and none is set. Ask an organization admin to configure one.",
+      "This feature needs a default AI model and none is set. Ask an organization admin to configure one.",
   },
   org_runtime_unsupported: {
     title: "Unavailable with organization keys",

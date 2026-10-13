@@ -1,12 +1,9 @@
-import { expect, test } from "@playwright/test";
-import { guardStagingNetwork, SYNTHETIC_ROLE } from "./staging-network";
-
-// Stop new browser traffic before removing guards, then let intercepted
-// fetches finish while the context and their responses are still alive.
-test.afterEach(async ({ context }) => {
-  await context.setOffline(true);
-  await context.unrouteAll({ behavior: "wait" });
-});
+import { expect, test } from "./staging-test";
+import {
+  declineStagingAnalytics,
+  guardStagingNetwork,
+  SYNTHETIC_ROLE,
+} from "./staging-network";
 
 test("staging synthetic user logs in and refreshes through the same-origin proxy", async ({
   page,
@@ -20,6 +17,7 @@ test("staging synthetic user logs in and refreshes through the same-origin proxy
   let phase = "configure network guards";
   try {
     await guardStagingNetwork(context, rejected);
+    await declineStagingAnalytics(context);
     phase = "open staging login";
     await page.goto(`${origin}/login`);
     phase = "enter synthetic email";

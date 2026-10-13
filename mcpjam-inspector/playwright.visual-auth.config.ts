@@ -2,7 +2,11 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e/visual",
-  testMatch: ["auth.spec.ts", "staging-network.browser.ts"],
+  testMatch: [
+    "auth.spec.ts",
+    "staging-network.browser.ts",
+    "staging-teardown.browser.ts",
+  ],
   outputDir: ".playwright/auth-check",
   workers: 1,
   retries: 0,

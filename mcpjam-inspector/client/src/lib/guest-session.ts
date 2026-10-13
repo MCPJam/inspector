@@ -651,11 +651,19 @@ export async function getGuestPromotionProof(): Promise<string | null> {
  * THROWS the real cause on failure. Only the auth retry ladder calls this, so
  * it can report why a refresh failed; everyone else uses
  * `forceRefreshGuestSession`.
+ *
+ * A 429 refusal resolves null and records the refusal, exactly as a mint
+ * does: retrying it only spends more of the per-IP budget, and the ladder
+ * reads the standing refusal as terminal instead of reporting a failure.
  */
 export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> {
   if (forceRefreshInFlight) {
     const session = await forceRefreshInFlight;
     return session?.token ?? null;
+  }
+
+  if (getGuestSessionRefusal()) {
+    return null;
   }
 
   sessionGeneration += 1;
@@ -676,6 +684,10 @@ export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> 
       }
       return session;
     } catch (error) {
+      if (error instanceof GuestSessionRefusedError) {
+        setRefusal({ until: Date.now() + error.retryAfterMs });
+        return null;
+      }
       console.error("Failed to refresh guest session:", error);
       throw error;
     }
