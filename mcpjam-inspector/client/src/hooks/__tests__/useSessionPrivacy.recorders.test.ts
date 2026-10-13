@@ -100,22 +100,28 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).toEqual(["masked"]);
 
     hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     expect(posthog.log).toEqual(["masked", "full", "start"]);
   });
 
   it("switching into an organization with enterprise privacy never records it unmasked", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     posthog.log.length = 0;
 
     hook.rerender({ level: levelFor("org_private") });
 
     // Synchronous, in the commit that switched: stop under the full profile,
-    // reconfigure, and only then record again.
-    expect(posthog.log).toEqual(["stop", "masked", "start"]);
+    // reconfigure, and keep recording stopped.
+    expect(posthog.log).toEqual(["stop", "masked"]);
   });
 
-  it("switching back records masked until the settle period has passed", async () => {
+  it("switching back waits for the settle period before recording", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({ level: levelFor("org_private") });
     posthog.log.length = 0;
@@ -126,7 +132,7 @@ describe("useSessionPrivacy with the real recorders", () => {
     await act(async () => {
       vi.advanceTimersByTime(3_000);
     });
-    expect(posthog.log).toEqual(["stop", "full", "start"]);
+    expect(posthog.log).toEqual(["full", "start"]);
   });
 
   it("a backend that never answers is never recorded", async () => {
@@ -143,11 +149,11 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).not.toContain("full");
   });
 
-  it("desktop: masked for everyone once the backend answers", async () => {
+  it("desktop: never records even after the backend answers", async () => {
     const { posthog, levelFor, hook } = await setup("desktop");
     expect(posthog.log).toEqual(["masked"]);
     hook.rerender({ level: levelFor("org_plain") });
-    expect(posthog.log).toEqual(["masked", "start"]);
+    expect(posthog.log).toEqual(["masked"]);
   });
 
   it("replay off: never starts, and a running recording stops in the same commit", async () => {
@@ -180,10 +186,10 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
   });
 
-  it("npx: off, the recorder is never touched", async () => {
+  it("npx: recording remains off", async () => {
     const { posthog, levelFor, hook } = await setup("npx");
     hook.rerender({ level: levelFor("org_private") });
-    expect(posthog.log).toEqual([]);
+    expect(posthog.log).toEqual(["masked"]);
   });
 });
 
@@ -235,8 +241,11 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
   }
 
   it("joining an organization with replay off stops recording until the new answer", async () => {
-    server.answer = { recording: "full", identity: "full" };
+    server.answer = { recording: "full", identity: "full", content: "full" };
     const { privacy, posthog, hook } = await setupComposed();
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     expect(posthog.log.at(-1)).toBe("start");
     posthog.log.length = 0;
 
@@ -254,7 +263,11 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
     expect(posthog.log).toEqual(["stop", "masked"]);
 
     // When it does come, it is off: still nothing records.
-    server.answer = { recording: "off", identity: "id_only" };
+    server.answer = {
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
+    };
     await act(async () => {
       hook.rerender({ membershipKey: "org_off:member:0,org_plain:owner:0" });
     });
