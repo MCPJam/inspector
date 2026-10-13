@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import {
@@ -13,6 +14,14 @@ const testSessionToken =
   process.env.MCPJAM_SESSION_TOKEN ?? "playwright-local-access-credential";
 process.env.MCPJAM_SESSION_TOKEN = testSessionToken;
 const baseURL = deployedBaseUrl ?? "http://localhost:6274";
+// Local CI runs represent separate client networks; loopback must not pool their daily guest budgets.
+const networkHash = createHash("sha256")
+  .update(
+    `${process.env.GITHUB_RUN_ID ?? randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`,
+  )
+  .digest("hex")
+  .slice(0, 16);
+const localClientIp = `2001:db8:${networkHash.match(/.{4}/g)!.join(":")}:0:1`;
 
 // staging.mcpjam.com sits behind Cloudflare Access. Without a service token
 // every navigation lands on the Access login page instead of the app, and the
@@ -63,7 +72,10 @@ export default defineConfig({
           launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
       : {}),
-    ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
+    extraHTTPHeaders: {
+      ...(cfAccessHeaders ?? {}),
+      ...(!deployedBaseUrl ? { "x-real-ip": localClientIp } : {}),
+    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
