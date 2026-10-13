@@ -39,10 +39,12 @@ export const queries: Record<string, unknown> = {
 };
 
 // `hosts:listHosts` is empty, so the client selector asks for the default client.
+// `created: false` because the list never shows it: a created client would be
+// selected by the Playground and then fetched as if it existed.
 export const mutations: Record<string, unknown> = {
   "projectClients:ensureProjectClient": {
     hostId: "visual-client",
-    created: true,
+    created: false,
   },
 };
 
