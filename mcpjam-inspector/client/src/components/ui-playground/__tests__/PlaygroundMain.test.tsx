@@ -1605,7 +1605,7 @@ describe("PlaygroundMain", () => {
               connectionRef: { kind: "localProvider", providerKey: "openai" },
               nativeModelId: "gpt-5",
               settings: { reasoningEffort: "high" },
-              fallback: { provider: "openrouter", model: "none" },
+              fallback: { provider: "none", model: "none" },
             },
           ]);
         });

@@ -20,6 +20,7 @@ import {
   buildAvailableModelsFromOrgConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import { toast } from "sonner";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 const mockState = vi.hoisted(() => ({
   appState: null as any,
@@ -60,6 +61,7 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+  selectedModelSelection: undefined as ModelSelection | undefined,
   persistedModelInitialized: undefined as boolean | undefined,
 }));
 vi.mock("@/state/app-state-context", async (importOriginal) => ({
@@ -160,6 +162,7 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: mockState.selectedModelId,
+    selectedModelSelection: mockState.selectedModelSelection,
     setSelectedModelId: mockState.setSelectedModelId,
     selectedModelIds: [mockState.selectedModelId],
     setSelectedModelIds: vi.fn(),
@@ -360,12 +363,176 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    mockState.selectedModelSelection = undefined;
     mockState.latestOnData = undefined;
     mockState.latestOnToolCall = undefined;
     mockState.addToolOutput.mockReset();
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  const savedOrgChoice: ModelSelection = {
+    modelId: "openai/gpt-4o-mini", nativeModelId: "gpt-4o-mini", source: "org",
+    connectionRef: { kind: "orgProvider", id: "connection-a" },
+    fallback: { provider: "none", model: "none" },
+    settings: { temperature: 0.2 },
+  };
+  const selectionOptions = (selection = savedOrgChoice) => ({
+    selectedServers: [],
+    pickedModelSelection: selection,
+    executionConfig: { modelId: "gpt-4o-mini" },
+    hostedOrgModelConfig: {
+      providers: [{ id: selection.connectionRef?.kind === "orgProvider" ? selection.connectionRef.id : "connection-a",
+        providerKey: "openai", enabled: true, hasSecret: true }],
+    },
+    hostedContext: { projectId: "project-1", selectedServerIds: [] },
+  });
+
+  it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
+    const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.9, modelSelection: { ...savedOrgChoice, settings: { temperature: 0.9 } },
+    });
+    rerender({ hostId: "host-2" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    unmount();
+  });
+
+  it.each(["picked", "inherit"] as const)("refuses unsupported effort after a %s choice until cleared", async (intent) => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions({ ...savedOrgChoice, settings: { reasoningEffort: "high" } }),
+      selectionIntent: intent,
+      reasoningEffortEnabled: true,
+    }));
+    if (intent === "inherit") {
+      expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+      act(() => result.current.setReasoningEffort("high", true));
+    }
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(() => lastTransportOptions.body()).toThrow("saved reasoning effort is unavailable");
+    act(() => result.current.setReasoningEffort(undefined, true));
+    expect(result.current.submitBlocked).toBe(false);
+    expect(lastTransportOptions.body().modelSelection).not.toHaveProperty("settings.reasoningEffort");
+    unmount();
+  });
+
+  it("restores recorded selection settings ahead of legacy resume fields", async () => {
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await result.current.loadChatSession({
+      chatSessionId: "history-settings", messagesBlobUrl: null,
+      resumeConfig: { temperature: 0.8 },
+    }, { restoredModel: result.current.selectedModel, restoredSelection: savedOrgChoice });
+    await waitFor(() => expect(result.current.temperature).toBe(0.2));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.2, modelSelection: { settings: { temperature: 0.2 } },
+    });
+    unmount();
+  });
+
+  it("keeps an unavailable historical choice local without changing the saved lead or provider", async () => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(), executionConfig: undefined,
+    }));
+    const before = JSON.stringify(localStorage);
+    mockState.setSelectedModelId.mockClear();
+    act(() => result.current.setSelectedModel(result.current.selectedModel, {
+      selection: { ...savedOrgChoice, connectionRef: { kind: "orgProvider", id: "removed" } },
+      persist: false,
+    }));
+    expect(result.current.selectedModel.disabled).toBe(true);
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(mockState.setSelectedModelId).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).toBe(before);
+    unmount();
+  });
+
+  it("carries the saved org connection, settings and fallback into the request", async () => {
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await waitFor(() => expect(result.current.selectedModel.id).toBe("gpt-4o-mini"));
+    expect(lastTransportOptions.body()).toMatchObject({ modelSelection: savedOrgChoice, temperature: 0.2 });
+    unmount();
+  });
+
+  it("resolves the lead from its persisted selection and blocks a changed org connection", () => {
+    mockState.selectedModelId = savedOrgChoice.modelId;
+    mockState.selectedModelSelection = savedOrgChoice;
+    const options = { ...selectionOptions(), pickedModelSelection: undefined, executionConfig: undefined };
+    const { result, rerender, unmount } = renderHook(({ options }) => useChatSession(options), { initialProps: { options } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body().modelSelection).toEqual(savedOrgChoice);
+    rerender({ options: { ...options, hostedOrgModelConfig: { providers: [{ id: "replacement", providerKey: "openai", enabled: true, hasSecret: true }] } } });
+    expect(result.current.submitBlocked).toBe(true);
+    unmount();
+  });
+
+  it("a deliberate picker override wins only for its current host target", () => {
+    mockState.selectedModelId = savedOrgChoice.modelId;
+    mockState.selectedModelSelection = savedOrgChoice;
+    const options = { ...selectionOptions(), executionConfig: undefined, selectionIntent: "inherit" as const };
+    const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setSelectedModel(result.current.selectedModel, { userInitiated: true }));
+    expect(lastTransportOptions.body().modelSelection).toEqual(savedOrgChoice);
+    rerender({ hostId: "host-2" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    unmount();
+  });
+
+  it("refreshes the connection on the next send without changing the model id", () => {
+    const { rerender, unmount } = renderHook(({ selection }) => useChatSession(selectionOptions(selection)), {
+      initialProps: { selection: savedOrgChoice },
+    });
+    const next: ModelSelection = { ...savedOrgChoice, connectionRef: { kind: "orgProvider", id: "connection-b" } };
+    rerender({ selection: next });
+    expect(lastTransportOptions.body().modelSelection).toEqual(next);
+    unmount();
+  });
+
+  it("clears saved effort without recovering a host or remembered effort", () => {
+    const { unmount } = renderHook(() => useChatSession({
+      ...selectionOptions({ ...savedOrgChoice, settings: { reasoningEffort: "high" } }),
+      fixedReasoningEffort: null,
+    }));
+    const body = lastTransportOptions.body();
+    expect(body.modelSelection).not.toHaveProperty("settings.reasoningEffort");
+    expect(body).not.toHaveProperty("reasoningEffort");
+    expect(body.temperature).toBe(0.7);
+    unmount();
+  });
+
+  it("blocks stale saved connections instead of sending on a replacement", async () => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(),
+      hostedOrgModelConfig: { providers: [{ id: "replacement", providerKey: "openai", enabled: true, hasSecret: true }] },
+    }));
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(() => lastTransportOptions.body()).toThrow("saved model or connection is unavailable");
+    unmount();
+  });
+
+  it.each(["inherit", "scenario"])("omits picked selections and settings for %s authority", (authority) => {
+    const { unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(), selectionIntent: "inherit",
+      ...(authority === "scenario" ? { selectionIntent: "picked" as const,
+        hostedContext: { projectId: "project-1", selectedServerIds: [], scenarioId: "scenario-1", accessVersion: 1 } } : {}),
+    }));
+    const body = lastTransportOptions.body();
+    expect(body).not.toHaveProperty("modelSelection");
+    expect(body).not.toHaveProperty("reasoningEffort");
+    expect(body).not.toHaveProperty("temperature");
+    unmount();
   });
 
   it("waits for browser control before dispatching the next user message", async () => {

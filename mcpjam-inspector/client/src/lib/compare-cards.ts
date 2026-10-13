@@ -99,11 +99,9 @@ export function resolveCompareSelectionRow(
     const own = models.filter(
       (model) => String(model.id) === selection.modelId && !isHostedRow(model),
     );
-    return (
-      (selection.provider
-        ? own.find((model) => String(model.provider) === selection.provider)
-        : undefined) ?? own[0]
-    );
+    return selection.provider
+      ? own.find((model) => String(model.provider) === selection.provider)
+      : own[0];
   }
   const row = findModelForStoredChoice(
     { modelId: selection.modelId, selection },
