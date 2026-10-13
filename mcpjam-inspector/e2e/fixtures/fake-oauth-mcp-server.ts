@@ -45,6 +45,16 @@ export interface FakeOAuthMcpServerOptions {
   authorizationServerMetadata?: Record<string, unknown>;
   /** Same merge semantics, for the protected-resource metadata document. */
   protectedResourceMetadata?: Record<string, unknown>;
+  /**
+   * Make authorization codes behave like a real server's: each `/authorize`
+   * issues a fresh single-use code, and `/token` rejects one that is unknown,
+   * spent or older than this with 400 `invalid_grant`. Keycloak's default
+   * lifetime is 60 seconds.
+   *
+   * Omitted by default: the fixed `FAKE_OAUTH_AUTH_CODE` is then redeemable
+   * any number of times, which tests that post the callback themselves rely on.
+   */
+  authorizationCodeLifetimeMs?: number;
 }
 
 /** Shallow merge where an explicit `null` removes the key. */
@@ -151,6 +161,10 @@ export async function startFakeOAuthMcpServer(
   options: FakeOAuthMcpServerOptions = {},
 ): Promise<FakeMcpServer> {
   const requests: FakeMcpServer["requests"] = [];
+  const codeLifetimeMs = options.authorizationCodeLifetimeMs;
+  // Issue time of every code not yet redeemed.
+  const issuedCodes = new Map<string, number>();
+  let codesIssued = 0;
 
   const server = http.createServer(
     async (request: IncomingMessage, response: ServerResponse) => {
@@ -269,7 +283,13 @@ export async function startFakeOAuthMcpServer(
         }
 
         const callbackUrl = new URL(redirectUri);
-        callbackUrl.searchParams.set("code", AUTH_CODE);
+        let code = AUTH_CODE;
+        if (codeLifetimeMs !== undefined) {
+          codesIssued += 1;
+          code = `${AUTH_CODE}-${codesIssued}`;
+          issuedCodes.set(code, Date.now());
+        }
+        callbackUrl.searchParams.set("code", code);
         if (state) {
           callbackUrl.searchParams.set("state", state);
         }
@@ -289,6 +309,25 @@ export async function startFakeOAuthMcpServer(
               : {}),
           });
           return;
+        }
+
+        const tokenBody = parsedBody as Record<string, string> | undefined;
+        if (
+          codeLifetimeMs !== undefined &&
+          tokenBody?.grant_type === "authorization_code"
+        ) {
+          const issuedAt = issuedCodes.get(tokenBody.code);
+          issuedCodes.delete(tokenBody.code);
+          if (
+            issuedAt === undefined ||
+            Date.now() - issuedAt > codeLifetimeMs
+          ) {
+            sendJson(response, 400, {
+              error: "invalid_grant",
+              error_description: "Authorization code not found or expired",
+            });
+            return;
+          }
         }
 
         sendJson(response, 200, {

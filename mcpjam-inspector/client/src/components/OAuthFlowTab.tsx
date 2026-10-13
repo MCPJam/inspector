@@ -7,6 +7,7 @@ import {
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
 import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
+import { redeemAuthorizationCode } from "@/lib/oauth/code-redemption";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import {
@@ -880,9 +881,8 @@ export const OAuthFlowTab = ({
       exchangeTimeoutRef.current = setTimeout(() => {
         exchangeTimeoutRef.current = null;
         setIsAdvancing(true);
-        // This promise had no rejection handler: a token exchange that threw
-        // left the UI frozen mid-flow with nothing logged anywhere.
-        Promise.resolve(oauthStateMachine?.proceedToNextStep())
+        // Caught so a throw mid-exchange can't freeze the UI unlogged.
+        redeemAuthorizationCode(oauthStateMachine, oauthFlowStateRef)
           .catch((err) => {
             reportCaught(err, {
               source: "oauth_debugger_auto_advance",

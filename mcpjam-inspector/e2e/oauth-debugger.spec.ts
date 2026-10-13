@@ -207,7 +207,30 @@ async function advanceUntilConnectServer(page: Page) {
   return connectServerButton;
 }
 
-async function completeOAuthDebuggerFlow(page: Page, fakeOAuthOrigin: string) {
+async function addOAuthServerThroughDebugger(page: Page, serverUrl: string) {
+  await page
+    .getByRole("button", { name: "Add OAuth server through debugger" })
+    .click();
+  const activeConfigDialog = page.getByRole("dialog", {
+    name: "Configure Server to Test",
+  });
+  await expect(
+    page.getByRole("heading", { name: "Configure Server to Test" })
+  ).toBeVisible();
+  await activeConfigDialog
+    .getByRole("textbox", { name: "Server Name" })
+    .fill("oauth-e2e-target");
+  await activeConfigDialog
+    .getByRole("textbox", { name: "Server URL" })
+    .fill(serverUrl);
+  await activeConfigDialog
+    .getByRole("button", { name: "Save configuration" })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(activeConfigDialog).toBeHidden({ timeout: 10_000 });
+}
+
+async function signInThroughDebugger(page: Page, fakeOAuthOrigin: string) {
   const authorizeButton = await advanceUntilAuthorize(page);
 
   page.on("popup", (popup) => {
@@ -222,18 +245,29 @@ async function completeOAuthDebuggerFlow(page: Page, fakeOAuthOrigin: string) {
   expect(flowState.authorizationUrl).toContain(fakeOAuthOrigin);
   expect(flowState.state).toBeTruthy();
 
-  await page.evaluate((state) => {
-    const message = {
-      type: "OAUTH_CALLBACK",
-      code: "e2e-auth-code",
-      state,
-    };
-    window.postMessage(message, window.location.origin);
-    const channel = new BroadcastChannel("oauth_callback_channel");
-    channel.postMessage(message);
-    channel.close();
-  }, flowState.state);
+  // What the popup does, without loading the app's whole dev module graph in
+  // it: follow the server's redirect and hand its code to the debugger.
+  const redirect = await fetch(flowState.authorizationUrl!, {
+    redirect: "manual",
+  });
+  const callback = new URL(redirect.headers.get("location")!);
+  await page.evaluate(
+    ({ code, state }) => {
+      const message = { type: "OAUTH_CALLBACK", code, state };
+      window.postMessage(message, window.location.origin);
+      const channel = new BroadcastChannel("oauth_callback_channel");
+      channel.postMessage(message);
+      channel.close();
+    },
+    {
+      code: callback.searchParams.get("code"),
+      state: callback.searchParams.get("state"),
+    }
+  );
+}
 
+async function completeOAuthDebuggerFlow(page: Page, fakeOAuthOrigin: string) {
+  await signInThroughDebugger(page, fakeOAuthOrigin);
   const connectServerButton = await advanceUntilConnectServer(page);
   await connectServerButton.click();
 }
@@ -359,26 +393,7 @@ test.describe("OAuth Debugger e2e", () => {
         )
       ).toBe(true);
 
-      await page
-        .getByRole("button", { name: "Add OAuth server through debugger" })
-        .click();
-      const activeConfigDialog = page.getByRole("dialog", {
-        name: "Configure Server to Test",
-      });
-      await expect(
-        page.getByRole("heading", { name: "Configure Server to Test" })
-      ).toBeVisible();
-      await activeConfigDialog
-        .getByRole("textbox", { name: "Server Name" })
-        .fill("oauth-e2e-target");
-      await activeConfigDialog
-        .getByRole("textbox", { name: "Server URL" })
-        .fill(fakeOAuthServer.serverUrl);
-      await activeConfigDialog
-        .getByRole("button", { name: "Save configuration" })
-        .click();
-      await page.keyboard.press("Escape");
-      await expect(activeConfigDialog).toBeHidden({ timeout: 10_000 });
+      await addOAuthServerThroughDebugger(page, fakeOAuthServer.serverUrl);
 
       await completeOAuthDebuggerFlow(page, fakeOAuthServer.origin);
       await expect(
@@ -478,6 +493,35 @@ test.describe("OAuth Debugger e2e", () => {
       });
     } finally {
       await fakePlainServer.close();
+      await fakeOAuthServer.close();
+    }
+  });
+
+  test("redeems the authorization code as soon as sign-in returns it", async ({
+    page,
+  }) => {
+    // Real servers expire codes quickly (Keycloak's default is 60 seconds), so
+    // the exchange cannot wait for the user to click through each step.
+    const fakeOAuthServer = await startFakeOAuthMcpServer({
+      authorizationCodeLifetimeMs: 60_000,
+    });
+    const tokenRequests = () =>
+      fakeOAuthServer.requests.filter((request) => request.path === "/token");
+    await page.route("**/api/**/oauth/debug/proxy", fulfillDebugProxy);
+
+    try {
+      await page.goto("/__e2e/oauth-debugger");
+      await waitForHarnessReady(page);
+      await addOAuthServerThroughDebugger(page, fakeOAuthServer.serverUrl);
+
+      await signInThroughDebugger(page, fakeOAuthServer.origin);
+
+      // No click after sign-in: the code is redeemed on its own.
+      await expect.poll(() => tokenRequests().length).toBe(1);
+
+      await advanceUntilConnectServer(page);
+      expect(tokenRequests()).toHaveLength(1);
+    } finally {
       await fakeOAuthServer.close();
     }
   });
