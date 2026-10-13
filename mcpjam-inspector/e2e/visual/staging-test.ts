@@ -7,8 +7,9 @@ export const test = base.extend({
     try {
       await use(context);
     } finally {
-      // The staging proxy fetches background reads outside the page lifecycle.
-      // Finish those callbacks before Playwright disposes their request context.
+      // Stop new browser traffic, then finish proxy callbacks before Playwright
+      // disposes the request context they use for background reads.
+      await context.setOffline(true);
       await context.unrouteAll({ behavior: "wait" });
     }
   },

@@ -1359,7 +1359,14 @@ describe("eval runner reads saved model selections", () => {
       await run({ model: "llama3", provider: "ollama", selection: ORG_OLLAMA_LOCAL }, { orgModelConfigTarget: { projectId: "project-local-rotation" } });
       expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3");
       expect(streamTextMock).toHaveBeenCalledOnce();
-      expect((streamTextMock.mock.calls[0][0] as any).model).toEqual({ id: "freshly-admitted-model" });
+      // The turn's model asks again before each attempt and runs it on the
+      // config that answer carries.
+      const attemptModel = { specificationVersion: "v4", provider: "ollama", modelId: "llama3", supportedUrls: {}, doGenerate: vi.fn(), doStream: vi.fn(async () => ({ stream: "from-fresh-config" })) };
+      admittedFactory.mockClear();
+      admittedFactory.mockReturnValueOnce(attemptModel as never);
+      const model = (streamTextMock.mock.calls[0][0] as any).model;
+      await expect(model.doStream({ prompt: [] })).resolves.toEqual({ stream: "from-fresh-config" });
+      expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3");
     });
 
     it("posts /stream/org/local-usage naming the iteration, with the selection and its record", async () => {

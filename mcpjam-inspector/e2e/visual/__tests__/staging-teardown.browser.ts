@@ -34,10 +34,20 @@ test("staging teardown drains an in-flight proxy callback", async ({
   const pending = new Promise<void>((resolve) => {
     started = resolve;
   });
+  let release!: () => void;
+  const teardown = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const unrouteAll = context.unrouteAll.bind(context);
+  context.unrouteAll = async (options) => {
+    release();
+    await unrouteAll(options);
+    expect(completed).toBe(true);
+  };
   await context.route(`${origin}/background`, async (route) => {
     started();
-    // Keep the callback alive beyond the test body, like a slow staging read.
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // Hold the proxy callback until route teardown starts, regardless of speed.
+    await teardown;
     await fulfillWithoutForwardingCredentials(route, route.request().headers());
     completed = true;
   });

@@ -277,9 +277,9 @@ import {
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import {
-  canonicalJudgeModelIdForSelection,
   judgeModelIdInputSchema,
   judgeModelIdSchema,
+  judgeRunOverride,
 } from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
@@ -3815,8 +3815,8 @@ const requestRunJudgeSchema = z
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
     /**
-     * Judge model for THIS run only. Normalized in the handler, beside the
-     * selection: only a hosted judge's `mcpjam/` spelling is rewritten.
+     * Judge model for THIS run only. Normalized beside the selection by
+     * `judgeRunOverride`: only a hosted judge's `mcpjam/` spelling changes.
      */
     model: judgeModelIdInputSchema.optional(),
     /**
@@ -6058,26 +6058,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   // re-stating an override returns to suite-config grading on its own.
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
-  // An org (BYOK) judge's id is forwarded as sent; only a hosted judge's
-  // documented `mcpjam/` spelling is normalized to the catalog id.
-  const judgeModel =
-    parsed.model !== undefined
-      ? canonicalJudgeModelIdForSelection(parsed.model, parsed.modelSelection)
-      : undefined;
-  if (judgeModel !== undefined) override.judgeModel = judgeModel;
-  if (parsed.modelSelection !== undefined) {
-    if (
-      judgeModel !== undefined &&
-      judgeModel !== parsed.modelSelection.modelId
-    ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${judgeModel}).`,
-      );
-    }
-    override.judgeSelection = parsed.modelSelection;
-  }
+  Object.assign(
+    override,
+    judgeRunOverride(parsed.model, parsed.modelSelection),
+  );
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {

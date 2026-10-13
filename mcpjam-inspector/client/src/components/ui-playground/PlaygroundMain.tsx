@@ -125,7 +125,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
@@ -286,6 +286,8 @@ import {
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -695,7 +697,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -1375,7 +1377,7 @@ export function PlaygroundMain({
     traceViewsSupported,
     isStreaming,
     disableForAuthentication,
-    submitBlocked,
+    submitBlocked: baseSubmitBlocked,
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
@@ -2754,6 +2756,13 @@ export function PlaygroundMain({
     multiModelEnabled &&
     !viewingHistoryReplay &&
     !isMultiHostMode;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const submitBlocked =
+    baseSubmitBlocked ||
+    (isMultiModelMode &&
+      modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
   // execution/state-pruning all branch on this — anything that used to
   // gate on `isMultiModelMode` and writes to (or reads from) the
@@ -6390,6 +6399,7 @@ export function PlaygroundMain({
       : undefined,
     voiceInputAuthHeaders: authHeaders,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Check if widget should take over the full container
