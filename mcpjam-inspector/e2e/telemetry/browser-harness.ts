@@ -14,9 +14,8 @@
  *  - the app's own files: served from the telemetry build
  *    (`npm run build:client:telemetry-e2e`, hosted mode, Sentry and PostHog
  *    on), with the SPA fallback to `index.html`.
- *  - `/api/web/guest-session`: a guest, because a signed-out hosted visitor
- *    is one — and signed-out hosted visitors are what records at `full`.
- *    Convex is `convex-stand-in.ts`.
+ *  - AuthKit and Convex: a signed-in member with a resolved, open context,
+ *    which permits full recording. Convex is `convex-stand-in.ts`.
  *  - anything else (fonts, the app's other API routes, third parties): 404,
  *    and listed, so a new outbound host is visible in a failure.
  *
@@ -39,12 +38,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { guestSessionBody, installConvexStandIn } from "./convex-stand-in";
-import { TELEMETRY_CONTEXT_PROPERTY } from "../../shared/telemetry-privacy";
+import {
+  authenticatedSessionBody,
+  installConvexStandIn,
+  standInTelemetryPolicy,
+} from "./convex-stand-in";
+import { recordRelayEgress } from "../relay-recorder";
 import {
   containsSentinel,
   posthogEvents,
   posthogRemoteConfigScript,
+  RRWEB,
   scanAll,
   SENTINEL_STEM,
   sinkOf,
@@ -76,7 +80,9 @@ export function assertTelemetryBuild(): void {
 }
 
 export interface EgressRecorder {
-  /** Every PostHog and Sentry request, with its bytes. */
+  /** Raw first-party requests, used only to verify capture stamps. */
+  ingress: CapturedRequest[];
+  /** Every vendor PostHog and Sentry request, with its bytes. */
   telemetry: CapturedRequest[];
   /** Same-origin API requests the app made (answered 404 or stubbed). */
   api: string[];
@@ -128,6 +134,7 @@ export async function installEgressRecorder(
   options: EgressRecorderOptions = {},
 ): Promise<EgressRecorder> {
   const recorder: EgressRecorder = {
+    ingress: [],
     telemetry: [],
     api: [],
     external: [],
@@ -140,7 +147,16 @@ export async function installEgressRecorder(
     recorder.diagnostics.push(`pageerror: ${error.message}`),
   );
   await page.addInitScript(pinRandomScript);
-  await installConvexStandIn(page);
+  await page.context().addCookies([
+    {
+      name: "workos-has-session",
+      value: "client_telemetry_e2e",
+      url: ORIGIN,
+    },
+  ]);
+  await installConvexStandIn(page, {
+    log: (line) => recorder.diagnostics.push(line),
+  });
 
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -148,13 +164,15 @@ export async function installEgressRecorder(
     const sink = sinkOf(request.url());
     if (sink !== "other") {
       const body = request.postDataBuffer();
-      recorder.telemetry.push({
+      const captured: CapturedRequest = {
         url: request.url(),
         method: request.method(),
         transport: request.resourceType(),
         headers: await request.allHeaders(),
         body: body ? new Uint8Array(body) : null,
-      });
+      };
+      recorder.ingress.push(captured);
+      if (sink === "sentry") recorder.telemetry.push(captured);
       if (
         sink === "posthog" &&
         /\/array\/[^/]+\/config\.js$/.test(url.pathname)
@@ -164,6 +182,11 @@ export async function installEgressRecorder(
           contentType: "application/javascript",
           body: posthogRemoteConfigScript(),
         });
+      }
+      if (sink === "posthog" && /^\/(?:tlm|relay)\/(?:e|i\/v0\/e|s)\/?$/.test(url.pathname)) {
+        await recordRelayEgress({ url: request.url(), method: request.method(), headers: captured.headers, body }, async (context) => standInTelemetryPolicy(context), (vendor) => recorder.telemetry.push({
+          url: vendor.url.href, method: "POST", transport: "fetch", headers: vendor.headers, body: vendor.body,
+        }));
       }
       if (sink === "sentry" && options.sentryLatencyMs) {
         await new Promise((resolve) =>
@@ -177,15 +200,12 @@ export async function installEgressRecorder(
       });
     }
     if (url.origin === ORIGIN) {
+      if (url.pathname === "/user_management/authenticate") {
+        recorder.api.push(`${request.method()} ${url.pathname}`);
+        return route.fulfill({ json: JSON.parse(authenticatedSessionBody()) });
+      }
       if (url.pathname.startsWith("/api/")) {
         recorder.api.push(`${request.method()} ${url.pathname}`);
-        if (url.pathname === "/api/web/guest-session") {
-          return route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: guestSessionBody(),
-          });
-        }
         return route.fulfill({
           status: 404,
           contentType: "application/json",
@@ -324,20 +344,39 @@ export async function waitForFullReplay(
   page: Page,
   recorder: EgressRecorder,
   timeoutMs = 30_000,
+  since = 0,
+  recordedSince = 0,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (let step = 0; Date.now() < deadline; step++) {
-    const atFull = posthogEvents(scanAll(recorder.telemetry).decoded).some(
-      (event) =>
-        event.event === "$snapshot" &&
-        (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })
-          ?.r === "full",
+    const atFull = posthogEvents(recorder.scanSince(since).decoded).some(
+      (event) => {
+        const frames = event.properties.$snapshot_data;
+        return (
+          event.event === "$snapshot" &&
+          Array.isArray(frames) &&
+          frames.some((frame: unknown) => {
+            if (!frame || typeof frame !== "object") return false;
+            const value = frame as { type?: unknown; timestamp?: unknown };
+            return (
+              (value.type === RRWEB.FullSnapshot ||
+                value.type === RRWEB.IncrementalSnapshot) &&
+              typeof value.timestamp === "number" &&
+              value.timestamp >= recordedSince
+            );
+          })
+        );
+      },
     );
     if (atFull) return;
     await page.mouse.move(20 + (step % 40), 20 + (step % 40));
     await page.waitForTimeout(500);
   }
-  throw new Error("PostHog never sent replay recorded at full");
+  throw new Error("PostHog never sent replay recorded at full: " + JSON.stringify({
+    ingress: posthogEvents(scanAll(recorder.ingress).decoded).map(event => ({ event: event.event, context: event.properties.$mcpjam_telemetry_context })),
+    vendor: posthogEvents(recorder.scanSince(0).decoded).map(event => event.event),
+    headers: recorder.ingress.filter(request => sinkOf(request.url) === "posthog").map(request => ({ auth: !!request.headers.authorization, policy: request.headers["x-mcpjam-telemetry-policy"] })),
+  }));
 }
 
 export async function drain(
