@@ -410,6 +410,7 @@ export interface WebChatTurnPrepareInputs {
    * hosted-list check, unchanged.
    */
   routingSelection?: RequestedModelSelection;
+  routingSelectionOrigin?: "backfill";
   systemPrompt?: string;
   temperature?: number;
   /**
@@ -1348,9 +1349,8 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
-        // What the session records for this turn: the selection it ran,
-        // effort included (last turn wins, like its modelId).
-        modelSelection: ranTurnSelection({
+        // Backfill origin cannot be stored on a session selection.
+        modelSelection: prepare.routingSelectionOrigin ? undefined : ranTurnSelection({
           selection: prepare.routingSelection,
           model: prepare.modelDefinition,
           reasoningEffort: prepare.reasoningEffort,
@@ -1634,7 +1634,7 @@ export async function streamWebChatTurn(
       providerKey: orgRuntime.providerKey,
       modelId,
       ...(prepare.routingSelection?.source === "org"
-        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const } }
+        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const }, modelSelectionOrigin: prepare.routingSelectionOrigin }
         : {}),
       ...(typeof prepare.modelDefinition.nativeModelId === "string"
         ? { nativeModelId: prepare.modelDefinition.nativeModelId }
@@ -1784,7 +1784,7 @@ export async function streamWebChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
-      ? { modelSelection: forwardableSelection(prepare.routingSelection) }
+      ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }
       : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }

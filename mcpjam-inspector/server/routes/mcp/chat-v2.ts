@@ -1252,6 +1252,7 @@ chatV2.post("/", async (c) => {
     const selected = resolveChatSelection({
       raw: (body as { modelSelection?: unknown }).modelSelection,
       inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
       model: unroutedModelDefinition,
       hostWins: isScenarioSession,
       allowLocal: true,
@@ -1290,8 +1291,7 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // A picked selection owns its settings, including a cleared effort.
-    // Only a scenario forces host settings; other turns allow a body override.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
     const reasoningEffort = resolveChatReasoningEffort({
@@ -1301,15 +1301,15 @@ chatV2.post("/", async (c) => {
       requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
-    // What the session records for this turn: the selection it ran, effort
-    // included (last turn wins, like its modelId).
-    const sessionModelSelection = ranTurnSelection({
+    // Apply settings independently of the session's origin-free saved choice.
+    const appliedModelSelection = ranTurnSelection({
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort,
       ...(routingSelection && reasoningEffort === undefined ? { temperature } : {}),
     });
-    if (routingSelection) routingSelection = sessionModelSelection;
+    const sessionModelSelection = selected.origin ? undefined : appliedModelSelection;
+    if (routingSelection) routingSelection = appliedModelSelection;
     // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
     // host default (or the slider value a client sends with a host's saved
     // effort) yields to the effort; an explicit pair is refused on the direct
@@ -2528,7 +2528,7 @@ chatV2.post("/", async (c) => {
         },
         // Preserve the resolved selection for hosted steps and harness leases.
         ...(forwardableSelection(routingSelection)
-          ? { modelSelection: forwardableSelection(routingSelection) }
+          ? { modelSelection: forwardableSelection(routingSelection), modelSelectionOrigin: selected.origin }
           : {}),
         ...(resolvedExecution.harness
           ? {
@@ -2830,7 +2830,7 @@ chatV2.post("/", async (c) => {
         providerKey,
         modelId,
         ...(routingSelection?.source === "org"
-          ? { modelSelection: { ...routingSelection, source: "org" as const } }
+          ? { modelSelection: { ...routingSelection, source: "org" as const }, modelSelectionOrigin: selected.origin }
           : {}),
         ...(typeof modelDefinition.nativeModelId === "string"
           ? { nativeModelId: modelDefinition.nativeModelId }

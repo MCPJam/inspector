@@ -926,6 +926,7 @@ export interface MCPJamHandlerOptions {
    * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
    */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -4942,9 +4943,7 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
-  // The turn's effort rides every per-step hosted body as the top-level field
-  // (which the backend prefers over a forwarded selection's). Set last so a
-  // caller-supplied extra field cannot contradict the typed one.
+  // Typed settings and origin are authoritative on every step.
   const extraBodyFields = {
     ...callerExtraBodyFields,
     ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
@@ -4952,6 +4951,7 @@ export async function runChatEngineLoop(
       options.modelSelection ?? callerExtraBodyFields?.modelSelection,
       { id: modelId, provider },
       endpointPath ?? "/stream",
+      options.modelSelectionOrigin,
     ),
   };
   // One typed route.operation.failed per turn, whatever combination of the

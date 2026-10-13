@@ -1,3 +1,4 @@
+import { inheritedSelectionOrigin } from "./runtime-model-choice.js";
 /**
  * Which rail a turn runs on — and so who pays for it — decided from the turn's
  * SAVED SELECTION.
@@ -124,16 +125,18 @@ export function routingSelectionForModel(
 export function resolveChatSelection(args: {
   raw: unknown;
   inherited?: RequestedModelSelection;
+  inheritedOrigin?: "backfill";
   model: RailModel;
   hostWins: boolean;
   allowLocal: boolean;
 }):
-  | { ok: true; selection?: RequestedModelSelection; requestSelection?: RequestedModelSelection }
+  | { ok: true; selection?: RequestedModelSelection; requestSelection?: RequestedModelSelection; origin?: "backfill" }
   | { ok: false; error: string } {
   if (args.hostWins || args.raw === undefined || args.raw === null) {
     return {
       ok: true,
       selection: routingSelectionForModel(args.inherited, args.model),
+      origin: inheritedSelectionOrigin({ selection: routingSelectionForModel(args.inherited, args.model), inheritedOrigin: args.inheritedOrigin }),
     };
   }
   const selection = readRoutingSelection(args.raw);
@@ -152,6 +155,7 @@ export function streamSelectionFields(
   raw: unknown,
   model: RailModel,
   endpointPath: string,
+  origin?: "backfill",
 ) {
   if (raw === undefined || raw === null) return {};
   const selection = backendModelSelection(assertModelSelection(raw));
@@ -167,6 +171,7 @@ export function streamSelectionFields(
       ? wireModelIdForSelection(selection)
       : selection.modelId,
     modelSelection: selection,
+    modelSelectionOrigin: origin,
     // The selection is the sole deployment authority, including when absent.
     nativeModelId: undefined,
   };
