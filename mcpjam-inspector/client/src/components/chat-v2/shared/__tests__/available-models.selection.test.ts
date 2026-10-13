@@ -579,6 +579,26 @@ describe("stored choices", () => {
         orgConfig,
       ),
     ).toBeUndefined();
+    // The provider hint separates two rows with the same id, and names no
+    // row when it matches none.
+    const otherProvider = { ...twin, provider: "custom:other" };
+    expect(
+      findModelForStoredChoice(
+        {
+          modelId,
+          selection: { ...legacy, provider: String(byok.provider) },
+        },
+        [byok, otherProvider],
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: "nobody" } },
+        [byok],
+        orgConfig,
+      ),
+    ).toBeUndefined();
     // A locked twin does not make the runnable row ambiguous.
     expect(
       findModelForStoredChoice(

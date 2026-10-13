@@ -54,6 +54,7 @@ import {
   selectionKey,
   validateModelSelection,
   type ModelConnectionRef,
+  type LegacyModelSelection,
   type ModelSelection,
   type ModelSelectionPurpose,
   type RequestedModelSelection,
@@ -313,6 +314,29 @@ export function storedModelChoice(
 }
 
 /**
+ * The own-key rows a stored legacy selection ("own key only") may run on: the
+ * rows with its id, never a hosted one, narrowed by the provider hint when it
+ * has one. A locked row (an org connection out of credits beside a personal
+ * key) cannot run the model, so enabled rows win when there are any. The
+ * caller decides what more than one candidate means.
+ */
+export function ownKeyRowsForLegacySelection(
+  selection: LegacyModelSelection,
+  models: readonly ModelDefinition[],
+): ModelDefinition[] {
+  const id = selection.modelId.trim();
+  const hint = selection.provider;
+  const own = models.filter(
+    (model) => String(model.id) === id && !isHostedRow(model),
+  );
+  const named = hint
+    ? own.filter((model) => String(model.provider) === hint)
+    : own;
+  const enabled = named.filter((model) => model.disabled !== true);
+  return enabled.length > 0 ? enabled : named;
+}
+
+/**
  * The picker row a stored choice refers to.
  *
  * With a selection: the row whose own selection has the same `selectionKey`
@@ -343,18 +367,8 @@ export function findModelForStoredChoice(
     // A legacy selection names no connection, so a strict lookup has nothing
     // to match it against.
     if (exactSelection) return undefined;
-    const hint = choice.selection.provider;
-    const own = models.filter(
-      (model) => String(model.id) === id && !isHostedRow(model),
-    );
-    const named = hint
-      ? own.filter((model) => String(model.provider) === hint)
-      : own;
-    // A locked twin (an org connection out of credits beside a personal key)
-    // cannot run the model, so it does not make the runnable row ambiguous.
-    const enabled = named.filter((model) => model.disabled !== true);
-    const candidates = enabled.length > 0 ? enabled : named;
-    return candidates.length === 1 ? candidates[0] : undefined;
+    const rows = ownKeyRowsForLegacySelection(choice.selection, models);
+    return rows.length === 1 ? rows[0] : undefined;
   }
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);

@@ -25,6 +25,7 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
+  ownKeyRowsForLegacySelection,
   modelRowKey,
   modelSelectionFromDefinition,
 } from "@/components/chat-v2/shared/model-selection";
@@ -88,24 +89,28 @@ export function compareSelectionForRow(
  * The row a stored selection runs on, or `undefined` when none is available.
  * A hosted selection only resolves to a hosted row and an own-key selection
  * (org, local, stored legacy) only to an own-key row: a card never silently
- * changes who pays. `findModelForStoredChoice` already keeps a stored legacy
- * selection off hosted rows, and resolves one only when exactly one own-key
- * row matches its id (and provider hint): a legacy selection cannot say which
- * of two such rows ran it, so the card drops out of the line-up rather than
- * run on a connection nobody picked (`mergePickedRows` keeps the saved entry).
+ * changes who pays.
+ *
+ * A stored legacy card resolves to the first enabled own-key row for its id
+ * and provider hint (`ownKeyRowsForLegacySelection`), not to exactly one as
+ * the hosts page requires: `compareSelectionForRow` stores two own-key rows
+ * that share provider and id identically, so a pick of either must still
+ * render a card, and both run on the user's own key. The hosts page can
+ * re-pick into a canonical selection; a compare pick cannot.
  */
 export function resolveCompareSelectionRow(
   selection: RequestedModelSelection,
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
 ): ModelDefinition | undefined {
+  if (isLegacySelection(selection)) {
+    return ownKeyRowsForLegacySelection(selection, models)[0];
+  }
   const row = findModelForStoredChoice(
     { modelId: selection.modelId, selection },
     models,
     orgConfig,
-    // A legacy selection names no connection, so the strict lookup could never
-    // match it; its own-key-only rule lives in `findModelForStoredChoice`.
-    { exactSelection: !isLegacySelection(selection) },
+    { exactSelection: true },
   );
   if (!row) return undefined;
   return (selection.source === "hosted") === isHostedRow(row) ? row : undefined;

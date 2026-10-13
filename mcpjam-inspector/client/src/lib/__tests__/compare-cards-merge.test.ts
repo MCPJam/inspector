@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { comparisonKey } from "@mcpjam/sdk/browser";
 import {
   mergePickedRows,
+  resolveCompareCards,
   resolveCompareSelectionRow,
   type CompareCard,
 } from "@/lib/compare-cards";
@@ -64,12 +65,24 @@ describe("resolveCompareSelectionRow", () => {
     );
   });
 
-  it("drops a stored legacy card whose provider and id sit on two own-key rows", () => {
-    // The legacy fields cannot say which connection ran it; the saved entry
-    // survives in mergePickedRows, the card just does not render.
+  it("renders the first enabled own-key row when two share provider and id", () => {
+    // compareSelectionForRow stores both rows as this same legacy entry, so a
+    // pick of either must still produce a card; both run on the user's key.
     expect(
       resolveCompareSelectionRow(legacy, [orgGrok, localGrok], undefined),
-    ).toBeUndefined();
+    ).toBe(orgGrok);
+    expect(
+      resolveCompareSelectionRow(
+        legacy,
+        [{ ...orgGrok, disabled: true }, localGrok],
+        undefined,
+      ),
+    ).toBe(localGrok);
+    expect(
+      resolveCompareCards([legacy], [orgGrok, localGrok], undefined).map(
+        (card) => card.model,
+      ),
+    ).toEqual([orgGrok]);
   });
 });
 
