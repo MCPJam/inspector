@@ -20,14 +20,23 @@ export function FirstRunValidationNotice({ error }: { error: string }) {
       {error === HOSTED_STDIO_ERROR ? (
         <section className="mt-3 space-y-2" aria-label="Run MCPJam locally">
           <p className="text-[12px] leading-5 text-foreground">
-            Run this command in your terminal, then connect your STDIO server.
+            Run this command to open MCPJam on your computer, then add your server.
           </p>
           <CopyableCodeBlock
             code="npx @mcpjam/inspector@latest"
             copyLabel="Copy MCPJam command"
           />
           <p className="text-[11px] leading-4 text-muted-foreground">
-            You can also use the MCPJam desktop app.
+            You can also{" "}
+            <a
+              href="https://docs.mcpjam.com/installation"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              install the desktop app or run MCPJam with Docker
+            </a>
+            .
           </p>
         </section>
       ) : null}

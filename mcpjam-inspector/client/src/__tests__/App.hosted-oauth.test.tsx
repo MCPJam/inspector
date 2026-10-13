@@ -4407,7 +4407,7 @@ describe("App hosted OAuth callback handling", () => {
         screen.getByRole("heading", { name: "Set up your server" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "cannot start STDIO servers",
+        "Connect your STDIO server in MCPJam’s local app",
       );
     });
     expect(

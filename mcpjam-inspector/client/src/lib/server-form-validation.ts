@@ -90,7 +90,7 @@ export function validateServerFormData(
 }
 
 export const HOSTED_STDIO_ERROR =
-  "MCPJam’s hosted web app cannot start STDIO servers. Enter a full HTTPS URL or run MCPJam locally.";
+  "Connect your STDIO server in MCPJam’s local app. The web app connects to HTTPS servers.";
 
 /**
  * First-run onboarding adds only a server the user typed, never a plugin

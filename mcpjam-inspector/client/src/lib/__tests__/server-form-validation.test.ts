@@ -89,10 +89,10 @@ describe("validateFirstRunServerFormData", () => {
       .validateFirstRunServerFormData;
   };
 
-  it("refuses STDIO in hosted mode and asks for a full HTTPS URL", async () => {
+  it("refuses hosted STDIO and directs the developer to the local app", async () => {
     const validate = await importFirstRunValidator(true);
     expect(validate(stdioForm)).toMatch(
-      /cannot start STDIO servers.*Enter a full HTTPS URL/i,
+      /Connect your STDIO server in MCPJam’s local app.*HTTPS servers/i,
     );
   });
 
