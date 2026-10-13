@@ -75,6 +75,12 @@ interface CommonLogContext {
 export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
+  /**
+   * The handler pattern the request was headed for, when a middleware answered
+   * before it ran. Only then does it differ from `route`, which names the
+   * middleware's mount (`/api/web/*`).
+   */
+  targetRoute?: string;
   method: string;
   /**
    * The caller's `user-agent`, sanitized and capped.
@@ -150,6 +156,11 @@ type RouteOperationFailedFields = {
 };
 
 export type RequestEventMap = {
+  "eval.import.environment_selection.failed": {
+    projectId: string;
+    suiteId: string;
+    reason: "ENVIRONMENT_REQUIRED";
+  };
   /**
    * 4xx responses land here, not on `http.request.failed` — a 4xx is a
    * declared client outcome, not a server failure. But "declared outcome"
@@ -313,6 +324,22 @@ export type RequestEventMap = {
     modelId: string;
     reason: string;
   };
+  /**
+   * A chat continuation was refused before any model call or MCP connection
+   * (`server/utils/agent-loop-guard.ts`): the user message's step budget was
+   * already spent, or the model's call to one tool had its input rejected in
+   * each of the last few steps. The browser stops resuming on the refusal, so
+   * a steady rate from one session is an old tab that has not reloaded yet.
+   *
+   * Counts and the tool's name only — never message content.
+   */
+  "agent.loop_guard.tripped": {
+    surface: "mcpjam_agent" | "chat_v2";
+    reason: "step_limit" | "repeated_tool_input_error";
+    steps: number;
+    maxSteps: number;
+    toolName?: string;
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"
@@ -380,6 +407,18 @@ export type RequestEventMap = {
     resourceUri?: string;
     cspMode?: "permissive" | "widget-declared";
     errorCode: string;
+  };
+  /**
+   * Per-step timings of one plugin App request (activation open/execute, App
+   * tool calls). `spans` aggregates each step: backend admission reads, target
+   * authorization, MCP connect/initialize, tools/list, resources/read, durable
+   * control and receipt writes, and the tool call. Durations only; no content.
+   */
+  "plugin.instance.request.timing": {
+    action: string;
+    statusCode: number;
+    totalMs: number;
+    spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
   "mcp.tool.execution.failed": {
     toolName: string;
@@ -470,6 +509,23 @@ export type RequestEventMap = {
 };
 
 export type SystemEventMap = {
+  /**
+   * A chunk the backend streamed that the browser's AI SDK would reject, so
+   * the stream handler dropped it instead of forwarding it. Forwarded, one
+   * such chunk kills the whole turn client-side ("Type validation failed").
+   *
+   * Exists because of the 2026-10-05 P1: the backend moved to AI SDK 7, its
+   * Anthropic provider started emitting `{type:"custom"}` on every step, the
+   * AI SDK 6 client rejected it, and every hosted Anthropic chat died with
+   * nothing in #mcpjam-alerts. Any row here is protocol drift between the
+   * backend and this build's `ai` version; the Axiom monitor fires on one.
+   *
+   * Field NAMES only, never values: a chunk carries model output.
+   */
+  "chat.stream.chunk_rejected": {
+    chunkType: string;
+    fields: string[];
+  };
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
   /**
    * Auto-negotiation outcome, one line per connection attempt. Carries the
@@ -555,6 +611,20 @@ export type SystemEventMap = {
     rateLimitRejects: number;
     projectRejects: number;
     busyRejects: number;
+    /** Requests forwarded with at least one event under a restricted policy. */
+    privacyMasked: number;
+    /** Requests refused outright: nothing the policy allows was left to forward. */
+    privacyRejected: number;
+    /** Requests with at least one event whose policy was unresolved. */
+    privacyUnresolved: number;
+    /** Replay events the policy did not allow, dropped from forwarded requests. */
+    privacyReplayDropped: number;
+    /** Requests refused because an event or metric could not be shown clean. */
+    scrubDrops: number;
+    /** Replay events dropped: they carried a credential URL. */
+    replayCredentialDrops: number;
+    /** Replay events dropped: their nested data could not be decoded. */
+    replayUndecodableDrops: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

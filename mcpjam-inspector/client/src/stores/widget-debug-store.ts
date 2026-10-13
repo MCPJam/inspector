@@ -6,6 +6,7 @@
  */
 
 import { create } from "zustand";
+import type { CspSubtypePolicy, CspClientContext } from "@mcpjam/widget-react";
 import type { CspMode } from "./ui-playground-store";
 import type {
   McpAppsCspConnectDomains,
@@ -17,6 +18,8 @@ import type {
 export type CspMountId = string | number;
 
 export interface CspApplicationIntent {
+  cspSubtypePolicy?: CspSubtypePolicy;
+  clientContext?: CspClientContext;
   csp?: {
     connectDomains?: string[];
     resourceDomains?: string[];
@@ -133,10 +136,11 @@ export interface WidgetSandboxApplied {
    * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
    * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
    * mount switch, `"srcdoc-fallback"` was forced because the frame's document
-   * was unreachable). Twin of the same field in
-   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   * was unreachable). `"opaque"` is the intended srcdoc mount of a client
+   * whose app iframe is not same-origin. Twin of the same field
+   * in `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
@@ -185,7 +189,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;

@@ -1,3 +1,6 @@
+import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
+import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-resources.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -27,6 +30,7 @@
  */
 import { environmentModelRequiredError } from "../environments/resolve.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { aiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   createAuthorizedManager,
   type ManagerCallerContext,
@@ -41,6 +45,11 @@ import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
 import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
+import {
+  parseFundingChangedDetails,
+  SWARM_FUNDING_CHANGED_CODE,
+  type SwarmFundingSummary,
+} from "../../../shared/swarm-sponsorship.js";
 
 const BROWSER_TOOL_ID = "browser";
 
@@ -111,14 +120,32 @@ export interface LaunchJourneyRunInput {
   environmentIds?: string[];
   /** Iterations for THIS run; leaves the journey's own config untouched. */
   sessionsPerTarget?: number;
+  /**
+   * How many of this run's conversations the caller was shown as sponsored.
+   * A mismatch is a typed 409 (`swarm_funding_changed`) before anything is
+   * created, never a silent shift onto the organization's credits.
+   */
+  expectedSponsored?: number;
 }
 
 export interface LaunchJourneyRunResult {
   runId: string;
   deduped?: boolean;
+  /** How the backend funded this run's conversations, when it says. */
+  funding?: SwarmFundingSummary;
 }
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+/**
+ * A launch the organization's AI key policy refused, when the backend's own
+ * sentence is too long to pass through.
+ */
+const AI_LAUNCH_REFUSED_FALLBACK =
+  "This organization requires its own provider keys for AI features, and this launch has dependencies that can't run on them.";
+
+/** The backend's refusal for a hosted harness target with a broken image pin. */
+const JOURNEY_TARGET_IMAGE_UNAVAILABLE = "JOURNEY_TARGET_IMAGE_UNAVAILABLE";
 
 /**
  * Every character a renderer may break a line on — not just `\n`. `String.trim`
@@ -129,8 +156,10 @@ const MAX_PASSTHROUGH_REASON_LENGTH = 300;
  * Form feed is in the set because the toast renders with `white-space:
  * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
  * U+000D — so it breaks lines on screen even though it looks inert in a string.
+ * Vertical tab and next-line complete it: with CR, LF, FF and the two Unicode
+ * separators, these are every mandatory break in UAX #14.
  */
-const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
+const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 
 /**
  * A human-readable reason from a backend launch rejection.
@@ -153,11 +182,16 @@ const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
  * runs inside is already a failure and a parse error here would replace a
  * useful message with a 500.
  */
-export function launchFailureMessage(err: SwarmAgentError): string {
+export function launchFailureMessage(
+  err: SwarmAgentError,
+  /** Replaces the generic sentence when the caller knows the refusal's code. */
+  fallbackOverride?: string,
+): string {
   const fallback =
-    err.status === 402
+    fallbackOverride ??
+    (err.status === 402
       ? "This launch would exceed your organization's credit limit."
-      : "This journey can't be launched.";
+      : "This journey can't be launched.");
   const raw = err.bodyText?.trim();
   if (!raw) return fallback;
 
@@ -196,7 +230,7 @@ export function launchFailureMessage(err: SwarmAgentError): string {
  * unexamined" promise true of the less likely case and false of the more
  * likely one.
  */
-function showableReason(value: unknown): string | null {
+export function showableReason(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (!text) return null;
@@ -234,13 +268,22 @@ function launchFailureDetails(
     // else to read. Cheap to forward, and the same code the eval and v1
     // environment surfaces already expose.
     const code = typeof source.code === "string" ? source.code : undefined;
-    if (!bag && !code) return undefined;
+    // The organization's AI key policy refuses a launch with EVERY
+    // dependency that can't run on its providers, beside its message.
+    const problems = Array.isArray(source.problems)
+      ? source.problems
+      : undefined;
+    if (!bag && !code && !problems) return undefined;
     // The DETAILS bag wins when it carries its own `code`. A response can hold
     // both — an envelope code describing the transport failure and a domain
     // code inside `details` naming the specific refusal — and the domain one is
     // the branchable half. The envelope code only fills a gap.
     const hasDetailCode = typeof bag?.code === "string" && bag.code.length > 0;
-    return { ...(bag ?? {}), ...(code && !hasDetailCode ? { code } : {}) };
+    return {
+      ...(bag ?? {}),
+      ...(code && !hasDetailCode ? { code } : {}),
+      ...(problems && !bag?.problems ? { problems } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -271,6 +314,42 @@ export async function launchJourneyRun(
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
+  // Capture the signed-in identity before replacing its bearer with the
+  // background credential. Membership and rollout are rechecked per session.
+  // The harnesses the wave's targets use, so the launch can declare which of
+  // them this runner will execute locally.
+  let waveHarnesses: Array<string | undefined> = [];
+  if (input.waveId) {
+    const client = createConvexClient(deps.bearerToken);
+    const journey = await client.query("journeys:getJourney" as never, {
+      projectId: input.projectId, journeyRefId: input.journeyRefId,
+    } as never) as any;
+    const environmentIds = input.environmentIds?.length ? input.environmentIds : journey?.environmentIds ?? [];
+    const hostIds = environmentIds.length
+      ? await Promise.all(environmentIds.map(async (environmentId: string) => {
+          const environment = await client.query("projectEnvironments:getEnvironment" as never, {
+            projectId: input.projectId, environmentId,
+          } as never) as any;
+          return environment?.hostId;
+        }))
+      : journey?.hostIds ?? [];
+    const hosts = await Promise.all(hostIds.map(async (hostId: string) =>
+      client.query("hosts:getHost" as never, { hostId } as never) as any,
+    ));
+    waveHarnesses = hosts.map(host => host?.config?.harness);
+  }
+  // Per harness, unattended (a swarm runs with nobody to approve anything):
+  // machine, sandbox evidence, rollout and authorization. Declared to the
+  // backend below so it stamps exactly these targets local — and the runner
+  // executes exactly these locally.
+  const localHarnessIds = await eligibleUnattendedLocalHarnesses(deps.bearerToken, input.projectId, waveHarnesses);
+  const localEnabled = localHarnessIds.length > 0;
+  for (const harnessId of localHarnessIds) {
+    await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false, harnessId });
+  }
+  const localActorResult = localEnabled
+    ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
+    : undefined;
 
   // Create the run over the journey's full pinned host set (no maxHosts
   // cap). A backend rejection (a hard host-count ceiling, a journey with no
@@ -279,6 +358,8 @@ export async function launchJourneyRun(
   let created;
   try {
     created = await createJourneyRun(convexHttpUrl, deps.bearerToken, {
+      runtimeVenue: localEnabled ? "local" : "hosted",
+      ...(localEnabled ? { localHarnessIds } : {}),
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
@@ -289,6 +370,9 @@ export async function launchJourneyRun(
         : {}),
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }
+        : {}),
+      ...(input.expectedSponsored !== undefined
+        ? { expectedSponsored: input.expectedSponsored }
         : {}),
     });
   } catch (err) {
@@ -323,16 +407,54 @@ export async function launchJourneyRun(
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
       const details = launchFailureDetails(err);
+      if (err.status === 409 && details?.code === SWARM_FUNDING_CHANGED_CODE) {
+        const changed = parseFundingChangedDetails(details);
+        throw new WebRouteError(
+          409,
+          ErrorCode.CONFLICT,
+          changed
+            ? `Sponsored conversations changed while you were reviewing this launch: ${changed.expectedSponsored} were expected and ${changed.actualSponsored} of ${changed.totalConversations} would be sponsored now. Nothing was launched.`
+            : "Sponsored conversations changed while you were reviewing this launch. Nothing was launched.",
+          { ...(changed ?? {}), code: SWARM_FUNDING_CHANGED_CODE },
+        );
+      }
+      // The organization's AI key policy refused the launch: the same answer
+      // an eval launch gets (403 or 422 with the code and its remediation),
+      // with the problem list the client shows in full. The backend's
+      // summary sentence is often past the passthrough bound, so the
+      // fallback says what happened.
+      if (
+        details &&
+        Array.isArray(details.problems) &&
+        typeof details.code === "string"
+      ) {
+        throw aiRefusalRouteError(
+          details.code,
+          launchFailureMessage(err, AI_LAUNCH_REFUSED_FALLBACK),
+          details,
+        );
+      }
+      // A hosted harness target whose pinned image cannot boot refuses the
+      // whole launch. The backend's sentence names the target, and passes
+      // through when it fits; a long client or environment name can push it
+      // past the passthrough bound, and the generic fallback would then drop
+      // the one thing the launcher needs to know: which fix applies.
+      const message = launchFailureMessage(
+        err,
+        details?.code === JOURNEY_TARGET_IMAGE_UNAVAILABLE
+          ? "A target in this launch pins a computer image that can't boot. " +
+              "Fix that image, or remove the target, then launch again."
+          : undefined,
+      );
       const modelError = environmentModelRequiredError({
         data: {
           code: details?.code,
-          message: launchFailureMessage(err),
+          message,
           details,
         },
       });
       const routeError =
-        modelError ??
-        new WebRouteError(err.status, code, launchFailureMessage(err), details);
+        modelError ?? new WebRouteError(err.status, code, message, details);
       // The wave fan-out and every generic client read `Retry-After` to decide
       // WHEN to come back; the 429 alone only says "not now". The backend's
       // daily launch cap sends the UTC roll and its burst brake sends the
@@ -365,7 +487,11 @@ export async function launchJourneyRun(
       runId,
       projectId,
     });
-    return { runId, deduped: true };
+    return {
+      runId,
+      deduped: true,
+      ...(created.funding ? { funding: created.funding } : {}),
+    };
   }
 
   if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length === 0) {
@@ -376,6 +502,7 @@ export async function launchJourneyRun(
     );
   }
   const hosts = snapshot.hosts;
+  const localHarnessActor = localActorResult?.ok ? localActorResult.actor : undefined;
 
   // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
   // not memoized: a client bakes its auth token in at construction, so a
@@ -403,6 +530,7 @@ export async function launchJourneyRun(
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      ...(created.sessions?.length ? { sessionFunding: created.sessions } : {}),
       setupWrites: snapshot.setupWrites,
       goal: snapshot.goal,
       // Whether this run is rubric-graded at all. The runner only needs
@@ -414,6 +542,8 @@ export async function launchJourneyRun(
           0) > 0,
       convexHttpUrl,
       getBearer: deps.getRunBearer,
+      localHarnessActor,
+      ...(localEnabled ? { localHarnessIds } : {}),
       // Host-aware: each host connects ONLY its own pinned required servers
       // (optionalServerIds stay off, matching a real no-opt-in visitor).
       managerFactory: async (host) => {
@@ -548,5 +678,5 @@ export async function launchJourneyRun(
     });
   });
 
-  return { runId };
+  return { runId, ...(created.funding ? { funding: created.funding } : {}) };
 }

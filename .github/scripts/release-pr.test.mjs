@@ -26,9 +26,9 @@ test("titles a packages-only PR with each bumped package", () => {
 
 test("options survive a round trip through the body", () => {
   for (const options of [
-    { deploy_backend_prod: true, deploy_webapp: true },
-    { deploy_backend_prod: false, deploy_webapp: true },
-    { deploy_backend_prod: false, deploy_webapp: false },
+    { deploy_backend_prod: true, deploy_webapp: true, skip_verify: true },
+    { deploy_backend_prod: false, deploy_webapp: true, skip_verify: false },
+    { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false },
   ]) {
     const body = versionPrBody({ releases, options, runUrl: "https://x", sourceSha: "abc" });
     assert.deepEqual(parseReleaseOptions(body), options);
@@ -41,6 +41,7 @@ test("reads a box ticked in the GitHub UI", () => {
   assert.deepEqual(parseReleaseOptions(body), {
     deploy_backend_prod: true,
     deploy_webapp: false,
+    skip_verify: false,
   });
 });
 
@@ -48,10 +49,11 @@ test("a missing or mangled option reads as unchecked", () => {
   assert.deepEqual(parseReleaseOptions(null), {
     deploy_backend_prod: false,
     deploy_webapp: false,
+    skip_verify: false,
   });
   assert.deepEqual(
     parseReleaseOptions("- [x] Deploy the webapp to production\n[x] <!-- release-option:deploy_backend_prod -->"),
-    { deploy_backend_prod: false, deploy_webapp: false }
+    { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false }
   );
 });
 
@@ -59,18 +61,20 @@ test("ignores options it does not know", () => {
   assert.deepEqual(parseReleaseOptions("- [x] Nuke it <!-- release-option:nuke -->"), {
     deploy_backend_prod: false,
     deploy_webapp: false,
+    skip_verify: false,
   });
 });
 
 test("a packages-only PR never offers the webapp deploy ticked", () => {
   const body = versionPrBody({
     releases: releases.slice(1),
-    options: { deploy_backend_prod: true, deploy_webapp: true },
+    options: { deploy_backend_prod: true, deploy_webapp: true, skip_verify: false },
     runUrl: "https://x",
     sourceSha: "abc",
   });
   assert.deepEqual(parseReleaseOptions(body), {
     deploy_backend_prod: true,
     deploy_webapp: false,
+    skip_verify: false,
   });
 });

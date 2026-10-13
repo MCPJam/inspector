@@ -28,8 +28,12 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager, ModelSelection } from "@mcpjam/sdk";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
+import type {
+  MCPClientManager,
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   buildOrgModelFromResolvedConfig,
@@ -44,6 +48,11 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
+import {
+  admitEachLocalOrgAttempt,
+  localOrgAttemptRefusal,
+} from "./local-org-attempt-admission.js";
+import type { LocalOrgAttemptRequest } from "./org-runtime-admission.js";
 import type { LocalExecutionRecord } from "./local-execution-record.js";
 import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
 import {
@@ -107,6 +116,11 @@ export interface OrgModelHandlerOptions {
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort for this turn. Sent to `/stream/org` as the top-level
+   * `reasoningEffort` field, which the backend maps per org provider.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
@@ -253,6 +267,9 @@ export function formatLocalStreamError(error: unknown): string {
   if (error instanceof OrgProviderConfigError) {
     return JSON.stringify({ code: error.code, message: error.message });
   }
+  // An attempt the backend refused (or could not authorize) before it ran.
+  const refusal = localOrgAttemptRefusal(error);
+  if (refusal) return JSON.stringify(refusal);
   const { message, statusCode, responseBody } =
     readLocalStreamErrorFields(error);
   if (
@@ -295,6 +312,13 @@ export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
+   * The resolve answer's `admission`. Every provider attempt of the turn
+   * (each step, each retry) asks it again first, so the turn stops once the
+   * organization's policy or the connection no longer allows it. Without
+   * one, no attempt runs. See `local-org-attempt-admission.ts`.
+   */
+  admission: LocalOrgAttemptRequest | undefined;
+  /**
    * Shape what each step sends to the model (MJ-009); see
    * `MCPJamHandlerOptions.historyPresentation`.
    */
@@ -306,6 +330,13 @@ export interface OrgLocalModelHandlerOptions {
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Provider options that apply the turn's reasoning effort. The inspector
+   * calls the provider itself on this runtime, so the caller resolves the
+   * effort to options (`directChatEffort`, which refuses a provider with no
+   * effort control before any spend) and they are handed to the engine as-is.
+   */
+  providerOptions?: ProviderOptions;
   tools: ToolSet;
   selectedServers?: string[];
   serverIds?: string[];
@@ -560,10 +591,14 @@ export function handleLocalOrgChatModel(
   // Validate and build the AI SDK model before opening the stream.
   // If config/allowlist checks fail, return a formatted error stream rather
   // than letting the exception propagate as a 500.
-  let llmModel: ReturnType<typeof buildOrgModelFromResolvedConfig>;
+  let llmModel: ReturnType<typeof admitEachLocalOrgAttempt>;
   try {
     assertOrgModelAllowed(provider, modelId);
-    llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+    llmModel = admitEachLocalOrgAttempt(
+      buildOrgModelFromResolvedConfig(provider, modelId),
+      options.admission,
+      modelId,
+    );
   } catch (configErr) {
     // The response is still a 200 stream whose first chunk is the error, so
     // the HTTP failure events never see this — the typed event is the only
@@ -667,6 +702,9 @@ export function handleLocalOrgChatModel(
         messageHistory: messages,
         systemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
+        ...(options.providerOptions
+          ? { providerOptions: options.providerOptions }
+          : {}),
         tools,
         progressivePlan: options.progressivePlan,
         discoveryState: options.discoveryState,
@@ -1029,6 +1067,9 @@ export async function handleHostedOrgChatModel(
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
+    ...(options.reasoningEffort !== undefined
+      ? { reasoningEffort: options.reasoningEffort }
+      : {}),
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,

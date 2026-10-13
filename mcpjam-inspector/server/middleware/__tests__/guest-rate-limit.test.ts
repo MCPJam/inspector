@@ -172,5 +172,31 @@ describe("guestRateLimitMiddleware", () => {
       expect(retryAfter).toBeGreaterThanOrEqual(1);
       expect(retryAfter).toBeLessThanOrEqual(60);
     });
+
+    it("types the refusal for the request log", async () => {
+      // Without it the 429 row carries no code or message, so a storm from
+      // this limiter is indistinguishable from the passthrough one (PLB-145).
+      let meta: unknown;
+      const typed = new Hono();
+      typed.use("*", async (c, next) => {
+        c.set("guestId", "guest-h");
+        await next();
+        meta = c.var.webErrorMeta;
+      });
+      typed.use("*", guestRateLimitMiddleware);
+      typed.get("/proxy", (c) => c.json({ ok: true }));
+      for (let i = 0; i < 60; i++) {
+        await typed.request("/proxy");
+      }
+
+      await typed.request("/proxy");
+
+      expect(meta).toEqual({
+        status: 429,
+        code: "RATE_LIMITED",
+        message:
+          "Guest rate limit exceeded. Try again later or sign in for higher limits.",
+      });
+    });
   });
 });

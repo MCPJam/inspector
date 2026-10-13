@@ -123,7 +123,7 @@ export const LOCAL_PERMISSION_PROFILES: readonly LocalPermissionProfile[] = [
  * minted under the old rules — a user consented to the guarantees as they were
  * described, so changing the guarantees re-asks.
  */
-export const LOCAL_HARNESS_POLICY_VERSION = "local-harness-policy-2026-09-01";
+export const LOCAL_HARNESS_POLICY_VERSION = "local-harness-policy-2026-09-28";
 
 /**
  * Version of the ISOLATION policy (backend selection, mount/seccomp/Seatbelt

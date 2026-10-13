@@ -273,6 +273,19 @@ describe("startSuiteRunWithRecorder", () => {
     );
   });
 
+  it.each(["local", "hosted"] as const)("uses the backend's frozen %s venue for fresh and deduped runs", async (venue) => {
+    for (const deduped of [false, true]) {
+      const result = await startSuiteRunWithRecorder({
+        convexClient: { mutation: vi.fn().mockResolvedValue({
+          runId: "run-1", testCases: [], deduped, status: "running",
+          configSnapshot: { environment: { servers: [] }, executionVenue: venue },
+        }), action: vi.fn() } as any,
+        suiteId: "suite-1", serverIds: [], runtimeVenue: venue === "local" ? "hosted" : "local",
+      });
+      expect(result.harnessRuntimeVenue).toBe(venue);
+    }
+  });
+
   it("runs against the environment Convex snapshotted for the suite run", async () => {
     const snapshotEnvironment = {
       servers: ["friendly-server-name"],
@@ -449,6 +462,66 @@ describe("startSuiteRunWithRecorder", () => {
       },
     });
   });
+
+  it("forwards a rerun's lineage only when one is asked for", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation, action } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+    });
+    // An ordinary replay sends exactly the args it always sent.
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("rerunOfRunId");
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("rerunScope");
+  });
+
+  it.each([
+    ["RERUN_NOTHING_TO_RERUN", 409],
+    ["RERUN_SOURCE_NOT_TERMINAL", 409],
+    ["RERUN_SOURCE_SUITE_MISMATCH", 400],
+  ])(
+    "translates a %s rerun refusal into a %i naming the reason",
+    async (code, status) => {
+      const { ConvexError } = await import("convex/values");
+      const mutation = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ConvexError({ code, message: "The backend says why." }),
+        );
+      await expect(
+        startSuiteRunWithRecorder({
+          convexClient: { mutation, action: vi.fn() } as any,
+          suiteId: "suite-1",
+          replayedFromRunId: "source-run",
+          rerunOfRunId: "source-run",
+          rerunScope: "failed_cases",
+        }),
+      ).rejects.toMatchObject({
+        status,
+        message: "The backend says why.",
+        details: { reason: code },
+      });
+    },
+  );
 
   it("marks the suite run failed when iteration precreate fails", async () => {
     // The precreate is an ACTION now, so the failure under test belongs to it.

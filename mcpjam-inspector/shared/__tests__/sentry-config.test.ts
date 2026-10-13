@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stepFailureFindingKey } from "@mcpjam/sdk/browser";
 import {
   BROWSER_IGNORE_ERRORS,
   buildClientSentryConfig,
@@ -9,8 +10,16 @@ import {
   electronBuildSurface,
   type FingerprintableEvent,
   groupDomMutationConflicts,
+  groupOAuthDebuggerStepFailures,
   isSentryBuildSurface,
   resolveClientBuildSurface,
+  type ScrubbableBreadcrumb,
+  type ScrubbableEvent,
+  scrubClientSentryBreadcrumb,
+  scrubSentryCredentials,
+  scrubServerSentryBreadcrumb,
+  scrubServerSentryEvent,
+  sentryTransactionTemplate,
   SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
@@ -224,32 +233,64 @@ describe("surface builders", () => {
     expect(BROWSER_IGNORE_ERRORS).toContain(
       "ResizeObserver loop completed with undelivered notifications",
     );
-    expect(BROWSER_IGNORE_ERRORS).toContain("Failed to fetch");
     expect(BROWSER_IGNORE_ERRORS).toContain("Load failed");
-    const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
-    expect(
-      (abort as RegExp).test("AbortError: The user aborted a request"),
-    ).toBe(true);
+    const regexes = BROWSER_IGNORE_ERRORS.filter(
+      (e): e is RegExp => e instanceof RegExp,
+    );
+    const matches = (message: string) => regexes.some((r) => r.test(message));
+    expect(matches("AbortError: The user aborted a request")).toBe(true);
+    expect(matches("Failed to fetch")).toBe(true);
+    expect(matches("TypeError: Failed to fetch")).toBe(true);
   });
 
-  it("groups DOM mutation conflicts on the browser client only", () => {
+  it("keeps reporting stale code-split chunk loads", () => {
+    // Sentry matches string entries by substring, so a bare "Failed to fetch"
+    // would also swallow this — the client's only signal that a deploy
+    // orphaned a chunk an open tab still references.
+    const message =
+      "TypeError: Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-CtNEAoFZ.js";
+    for (const entry of BROWSER_IGNORE_ERRORS) {
+      const hit =
+        entry instanceof RegExp ? entry.test(message) : message.includes(entry);
+      expect(hit, String(entry)).toBe(false);
+    }
+  });
+
+  // Behaviour, not identity: `beforeSend` is a composition now, so asserting
+  // it IS one of the rules would pass only while there is exactly one.
+  it("applies both fingerprinting rules on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
-    const event = {
+    const beforeSend = buildClientSentryConfig(ctx).beforeSend;
+
+    const dom = beforeSend<FingerprintableEvent>({
       environment: "prod",
       exception: {
         values: [
           {
             type: "NotFoundError",
-            value: "Failed to execute 'removeChild' on 'Node': oops",
+            value:
+              "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
           },
         ],
       },
-    };
-    expect(buildClientSentryConfig(ctx).beforeSend(event)).toEqual(
-      groupDomMutationConflicts({ ...event }),
-    );
+    });
+    expect(dom?.fingerprint).toEqual(["dom-mutation-conflict", "prod"]);
+
+    const step = beforeSend<FingerprintableEvent>({
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { step: "request_client_registration" },
+      exception: {
+        values: [
+          { type: "Error", value: "Dynamic Client Registration failed (400)." },
+        ],
+      },
+    });
+    expect(step?.fingerprint?.[0]).toBe("oauth-debugger-step");
+
     // A server-side NotFoundError is an upstream or storage failure, so
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects — and the
+    // OAuth debugger never runs off the browser client.
     expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
   });
@@ -602,6 +643,575 @@ describe("build surfaces", () => {
   it("rejects a value no build surface list contains", () => {
     expect(() => resolveClientBuildSurface("desktop")).toThrow(
       /not a client build surface/,
+    );
+  });
+});
+
+describe("groupOAuthDebuggerStepFailures", () => {
+  // Built the way the reporting adapter builds them: `extra.finding` from the
+  // real SDK key. So these exercise the composition that ships — SDK key plus
+  // this rule — not the rule against hand-picked keys.
+  function stepEvent(
+    value: string,
+    {
+      step = "request_client_registration",
+      environment = "prod",
+      source = "oauth_debugger_step",
+      withFinding = true,
+    }: {
+      step?: string;
+      environment?: string;
+      source?: string;
+      withFinding?: boolean;
+    } = {},
+  ): FingerprintableEvent {
+    return {
+      environment,
+      tags: { source },
+      extra: {
+        step,
+        ...(withFinding ? { finding: stepFailureFindingKey(value) } : {}),
+      },
+      exception: { values: [{ type: "Error", value }] },
+    };
+  }
+
+  const fingerprint = (event: FingerprintableEvent) =>
+    groupOAuthDebuggerStepFailures(event).fingerprint;
+
+  // INSPECTOR-CLIENT-2FE: nine events titled "Dynamic Client Registration
+  // failed (400)" that were five unrelated findings, one stack between them.
+  it("splits the findings that shared one stack", () => {
+    const findings = [
+      stepEvent("Dynamic Client Registration failed (400)."),
+      stepEvent("Dynamic Client Registration failed (401)."),
+      stepEvent(
+        "Token request failed: 400: invalid_client: invalid_client_secret",
+        {
+          step: "token_request",
+        },
+      ),
+      stepEvent(
+        "MCP server returned HTTP 404 Not Found where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+      stepEvent(
+        "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        { step: "request_resource_metadata" },
+      ),
+    ].map((event) => JSON.stringify(fingerprint(event)));
+
+    expect(new Set(findings).size).toBe(5);
+  });
+
+  it("keeps a registration failure together with and without the advisory", () => {
+    const withHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (401). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    // Pinned to a value, not only to its twin: two absent fingerprints would
+    // compare equal too.
+    expect(withHint).toEqual([
+      "oauth-debugger-step",
+      "request_client_registration",
+      "Dynamic Client Registration failed (401)",
+      "prod",
+    ]);
+    expect(withHint).toEqual(
+      fingerprint(stepEvent("Dynamic Client Registration failed (401).")),
+    );
+  });
+
+  // INSPECTOR-CLIENT-2FD: six events titled "Token request failed: 403
+  // Forbidden: invalid_target", which only one of them was. The other five were
+  // two more findings, from different servers and users.
+  it("splits the findings that shared the 2FD stack", () => {
+    const invalidTarget = fingerprint(
+      stepEvent(
+        "Token request failed: 403 Forbidden: invalid_target: Unauthorized resource: http://localhost:8080/v2/local",
+        { step: "token_request" },
+      ),
+    );
+    const registration = fingerprint(
+      stepEvent("Dynamic Client Registration failed (400)."),
+    );
+    const registrationWithHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    const wrongStatus = fingerprint(
+      stepEvent(
+        "MCP server returned HTTP 405 Method Not Allowed where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+    );
+
+    expect(
+      new Set(
+        [invalidTarget, registration, wrongStatus].map((f) =>
+          JSON.stringify(f),
+        ),
+      ).size,
+    ).toBe(3);
+    // The two registration events were one finding, one with the advisory.
+    expect(registrationWithHint).toEqual(registration);
+    // The server's own resource URL is free text, not part of the finding.
+    expect(invalidTarget?.[2]).not.toContain("localhost");
+  });
+
+  // Review of #5473: the cause of a discovery failure comes after the first
+  // period. The first version cut there and merged all of these.
+  it("keeps discovery failures with different causes apart", () => {
+    // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532).
+    const prefix = "Could not discover authorization server metadata.";
+    const url =
+      "https://auth.example.com/.well-known/oauth-authorization-server";
+    const keys = [
+      `${prefix} ${url}/t returned HTTP 404; ${url} returned HTTP 404.`,
+      `${prefix} ${url} returned HTTP 500.`,
+      `${prefix} ${url} failed: Failed to fetch.`,
+    ].map((value) =>
+      JSON.stringify(
+        fingerprint(
+          stepEvent(value, { step: "request_authorization_server_metadata" }),
+        ),
+      ),
+    );
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  // Review of #5473: the server writes part of a token failure, so keyed on
+  // the whole text one finding opened an issue per server wording.
+  it("keeps one token failure together across servers' wording", () => {
+    // Asserts the value, not that the three agree: with the rule off, all
+    // three fingerprints are `undefined` and would agree too.
+    for (const value of [
+      "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
+      "Token request failed: 400: invalid_grant: code already used",
+      "Token request failed: 400 Client Error: invalid_grant",
+    ]) {
+      expect(fingerprint(stepEvent(value, { step: "token_request" }))).toEqual([
+        "oauth-debugger-step",
+        "token_request",
+        "Token request failed: 400: invalid_grant",
+        "prod",
+      ]);
+    }
+  });
+
+  it("separates the same finding on different steps", () => {
+    expect(fingerprint(stepEvent("boom", { step: "a" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { step: "b" })),
+    );
+  });
+
+  it("keeps environments apart", () => {
+    expect(fingerprint(stepEvent("boom", { environment: "prod" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { environment: "dev" })),
+    );
+  });
+
+  it("files a report with no step under a stable bucket", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { finding: "boom" },
+      exception: { values: [{ type: "Error", value: "boom" }] },
+    };
+    expect(groupOAuthDebuggerStepFailures(event).fingerprint).toEqual([
+      "oauth-debugger-step",
+      "unknown",
+      "boom",
+      "prod",
+    ]);
+  });
+
+  it("falls back to the capped message, never a first-sentence cut", () => {
+    // No `finding` should reach here — the adapter and this rule ship
+    // together — but if one does, it must split rather than merge.
+    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(
+      300,
+    )}`;
+    const [, , finding] = fingerprint(
+      stepEvent(value, { withFinding: false }),
+    )!;
+    expect(finding).toBe(value.slice(0, 160));
+    expect(finding).toContain("returned HTTP 404");
+  });
+
+  it.each(["oauth_debugger_advance", "react_boundary", undefined])(
+    "leaves source %j on default grouping",
+    (source) => {
+      const event: FingerprintableEvent = {
+        environment: "prod",
+        ...(source ? { tags: { source } } : {}),
+        exception: { values: [{ type: "Error", value: "boom" }] },
+      };
+      expect(groupOAuthDebuggerStepFailures(event).fingerprint).toBeUndefined();
+    },
+  );
+});
+
+describe("scrubServerSentryEvent", () => {
+  it("summarizes the captured request body and drops query values, cookies and secret headers", () => {
+    // What @sentry/node's http integration attaches to an error on the chat
+    // route: the first ~10KB of the raw body, as a string.
+    const event: ScrubbableEvent = {
+      request: {
+        url: "https://app.mcpjam.com/api/web/chat-v2?serverUrl=https%3A%2F%2Fmcp.acme.com&code=abc",
+        query_string: "serverUrl=https%3A%2F%2Fmcp.acme.com&code=abc",
+        cookies: { "mcpjam-session": "s3cr3t" },
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig",
+          cookie: "mcpjam-session=s3cr3t",
+          "x-forwarded-for": "203.0.113.7",
+          "user-agent": "Mozilla/5.0",
+        },
+        data: JSON.stringify({
+          messages: [{ role: "user", content: "my diagnosis is …" }],
+          model: "openai/gpt-5",
+        }),
+      },
+    };
+
+    const scrubbed = scrubServerSentryEvent(event);
+    const serialized = JSON.stringify(scrubbed);
+
+    for (const value of ["diagnosis", "s3cr3t", "eyJ", "203.0.113.7", "acme"]) {
+      expect(serialized, `${value} leaked`).not.toContain(value);
+    }
+    expect(scrubbed.request).toEqual({
+      url: "https://app.mcpjam.com/api/web/chat-v2",
+      query_string: "serverUrl=[redacted]&code=[redacted]",
+      headers: {
+        "content-type": "application/json",
+        authorization: "[redacted]",
+        cookie: "[redacted]",
+        "x-forwarded-for": "[redacted]",
+        "user-agent": "Mozilla/5.0",
+      },
+      data: "{messages: array(1)<{role: string(4), content: string(17)}>, model: string(12)}",
+    });
+  });
+
+  it("reports a body cut off mid-JSON by its length", () => {
+    const scrubbed = scrubServerSentryEvent({
+      request: { data: '{"messages":[{"role":"user","content":"long…' },
+    });
+    expect(scrubbed.request?.data).toBe("string(44)");
+  });
+
+  it("redacts exception and message text but keeps the exception type and frames", () => {
+    const frames = [
+      { filename: "/app/server/routes/web/auth.js", function: "connect" },
+    ];
+    const scrubbed = scrubServerSentryEvent({
+      message: "token exchange failed for jane@acme.com",
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value:
+              "fetch failed: https://mcp.acme.com/tenants/42/sse?key=k Bearer abc.def.ghi",
+            stacktrace: { frames },
+          },
+        ],
+      },
+    });
+
+    expect(scrubbed.message).toBe("token exchange failed for [redacted-email]");
+    expect(scrubbed.exception?.values?.[0]).toEqual({
+      type: "TypeError",
+      value: "fetch failed: https://mcp.acme.com/… Bearer [redacted-token]",
+      stacktrace: { frames },
+    });
+  });
+
+  it("scrubs a thrown non-Error object but leaves logger-scrubbed extra alone", () => {
+    const scrubbed = scrubServerSentryEvent({
+      extra: {
+        // Already a shape summary: `logger.ts` scrubbed it before capture.
+        body: "{messages: array(2)}",
+        __serialized__: {
+          code: -32602,
+          message: "Invalid params for user bob@acme.com",
+          data: { arguments: { ssn: "123-45-6789" } },
+        },
+      },
+    });
+
+    expect(scrubbed.extra).toEqual({
+      body: "{messages: array(2)}",
+      __serialized__: {
+        code: -32602,
+        message: "Invalid params for user [redacted-email]",
+        data: { arguments: "{ssn: string(11)}" },
+      },
+    });
+  });
+});
+
+describe("scrubSentryBreadcrumb", () => {
+  const APP_ORIGIN = "https://app.mcpjam.test";
+
+  it("keeps a console breadcrumb's level, category and label but not its arguments", () => {
+    const payload = { messages: [{ content: "private words" }] };
+    const crumb = {
+      category: "console",
+      level: "error",
+      message:
+        '[chat] stream failed: {"messages":[{"content":"private words"}]}',
+      data: {
+        arguments: ["[chat] stream failed:", payload],
+        logger: "console",
+      },
+    };
+
+    expect(scrubClientSentryBreadcrumb(crumb, APP_ORIGIN)).toEqual({
+      category: "console",
+      level: "error",
+      message: "[chat] stream failed: (+1 args)",
+      data: { logger: "console", argumentCount: 2 },
+    });
+    // The caller's object is never touched; only the breadcrumb's copy goes.
+    expect(payload.messages[0]?.content).toBe("private words");
+  });
+
+  it("describes a console call whose first argument is not a string", () => {
+    expect(
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [new Error("for jane@acme.com")] },
+        },
+        APP_ORIGIN,
+      )!.message,
+    ).toBe("Error: for [redacted-email]");
+    expect(
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [{ toolArgs: { city: "Lisbon" } }] },
+        },
+        APP_ORIGIN,
+      )!.message,
+    ).toBe("{toolArgs: {city: string(6)}}");
+  });
+
+  it("cuts an outgoing request to the customer's host on the server", () => {
+    // @sentry/node's shape for an outgoing request.
+    const crumb = {
+      category: "http",
+      type: "http",
+      data: {
+        url: "https://mcp.acme.com/tenants/42/mcp",
+        "http.method": "POST",
+        status_code: 401,
+        "http.query": "?api_key=k",
+        "http.fragment": "#x",
+      },
+    };
+
+    expect(scrubServerSentryBreadcrumb(crumb)!.data).toEqual({
+      url: "https://mcp.acme.com",
+      "http.method": "POST",
+      status_code: 401,
+    });
+  });
+
+  it("keeps the browser's own API paths but drops queries and fragments", () => {
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "fetch",
+          data: {
+            url: "/api/web/servers/srv_1/tools?cursor=abc#x",
+            method: "GET",
+          },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ url: "/api/web/servers/srv_1/tools", method: "GET" });
+
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "xhr",
+          data: { url: `${APP_ORIGIN}/api/web/servers/srv_1?cursor=abc` },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ url: `${APP_ORIGIN}/api/web/servers/srv_1` });
+
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "navigation",
+          data: { from: "/oauth/callback?code=c0de&state=s", to: "/servers" },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ from: "/oauth/callback", to: "/servers" });
+  });
+
+  it("keeps only the origin of a browser request to another origin", () => {
+    const crumb = (url: string) => ({ category: "fetch", data: { url } });
+
+    for (const url of [
+      "https://mcp.acme.com/tenants/42/mcp?api_key=k",
+      // Protocol-relative: no scheme of its own, still another host.
+      "//mcp.acme.com/tenants/42/mcp",
+      // Same host, different port is a different origin.
+      "https://app.mcpjam.test:8443/tenants/42",
+    ]) {
+      const expected = new URL(url, APP_ORIGIN).origin;
+      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data).toEqual(
+        { url: expected },
+      );
+    }
+
+    // No app origin known: every absolute URL is someone else's.
+    expect(
+      scrubClientSentryBreadcrumb(
+        crumb(`${APP_ORIGIN}/api/web/servers/srv_1`),
+        undefined,
+      )!.data,
+    ).toEqual({ url: APP_ORIGIN });
+    // An opaque origin never matches, even its own.
+    expect(
+      scrubClientSentryBreadcrumb(
+        crumb("file:///Users/jane/notes.txt"),
+        "null",
+      )!.data,
+    ).toEqual({ url: "null" });
+  });
+
+  it("redacts the message of any other breadcrumb", () => {
+    expect(
+      scrubServerSentryBreadcrumb({
+        category: "child_process",
+        message:
+          "Child process errored with 'connect https://db.acme.com/x?password=p'",
+      })!.message,
+    ).toBe("Child process errored with 'connect https://db.acme.com/…'");
+  });
+
+  it("is wired into the browser config with the app's origin", () => {
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+      documentOrigin: APP_ORIGIN,
+    });
+    const scrub = (url: string) =>
+      config.beforeBreadcrumb({ category: "fetch", data: { url } })!.data;
+    expect(scrub(`${APP_ORIGIN}/api/web/servers/srv_1?x=1`)).toEqual({
+      url: `${APP_ORIGIN}/api/web/servers/srv_1`,
+    });
+    expect(scrub("https://mcp.acme.com/tenants/42/mcp")).toEqual({
+      url: "https://mcp.acme.com",
+    });
+  });
+});
+
+describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
+  const SECRET = "SENTINELs3ntry";
+
+  it("server events: request path, transaction, exception text", () => {
+    const event = scrubSentryCredentials(
+      scrubServerSentryEvent({
+        transaction: `GET /api/web/score/runs/${SECRET}`,
+        request: {
+          url: `https://app.mcpjam.com/api/web/score/runs/${SECRET}?x=1`,
+          query_string: `code=${SECRET}`,
+        },
+        exception: {
+          values: [
+            {
+              type: "Error",
+              value: `upstream refused /api/web/bench/results/${SECRET}`,
+            },
+          ],
+        },
+        tags: { route: `/results/${SECRET}` },
+      }),
+    );
+    expect(event).not.toBeNull();
+    expect(JSON.stringify(event)).not.toContain(SECRET);
+    expect(event?.transaction).toBe("GET /api/web/score/runs/:token");
+    expect(event?.request?.url).toBe(
+      "https://app.mcpjam.com/api/web/score/runs/[redacted]",
+    );
+    expect(event?.exception?.values?.[0]?.type).toBe("Error");
+  });
+
+  it("transactions and spans", () => {
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    });
+    const transaction = config.beforeSendTransaction({
+      type: "transaction",
+      transaction: "/results/:runToken",
+      spans: [
+        { description: `GET /api/web/score/runs/${SECRET}`, op: "http" },
+        { description: "GET /api/web/projects", op: "http" },
+      ],
+    });
+    expect(JSON.stringify(transaction)).not.toContain(SECRET);
+    expect(transaction?.spans).toHaveLength(2);
+    expect(transaction?.spans?.[1]?.description).toBe("GET /api/web/projects");
+  });
+
+  it("the browser beforeSend, last", () => {
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    }).beforeSend;
+    const out = beforeSend({
+      exception: { values: [{ type: "Error", value: "boom" }] },
+      request: { url: `https://app.mcpjam.com/evals/shared/${SECRET}` },
+    } as never);
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+  });
+
+  it("breadcrumbs of every category, Electron's included", () => {
+    for (const crumb of [
+      { category: "navigation", data: { from: `/results/${SECRET}`, to: "/" } },
+      { category: "fetch", data: { url: `/api/web/score/runs/${SECRET}` } },
+      {
+        category: "electron",
+        data: { url: `mcpjam://oauth/callback?code=${SECRET}` },
+      },
+      { category: "ui.click", message: `a[href="/connect/server/${SECRET}"]` },
+    ]) {
+      const client = scrubClientSentryBreadcrumb(
+        structuredClone(crumb),
+        "https://app.mcpjam.com",
+      );
+      const server = scrubServerSentryBreadcrumb(structuredClone(crumb));
+      expect(JSON.stringify(client)).not.toContain(SECRET);
+      expect(JSON.stringify(server)).not.toContain(SECRET);
+      expect(client?.category).toBe(crumb.category);
+    }
+  });
+
+  it("drops an event it cannot show clean", () => {
+    let deep: unknown = "x";
+    for (let i = 0; i < 100; i++) deep = { d: deep };
+    expect(
+      scrubSentryCredentials({ extra: { deep }, tags: { deep } }),
+    ).toBeNull();
+  });
+
+  it("names a transaction by template", () => {
+    expect(
+      sentryTransactionTemplate(`POST /api/web/bench/results/${SECRET}`),
+    ).toBe("POST /api/web/bench/results/:secret");
+    expect(sentryTransactionTemplate("GET /api/web/projects")).toBe(
+      "GET /api/web/projects",
     );
   });
 });

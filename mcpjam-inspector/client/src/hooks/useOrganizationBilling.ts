@@ -5,6 +5,7 @@ import { makeFunctionReference } from "convex/server";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useSoftQuery } from "@/hooks/use-soft-query";
 
 export type OrganizationPlan = "free" | "pro" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
@@ -214,6 +215,18 @@ export interface PlanCatalog {
   };
 }
 
+// One envelope for the five stable billing reads. Bundled server-side because
+// every open page used to hold five separate subscriptions for them, which is
+// what pushed prod into its concurrent-query limit. `projectPremiumness` is
+// null when the caller sent no projectId.
+export interface OrganizationBillingBundle {
+  billingStatus: OrganizationBillingStatus;
+  entitlements: OrganizationEntitlements;
+  organizationPremiumness: PremiumnessState;
+  projectPremiumness: PremiumnessState | null;
+  planCatalog: PlanCatalog;
+}
+
 export interface OrganizationPlanChangeSnapshot {
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
@@ -277,10 +290,12 @@ export function useOrganizationBillingStatus(
   const isUserReady = useDbUserReady();
   const enabled = (options?.enabled ?? true) && isUserReady;
 
-  return useQuery(
-    "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip",
-  ) as OrganizationBillingStatus | undefined;
+  // Soft: the app shell and sidebar call this, and a failed status read must
+  // not replace the app. A failure reads as "no status", like a pending one.
+  return useSoftQuery<OrganizationBillingStatus>(
+    "billing:getOrganizationBillingStatus",
+    enabled && organizationId ? { organizationId } : "skip",
+  ).data;
 }
 
 const billingStatusQuery = makeFunctionReference<
@@ -326,29 +341,37 @@ export function useOrganizationBilling(
   const shouldQuerySeatPaymentIntent =
     shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled,
-  });
+  // One subscription instead of five. `useOrganizationBillingStatus` stays a
+  // separate export for callers that only want the status, so it is not reused
+  // here.
+  //
+  // Soft, because `App` calls this on every page: on 2026-10-04 the bundle hit
+  // Convex's read limit for one organization and, thrown from `App`, it
+  // replaced the whole app. A failed bundle now reads as settled with no
+  // answer (see the loading flags below).
+  const { data: bundle, error: queryError } =
+    useSoftQuery<OrganizationBillingBundle>(
+      "billing:getOrganizationBillingBundle",
+      shouldQueryOrganization && organizationId
+        ? {
+            organizationId,
+            ...(shouldQueryProject && projectId ? { projectId } : {}),
+          }
+        : "skip",
+    );
+  const bundleFailed = queryError !== undefined;
 
-  const entitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as OrganizationEntitlements | undefined;
-
-  const organizationPremiumness = useQuery(
-    "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as PremiumnessState | undefined;
-
-  const projectPremiumness = useQuery(
-    "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
-  ) as PremiumnessState | undefined;
-
-  const planCatalog = useQuery(
-    "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as PlanCatalog | undefined;
+  const billingStatus = bundle?.billingStatus;
+  const entitlements = bundle?.entitlements;
+  const organizationPremiumness = bundle?.organizationPremiumness;
+  // The bundle says null for "no projectId sent"; callers expect undefined,
+  // which is what the old "skip" subscription gave them. Gate it on
+  // shouldQueryProject too, so a bundle fetched without a project can never
+  // read as a settled project answer.
+  const projectPremiumness = shouldQueryProject
+    ? (bundle?.projectPremiumness ?? undefined)
+    : undefined;
+  const planCatalog = bundle?.planCatalog;
 
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
@@ -768,13 +791,22 @@ export function useOrganizationBilling(
   // resolves to "not denied, free plan" — i.e. it fails OPEN and lets a
   // limited action through. An unfinished answer must read as loading.
   const isAwaitingUserRow = callerEnabled && !isUserReady && !!organizationId;
+  // A FAILED bundle is not a pending one, and deliberately reads as settled:
+  // gates then resolve as not denied, which is failing open. That is the
+  // lesser harm. The backend enforces every cap a plan actually sets
+  // (`convex/lib/tierLimits.ts`, `requireFeature`), so a limited action is
+  // still refused server-side; servers and scenarios per project, which it
+  // does not enforce, are uncapped on every plan. Reading as loading instead
+  // would leave server creation, invites and the like waiting forever on a
+  // read that is not coming back.
+  const awaitingBundle = shouldQueryOrganization && !bundleFailed;
 
   const isLoadingOrganizationPremiumness =
     isAwaitingUserRow ||
-    (shouldQueryOrganization && organizationPremiumness === undefined);
+    (awaitingBundle && organizationPremiumness === undefined);
   const isLoadingProjectPremiumness =
     (isAwaitingUserRow && !!projectId) ||
-    (shouldQueryProject && projectPremiumness === undefined);
+    (shouldQueryProject && !bundleFailed && projectPremiumness === undefined);
 
   return {
     billingStatus,
@@ -784,16 +816,15 @@ export function useOrganizationBilling(
     activeSeatPaymentIntent,
     planCatalog,
     isLoadingBilling:
-      isAwaitingUserRow ||
-      (shouldQueryOrganization && billingStatus === undefined),
+      isAwaitingUserRow || (awaitingBundle && billingStatus === undefined),
     isLoadingEntitlements:
-      isAwaitingUserRow ||
-      (shouldQueryOrganization && entitlements === undefined),
+      isAwaitingUserRow || (awaitingBundle && entitlements === undefined),
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
     isLoadingPlanCatalog:
-      isAwaitingUserRow ||
-      (shouldQueryOrganization && planCatalog === undefined),
+      isAwaitingUserRow || (awaitingBundle && planCatalog === undefined),
+    /** The bundle's server error, if it failed. Its fields are then undefined. */
+    queryError,
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,

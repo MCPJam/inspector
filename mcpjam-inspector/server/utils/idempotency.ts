@@ -19,6 +19,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 
 export const IDEMPOTENCY_KEY_HEADER = "x-mcpjam-idempotency-key";
 
@@ -70,6 +71,59 @@ export function readAnyIdempotencyKey(c: Context): string | undefined {
     readKeyHeader(c, IDEMPOTENCY_KEY_HEADER) ??
     readKeyHeader(c, IDEMPOTENCY_KEY_TRANSPORT_HEADER)
   );
+}
+
+/**
+ * Read the key off EITHER header, and REFUSE a malformed one.
+ *
+ * The lenient readers above degrade an unusable key to "no key", which is right
+ * where transport metadata must never cost a caller their write. It is wrong
+ * where the key IS the caller's safety: a report retried under a key that was
+ * silently dropped is filed twice, and the caller, who watched its key go out,
+ * has no way to know. So on a route that opts in, a key that is present must be
+ * usable:
+ *
+ *   - present but empty after trimming, or over 256 characters → 400 naming
+ *     the header;
+ *   - both headers present with different keys → 400, rather than picking one;
+ *   - absent → `undefined`.
+ *
+ * Opt-in per route. The lenient readers keep their contract for every route
+ * already relying on it.
+ */
+export function readIdempotencyKeyStrict(c: Context): string | undefined {
+  const keys: Array<{ header: string; key: string }> = [];
+  for (const header of [
+    IDEMPOTENCY_KEY_HEADER,
+    IDEMPOTENCY_KEY_TRANSPORT_HEADER,
+  ]) {
+    const raw = c.req.header(header);
+    if (typeof raw !== "string") continue;
+    const key = raw.trim();
+    if (key.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `The ${header} header is empty. Send a non-empty key, or omit the header.`
+      );
+    }
+    if (key.length > MAX_KEY_LENGTH) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `The ${header} header is longer than ${MAX_KEY_LENGTH} characters.`
+      );
+    }
+    keys.push({ header, key });
+  }
+  if (keys.length === 2 && keys[0]!.key !== keys[1]!.key) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `The ${IDEMPOTENCY_KEY_HEADER} and ${IDEMPOTENCY_KEY_TRANSPORT_HEADER} headers carry different keys. Send one key.`
+    );
+  }
+  return keys[0]?.key;
 }
 
 function readKeyHeader(c: Context, header: string): string | undefined {

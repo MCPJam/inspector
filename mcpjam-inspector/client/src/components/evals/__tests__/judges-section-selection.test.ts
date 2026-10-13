@@ -51,6 +51,22 @@ describe("judgeModelPatch", () => {
     });
   });
 
+  it("resolves a bare id like a stored choice: the hosted row, not the first id match", () => {
+    expect(
+      judgeModelPatch("anthropic/claude-haiku-4.5", [
+        orgOpenRouterTwin,
+        hosted,
+      ]).judgeSelection,
+    ).toMatchObject({ source: "hosted" });
+  });
+
+  it("saves exactly the row the picker hands over", () => {
+    expect(
+      judgeModelPatch(orgOpenRouterTwin, [hosted, orgOpenRouterTwin])
+        .judgeSelection,
+    ).toMatchObject({ source: "org" });
+  });
+
   it("clears both for the managed default", () => {
     expect(judgeModelPatch(MANAGED_DEFAULT_JUDGE_MODEL, [hosted])).toEqual({
       judgeModel: undefined,
@@ -74,6 +90,72 @@ describe("judgeModelPatch", () => {
       judgeModelPatch("anthropic/claude-haiku-4.5", [hosted], false),
     ).toEqual({
       judgeModel: "anthropic/claude-haiku-4.5",
+      judgeSelection: undefined,
+    });
+  });
+});
+
+describe("judgeModelPatch — reasoning effort", () => {
+  const supporting: ModelDefinition = {
+    ...hosted,
+    supportedReasoningEfforts: ["low", "high"],
+  };
+  const plain: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    hosted: true,
+  };
+
+  it("keeps the previous effort on a judge that lists it", () => {
+    const patch = judgeModelPatch(
+      "anthropic/claude-haiku-4.5",
+      [supporting],
+      true,
+      "high",
+    );
+    expect(patch.judgeSelection?.settings?.reasoningEffort).toBe("high");
+  });
+
+  it("drops it on a judge that does not, and never invents one", () => {
+    expect(
+      judgeModelPatch("openai/gpt-4o", [plain], true, "high").judgeSelection
+        ?.settings,
+    ).toBeUndefined();
+    expect(
+      judgeModelPatch("anthropic/claude-haiku-4.5", [supporting], true)
+        .judgeSelection?.settings,
+    ).toBeUndefined();
+  });
+});
+
+
+describe("judgeModelPatch — organization judges", () => {
+  const orgDirect: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
+    judgeEligible: true,
+  };
+
+  it("saves a bare-id org row under its canonical id, with its connection", () => {
+    expect(judgeModelPatch(orgDirect, [orgDirect])).toEqual({
+      judgeModel: "anthropic/claude-sonnet-4.5",
+      judgeSelection: {
+        modelId: "anthropic/claude-sonnet-4.5",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_anthropic" },
+        nativeModelId: "claude-sonnet-4-5",
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+  });
+
+  it("keeps the legacy id alone when the deployment does not store selections", () => {
+    expect(judgeModelPatch(orgDirect, [orgDirect], false)).toEqual({
+      judgeModel: "claude-sonnet-4-5",
       judgeSelection: undefined,
     });
   });

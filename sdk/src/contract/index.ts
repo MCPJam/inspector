@@ -513,12 +513,16 @@ export type {
   ToolSafetyClassification,
 } from "./tool-policy.js";
 export {
+  TOOL_POLICY_BLOCK_MARKER,
   TOOL_POLICY_DECISION_REASONS,
+  UnmatchedToolPolicyNameError,
   buildToolPolicySnapshot,
   classifyToolSafety,
   decideToolPolicy,
   decideToolPolicyFromSnapshot,
+  isToolPolicyBlockResult,
   isToolPolicyDecisionReason,
+  validateToolPolicyNames,
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
@@ -618,6 +622,26 @@ export {
   resolvedEvalValidityPolicySchema,
 } from "./verdict-policy.js";
 
+// ── the run verdict AGGREGATOR (v2) ─────────────────────────────────────────
+/**
+ * The producer side of the contract above: trial observations in, one
+ * `EvalVerdictDecision` out — a mirror of the backend aggregator hosted and
+ * SDK-ingest finalization call, held to the same generated run corpus. Plus
+ * the finalization adapter that reads one iteration's evidence as a trial.
+ */
+export type {
+  EvalCaseVerdictInput,
+  EvalTrialObservation,
+  EvalV2IterationEvidence,
+} from "./verdict-aggregate.js";
+export {
+  EvalVerdictAggregationError,
+  aggregateEvalCaseVerdict,
+  aggregateEvalRunVerdict,
+  evalV2IterationHasEvaluatorError,
+  evalV2TrialObservation,
+} from "./verdict-aggregate.js";
+
 /**
  * The generated JSON Schema (draft 2020-12) for a v2 verdict decision.
  *
@@ -666,6 +690,7 @@ export {
   EVAL_GRADING_POLICY_REFUSALS,
   EVAL_RUN_REPORTING_PRODUCERS,
   EVAL_SUITE_WIDE_POPULATIONS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   MAX_MINIMUM_ITERATIONS,
   SUITE_FILE_DEFAULT_COVERAGE,
@@ -1123,6 +1148,11 @@ export {
 } from "./scorer-rollup.js";
 
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
+export {
+  buildStageAuthoredCase,
+  type StageCaseSource,
+  type StageTurnSource,
+} from "./stage-authored-case.js";
 
 export {
   EXECUTION_BUDGET_CEILINGS,

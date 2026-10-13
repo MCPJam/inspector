@@ -101,6 +101,14 @@ const htmlRejection: Upstream = () =>
     headers: { "content-type": "text/html", ...EXTRA_RESPONSE_HEADERS },
   });
 
+/** Every request answers 404, as a server at the wrong endpoint path does. */
+const notFound: Upstream = () =>
+  new Response("<html><body>UNEXPECTED_MARKER_BODY</body></html>", {
+    status: 404,
+    statusText: "Not Found",
+    headers: { "content-type": "text/html", ...EXTRA_RESPONSE_HEADERS },
+  });
+
 /** A working MCP server whose results carry nothing outside the protocol. */
 const mcpServer: Upstream = async (request) => {
   if (request.method === "GET") {
@@ -362,7 +370,8 @@ describe("hosted MCP routes (web and v1)", () => {
     async (_name, surface, path, body) => {
       upstream.current = htmlRejection;
       const res = await post(routes[surface], path, body);
-      expect(res.status).toBeGreaterThanOrEqual(400);
+      // The v1 surface maps through the shared mapper, which keeps a 502.
+      expect(res.status).toBe(surface === "web" ? 424 : 502);
       const payload = (await res.json()) as any;
       expect(JSON.stringify(payload)).not.toMatch(MARKER);
       expect(payload.message).toBe("The MCP server responded with HTTP 405.");
@@ -370,6 +379,23 @@ describe("hosted MCP routes (web and v1)", () => {
         expect(payload.normalized.rawMessage).toBe(payload.message);
       }
       expectHttpLogsProjected(payload);
+    },
+  );
+
+  it.each(ROUTES.filter(([, surface]) => surface === "web"))(
+    "%s: reports the server's 404 as a 424 that names the status",
+    async (_name, surface, path, body) => {
+      upstream.current = notFound;
+      const res = await post(routes[surface], path, body);
+      expect(res.status).toBe(424);
+      const payload = (await res.json()) as any;
+      expect(payload.code).toBe("UPSTREAM_HTTP_ERROR");
+      expect(payload.message).toBe(
+        "The MCP server responded with HTTP 404 Not Found.",
+      );
+      expect(JSON.stringify(payload)).not.toMatch(/unexpected error/i);
+      expect(JSON.stringify(payload)).not.toMatch(MARKER);
+      expect(payload.normalized?.slug).toBe("server/http_error");
     },
   );
 

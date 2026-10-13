@@ -16,7 +16,10 @@ vi.mock("@/components/chat-v2/thread/user-message-bubble", () => ({
   ),
 }));
 
-import { ExpectedConversation } from "../preview/expected-conversation";
+import {
+  describeCheck,
+  ExpectedConversation,
+} from "../preview/expected-conversation";
 
 const turn = (over: Partial<PromptTurn> = {}): PromptTurn => ({
   id: "t1",
@@ -121,5 +124,41 @@ describe("ExpectedConversation — auto-derived widget-check slots", () => {
         steps: [seeded, { kind: "click", target: { testId: "" } }],
       },
     ]);
+  });
+});
+
+describe("describeCheck — pattern checks", () => {
+  it("counts matching calls, and says 0/0 as none matching", () => {
+    expect(
+      describeCheck({
+        type: "toolInputMatches",
+        toolName: "create_view",
+        patterns: ["Idea", "Build", "Ship"],
+      }),
+    ).toBe("at least 1 matching call(s) to create_view: /Idea/ +2");
+    expect(
+      describeCheck({
+        type: "toolInputMatches",
+        toolName: "create_view",
+        patterns: ["secret"],
+        min: 0,
+        max: 0,
+      }),
+    ).toBe("no matching call to create_view: /secret/");
+  });
+
+  it("counts matching results, from any tool unless one is named", () => {
+    expect(
+      describeCheck({ type: "toolResultMatches", patterns: ["open", "ISS"] }),
+    ).toBe("at least 1 matching result(s) from any tool: /open/ +1");
+    expect(
+      describeCheck({
+        type: "toolResultMatches",
+        toolName: "search",
+        patterns: ["secret"],
+        min: 0,
+        max: 0,
+      }),
+    ).toBe("no matching result from search: /secret/");
   });
 });

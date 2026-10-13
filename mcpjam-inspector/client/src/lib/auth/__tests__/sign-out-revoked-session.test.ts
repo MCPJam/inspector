@@ -44,7 +44,10 @@ describe("signOutRevokedSession", () => {
   });
 
   it("latches, shows the notice, ends the AuthKit session, then returns to the front door", async () => {
-    const signOut = vi.fn().mockResolvedValue(undefined);
+    let pausedWhenSignOutRan = false;
+    const signOut = vi.fn(async () => {
+      pausedWhenSignOutRan = useSessionRefreshStore.getState().queriesPaused;
+    });
 
     const done = signOutRevokedSession(signOut);
 
@@ -58,6 +61,9 @@ describe("signOutRevokedSession", () => {
       returnTo: "https://app.example.test",
       navigate: false,
     });
+    // Gated subscriptions were gone before `signOut()` could drop Convex's
+    // identity, so nothing re-ran without one.
+    expect(pausedWhenSignOutRan).toBe(true);
 
     // The notice stays up long enough to read, even when logout is instant.
     await vi.advanceTimersByTimeAsync(SESSION_ENDED_NOTICE_MS - 1);

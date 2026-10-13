@@ -20,17 +20,16 @@ user. It exists so that "stop" means stop.
 
 ```bash
 cd tools/mcpjam-job-launcher
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o mcpjam-job-launcher.exe .
+GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w" -o mcpjam-job-launcher.exe .
 ```
 
 CI builds it on `windows-latest` and ships it inside the Windows runtime pack,
 where the pack's tree digest covers it like every other file — so the
 supervisor will not launch a helper whose bytes changed.
 
-## Why Windows is still refused
+## Windows admission
 
-`nativePlatforms` does not list `win32`, and `supportsOwnershipProof('win32')`
-answers false until a verified helper is present AND the conformance suite has
-passed on `windows-latest`. An unenforced cleanup promise is worse than no
-Windows support: a user who is told their session stopped, and whose 376 MB
-agent is still running, has been lied to.
+Windows is a native target, gated by recorded conformance and a verified pack
+containing this launcher. The supervisor still refuses execution without a
+verified helper and ownership proof. Publishing and conformance use the exact
+Go version in `scripts/local-harness-toolchain.json`.

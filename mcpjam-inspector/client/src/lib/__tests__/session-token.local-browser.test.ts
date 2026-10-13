@@ -1,3 +1,4 @@
+import { rememberAccessToken } from "../access-link";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ hosted: false }));
@@ -26,7 +27,7 @@ function sentHeaders() {
 describe("local browser authentication across deployment modes", () => {
   beforeEach(() => {
     state.hosted = false;
-    window.__MCP_SESSION_TOKEN__ = "local-session";
+    rememberAccessToken("local-session");
     getApiAuthorizationHeader
       .mockReset()
       .mockResolvedValue("Bearer account-token");
@@ -34,7 +35,7 @@ describe("local browser authentication across deployment modes", () => {
   });
 
   afterEach(() => {
-    delete window.__MCP_SESSION_TOKEN__;
+    localStorage.clear();
     state.hosted = false;
   });
 

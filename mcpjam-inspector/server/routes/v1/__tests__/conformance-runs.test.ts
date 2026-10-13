@@ -55,11 +55,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
   lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
 }));
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 vi.mock("../../../services/conformance-run-executor.js", () => ({
   executePersistedConformanceRun: executePersistedConformanceRunMock,
@@ -126,7 +128,7 @@ const HTTP_SERVER = {
 
 const RUN_ROW = {
   _id: "run_1",
-  projectId: "p1",
+  projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   serverId: "s1",
   source: "api",
   status: "completed",
@@ -184,7 +186,7 @@ describe("v1 persisted conformance runs", () => {
     it("rejects a request with no bearer token", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { token: null },
       );
       expect(res.status).toBe(401);
@@ -198,7 +200,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { token: "guest-jwt" },
       );
       expect(res.status).toBe(401);
@@ -222,13 +224,13 @@ describe("v1 persisted conformance runs", () => {
 
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: {} },
       );
       expect(res.status).toBe(202);
       expect(await res.json()).toMatchObject({
         runId: "run_1",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverId: "s1",
         status: "queued",
         deduped: false,
@@ -237,7 +239,7 @@ describe("v1 persisted conformance runs", () => {
       expect(executePersistedConformanceRunMock).toHaveBeenCalledTimes(1);
       expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject(
         {
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           source: "api",
           target: { kind: "server", serverId: "s1" },
         },
@@ -249,7 +251,7 @@ describe("v1 persisted conformance runs", () => {
     it("refuses a body that tries to name its own target", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: { serverUrl: "https://evil.example.com/mcp" } },
       );
       expect(res.status).toBe(400);
@@ -259,7 +261,7 @@ describe("v1 persisted conformance runs", () => {
     it("refuses oauth in the suite list", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: { suites: ["protocol", "oauth"] } },
       );
       expect(res.status).toBe(400);
@@ -273,7 +275,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: {} },
       );
       expect(res.status).toBe(400);
@@ -286,7 +288,7 @@ describe("v1 persisted conformance runs", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: {} },
       );
       expect(res.status).toBe(400);
@@ -301,7 +303,7 @@ describe("v1 persisted conformance runs", () => {
       );
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: {} },
       );
       expect(res.status).toBe(502);
@@ -312,13 +314,13 @@ describe("v1 persisted conformance runs", () => {
     it("forwards an idempotency key as a namespaced externalRunId", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: { idempotencyKey: "k1", suites: ["protocol"] } },
       );
       expect(res.status).toBe(202);
       expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject(
         {
-          externalRunId: "api:p1:s1:k1",
+          externalRunId: "api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s1:k1",
           suites: ["protocol"],
         },
       );
@@ -329,12 +331,12 @@ describe("v1 persisted conformance runs", () => {
       // and then name the second server on that receipt.
       const first = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: { idempotencyKey: "k1" } },
       );
       const second = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s2/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s2/conformance-runs",
         { body: { idempotencyKey: "k1" } },
       );
       expect(first.status).toBe(202);
@@ -344,13 +346,13 @@ describe("v1 persisted conformance runs", () => {
       expect(executePersistedConformanceRunMock).toHaveBeenCalledTimes(2);
       expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject(
         {
-          externalRunId: "api:p1:s1:k1",
+          externalRunId: "api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s1:k1",
           target: { kind: "server", serverId: "s1" },
         },
       );
       expect(executePersistedConformanceRunMock.mock.calls[1]![0]).toMatchObject(
         {
-          externalRunId: "api:p1:s2:k1",
+          externalRunId: "api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s2:k1",
           target: { kind: "server", serverId: "s2" },
         },
       );
@@ -366,7 +368,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs",
         { body: { idempotencyKey: "k1" } },
       );
       expect(res.status).toBe(202);
@@ -381,7 +383,7 @@ describe("v1 persisted conformance runs", () => {
       convexQueryMock.mockResolvedValue(RUN_ROW);
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, any>;
@@ -389,7 +391,7 @@ describe("v1 persisted conformance runs", () => {
       expect(body.pending).toBe(1);
       expect(body.reports[0].profileId).toBe("mcp-protocol");
       expect(body.reportUrl).toBe(
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
     });
 
@@ -397,7 +399,7 @@ describe("v1 persisted conformance runs", () => {
       convexQueryMock.mockResolvedValue({ ...RUN_ROW, projectId: "p-other" });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
       );
       expect(res.status).toBe(404);
     });
@@ -406,7 +408,7 @@ describe("v1 persisted conformance runs", () => {
       convexQueryMock.mockResolvedValue(null);
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_x",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_x",
       );
       expect(res.status).toBe(404);
     });
@@ -419,13 +421,13 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs?serverId=s1&limit=5",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs?serverId=s1&limit=5",
       );
       expect(res.status).toBe(200);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "conformanceRuns:listRuns",
         expect.objectContaining({
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           targetKey: "server:s1",
           paginationOpts: { cursor: null, numItems: 5 },
         }),
@@ -443,7 +445,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { reportUrl: string | null };
@@ -457,7 +459,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -477,7 +479,7 @@ describe("v1 persisted conformance runs", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(404);
     });
@@ -522,7 +524,7 @@ describe("v1 persisted conformance runs", () => {
 
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, any>;
@@ -560,7 +562,7 @@ describe("v1 persisted conformance runs", () => {
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(502);
     });
@@ -575,7 +577,7 @@ describe("v1 persisted conformance runs", () => {
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(502);
     });
@@ -588,7 +590,7 @@ describe("v1 persisted conformance runs", () => {
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/conformance-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(502);
     });

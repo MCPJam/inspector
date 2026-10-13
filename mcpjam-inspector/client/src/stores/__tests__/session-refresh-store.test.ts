@@ -13,6 +13,7 @@ describe("session-refresh-store", () => {
       kind: null,
       retryNonce: 0,
       queriesPaused: false,
+      authConfirmed: false,
     });
   });
 
@@ -48,6 +49,9 @@ describe("session-refresh-store", () => {
     store.clear();
     expect(useSessionRefreshStore.getState().status).toBe("idle");
     expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+    store.resumeQueries();
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+    useSessionRefreshStore.setState({ authConfirmed: true });
     store.resumeQueries();
     expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
   });

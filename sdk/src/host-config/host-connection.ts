@@ -180,3 +180,53 @@ export function hostConnectionProfile(
     respectToolVisibility,
   };
 }
+
+/**
+ * Merge a host's connection pins onto ONE MCP server config, so a client
+ * connects "as" that host: the same `initialize` identity, capabilities and
+ * protocol pins the playground sends.
+ *
+ * The HTTP-only fields (the stateless wire-mode pin and SEP-2243 parameter
+ * mirroring) are applied only to a `url` config; the client-conformance knobs
+ * (first-page-only pagination, no MRTR) are not transport-specific and apply
+ * to stdio too, so `--host` means the same thing on both.
+ *
+ * Moved from the CLI's `host-resolve.ts` so the CLI and the SDK's local
+ * suite-file runner share one mapping. Generic over the config record so this
+ * browser-safe module needs no transport types.
+ */
+export function applyHostConnectionProfile<T extends object>(
+  config: T,
+  host: HostConnectionProfile
+): T {
+  const identity = {
+    ...(host.clientInfo ? { clientInfo: host.clientInfo } : {}),
+    ...(host.clientCapabilities
+      ? { clientCapabilities: host.clientCapabilities }
+      : {}),
+    ...(host.supportedProtocolVersions
+      ? { supportedProtocolVersions: host.supportedProtocolVersions }
+      : {}),
+  };
+  const httpOnly =
+    "url" in config
+      ? {
+          ...(host.mcpProtocolVersion
+            ? { mcpProtocolVersion: host.mcpProtocolVersion }
+            : {}),
+          ...(host.mirrorToolParamHeaders === false
+            ? { mirrorToolParamHeaders: false }
+            : {}),
+        }
+      : {};
+  const conformance = {
+    ...(host.firstPageOnly ? { firstPageOnly: true } : {}),
+    ...(host.supportsMrtr === false ? { supportsMrtr: false } : {}),
+  };
+  return {
+    ...config,
+    ...identity,
+    ...httpOnly,
+    ...conformance,
+  } as T;
+}

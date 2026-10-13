@@ -3,6 +3,7 @@
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // Must stay below that guard: `security-policy.js` reaches into `server/`,
 // which pulls in `ws`. Hoisted above it, `ws` evaluates before
@@ -10,11 +11,15 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
+import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
+  scrubSentryCredentials,
+  scrubServerSentryBreadcrumb,
+  scrubServerSentryEvent,
 } from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
@@ -22,6 +27,14 @@ import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { loadSentryInstallationId } from "./sentry-installation.js";
+import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
+import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
+import { SENTRY_INSTALLATION_ARGUMENT } from "../shared/sentry-identity.js";
+
+const installationIdentity = initializeDesktopSentryIdentity(
+  loadSentryInstallationId(app.getPath("userData")),
+);
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -37,19 +50,40 @@ Sentry.init({
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
+  initialScope: {
+    user: { id: installationIdentity.id },
+    tags: { deployment: "self_hosted", actor_kind: installationIdentity.kind },
+  },
   // Promotes crashed/oom from breadcrumbs to captured events — see
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 5.12 and is left alone.
+  // already on by default in @sentry/electron 7 and is left alone.
   integrations: crashReportingIntegrations,
   // Drops the ONE rejection the app cannot catch: Electron leaves
   // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
   // in-flight Update.exe arrives as an unhandled rejection for something that
   // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
   // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
-  beforeSend: dropUpdaterInstallSpawnRejection,
+  //
+  // What survives is scrubbed like the standalone server's events: the
+  // embedded server runs in this process, so its request bodies and outgoing
+  // requests reach Sentry through this client (see `server/sentry.ts`).
+  //
+  // Last, every credential out of the whole event — the renderer's events
+  // arrive here over IPC too, so this is the one place they all pass
+  // (`shared/credential-urls.ts`; an event that cannot be shown clean is
+  // dropped).
+  beforeSend: (event) => {
+    const kept = dropUpdaterInstallSpawnRejection(event);
+    return kept === null
+      ? null
+      : scrubSentryCredentials(scrubServerSentryEvent(kept));
+  },
+  beforeSendTransaction: scrubSentryCredentials,
+  beforeBreadcrumb: scrubServerSentryBreadcrumb,
 });
 
 const desktopDiagnostics = installDesktopDiagnostics();
+const desktopSentryIdentity = installDesktopSentryIdentity();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -61,7 +95,12 @@ import fs from "fs";
 // have to set `process.env.SERVER_PORT` (after probing for a free port)
 // BEFORE the server module graph is first evaluated. The dynamic import
 // in `startHonoServer()` enforces that ordering.
-import { probeFreePort } from "./server-port-fallback.js";
+import {
+  probeFreePort,
+  resolveServerPortAttempts,
+  resolveServerStartPort,
+} from "./server-port-fallback.js";
+import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
 import log from "electron-log";
 import { registerListeners } from "./ipc/listeners-register.js";
 import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
@@ -485,10 +524,15 @@ async function startHonoServer(): Promise<number> {
       // origin-validation allowlist. If we bound the server before setting
       // this, the renderer (loading from the fallback port) would 403 on its
       // own API calls and ngrok would target the wrong local address.
+      // Start from SERVER_PORT when the launcher set it: `electron:dev` picks
+      // the free port the renderer's proxy already points at, so main and
+      // renderer agree on which server this window talks to. When it pinned
+      // the renderer to that port, main may not fall forward: the window
+      // would keep calling whoever owns SERVER_PORT.
       port = await probeFreePort(
         hostname,
-        DEFAULT_SERVER_PORT,
-        SERVER_PORT_FALLBACK_ATTEMPTS,
+        resolveServerStartPort(process.env, DEFAULT_SERVER_PORT),
+        resolveServerPortAttempts(process.env, SERVER_PORT_FALLBACK_ATTEMPTS),
         {
           onAttemptFailed: (failedPort, err) => {
             log.warn(
@@ -501,6 +545,32 @@ async function startHonoServer(): Promise<number> {
       );
       process.env.SERVER_PORT = String(port);
       cachedProbedPort = port;
+    }
+
+    // This instance's own addresses, the same way `bin/start.js` and
+    // `dev:worktree` set them. The browser port names the session namespace
+    // (`server/utils/local-session-namespace.ts`), so two desktop apps, or a
+    // desktop app next to `npm run dev`, never share a WorkOS or guest cookie;
+    // the public callback origins (CLI login, Slack/Discord linking) follow it.
+    // In development the window loads from forge's renderer dev server, so
+    // that is the browser port; packaged, the embedded server serves the app.
+    const browserPort =
+      (rendererDevServerUrl
+        ? Number(new URL(rendererDevServerUrl).port)
+        : undefined) || port;
+    const instanceEnv = computeInstanceEnv({
+      ports: { server: port },
+      browserPort,
+      host: hostname,
+      profile: process.env,
+    });
+    for (const key of [
+      "MCPJAM_BROWSER_PORT",
+      "CLI_AUTH_PUBLIC_ORIGIN",
+      "SLACK_LINK_PUBLIC_ORIGIN",
+      "DISCORD_LINK_PUBLIC_ORIGIN",
+    ] as const) {
+      process.env[key] = instanceEnv[key];
     }
 
     // Where the local-harness runtime pack installs. A packaged app keeps its
@@ -518,18 +588,6 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
-
-    // The session token the local-harness picker presents when it registers a
-    // workspace grant through the server's own route. Read here, after the
-    // server module has generated it, and re-read on every restart.
-    try {
-      const { getSessionToken } = await import(
-        "../server/services/session-token.js"
-      );
-      localHarnessSessionToken = getSessionToken();
-    } catch {
-      localHarnessSessionToken = null;
-    }
 
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
@@ -557,6 +615,18 @@ async function startHonoServer(): Promise<number> {
       shutdownLocalBrowserFrameSockets,
       killLocalBrowserFrameSockets,
     } = await createHonoApp();
+    // The session token the local-harness picker presents when it registers a
+    // workspace grant through the server's own route. Read here, after the
+    // server module has generated it, and re-read on every restart.
+    try {
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
+      localHarnessSessionToken = getSessionToken();
+    } catch {
+      localHarnessSessionToken = null;
+    }
+
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
     // latching variant is for a real quit; the plain kill is for
@@ -578,11 +648,20 @@ async function startHonoServer(): Promise<number> {
     shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
     killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
-    server = serve({
-      fetch: honoApp.fetch,
-      port,
-      hostname,
-    });
+    server = serve(
+      {
+        fetch: honoApp.fetch,
+        port,
+        hostname,
+      },
+      (info) => {
+        const cleanup = writeInspectorRuntime(info.port, {
+          hosted: process.env.VITE_MCPJAM_HOSTED_MODE === "true",
+          warn: (message) => log.warn(message),
+        });
+        server?.once("close", cleanup);
+      },
+    );
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
@@ -626,17 +705,26 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       // true in dev too, and the two differ on whether a Playwright browser can
       // be launched at all (forge packages `.vite` only, so `import("playwright")`
       // always rejects in the shipped app).
-      additionalArguments: app.isPackaged ? ["--mcpjam-packaged"] : [],
+      additionalArguments: [
+        ...(app.isPackaged ? ["--mcpjam-packaged"] : []),
+        `${SENTRY_INSTALLATION_ARGUMENT}${installationIdentity.id}`,
+      ],
     },
     show: false, // Don't show until ready
   });
 
   desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
+  desktopSentryIdentity.bind(window, rendererDevServerUrl ?? serverUrl);
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
   window.on("closed", () => mcpCallbackDelivery.setReady(false));
-  window.loadURL(rendererDevServerUrl ?? serverUrl);
+  const accessUrl = new URL(rendererDevServerUrl ?? serverUrl);
+  if (localHarnessSessionToken)
+    accessUrl.hash = new URLSearchParams({
+      token: localHarnessSessionToken,
+    }).toString();
+  window.loadURL(accessUrl.href);
 
   if (isDev) {
     window.webContents.openDevTools();
@@ -1239,8 +1327,16 @@ app.on("web-contents-created", (_, contents) => {
   });
 });
 
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-prevent-unload", () =>
+    recordUpdateShutdown("window_close_blocked"),
+  );
+});
+app.on("will-quit", () => recordUpdateShutdown("will_quit"));
+
 // Handle app shutdown
 app.on("before-quit", (event) => {
+  recordUpdateShutdown("before_quit");
   // Safety net: if a new build has been downloaded but the user never clicked the
   // button, install it during quit so the next launch is on the new version.
   // quitAndInstall() re-fires before-quit; the helper guards with isQuittingForUpdate
@@ -1249,12 +1345,14 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     return;
   }
+  recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
   }
+  recordUpdateShutdown("local_cleanup_finished");
   // The one asynchronous step in quitting. Electron will exit as soon as this
   // handler returns, so a fire-and-forget teardown loses the race with the
   // process: Chromium never releases the profile's singleton lock, and the
@@ -1263,10 +1361,12 @@ app.on("before-quit", (event) => {
   if (!quittingAfterBrowserTeardown && shutdownLocalBrowsers) {
     event.preventDefault();
     quittingAfterBrowserTeardown = true;
+    recordUpdateShutdown("browser_cleanup_started");
     browserTeardown = (browserTeardown ?? Promise.resolve())
       .catch(() => {})
       .then(() => shutdownLocalBrowsers?.())
-      .catch(() => {});
+      .then(() => recordUpdateShutdown("browser_cleanup_finished"))
+      .catch(() => recordUpdateShutdown("browser_cleanup_failed"));
     void browserTeardown.finally(() => app.quit());
   }
 });

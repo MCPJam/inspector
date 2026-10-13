@@ -1,15 +1,53 @@
+import { computeHarnessPackInputs, computePackInputs } from "./check-local-harness-inputs.mjs";
+import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
+import {
+  advertisedTargetsOf,
+  parseManifestFacts,
+  parsePackTables,
+  RUNTIME_COMPAT_PATH,
+  TARGETS_BY_PLATFORM,
+} from "./local-harness-pack-tables.mjs";
+import {
+  attestationVerifyArgs,
+  EQUIVALENCE_SIGNER_WORKFLOW,
+  PACK_SIGNER_WORKFLOW,
+  readEquivalenceRecords,
+  verifyAttestation,
+} from "./local-harness-publication.mjs";
 /**
- * The release gate for local Claude Code execution.
+ * The release gate for local harness execution, run for EVERY harness with a
+ * compatibility manifest entry.
  *
  * Run before a release publishes, and again after its assets exist. It refuses
- * a release that ADVERTISES a local target it cannot serve:
+ * a release that ADVERTISES a local target it cannot serve, harness by harness:
  *
- *   1. every platform in `nativePlatforms` has a pack digest for each of its
- *      targets, at the version this release is stamped with;
+ *   1. every platform in the harness's `nativePlatforms` has a pack digest for
+ *      each of its targets, at that harness's independently pinned pack
+ *      version;
  *   2. the harness records lifecycle conformance evidence;
- *   3. (with `--assets`) each advertised target's published assets exist, its
- *      manifest is signed by the key this Inspector build carries, and the
- *      manifest's tree digest is byte-identical to the committed one.
+ *   3. (with `--assets`) every pack the build may SELECT — the desired one and
+ *      the permitted previous one — is published under its harness's release
+ *      tag, its manifest is signed by the key this Inspector build carries,
+ *      names this harness and target, and its tree digest and archive hash are
+ *      byte-identical to the committed ones; and the DESIRED pack was built
+ *      from this harness's reviewed inputs — its signed manifest carries this
+ *      checkout's inputs fingerprint, OR a committed equivalence record says a
+ *      clean rebuild from these inputs reproduced its tree on that target
+ *      (`scripts/local-harness-pack-equivalence/`);
+ *   3a. (with `--verify-attestations`) each of those assets has build
+ *      provenance from `local-harness-pack.yml` on main, and each equivalence
+ *      record relied on has provenance from `local-harness-pack-pipeline.yml`
+ *      on main (`gh attestation verify`): a pinned pack is not merely signed
+ *      by our key, it was built by our workflow from a reviewed commit;
+ *   4. (with `--evidence <dir>`) conformance evidence exists for THIS commit's
+ *      Inspector layer digest × each pack it selects × every advertised
+ *      target. That replaces the old check that each pack carried the bridge
+ *      this checkout builds: the bridge is the Inspector layer now, shipped
+ *      with the Inspector, so what a release has to prove is that THIS layer
+ *      was run against each pack — not that a pack contains a copy of it;
+ *   5. (with `--contract <path>`) the result is written as
+ *      `runtime-contract.json`, which the release workflow attests and
+ *      attaches to the Inspector release.
  *
  * (3) is what makes this a RELEASE check rather than a lint. The pack workflow
  * already proves a freshly built pack installs — from a local file, through
@@ -23,13 +61,24 @@
  *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets
  *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
  *     --base-url file:///tmp/pack-out            # a local artifact directory
+ *   node scripts/check-local-harness-release.mjs --harness codex --require-ready
+ *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
+ *     --verify-attestations                      # needs `gh` and GH_TOKEN
+ *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
+ *     --evidence ./evidence --contract ./runtime-contract.json
+ *
+ * `--version` is the Inspector release and is informational: each harness's
+ * pack version is read from the committed `EXPECTED_PACK_VERSIONS`.
+ * `--harness` limits every check to one harness; `--base-url` then serves
+ * that harness's assets.
  *
  * Exits non-zero with every blocker listed, not just the first: fixing
  * conformance and then discovering the digest table is also empty is two
  * release cycles for one problem.
  */
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -37,67 +86,38 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = join(scriptDir, "..");
 
 /**
- * The modules are TypeScript, and this script is plain node. Rather than pull
- * in a loader, the two facts it needs are parsed out of the sources — which
- * has the useful side effect that the check reads exactly what is COMMITTED,
- * not what a build step could have rewritten on the way past.
+ * The pins and the conformance stamp come from the generated JSON record
+ * (`runtime-compat.generated.json`); the reviewed POLICY (native platforms and
+ * targets) is parsed out of `compatibility.ts`. Both are read as COMMITTED,
+ * not as a build step could have rewritten them on the way past.
+ *
+ * Returns one entry per harness that has a manifest entry or a record entry:
+ * `{ [harnessId]: { expectedVersion, records, permitted, conformance,
+ * nativePlatforms, nativeTargets? } }`.
  */
 async function readCommittedFacts() {
-  const digestsSource = await readFile(
-    join(
-      inspectorRoot,
-      "server/utils/harness/local/pack-digests.generated.ts",
-    ),
-    "utf8",
-  );
+  const compatRecord = await readFile(RUNTIME_COMPAT_PATH, "utf8");
   const compatSource = await readFile(
     join(inspectorRoot, "server/utils/harness/local/compatibility.ts"),
     "utf8",
   );
-
-  const versionMatch = digestsSource.match(
-    /export const EXPECTED_PACK_VERSION = "([^"]*)";/,
-  );
-  const expectedVersion = versionMatch?.[1] ?? "";
-
-  const recordsBlock = digestsSource.match(
-    /export const PACK_RECORDS[\s\S]*?= \{\n([\s\S]*?)^\};$/m,
-  );
-  const records = {};
-  if (recordsBlock) {
-    const claudeBlock = recordsBlock[1].match(
-      /"claude-code": \{\n([\s\S]*?)^  \},$/m,
-    );
-    const body = claudeBlock?.[1] ?? "";
-    const entry =
-      /"([a-z0-9-]+)": \{\s*packVersion: "([^"]*)",\s*treeDigest: "([^"]*)",\s*\},/g;
-    for (const match of body.matchAll(entry)) {
-      records[match[1]] = { packVersion: match[2], treeDigest: match[3] };
-    }
+  const tables = parsePackTables(compatRecord);
+  const manifests = parseManifestFacts(compatSource);
+  const facts = {};
+  for (const harnessId of [...new Set([...Object.keys(manifests), ...Object.keys(tables)])].sort()) {
+    facts[harnessId] = {
+      expectedVersion: tables[harnessId]?.version ?? "",
+      records: tables[harnessId]?.records ?? {},
+      permitted: tables[harnessId]?.permitted ?? {},
+      conformance: tables[harnessId]?.conformance ?? "",
+      nativePlatforms: manifests[harnessId]?.nativePlatforms ?? [],
+      ...(manifests[harnessId]?.nativeTargets
+        ? { nativeTargets: manifests[harnessId].nativeTargets }
+        : {}),
+    };
   }
-
-  // The `claude-code` manifest's own two release-relevant fields.
-  const claudeManifest = compatSource.match(
-    /"claude-code": \{[\s\S]*?\n  \},\n  codex: \{/,
-  );
-  const manifestBody = claudeManifest?.[0] ?? "";
-  const conformance =
-    manifestBody.match(/lifecycleConformanceVersion: "([^"]*)"/)?.[1] ?? "";
-  const nativePlatforms = (
-    manifestBody.match(/nativePlatforms: \[([^\]]*)\]/)?.[1] ?? ""
-  )
-    .split(",")
-    .map((token) => token.trim().replace(/^"|"$/g, ""))
-    .filter((token) => token.length > 0);
-
-  return { expectedVersion, records, conformance, nativePlatforms };
+  return facts;
 }
-
-const TARGETS_BY_PLATFORM = {
-  darwin: ["darwin-arm64", "darwin-x64"],
-  linux: ["linux-x64", "linux-arm64"],
-  win32: ["win32-x64"],
-};
 
 function parseArgs(argv) {
   const args = {};
@@ -147,71 +167,225 @@ async function fetchAsset(baseUrl, name) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const version = typeof args.version === "string" ? args.version.trim() : "";
-  if (version.length === 0) {
-    console.error("check-local-harness-release: --version is required");
-    process.exit(2);
+/**
+ * Whether the desired pack may stand for this checkout's inputs on one target:
+ * built from them (the signed manifest carries the fingerprint), or proven
+ * equivalent — a committed record that a clean rebuild from exactly these
+ * inputs reproduced exactly this pinned tree. Returns how, or null.
+ */
+export function fingerprintAcceptance({ harnessId, target, ref, manifestFingerprint, expectedFingerprint, equivalences }) {
+  if (expectedFingerprint === null) return null;
+  if (manifestFingerprint === expectedFingerprint) return { kind: "built" };
+  const record = equivalences.find(
+    (candidate) =>
+      candidate.harnessId === harnessId &&
+      candidate.fingerprint === expectedFingerprint &&
+      candidate.packVersion === ref.packVersion &&
+      candidate.digests?.[target] === ref.treeDigest,
+  );
+  return record === undefined ? null : { kind: "equivalent", record };
+}
+
+/**
+ * One pinned pack's published assets against what this build pins. Every
+ * mismatch is a blocker; nothing here is fetched from anywhere but the pack's
+ * own release tag (or `--base-url`).
+ */
+async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expectedFingerprint, equivalences = [], attest = null, publicKeys, blockers }) {
+  const label = `${harnessId} ${target} ${role} ${ref.packVersion}`;
+  const stem = packAssetStem(harnessId, target, ref.packVersion);
+  let manifestBytes;
+  let signature;
+  let archive;
+  try {
+    manifestBytes = await fetchAsset(baseUrl, `${stem}.manifest.json`);
+    signature = (await fetchAsset(baseUrl, `${stem}.manifest.json.sig`)).toString("utf8");
+    archive = await fetchAsset(baseUrl, `${stem}.tar.gz`);
+  } catch (error) {
+    blockers.push(
+      `the ${label} pack assets are not published: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
   }
+  const signed = publicKeys.some((pem) => {
+    try {
+      return edVerify(null, manifestBytes, createPublicKey(pem), Buffer.from(signature.trim(), "base64"));
+    } catch {
+      return false;
+    }
+  });
+  if (!signed) {
+    blockers.push(
+      `the published ${label} manifest is not signed by a key this Inspector ` +
+        `build carries, so every install of it would be refused.`,
+    );
+    return;
+  }
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  let accepted = null;
+  if (expectedFingerprint !== undefined) {
+    accepted = fingerprintAcceptance({
+      harnessId,
+      target,
+      ref,
+      manifestFingerprint: manifest.inputsFingerprint ?? null,
+      expectedFingerprint,
+      equivalences,
+    });
+    if (accepted === null) {
+      blockers.push(
+        `the published ${label} pack was built from different inputs, and no equivalence ` +
+          `record says a rebuild from this checkout's reproduced it. Start the release ` +
+          `again (prepare-release.yml): it publishes and pins ${harnessId}'s pack in the version PR.`,
+      );
+    }
+  }
+  if (manifest.schema !== "mcpjam.local-harness-pack/1" || manifest.harnessId !== harnessId || manifest.platform !== target) {
+    blockers.push(`the published ${label} manifest has the wrong identity`);
+  }
+  if (manifest.treeDigest !== ref.treeDigest) {
+    blockers.push(
+      `the published ${label} manifest names tree digest ${manifest.treeDigest}, ` +
+        `but the committed record says ${ref.treeDigest}. One of them is not ` +
+        `the pack this release reviewed.`,
+    );
+  }
+  const archiveSha = createHash("sha256").update(archive).digest("hex");
+  if (manifest.archive?.sha256 !== archiveSha) {
+    blockers.push(
+      `the published ${label} archive does not match its own signed manifest ` +
+        `(manifest ${manifest.archive?.sha256}, asset ${archiveSha}).`,
+    );
+  }
+  if (manifest.packVersion !== ref.packVersion) {
+    blockers.push(`the published ${label} manifest is for pack version ${manifest.packVersion}.`);
+  }
+  if (attest !== null) {
+    // Provenance, not just a signature: these exact bytes were built by the
+    // pack workflow on main. Verified from the bytes this check downloaded.
+    const dir = await mkdtemp(join(tmpdir(), "mcpjam-attest-"));
+    try {
+      for (const [suffix, bytes] of [[".manifest.json", manifestBytes], [".tar.gz", archive]]) {
+        const path = join(dir, `${stem}${suffix}`);
+        await writeFile(path, bytes);
+        const failure = await attest.verify(path, { repo: attest.repo, workflow: PACK_SIGNER_WORKFLOW });
+        if (failure !== null) {
+          blockers.push(`the published ${label} ${suffix.slice(1)} has no verifiable build provenance from ${PACK_SIGNER_WORKFLOW} on main: ${failure}`);
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+    if (accepted?.kind === "equivalent" && !attest.verifiedRecords.has(accepted.record.file)) {
+      const failure = await attest.verify(accepted.record.file, { repo: attest.repo, workflow: EQUIVALENCE_SIGNER_WORKFLOW });
+      if (failure !== null) {
+        blockers.push(`the ${harnessId} equivalence record ${accepted.record.file} has no verifiable provenance from ${EQUIVALENCE_SIGNER_WORKFLOW} on main: ${failure}`);
+      } else {
+        attest.verifiedRecords.add(accepted.record.file);
+      }
+    }
+  }
+}
 
-  const facts = await readCommittedFacts();
-  // Two lists, and the difference between them is the point.
-  //
-  // `blockers` fail the release: the build would OFFER a local target it
-  // cannot serve. `notShipped` only explains why the feature is still dark —
-  // a build with no conformance evidence offers local execution nowhere, so
-  // it is unshipped rather than broken, and failing every release until an
-  // unrelated feature lands is noise nobody keeps. `--require-ready` is how a
-  // release that INTENDS to ship the feature turns the second list into the
-  // first.
-  const blockers = [];
-  const notShipped = [];
+/**
+ * Conformance evidence for THIS commit's Inspector layer × every pack the
+ * build may select × every advertised target, from the records
+ * `write-conformance-evidence.mjs` wrote in passing legs. Returns the evidence
+ * keyed `harness/target/digest` for the contract.
+ */
+async function checkEvidence({ facts, dir, layers, commit, blockers, harnessFilter }) {
+  const records = [];
+  for (const name of (await readdir(dir, { recursive: true })).map(String)) {
+    if (!name.endsWith(".json") || !/conformance-evidence-/.test(name)) continue;
+    try {
+      records.push(JSON.parse(await readFile(join(dir, name), "utf8")));
+    } catch {
+      blockers.push(`conformance evidence ${name} is not readable JSON`);
+    }
+  }
+  const covered = {};
+  for (const [harnessId, harnessFacts] of Object.entries(facts)) {
+    if (harnessFilter !== null && harnessFilter !== harnessId) continue;
+    if (harnessFacts.conformance === "") continue;
+    const layerDigest = layers[harnessId] ?? null;
+    for (const target of advertisedTargetsOf(harnessFacts)) {
+      const desired = harnessFacts.records[target];
+      if (!desired) continue;
+      const selectable = [
+        { role: "desired", ref: desired },
+        ...(harnessFacts.permitted?.[target] ? [{ role: "permitted", ref: harnessFacts.permitted[target] }] : []),
+      ];
+      for (const { role, ref } of selectable) {
+        const match = records.find(
+          (record) =>
+            record.schema === "mcpjam.local-harness-conformance/1" &&
+            record.result === "passed" &&
+            record.harnessId === harnessId &&
+            record.target === target &&
+            record.pack?.treeDigest === ref.treeDigest &&
+            (record.layerDigest ?? null) === layerDigest &&
+            (commit === null || record.commit === commit),
+        );
+        if (match === undefined) {
+          blockers.push(
+            `no conformance evidence for ${harnessId} ${target}: this commit's ` +
+              `Inspector layer (${layerDigest ?? "pack-shipped bridge"}) × the ` +
+              `${role} ${ref.packVersion} pack (${ref.treeDigest.slice(0, 19)}…). ` +
+              `A build may only select a pack its own layer was tested against.`,
+          );
+          continue;
+        }
+        covered[`${harnessId}/${target}/${ref.treeDigest}`] = match;
+      }
+    }
+  }
+  return covered;
+}
 
+async function checkHarness({ harnessId, facts, args, publicKeys, attest, blockers, notShipped }) {
+  const version = facts.expectedVersion;
+  const advertisedTargets = [];
   // Mirrors `localHarnessReleaseBlockers` in
   // `server/utils/harness/local/release-gate.ts`; `release-gate.test.ts` pins
   // the two to the same committed facts so they cannot drift apart.
   const wouldOffer = facts.conformance !== "";
   if (!wouldOffer) {
     notShipped.push(
-      "claude-code records no lifecycleConformanceVersion, so local execution " +
+      `${harnessId} records no lifecycleConformanceVersion, so local execution ` +
         "is offered on no platform. Run the lifecycle conformance suite on " +
         "every advertised platform and record its version in compatibility.ts " +
         "— a green run on one platform is not evidence for the others.",
     );
   }
 
-  if (facts.expectedVersion === "") {
+  if (version === "") {
     (wouldOffer ? blockers : notShipped).push(
-      "EXPECTED_PACK_VERSION is empty, so no pack has been built and no " +
-        "install can ever verify. Run local-harness-pack.yml, then " +
-        "scripts/write-pack-digests.mjs, and commit the generated table.",
-    );
-  } else if (facts.expectedVersion !== version) {
-    // Always blocking: the table is what the next release inherits, and it
-    // points every install at an asset URL this release does not publish.
-    blockers.push(
-      `EXPECTED_PACK_VERSION is ${facts.expectedVersion} but this release is ` +
-        `${version}. A client builds the asset URL from the release tag, so ` +
-        `the two must be the same version.`,
+      `EXPECTED_PACK_VERSIONS["${harnessId}"] is empty, so no ${harnessId} ` +
+        "pack has been built and no install can ever verify. Run " +
+        `local-harness-pack.yml with harness=${harnessId}, then ` +
+        `scripts/write-pack-digests.mjs --harness ${harnessId}, and commit the ` +
+        "generated table.",
     );
   }
 
-  const advertisedTargets = [];
   for (const platform of facts.nativePlatforms) {
     const targets = TARGETS_BY_PLATFORM[platform];
     if (targets === undefined) {
       blockers.push(
-        `compatibility.ts advertises an unknown platform ${platform}; this ` +
-          `check does not know which pack targets it needs.`,
+        `compatibility.ts advertises an unknown platform ${platform} for ` +
+          `${harnessId}; this check does not know which pack targets it needs.`,
       );
       continue;
     }
-    for (const target of targets) {
+    // D8: only the targets the manifest certifies are advertised; an
+    // uncertified architecture is unavailable, not a blocker.
+    for (const target of targets.filter((t) => !facts.nativeTargets || facts.nativeTargets.includes(t))) {
       const record = facts.records[target];
       if (record === undefined) {
         (wouldOffer ? blockers : notShipped).push(
-          `claude-code advertises ${platform} but carries no ${target} pack ` +
+          `${harnessId} advertises ${platform} but carries no ${target} pack ` +
             `digest. Either build and publish that target's pack, or drop the ` +
             `platform from nativePlatforms — an advertised target with no pack ` +
             `refuses every install it is offered for.`,
@@ -220,95 +394,130 @@ async function main() {
       }
       if (record.packVersion !== version) {
         blockers.push(
-          `the ${target} digest is stamped ${record.packVersion}, not ` +
-            `${version}; its asset URL would not exist in this release.`,
+          `the ${harnessId} ${target} digest is stamped ${record.packVersion}, ` +
+            `not ${version}; its asset URL would not exist in this release.`,
         );
         continue;
       }
-      advertisedTargets.push({ target, ...record });
+      advertisedTargets.push({
+        harnessId,
+        target,
+        ...record,
+        ...(facts.permitted?.[target] ? { permitted: facts.permitted[target] } : {}),
+      });
     }
   }
 
-  if (args.assets === true || typeof args["base-url"] === "string") {
-    const baseUrl =
-      typeof args["base-url"] === "string"
-        ? args["base-url"]
-        : `https://github.com/MCPJam/inspector/releases/download/v${version}/`;
-    const publicKeys = await readPackSigningPublicKeys();
-    if (publicKeys.length === 0) {
-      blockers.push(
-        "pack-signing-key.ts carries no public key, so a published manifest " +
-          "cannot be shown to have come from MCPJam.",
-      );
-    }
-    for (const entry of advertisedTargets) {
-      const names = {
-        archive: `local-harness-pack-${entry.target}-${version}.tar.gz`,
-        manifest: `local-harness-pack-${entry.target}-${version}.manifest.json`,
-        signature: `local-harness-pack-${entry.target}-${version}.manifest.json.sig`,
-      };
-      let manifestBytes;
-      let signature;
-      let archive;
-      try {
-        manifestBytes = await fetchAsset(baseUrl, names.manifest);
-        signature = (await fetchAsset(baseUrl, names.signature)).toString(
-          "utf8",
-        );
-        archive = await fetchAsset(baseUrl, names.archive);
-      } catch (error) {
-        blockers.push(
-          `the ${entry.target} pack assets are not published: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+  if (version && (args.assets === true || typeof args["base-url"] === "string")) {
+    const { fingerprint } = await computeHarnessPackInputs(harnessId).catch(() => ({ fingerprint: null }));
+    // A published pack is one complete release of every target it ADVERTISES.
+    // A harness certified per target (D8, `nativeTargets`) is checked on
+    // exactly those: an uncertified architecture is unavailable, so requiring
+    // its assets would block an independently certified one — and leaving one
+    // of the advertised targets out would hide its failure. Without
+    // `nativeTargets`, every target, as before.
+    const releaseTargets = facts.nativeTargets ?? Object.values(TARGETS_BY_PLATFORM).flat();
+    for (const target of releaseTargets) {
+      const entry = facts.records[target];
+      if (!entry || entry.packVersion !== version || !/^sha256:[0-9a-f]{64}$/.test(entry.treeDigest)) {
+        blockers.push(`Missing or inconsistent pinned ${harnessId} pack record for ${target}`);
         continue;
       }
-
-      const signed = publicKeys.some((pem) => {
-        try {
-          return edVerify(
-            null,
-            manifestBytes,
-            createPublicKey(pem),
-            Buffer.from(signature.trim(), "base64"),
-          );
-        } catch {
-          return false;
+      const selectable = [
+        { role: "desired", ref: entry },
+        ...(facts.permitted?.[target] ? [{ role: "permitted", ref: facts.permitted[target] }] : []),
+      ];
+      for (const { role, ref } of selectable) {
+        if (role === "permitted" && typeof args["base-url"] === "string") {
+          // A local artifact directory holds ONE build: the desired pack.
+          notShipped.push(`${harnessId} ${target}: the permitted ${ref.packVersion} pack is not checked against --base-url`);
+          continue;
         }
-      });
-      if (!signed) {
-        blockers.push(
-          `the published ${entry.target} manifest is not signed by a key this ` +
-            `Inspector build carries, so every install of it would be refused.`,
-        );
-        continue;
-      }
-
-      const manifest = JSON.parse(manifestBytes.toString("utf8"));
-      if (manifest.treeDigest !== entry.treeDigest) {
-        blockers.push(
-          `the published ${entry.target} manifest names tree digest ` +
-            `${manifest.treeDigest}, but the committed table says ` +
-            `${entry.treeDigest}. One of them is not the pack this release ` +
-            `reviewed.`,
-        );
-      }
-      const archiveSha = createHash("sha256").update(archive).digest("hex");
-      if (manifest.archive?.sha256 !== archiveSha) {
-        blockers.push(
-          `the published ${entry.target} archive does not match its own signed ` +
-            `manifest (manifest ${manifest.archive?.sha256}, asset ` +
-            `${archiveSha}).`,
-        );
-      }
-      if (manifest.packVersion !== version) {
-        blockers.push(
-          `the published ${entry.target} manifest is for pack version ` +
-            `${manifest.packVersion}, not ${version}.`,
-        );
+        await checkPublishedPack({
+          harnessId,
+          target,
+          role,
+          ref,
+          baseUrl:
+            typeof args["base-url"] === "string"
+              ? args["base-url"]
+              : packReleaseBaseUrl(harnessId, ref.packVersion),
+          // Only the DESIRED pack has to be what this checkout's inputs build:
+          // a permitted previous pack is older by definition.
+          expectedFingerprint: role === "desired" ? fingerprint : undefined,
+          equivalences: readEquivalenceRecords(harnessId),
+          attest: typeof args["base-url"] === "string" ? null : attest,
+          publicKeys,
+          blockers,
+        });
       }
     }
+  }
+  return advertisedTargets;
+}
+
+async function main() {
+  const computed = await computePackInputs();
+  const recordedInputs = JSON.parse(await readFile(join(inspectorRoot, "server/utils/harness/local/pack-inputs.generated.json"), "utf8"));
+  if (JSON.stringify(computed) !== JSON.stringify(recordedInputs)) throw new Error("Pack inputs differ from the reviewed fingerprints. Recompute and review before releasing.");
+  const args = parseArgs(process.argv.slice(2));
+  const facts = await readCommittedFacts();
+  const harnessFilter = typeof args.harness === "string" ? args.harness : null;
+  // Two lists, and the difference between them is the point.
+  //
+  // `blockers` fail the release: the build would OFFER a local target it
+  // cannot serve. `notShipped` only explains why a harness is still dark —
+  // a build with no conformance evidence offers local execution nowhere, so
+  // it is unshipped rather than broken, and failing every release until an
+  // unrelated feature lands is noise nobody keeps. `--require-ready` is how a
+  // release that INTENDS to ship the feature turns the second list into the
+  // first (for the harnesses `--harness` names, or all of them).
+  const blockers = [];
+  const notShipped = [];
+  const advertisedTargets = [];
+  const publicKeys = await readPackSigningPublicKeys();
+  if (publicKeys.length === 0 && (args.assets === true || typeof args["base-url"] === "string")) {
+    blockers.push(
+      "pack-signing-key.ts carries no public key, so a published manifest " +
+        "cannot be shown to have come from MCPJam.",
+    );
+  }
+  let attest = null;
+  if (args["verify-attestations"] === true) {
+    if (args.assets !== true) {
+      blockers.push("--verify-attestations needs --assets: it verifies the published assets' provenance");
+    } else {
+      attest = {
+        repo: process.env.GITHUB_REPOSITORY || "MCPJam/inspector",
+        verify: verifyAttestation,
+        verifiedRecords: new Set(),
+      };
+    }
+  }
+  for (const [harnessId, harnessFacts] of Object.entries(facts)) {
+    if (harnessFilter !== null && harnessFilter !== harnessId) continue;
+    advertisedTargets.push(
+      ...(await checkHarness({ harnessId, facts: harnessFacts, args, publicKeys, attest, blockers, notShipped })),
+    );
+  }
+
+  let layers = null;
+  let evidence = null;
+  if (typeof args.evidence === "string" || typeof args.contract === "string") {
+    const { computeInspectorLayerDigests } = await import("./inspector-layer-digests.mjs");
+    layers = await computeInspectorLayerDigests();
+  }
+  if (typeof args.evidence === "string") {
+    evidence = await checkEvidence({
+      facts,
+      dir: args.evidence,
+      layers,
+      commit: typeof args.commit === "string" ? args.commit : (process.env.GITHUB_SHA ?? null),
+      blockers,
+      harnessFilter,
+    });
+  } else if (typeof args.contract === "string") {
+    blockers.push("--contract needs --evidence: a runtime contract names the conformance runs it rests on");
   }
 
   if (args["require-ready"] === true) {
@@ -326,7 +535,7 @@ async function main() {
   if (blockers.length > 0) {
     console.error(
       `check-local-harness-release: ${blockers.length} blocker(s) — this ` +
-        `release advertises local Claude Code execution it cannot serve.\n`,
+        `release advertises local harness execution it cannot serve.\n`,
     );
     for (const blocker of blockers) console.error(`  • ${blocker}\n`);
     process.exit(1);
@@ -334,6 +543,32 @@ async function main() {
 
   for (const note of notShipped) {
     console.log(`check-local-harness-release: not shipped yet — ${note}`);
+  }
+
+  if (typeof args.contract === "string" && evidence !== null) {
+    const contract = {
+      schema: "mcpjam.local-harness-runtime-contract/1",
+      inspectorVersion: typeof args.version === "string" ? args.version : null,
+      commit: typeof args.commit === "string" ? args.commit : (process.env.GITHUB_SHA ?? null),
+      harnesses: {},
+    };
+    for (const entry of advertisedTargets) {
+      const harness = (contract.harnesses[entry.harnessId] ??= {
+        layerDigest: layers?.[entry.harnessId] ?? null,
+        conformance: facts[entry.harnessId].conformance,
+        targets: {},
+      });
+      const pack = (ref) => {
+        const record = evidence[`${entry.harnessId}/${entry.target}/${ref.treeDigest}`];
+        return { packVersion: ref.packVersion, treeDigest: ref.treeDigest, evidence: record?.run ?? null };
+      };
+      harness.targets[entry.target] = {
+        desired: pack(entry),
+        ...(entry.permitted ? { permitted: pack(entry.permitted) } : {}),
+      };
+    }
+    await writeFile(args.contract, `${JSON.stringify(contract, null, 2)}\n`);
+    console.log(`check-local-harness-release: wrote ${args.contract}`);
   }
   if (advertisedTargets.length === 0) {
     console.log(
@@ -343,8 +578,8 @@ async function main() {
     return;
   }
   console.log(
-    `check-local-harness-release: ${advertisedTargets.length} target(s) ready ` +
-      `at ${version} — ${advertisedTargets.map((e) => e.target).join(", ")}`,
+    `check-local-harness-release: ${advertisedTargets.length} target(s) ready — ` +
+      advertisedTargets.map((e) => `${e.harnessId} ${e.target}@${e.packVersion}`).join(", "),
   );
 }
 
@@ -355,3 +590,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 }
 
 export { readCommittedFacts };
+// The provenance rules live with the publication pipeline that produces what
+// they verify; re-exported so the gate's callers have one import.
+export { attestationVerifyArgs, EQUIVALENCE_SIGNER_WORKFLOW, PACK_SIGNER_WORKFLOW };

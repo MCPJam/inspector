@@ -10,6 +10,12 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import { computeIterationResult } from "./pass-criteria";
+import {
+  comparisonKey,
+  selectionConfigKey,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   CompareModelOverride,
   CompareRunRecord,
@@ -17,6 +23,7 @@ import type {
   EvalIteration,
 } from "./types";
 import type { TraceEnvelope } from "./trace-viewer-adapter";
+import { modelTarget, modelTargetKey } from "@/lib/model-target";
 
 /**
  * The provider names a trace's snapshot may legitimately carry.
@@ -86,8 +93,31 @@ export function createCompareSessionId() {
     .slice(2, 10)}`;
 }
 
+/**
+ * A quick-run pick's key. A pick with no selection, or a default one, keys as
+ * its model value (`provider/model`), exactly as before efforts; any other
+ * pick adds its `comparisonKey` after a NUL. So Sonnet·Low, Sonnet·Medium and
+ * Sonnet·High are three picks, three runs and three columns. Model values
+ * never contain a NUL, so {@link quickRunModelValue} always recovers one.
+ */
+export function quickRunKey(
+  modelValue: string,
+  selection?: ModelSelection,
+): string {
+  const target = modelTarget(parseModelValue(modelValue).model, selection);
+  const key = modelTargetKey(target);
+  return key === target.modelId ? modelValue : `${modelValue}\u0000${key}`;
+}
+
+/** The model value (`provider/model`) a quick-run key runs. */
+export function quickRunModelValue(key: string): string {
+  const nul = key.indexOf("\u0000");
+  return nul < 0 ? key : key.slice(0, nul);
+}
+
 export function parseModelValue(modelValue: string) {
-  const [provider, ...modelParts] = modelValue.split("/");
+  const [provider, ...modelParts] =
+    quickRunModelValue(modelValue).split("/");
   return {
     provider,
     model: modelParts.join("/"),
@@ -367,8 +397,16 @@ export function resolveInitialCompareModelValues(params: {
   modelOptions: Array<{ value: string }>;
   preferredModelValue?: string | null;
   maxModels?: number;
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue?: (entry: CompareCaseModelEntry) => string;
 }) {
-  const { testCase, modelOptions, preferredModelValue, maxModels = 3 } = params;
+  const {
+    testCase,
+    modelOptions,
+    preferredModelValue,
+    maxModels = 3,
+    entryValue = defaultCaseEntryValue,
+  } = params;
   const optionValues = new Set(modelOptions.map((option) => option.value));
   const values: string[] = [];
 
@@ -379,7 +417,7 @@ export function resolveInitialCompareModelValues(params: {
   };
 
   for (const model of testCase?.models ?? []) {
-    pushValue(`${model.provider}/${model.model}`);
+    pushValue(entryValue(model));
   }
 
   pushValue(preferredModelValue);
@@ -396,20 +434,109 @@ export function resolveInitialCompareModelValues(params: {
   return values.slice(0, maxModels);
 }
 
+/** A case `models[]` entry as the compare editor reads and writes it. */
+export type CompareCaseModelEntry = {
+  provider: string;
+  model: string;
+  selection?: RequestedModelSelection | null;
+};
+
+/**
+ * A saved entry's picker value when the caller has no catalog to read it
+ * against: `provider/model`. The editor passes `caseModelEntryValue`, which
+ * also maps an organization row saved under its canonical id back to that
+ * row.
+ */
+export function defaultCaseEntryValue(entry: CompareCaseModelEntry): string {
+  return `${entry.provider}/${entry.model}`;
+}
+
+function sameCaseModelEntry(
+  a: CompareCaseModelEntry,
+  b: CompareCaseModelEntry,
+): boolean {
+  if (a.provider !== b.provider || a.model !== b.model) return false;
+  const aSelection = a.selection ?? undefined;
+  const bSelection = b.selection ?? undefined;
+  if (aSelection && bSelection) {
+    // Settings included, so an effort-only edit is a change.
+    return selectionConfigKey(aSelection) === selectionConfigKey(bSelection);
+  }
+  // An entry with no saved selection runs as its bare id: only a DEFAULT
+  // selection (its `comparisonKey` is that id) is the same entry.
+  const present = aSelection ?? bSelection;
+  return present === undefined || comparisonKey(present) === a.model;
+}
+
+/**
+ * Whether the compare editor's next `models[]` equals the saved one. Compares
+ * the selection too (by its full config, or by `comparisonKey` against an
+ * entry that has none), so an effort-only edit — Sonnet Low → High — counts
+ * as a change and is saved.
+ */
+export function caseModelEntriesUnchanged(
+  current: readonly CompareCaseModelEntry[],
+  next: readonly CompareCaseModelEntry[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((entry, index) => {
+      const other = next[index];
+      return other !== undefined && sameCaseModelEntry(entry, other);
+    })
+  );
+}
+
+/**
+ * The `models[]` to save for the compare editor's `provider/model` values.
+ * A value the case already lists keeps EVERY saved entry for it, selections
+ * included — the editor picks models, not efforts, so re-saving must neither
+ * strip a saved effort nor collapse two entries of one model (Low and High)
+ * into one. A new value gets `build(value)`.
+ */
+export function caseModelEntriesForCompareValues<
+  Entry extends CompareCaseModelEntry,
+>(
+  modelValues: readonly string[],
+  currentModels: readonly Entry[],
+  build: (modelValue: string) => Entry,
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue: (entry: Entry) => string = defaultCaseEntryValue,
+): Entry[] {
+  const entries: Entry[] = [];
+  for (const modelValue of modelValues) {
+    // A saved entry is the pick's when it reads back as the pick, or when the
+    // pick names it directly (a catalog that has not loaded yet).
+    const saved = currentModels.filter(
+      (entry) =>
+        entryValue(entry) === modelValue ||
+        defaultCaseEntryValue(entry) === modelValue,
+    );
+    if (saved.length > 0) entries.push(...saved);
+    else entries.push(build(modelValue));
+  }
+  return entries;
+}
+
 export function resolveIterationModelValue(
   iteration: Pick<EvalIteration, "testCaseSnapshot">,
   testCase?: Pick<EvalCase, "models"> | null,
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue: (entry: CompareCaseModelEntry) => string = defaultCaseEntryValue,
 ) {
-  const provider =
-    iteration.testCaseSnapshot?.provider ?? testCase?.models?.[0]?.provider;
-  const model =
-    iteration.testCaseSnapshot?.model ?? testCase?.models?.[0]?.model;
+  const snapshot = iteration.testCaseSnapshot;
+  const provider = snapshot?.provider ?? testCase?.models?.[0]?.provider;
+  const model = snapshot?.model ?? testCase?.models?.[0]?.model;
 
   if (!provider || !model) {
     return null;
   }
 
-  return `${provider}/${model}`;
+  const selection =
+    snapshot?.model !== undefined
+      ? snapshot.selection
+      : testCase?.models?.[0]?.selection;
+  return entryValue({ provider, model, ...(selection ? { selection } : {}) });
 }
 
 export function buildHistoricalCompareRunRecords(params: {
@@ -419,6 +546,8 @@ export function buildHistoricalCompareRunRecords(params: {
   testCase?: Pick<EvalCase, "models"> | null;
   existingRecords?: Record<string, CompareRunRecord>;
   preferredIteration?: EvalIteration | null;
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue?: (entry: CompareCaseModelEntry) => string;
 }) {
   const {
     selectedModelValues,
@@ -427,6 +556,7 @@ export function buildHistoricalCompareRunRecords(params: {
     testCase,
     existingRecords = {},
     preferredIteration = null,
+    entryValue = defaultCaseEntryValue,
   } = params;
 
   if (selectedModelValues.length === 0) {
@@ -493,7 +623,11 @@ export function buildHistoricalCompareRunRecords(params: {
         : sortedIterations;
 
   for (const iteration of sourceIterations) {
-    const modelValue = resolveIterationModelValue(iteration, testCase);
+    const modelValue = resolveIterationModelValue(
+      iteration,
+      testCase,
+      entryValue,
+    );
     if (!modelValue || latestIterationByModel.has(modelValue)) {
       continue;
     }
@@ -565,30 +699,6 @@ export function mergeAdvancedConfigWithOverride(params: {
       }
       next.temperature = parsedTemperature;
     }
-  }
-
-  if (override?.providerFlagsJson !== undefined) {
-    const trimmedFlags = override.providerFlagsJson.trim();
-    if (!trimmedFlags) {
-      return Object.keys(next).length > 0 ? next : undefined;
-    }
-
-    let parsedFlags: unknown;
-    try {
-      parsedFlags = JSON.parse(trimmedFlags);
-    } catch {
-      throw new Error("Provider flags override must be valid JSON");
-    }
-
-    if (
-      !parsedFlags ||
-      typeof parsedFlags !== "object" ||
-      Array.isArray(parsedFlags)
-    ) {
-      throw new Error("Provider flags override must be a JSON object");
-    }
-
-    Object.assign(next, parsedFlags);
   }
 
   return Object.keys(next).length > 0 ? next : undefined;

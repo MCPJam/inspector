@@ -212,6 +212,7 @@ describe("eval runner reads saved model selections", () => {
         modelId: "gpt-4o",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([{ role: "assistant", content: "Done" }]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -232,7 +233,9 @@ describe("eval runner reads saved model selections", () => {
       model: string;
       provider: string;
       selection?: ModelSelection;
+      legacySelection?: { source: "legacy"; modelId: string; provider?: string };
       advancedConfig?: Record<string, unknown>;
+      promptTurns?: unknown[];
     },
     options: Record<string, unknown> = {},
   ) {
@@ -247,7 +250,7 @@ describe("eval runner reads saved model selections", () => {
             runs: 1,
             ...test,
             expectedToolCalls: [],
-            promptTurns: [
+            promptTurns: test.promptTurns ?? [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
             testCaseId: "case-1",
@@ -276,6 +279,30 @@ describe("eval runner reads saved model selections", () => {
     )?.[1] as { name?: string; code?: string; message?: string } | undefined;
     errorSpy.mockRestore();
     expect(refusal?.name).toBe("ModelResolutionRefusalError");
+    expect(refusal?.code).toBe(code);
+    expect(refusal?.message).toMatch(new RegExp(`^${code}: `));
+  }
+
+  /**
+   * A refusal by the organization's AI-key policy fails the case the same
+   * way, but is logged as a warning: the org's own configuration working as
+   * designed is never paged.
+   */
+  async function expectPolicyRefused(pending: Promise<unknown>, code: string) {
+    const errorSpy = vi.spyOn(logger, "error");
+    const warnSpy = vi.spyOn(logger, "warn");
+    await pending;
+    const paged = errorSpy.mock.calls.find(
+      ([message]) => message === "[evals] Test case failed:",
+    );
+    const refusal = warnSpy.mock.calls.find(
+      ([message]) =>
+        message ===
+        "[evals] Test case refused by the organization AI-key policy:",
+    )?.[1] as { code?: string; message?: string } | undefined;
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+    expect(paged).toBeUndefined();
     expect(refusal?.code).toBe(code);
     expect(refusal?.message).toMatch(new RegExp(`^${code}: `));
   }
@@ -328,6 +355,83 @@ describe("eval runner reads saved model selections", () => {
       );
       expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
       expect(requestTo("/stream/org")).toBeNull();
+    });
+  });
+
+  describe("a STORED legacy selection (own key only)", () => {
+    const LEGACY = { source: "legacy" as const, modelId: SAME_ID };
+
+    it("a hosted-catalog id runs on the org connection, never the hosted rail", async () => {
+      await run(
+        { model: SAME_ID, provider: "anthropic", legacySelection: LEGACY },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toBeNull();
+      const body = requestTo("/stream/org");
+      expect(body).toMatchObject({
+        model: SAME_ID,
+        providerKey: "anthropic",
+        projectId: "project-1",
+      });
+      // Never forwarded: `/stream` refuses a legacy selection, and the org
+      // rail has nothing in it to re-check.
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("with request keys it runs on them, still never on MCPJam credits", async () => {
+      await run(
+        { model: SAME_ID, provider: "anthropic", legacySelection: LEGACY },
+        { modelApiKeys: { anthropic: "sk-ant-local" } },
+      );
+      expect(requestTo("/stream")).toBeNull();
+      expect(requestTo("/stream/org")).toBeNull();
+      expect(createLlmModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ hosted: false }),
+        "sk-ant-local",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("without any own key it fails the case rather than falling back to MCPJam", async () => {
+      const errorSpy = vi.spyOn(logger, "error");
+      await run({
+        model: SAME_ID,
+        provider: "anthropic",
+        legacySelection: LEGACY,
+      });
+      const failure = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { message?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(failure?.message).toMatch(/Missing API key for provider anthropic/);
+      expect(requestTo("/stream")).toBeNull();
+    });
+
+    it("a legacy selection for a different model is ignored: today's hosted-first read", async () => {
+      await run(
+        {
+          model: SAME_ID,
+          provider: "anthropic",
+          legacySelection: { source: "legacy", modelId: "anthropic/other" },
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
+      expect(requestTo("/stream/org")).toBeNull();
+    });
+
+    it("a full selection wins over a legacy one when both are present", async () => {
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: HOSTED,
+          legacySelection: LEGACY,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({ model: SAME_ID });
     });
   });
 
@@ -416,6 +520,287 @@ describe("eval runner reads saved model selections", () => {
         /^Model selection refused — credential_missing: /,
       );
       expect(JSON.stringify(finished)).not.toContain("sk-org");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the organization requires its own provider keys", () => {
+    const SHARED_GATEWAY_MESSAGE =
+      "This connection routes through a shared gateway whose upstream provider account can't be verified as the organization's own. Use a direct provider connection.";
+    // Each row carries the backend's verdict (`policyEligibility`); the
+    // runner only reads it.
+    const POLICY_CONFIG = {
+      aiKeyPolicy: { requireOrgKeys: true },
+      providers: [
+        {
+          providerKey: "openai",
+          exportDenied: true,
+          exportDeniedCode: "org_keys_required",
+          policyEligibility: { eligible: true },
+        },
+        {
+          providerKey: "anthropic",
+          exportDenied: true,
+          exportDeniedCode: "org_keys_required",
+          policyEligibility: { eligible: true },
+        },
+        {
+          providerKey: "openrouter",
+          exportDenied: true,
+          policyEligibility: {
+            eligible: false,
+            code: "org_keys_required" as const,
+            message: SHARED_GATEWAY_MESSAGE,
+          },
+        },
+      ],
+    };
+    const ORG_OPENAI: ModelSelection = {
+      modelId: "openai/gpt-5-mini",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_openai_1" },
+      nativeModelId: "gpt-5-mini",
+      fallback: { provider: "none", model: "none" },
+    };
+
+    it("runs an org selection through /stream/org (cloud), never /stream or a local key", async () => {
+      await run(
+        { model: "openai/gpt-5-mini", provider: "openai", selection: ORG_OPENAI },
+        {
+          // A key the request carries must not divert it onto this machine.
+          modelApiKeys: { openai: "sk-local" },
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: POLICY_CONFIG,
+        },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({
+        model: "gpt-5-mini",
+        providerKey: "openai",
+        projectId: "project-1",
+      });
+      expect(requestTo("/stream")).toBeNull();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a hosted selection with org_keys_required before any provider call", async () => {
+      await expectPolicyRefused(
+        run(
+          { model: SAME_ID, provider: "anthropic", selection: HOSTED },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: POLICY_CONFIG,
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a local selection even with the request's own key", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: "openai/gpt-4o",
+            provider: "openai",
+            selection: {
+              modelId: "openai/gpt-4o",
+              source: "local",
+              connectionRef: { kind: "localProvider", providerKey: "openai" },
+              nativeModelId: "gpt-4o",
+              fallback: { provider: "none", model: "none" },
+            },
+          },
+          {
+            modelApiKeys: { openai: "sk-local" },
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: POLICY_CONFIG,
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses an org connection the backend calls ineligible", async () => {
+      await expectPolicyRefused(
+        run(
+          { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: POLICY_CONFIG,
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses an org connection the backend sent no verdict for (an older backend)", async () => {
+      await expectPolicyRefused(
+        run(
+          { model: "openai/gpt-5-mini", provider: "openai", selection: ORG_OPENAI },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: {
+              aiKeyPolicy: { requireOrgKeys: true },
+              providers: [
+                {
+                  providerKey: "openai",
+                  exportDenied: true,
+                  exportDeniedCode: "org_keys_required",
+                },
+              ],
+            },
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("shows the backend's message on the case's rows", async () => {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                { _id: "iter-refused", status: "pending", testCaseId: "case-1" },
+              ],
+            }
+          : { status: "running" },
+      );
+      const recorder = {
+        runId: "run-1",
+        suiteId: "suite-1",
+        startIteration: vi.fn(),
+        finishIteration: vi.fn(),
+        finalize: vi.fn(),
+      };
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        {
+          runId: "run-1",
+          recorder,
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: POLICY_CONFIG,
+        },
+      );
+      const finished = recorder.finishIteration.mock.calls[0]![0] as {
+        status?: string;
+        error?: string;
+      };
+      expect(finished.status).toBe("setup_failed");
+      expect(finished.error).toBe(
+        `Model selection refused — org_keys_required: ${SHARED_GATEWAY_MESSAGE}`,
+      );
+    });
+
+    it("refuses a legacy hosted-catalog case instead of running it on /stream", async () => {
+      await expectPolicyRefused(
+        run(
+          { model: SAME_ID, provider: "anthropic" },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: POLICY_CONFIG,
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(requestTo("/stream")).toBeNull();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses an org connection whose runtime is local when /stream/org/resolve says so, even if its row said eligible", async () => {
+      fetchMock.mockImplementation(async (url: string) =>
+        url.endsWith("/stream/org/resolve")
+          ? new Response(
+              JSON.stringify({
+                ok: false,
+                code: "org_keys_required",
+                error:
+                  "This organization requires its own provider keys for AI features.",
+                remediation: "choose_org_model",
+              }),
+              {
+                status: 403,
+                headers: { "content-type": "application/json" },
+              },
+            )
+          : createBackendStreamResponse(),
+      );
+      await expectPolicyRefused(
+        run(
+          {
+            model: "custom:acme:llama-3",
+            provider: "custom",
+            selection: {
+              modelId: "custom:acme/llama-3",
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "orgprov_acme" },
+              nativeModelId: "custom:acme:llama-3",
+              fallback: { provider: "none", model: "none" },
+            },
+          },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: {
+              aiKeyPolicy: { requireOrgKeys: true },
+              providers: [
+                {
+                  providerKey: "custom:acme",
+                  modelIds: ["llama-3"],
+                  exportDenied: true,
+                  // A verdict read before an admin moved the connection to a
+                  // local runtime: the backend's resolve still refuses it.
+                  policyEligibility: { eligible: true },
+                },
+              ],
+            },
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(requestTo("/stream/org")).toBeNull();
+      expect(requestTo("/stream")).toBeNull();
+      expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+
+    it("records the refusal on the case's rows as setup_failed", async () => {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                { _id: "iter-refused", status: "pending", testCaseId: "case-1" },
+              ],
+            }
+          : { status: "running" },
+      );
+      const recorder = {
+        runId: "run-1",
+        suiteId: "suite-1",
+        startIteration: vi.fn(),
+        finishIteration: vi.fn(),
+        finalize: vi.fn(),
+      };
+      await run(
+        { model: SAME_ID, provider: "anthropic", selection: HOSTED },
+        {
+          runId: "run-1",
+          recorder,
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: POLICY_CONFIG,
+        },
+      );
+      const finished = recorder.finishIteration.mock.calls[0]![0] as {
+        status?: string;
+        error?: string;
+      };
+      expect(finished.status).toBe("setup_failed");
+      expect(finished.error).toMatch(
+        /^Model selection refused — org_keys_required: This organization requires its own provider keys for AI features\./,
+      );
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
@@ -802,6 +1187,53 @@ describe("eval runner reads saved model selections", () => {
       expect(streamTextMock).not.toHaveBeenCalled();
     });
 
+    it("a stored advancedConfig.reasoningEffort is refused, never run as if applied", async () => {
+      await expectRefused(
+        run(
+          {
+            model: "openai/gpt-5",
+            provider: "openai",
+            selection: LOCAL_GPT5_EFFORT,
+            advancedConfig: { reasoningEffort: "low" },
+          },
+          localOptions,
+        ),
+        "capability_missing",
+      );
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
+    it("a legacy advancedConfig.reasoningEffort on a pinned-only case is not refused (no model runs)", async () => {
+      mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+      const errorSpy = vi.spyOn(logger, "error");
+      await run(
+        {
+          model: "openai/gpt-5",
+          provider: "openai",
+          advancedConfig: { reasoningEffort: "low" },
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "",
+              expectedToolCalls: [],
+              pinnedToolCall: {
+                serverName: "srv-1",
+                toolName: "show_map",
+                arguments: { city: "SF" },
+              },
+            },
+          ],
+        },
+        localOptions,
+      );
+      const refusal = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { name?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(refusal?.name).not.toBe("ModelResolutionRefusalError");
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
     it("hosted: the top-level temperature is the saved one, not the host default", async () => {
       const hostedWithTemperature: ModelSelection = {
         ...HOSTED,
@@ -838,22 +1270,23 @@ describe("eval runner reads saved model selections", () => {
       expect(body.modelSelection).toEqual(orgWithTemperature);
     });
 
-    it("org cloud: a saved reasoning effort is refused (the route cannot apply it)", async () => {
-      await expectRefused(
-        run(
-          {
-            model: SAME_ID,
-            provider: "openrouter",
-            selection: {
-              ...ORG_OPENROUTER,
-              settings: { reasoningEffort: "low" },
-            },
-          },
-          { orgModelConfigTarget: { projectId: "project-1" } },
-        ),
-        "capability_missing",
+    it("org cloud: a saved reasoning effort is forwarded on the selection for the backend to apply", async () => {
+      const orgWithEffort: ModelSelection = {
+        ...ORG_OPENROUTER,
+        settings: { reasoningEffort: "low" },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: orgWithEffort,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
       );
-      expect(requestTo("/stream/org")).toBeNull();
+      const body = requestTo("/stream/org");
+      expect(body).not.toBeNull();
+      expect(body.modelSelection).toEqual(orgWithEffort);
+      expect(body).not.toHaveProperty("temperature");
     });
   });
 
@@ -926,7 +1359,14 @@ describe("eval runner reads saved model selections", () => {
       await run({ model: "llama3", provider: "ollama", selection: ORG_OLLAMA_LOCAL }, { orgModelConfigTarget: { projectId: "project-local-rotation" } });
       expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3");
       expect(streamTextMock).toHaveBeenCalledOnce();
-      expect((streamTextMock.mock.calls[0][0] as any).model).toEqual({ id: "freshly-admitted-model" });
+      // The turn's model asks again before each attempt and runs it on the
+      // config that answer carries.
+      const attemptModel = { specificationVersion: "v4", provider: "ollama", modelId: "llama3", supportedUrls: {}, doGenerate: vi.fn(), doStream: vi.fn(async () => ({ stream: "from-fresh-config" })) };
+      admittedFactory.mockClear();
+      admittedFactory.mockReturnValueOnce(attemptModel as never);
+      const model = (streamTextMock.mock.calls[0][0] as any).model;
+      await expect(model.doStream({ prompt: [] })).resolves.toEqual({ stream: "from-fresh-config" });
+      expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3");
     });
 
     it("posts /stream/org/local-usage naming the iteration, with the selection and its record", async () => {

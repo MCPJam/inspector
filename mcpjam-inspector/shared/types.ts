@@ -1,5 +1,8 @@
 // Shared types between client and server
-import { modelRejectsTemperature } from "@mcpjam/sdk/browser";
+import {
+  modelRejectsTemperature,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
@@ -434,6 +437,12 @@ export interface ModelDefinition {
   freeTierEligible?: boolean;
   /** Whether the catalog admits this hosted model as an eval judge. */
   judgeEligible?: boolean;
+  /**
+   * Reasoning efforts the hosted catalog lists for this model (`/stream`
+   * accepts exactly these). Absent = the catalog did not say, which is NOT
+   * "none": the control stays hidden either way (unknown is never guessed).
+   */
+  supportedReasoningEfforts?: ModelReasoningEffort[];
   /**
    * Epoch ms of the catalog read that produced this row's observations. Its
    * presence is what makes an absent observation mean "observed as unknown"

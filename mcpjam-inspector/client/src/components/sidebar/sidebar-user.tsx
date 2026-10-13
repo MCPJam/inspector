@@ -25,6 +25,7 @@ import {
   markSignOutInProgress,
   SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
+import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { getInitials } from "@/lib/utils";
 import {
@@ -79,6 +80,10 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
     // next tick, and an unlatched failure would redirect this tab to the login
     // page on top of the logout navigation below. See `sign-out-latch`.
     markSignOutInProgress();
+    // And the gate: `signOut()` empties the WorkOS user and Convex drops its
+    // identity on that render, re-running anything still subscribed without
+    // one. See `pause-queries-before-auth-clear`.
+    pauseQueriesBeforeAuthClear();
     // Revoke the session server-side with the token about to be discarded,
     // so it stops working everywhere now rather than when it expires. Bounded
     // and never rejects; see `revoke-session`.

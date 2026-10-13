@@ -1,3 +1,4 @@
+import { generateSessionToken } from "../../../services/session-token.js";
 /**
  * Phase 0 transport-gate spike (STATIC half) — "Keep MCPJam being MCPJam" plan.
  *
@@ -46,8 +47,15 @@ const STREAMABLE_HTTP_HEADERS = {
 describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () => {
   let manager: MockMCPClientManager;
   let app: Hono;
+  let sessionToken: string;
+  const authenticatedRequest = (url: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set("X-MCP-Session-Auth", `Bearer ${sessionToken}`);
+    return app.request(url, { ...init, headers });
+  };
 
   beforeEach(() => {
+    sessionToken = generateSessionToken();
     vi.clearAllMocks();
     manager = createMockMcpClientManager({
       listServers: vi.fn().mockReturnValue(["test-server"]),
@@ -56,7 +64,9 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
         .mockImplementation((id: string) =>
           id === "test-server" ? {} : undefined,
         ),
-      hasServer: vi.fn().mockImplementation((id: string) => id === "test-server"),
+      hasServer: vi
+        .fn()
+        .mockImplementation((id: string) => id === "test-server"),
       getInitializationInfo: vi.fn().mockReturnValue({
         protocolVersion: "2025-06-18",
         transport: "http",
@@ -75,7 +85,7 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
   });
 
   const post = (body: unknown) =>
-    app.request("/api/mcp/adapter-http/test-server", {
+    authenticatedRequest("/api/mcp/adapter-http/test-server", {
       method: "POST",
       headers: STREAMABLE_HTTP_HEADERS,
       body: JSON.stringify(body),
@@ -127,11 +137,14 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
   });
 
   it("returns a JSON-RPC -32700 parse error for garbage bytes (NOT 202)", async () => {
-    const res = await app.request("/api/mcp/adapter-http/test-server", {
-      method: "POST",
-      headers: STREAMABLE_HTTP_HEADERS,
-      body: "this is not json {{{",
-    });
+    const res = await authenticatedRequest(
+      "/api/mcp/adapter-http/test-server",
+      {
+        method: "POST",
+        headers: STREAMABLE_HTTP_HEADERS,
+        body: "this is not json {{{",
+      },
+    );
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data).toEqual({
@@ -231,9 +244,12 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
   });
 
   it("GET is the LEGACY endpoint-handshake, not a Streamable-HTTP server stream → server→client notifications won't reach the harness this way (caps the dynamic tier, gate #3)", async () => {
-    const res = await app.request("/api/mcp/adapter-http/test-server", {
-      method: "GET",
-    });
+    const res = await authenticatedRequest(
+      "/api/mcp/adapter-http/test-server",
+      {
+        method: "GET",
+      },
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 

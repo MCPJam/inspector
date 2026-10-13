@@ -1,5 +1,6 @@
 import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
 import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
+import type { ModelSelection } from "@mcpjam/sdk";
 import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
@@ -181,16 +182,12 @@ import {
 } from "../lib/eval-gate.js";
 import {
   classifyLaunchErrorExitCode,
+  classifyWaitErrorExitCode,
   evalRunWaitExitCode,
   worstOf,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
-import {
-  formatRecordedExecutionDisclosure,
-  writeIterationProvenance,
-  type IterationProvenanceInput,
-} from "../lib/eval-provenance.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
@@ -229,6 +226,11 @@ import {
   detectInlineImageProtocol,
   encodeInlineImage,
 } from "../lib/terminal-image.js";
+import {
+  EFFORT_FLAG_DESCRIPTION,
+  effortShorthand,
+  parseModelSelectionFlag,
+} from "../lib/model-selection-flags.js";
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -348,6 +350,7 @@ function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
+  composeModelSelection?: string | string[];
   composeServer?: string[];
   composeServerGroup?: string;
   composeHostServers?: boolean;
@@ -362,6 +365,7 @@ function composeField(options: {
     server?: string;
     servers?: string[];
     models?: string[];
+    modelSelections?: ModelSelection[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
@@ -389,9 +393,21 @@ function composeField(options: {
     : options.composeModel
     ? [options.composeModel]
     : undefined;
+  const modelSelections = (
+    Array.isArray(options.composeModelSelection)
+      ? options.composeModelSelection
+      : options.composeModelSelection !== undefined
+      ? [options.composeModelSelection]
+      : []
+  ).map(
+    (raw) =>
+      // The server validates the selection; the flag parser only guarantees JSON.
+      parseModelSelectionFlag(raw, "--compose-model-selection") as ModelSelection
+  );
   const refinements =
     options.composeComputer !== undefined ||
     models !== undefined ||
+    modelSelections.length > 0 ||
     (options.composeServer?.length ?? 0) > 0 ||
     options.composeServerGroup !== undefined ||
     options.composeHostServers === true ||
@@ -444,6 +460,7 @@ function composeField(options: {
         : {}),
       ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
+      ...(modelSelections.length > 0 ? { modelSelections } : {}),
       ...(options.withClientDefault === true
         ? { includeClientDefault: true }
         : {}),
@@ -558,6 +575,7 @@ function writeRunGroupSummary(
       | {
           status: "started";
           runId: string;
+          deduped?: boolean;
           host?: { id: string; name: string };
           environment?: { id: string; name?: string | null } | null;
         }
@@ -573,6 +591,11 @@ function writeRunGroupSummary(
   if (format !== "human") return;
   for (const target of result.targets) {
     if (target.status !== "started") continue;
+    if (target.deduped === true) {
+      process.stderr.write(
+        `Reused existing eval run ${target.runId} (idempotency key replay).\n`
+      );
+    }
     writeRunLink(format, webOrigin, {
       projectId: result.project.id,
       suiteId: result.suite.id,
@@ -651,11 +674,6 @@ function writeRunDisclosure(
             })`
           : model.tenantEgress;
         lines.push(`  Model: ${model.modelId} — ${destination}`);
-        // What the run's own execution records say, when the disclosure was
-        // read off them (same facts as the inspector tooltip). Absent on a
-        // pre-run disclosure and on older backends: nothing is printed.
-        const recorded = formatRecordedExecutionDisclosure(model);
-        if (recorded) lines.push(`    ${recorded}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(
@@ -1017,6 +1035,39 @@ function validateOpInput<TInput>(
   return parsed.data as TInput;
 }
 
+/**
+ * Default deadline for a hosted eval operation.
+ *
+ * One timer covers the WHOLE operation, not each request inside it: the
+ * abort controller wraps the entire callback, which for a file sync is
+ * several round trips. (The message it raises says "Request timed out",
+ * which is its own small lie and is why this comment exists.)
+ *
+ * The program's `--timeout` defaults to 30s, which is right for what it was
+ * written for: one MCP probe against a local server. A hosted eval call is not
+ * that. Syncing a suite file resolves the project, negotiates the vocabulary,
+ * validates every authored tool reference against the live server, writes the
+ * cases and then launches — several round trips, the slowest of which is bound
+ * by someone else's server. It finishes well inside 30s from a warm laptop and
+ * exceeded it on a cold CI runner, which failed `eval run --file` with a bare
+ * TIMEOUT on the workflow our own CI docs teach.
+ *
+ * An explicit `--timeout` still wins; `getGlobalOptions` keys off the option's
+ * SOURCE, so this only applies when the caller said nothing.
+ */
+const EVAL_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * `getGlobalOptions` for every hosted eval command.
+ *
+ * Exists so a new subcommand cannot inherit the 30s probe default by writing
+ * the obvious thing. A test forbids a bare `evalGlobalOptions(command)` in this
+ * file for exactly that reason.
+ */
+function evalGlobalOptions(command: Command) {
+  return getGlobalOptions(command, EVAL_REQUEST_TIMEOUT_MS);
+}
+
 /** Run an operation with a pre-validated input and print the result. */
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
@@ -1024,7 +1075,7 @@ async function executeOp<TInput, TOutput>(
   options: PlatformOptions & { project?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const inputProject =
     options.project === undefined &&
     typeof (input as { project?: unknown }).project === "string"
@@ -1158,6 +1209,10 @@ function buildSuiteUpdateInput(options: Record<string, any>): {
     exec.systemPrompt = options.systemPrompt;
   if (options.temperature !== undefined)
     exec.temperature = Number(options.temperature);
+  if (options.modelSelection !== undefined)
+    exec.modelSelection = parseModelSelectionFlag(options.modelSelection);
+  const reasoningEffort = effortShorthand(options);
+  if (reasoningEffort !== undefined) exec.reasoningEffort = reasoningEffort;
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
@@ -1554,7 +1609,7 @@ async function runEvalGate(
     },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   // Enforced here rather than by commander — see the option's declaration. A
   // usage error, so the exit code is 2 exactly as it was when commander did
   // the checking, and it is raised before any flag parsing spends a request.
@@ -2155,7 +2210,7 @@ async function runEvalGateWaive(
   options: { reason: string; expiresIn: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
   // Parsed BEFORE any network call, like every other flag in this file: a
   // malformed duration exits 2 without spending a request.
@@ -2227,7 +2282,7 @@ async function runEvalGateUnwaive(
   options: { waiver?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
   const resolved = resolveCloudProjectArgs(scope);
 
@@ -2302,7 +2357,7 @@ async function runEvalCompare(
     },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   // Parsed BEFORE any network call, so a malformed flag exits 2 without
   // spending a request — and cannot be mistaken for an infrastructure failure.
   const policy = comparePolicyFromOptions(options);
@@ -2543,7 +2598,7 @@ async function runEvalPull(
   },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const lockPath = resolveCorpusLockPath(options.lock);
   const resolved = resolveCloudProjectArgs(options);
 
@@ -2980,7 +3035,7 @@ async function runProjectValidation(
   command: Command,
   resolved: ResolvedEvalSuiteFile
 ): Promise<NonNullable<ValidateResult["projectValidation"]>> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = resolveCloudProjectArgs(options);
   return runPlatformCommand(
     platformOptionsOf(command),
@@ -3009,7 +3064,7 @@ async function runEvalValidate(
   options: PlatformOptions & { file: string; project?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
@@ -3118,7 +3173,7 @@ async function runEvalExport(
   },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const resolved = resolveCloudProjectArgs(options);
 
   // The dialect is the author's choice, never inferred: an offline file has no
@@ -3344,7 +3399,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = evalGlobalOptions(command);
       const input = loadSuiteDefinition(options);
       const resolved = resolveCloudProjectArgs(options, {
         inputProject:
@@ -3374,12 +3429,16 @@ export function registerEvalCommands(program: Command): void {
     )
     .action(
       async (options: PlatformOptions & { project?: string }, command) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const result = await runCloudOp(
           command,
           options,
           ({ client, signal }, project) =>
-            listEvalSuitesOperation.execute(project, { client, signal })
+            listEvalSuitesOperation.execute(project, { client, signal }),
+          // `runCloudOp` resolves the options a second time, so without this
+          // it hands back the 30s probe default no matter what this command
+          // computed for itself.
+          { defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS }
         );
         writeResult(result, globalOptions.format);
       }
@@ -3462,7 +3521,8 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("run")
     .description(
-      "Start an eval run of an existing suite, or upload a versioned suite file and run it"
+      "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
+        "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
     )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
@@ -3523,7 +3583,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--idempotency-key <key>",
-      "Retry-safety key: repeating the call returns the run it already started"
+      "Retry key for a lost launch response; for --file, one is minted and printed when omitted"
     )
     .option("--wait", "Wait for every started run to reach a terminal status")
     .option(
@@ -3553,6 +3613,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--compose-model <id...>",
       "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
+    )
+    .option(
+      "--compose-model-selection <json...>",
+      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model. Repeat it to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell."
     )
     .option(
       "--with-client-default",
@@ -3599,6 +3663,7 @@ export function registerEvalCommands(program: Command): void {
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string[];
+          composeModelSelection?: string[];
           withClientDefault?: boolean;
           saveTargets?: boolean;
           composeServer?: string[];
@@ -3658,7 +3723,7 @@ export function registerEvalCommands(program: Command): void {
           throw usageError("--wait-timeout requires --wait.");
         }
         const approvals = parseApprovalFlags(options);
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const reporter = parseReporterFormat(options.reporter);
         const waitTimeoutMs =
           options.waitTimeout !== undefined
@@ -3737,6 +3802,9 @@ export function registerEvalCommands(program: Command): void {
                     signal: context.signal,
                     onDisclosure,
                     onDisclosureUnavailable,
+                    onIdempotencyKey: (key) => {
+                      process.stderr.write(`Eval idempotency key: ${key}\n`);
+                    },
                   },
                   {
                     source,
@@ -3999,45 +4067,11 @@ export function registerEvalCommands(program: Command): void {
               // stderr message. The caller cannot find, resume, or cancel the
               // runs it just paid for. The shared exit path below raises the
               // same failure after the receipt is on stdout.
-              // What each iteration actually ran on, printed after the
-              // receipt. Human mode only — the JSON document stays one
-              // document — so it costs one iteration walk per run only where
-              // a person is reading. A failed walk is reported in the block,
-              // never thrown: it must not cost the caller the receipt.
-              const provenance: IterationProvenanceInput[] =
-                globalOptions.format === "human"
-                  ? await Promise.all(
-                      runs.map(async (run) => {
-                        try {
-                          const iterations = await fetchAllIterations(
-                            client,
-                            signal,
-                            result.project.id,
-                            run.id
-                          );
-                          return {
-                            runId: run.id,
-                            iterations: iterations.items,
-                          };
-                        } catch (error) {
-                          return {
-                            runId: run.id,
-                            iterations: [],
-                            error:
-                              error instanceof Error
-                                ? error.message
-                                : String(error),
-                          };
-                        }
-                      })
-                    )
-                  : [];
               return {
                 runs,
                 waitErrors,
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
-                provenance,
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
               };
             }
@@ -4101,16 +4135,6 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs,
               iterationErrorCodes,
-              // Free: the walk the report already paid for.
-              provenance: reportInputs.map(
-                (input): IterationProvenanceInput => ({
-                  runId: input.run.id,
-                  iterations: input.iterations,
-                  ...(input.iterationError !== undefined
-                    ? { error: input.iterationError }
-                    : {}),
-                })
-              ),
               ...(decisionSummary ? { decisionSummary } : {}),
             };
           },
@@ -4192,13 +4216,6 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
-          // Stdout is the reporter's single document; the provenance block
-          // goes to stderr, the same rule the pre-run disclosure follows.
-          writeIterationProvenance(
-            globalOptions.format,
-            completion.provenance,
-            process.stderr
-          );
         } else {
           writeResult(
             {
@@ -4225,11 +4242,6 @@ export function registerEvalCommands(program: Command): void {
           writeEvalDecisionSummary(
             globalOptions.format,
             completion.decisionSummary,
-            process.stdout
-          );
-          writeIterationProvenance(
-            globalOptions.format,
-            completion.provenance,
             process.stdout
           );
         }
@@ -4302,7 +4314,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         let webOrigin = DEFAULT_PLATFORM_ORIGIN;
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
@@ -4752,6 +4764,195 @@ export function registerEvalCommands(program: Command): void {
         options,
         command
       );
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("rerun")
+      .description(
+        "Rerun a finished eval run's failed cases as a new run. The platform picks the cases: any with a trial that did not complete and pass (cancelled and skipped trials do not count)"
+      )
+      .argument("<run-id>", "Eval run ID to rerun (from `eval run`)")
+      .option(
+        "--failed",
+        "Rerun only the cases that did not pass (required; the only rerun scope)"
+      )
+      .option(
+        "--dry-run",
+        "Show which cases would rerun, and why, without starting anything"
+      )
+      .option("--notes <text>", "Free-text note stored on the new run")
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option("--wait", "Wait for the rerun to reach a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Maximum time to wait for completion (default 2100000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
+      )
+      .option("--json", "Print machine-readable JSON (same as --format json)")
+  ).action(
+    async (
+      runId: string,
+      options: PlatformOptions & {
+        project?: string;
+        failed?: boolean;
+        dryRun?: boolean;
+        notes?: string;
+        idempotencyKey?: string;
+        wait?: boolean;
+        waitTimeout?: string;
+        json?: boolean;
+      },
+      command
+    ) => {
+      if (!options.failed) {
+        throw usageError(
+          "Pass --failed: rerunning the cases that did not pass is the only rerun scope."
+        );
+      }
+      if (options.waitTimeout !== undefined && !options.wait) {
+        throw usageError("--wait-timeout requires --wait.");
+      }
+      if (options.dryRun && options.wait) {
+        throw usageError("--dry-run starts nothing, so it cannot --wait.");
+      }
+      const globalOptions = evalGlobalOptions(command);
+      const format = options.json ? "json" : globalOptions.format;
+      const waitTimeoutMs =
+        options.waitTimeout !== undefined
+          ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+          : DEFAULT_RUN_WAIT_TIMEOUT_MS;
+      // Same rule as `eval run --wait`: an explicit budget is honoured strictly.
+      const gradingExtensionMs =
+        options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
+      const resolved = resolveCloudProjectArgs(options);
+      let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+
+      let outcome;
+      try {
+        outcome = await runPlatformCommand(
+          platformOptionsOf(command),
+          options.wait
+            ? Math.max(
+                globalOptions.timeout,
+                waitTimeoutMs + gradingExtensionMs
+              )
+            : globalOptions.timeout,
+          async (context) => {
+            webOrigin = context.webOrigin;
+            const { client, signal } = context;
+            const projects = await client.listProjects({}, { signal });
+            const resolution = resolveProject(projects.items, resolved.project);
+            if (!resolution.ok) {
+              throw usageError(
+                appendProjectLinkHint(resolution.message, resolved.projectScope)
+              );
+            }
+            const projectId = resolution.project.id;
+            if (options.dryRun) {
+              const preview = await client.getEvalRunRerunPreview(
+                { projectId, runId },
+                { signal }
+              );
+              return { projectId, preview };
+            }
+            const rerun = await client.rerunEvalRun(
+              {
+                projectId,
+                runId,
+                scope: "failed_cases",
+                ...(options.notes !== undefined
+                  ? { notes: options.notes }
+                  : {}),
+                ...(options.idempotencyKey
+                  ? { idempotencyKey: options.idempotencyKey }
+                  : {}),
+              },
+              { signal }
+            );
+            if (!options.wait) return { projectId, rerun };
+            try {
+              const run = await waitForEvalRun(
+                client,
+                signal,
+                projectId,
+                rerun.runId,
+                Date.now() + waitTimeoutMs,
+                gradingExtensionMs
+              );
+              return { projectId, rerun, run };
+            } catch (error) {
+              // Not thrown from here: the receipt below is the only place the
+              // new run id is printed, and a wait that timed out must not cost
+              // the caller the id of the run it just paid for.
+              return {
+                projectId,
+                rerun,
+                waitError: {
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                  ...(isPlatformApiError(error)
+                    ? { errorCode: error.code }
+                    : {}),
+                },
+              };
+            }
+          },
+          { projectScope: resolved.projectScope, quiet: globalOptions.quiet }
+        );
+      } catch (error) {
+        // Same launch-phase remap as `eval run --wait`: a refusal (nothing to
+        // rerun, a source still in flight) is the request's answer, not an
+        // infrastructure failure.
+        if (options.wait && error instanceof CliError && error.exitCode !== 2) {
+          throw new CliError(
+            error.code,
+            error.message,
+            classifyLaunchErrorExitCode(error.code, error.details),
+            error.details
+          );
+        }
+        throw error;
+      }
+
+      if ("preview" in outcome) {
+        writeResult({ preview: outcome.preview }, format);
+        // Same answer the launch would give: nothing qualifies, or the run is
+        // still in flight, is not a rerun that can start.
+        if (outcome.preview?.rerunnable !== true) setProcessExitCode(1);
+        return;
+      }
+      const { rerun } = outcome;
+      const run = "run" in outcome ? outcome.run : undefined;
+      const waitError = "waitError" in outcome ? outcome.waitError : undefined;
+      writeResult(
+        { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
+        format
+      );
+      writeRunLink(format, webOrigin, {
+        projectId: outcome.projectId,
+        suiteId: rerun.suiteId,
+        runId: rerun.runId,
+      });
+      if (waitError) {
+        throw cliError(
+          "OPERATIONAL_ERROR",
+          `Did not observe completion for: ${rerun.runId}. ${waitError.message}`,
+          classifyWaitErrorExitCode(waitError.errorCode)
+        );
+      }
+      if (run) {
+        setProcessExitCode(
+          evalRunWaitExitCode({
+            launchOutcome: "started",
+            runs: [{ status: run.status, result: run.result }],
+            waitErrors: [],
+          })
+        );
+      }
     }
   );
 
@@ -5453,7 +5654,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const index =
           options.index !== undefined
             ? parsePositiveInteger(options.index, "--index")
@@ -5646,7 +5847,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const resolved = resolveCloudProjectArgs(options);
         const result = await runPlatformCommand(
           platformOptionsOf(command),
@@ -5773,6 +5974,15 @@ export function registerEvalCommands(program: Command): void {
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
+    .option(
+      "--model-selection <json>",
+      "Whole saved model selection for the suite (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for --model when both are given."
+    )
+    .option("--effort <level>", EFFORT_FLAG_DESCRIPTION)
+    .option(
+      "--clear-effort",
+      "Remove the reasoning effort from the suite's model selection"
+    )
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
     // The criterion, in the units its scope takes. A suite has ONE of these,
@@ -5846,7 +6056,7 @@ export function registerEvalCommands(program: Command): void {
                 );
                 const message =
                   "No grading change: the suite already has these values.";
-                const format = getGlobalOptions(command).format;
+                const format = evalGlobalOptions(command).format;
                 if (!hasOtherEdits) {
                   if (format === "human") process.stdout.write(`${message}\n`);
                   else writeResult({ noop: true, message }, format);
@@ -6096,6 +6306,10 @@ export function registerEvalCommands(program: Command): void {
       "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
     )
     .option(
+      "--compose-model-selection <json>",
+      "One whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -) to run this case on, at its effort."
+    )
+    .option(
       "--compose-server <id-or-name...>",
       "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
     )
@@ -6122,6 +6336,7 @@ export function registerEvalCommands(program: Command): void {
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string;
+          composeModelSelection?: string;
           composeServer?: string[];
           composeServerGroup?: string;
           composeHostServers?: boolean;

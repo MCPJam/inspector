@@ -38,6 +38,7 @@ import goals from "./goals.js";
 import personas from "./personas.js";
 import secrets from "./secrets.js";
 import traceDestinations from "./trace-destinations.js";
+import feedback from "./feedback.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
@@ -202,6 +203,13 @@ v1.route("/", secrets);
 // same terms as secrets (`guest-allowed-paths.ts` is default-deny and there is
 // deliberately NO entry for `/trace-destinations`).
 v1.route("/", traceDestinations);
+// PLATFORM FEEDBACK (`send_feedback`) — a signed-in caller's report about
+// MCPJam itself, stored in MCPJam's own database and sent to the MCPJam team.
+// Guest-DENIED: `guest-allowed-paths.ts` is default-deny and there is
+// deliberately NO entry for `/feedback`. Anonymous reports would need their
+// own IP-keyed brake first; until then a guest gets the 401 and is asked to
+// sign in.
+v1.route("/", feedback);
 v1.route("/", swarms);
 // The insights layer over runs: scorecards, findings, wave insights. Reads are
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends

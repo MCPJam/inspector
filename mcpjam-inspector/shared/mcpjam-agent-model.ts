@@ -14,9 +14,13 @@
  * or BYOK model — fine when the customer paid, not something MCPJam can hand
  * out.
  *
- * Haiku rather than Sonnet on purpose: it is already `getDefaultModel`'s first
- * pick, so most users were on it anyway; it is roughly 3-4x cheaper; and it is
- * a much less attractive thing to farm through throwaway signups.
+ * Claude Haiku 5.5. Every step of a turn re-sends the whole conversation, so
+ * the agent's bill is almost all input tokens. Haiku 5.5's input price is half
+ * of GPT-5.6 Luna's and its output price under half, and the backend asks the
+ * Gateway to cache the repeated prompt prefix. It is still not a frontier
+ * model, which keeps it a poor thing to farm through throwaway signups, and it
+ * is guest-allowed, so a guest's turns on the customer rail work too. The
+ * backend pins its reasoning effort; this side sends none.
  *
  * MIRRORED from the backend's `convex/lib/agentModel.ts`, pinned by that
  * repo's `convex/lib/mirrors.json` (`mcpjam-agent-model`). Drift is not
@@ -25,7 +29,7 @@
  */
 import type { ModelDefinition } from "./types.js";
 
-export const MCPJAM_AGENT_MODEL = "anthropic/claude-haiku-4.5";
+export const MCPJAM_AGENT_MODEL = "anthropic/claude-haiku-5.5";
 
 /**
  * Steps one agent turn may take. The backend enforces the same ceiling on
@@ -60,11 +64,11 @@ export const PLATFORM_EXA_SEARCH_PATH = "/tools/exa/search/platform";
  *  would not be MCPJam-paid, and the backend would refuse the claim. */
 export const MCPJAM_AGENT_MODEL_DEFINITION: ModelDefinition = {
   id: MCPJAM_AGENT_MODEL,
-  name: "Claude Haiku 4.5",
+  name: "Claude Haiku 5.5",
   provider: "anthropic",
   hosted: true,
 };
 
-/** The body field that ASKS the backend to bill MCPJam. Only honoured
- *  alongside `x-inspector-service-token` and this model. */
+/** The body field that ASKS the backend to bill MCPJam. Only honoured for a
+ *  signed-in user, on their own login, and only for this model. */
 export const MCPJAM_AGENT_BILLING_FEATURE = "mcpjam_agent";

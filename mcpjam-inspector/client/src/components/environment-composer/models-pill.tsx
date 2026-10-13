@@ -10,36 +10,55 @@
  *
  * Rows are identified by `modelRowKey` (source, connection, id), so the same
  * id listed by the hosted catalog and under an org connection are two rows:
- * the one checked is the one whose saved selection is stored for that id, and
- * picking the other swaps the stored selection. The id list stays keyed by
- * the legacy id, so one id is one choice.
+ * the one checked is the one the id's targets were saved from, and picking
+ * the other swaps them onto it. The value's targets are keyed by
+ * `comparisonKey`, so two efforts of one model are two targets: one checked
+ * row, whose chevron opens its efforts to the side (each level a checkbox).
  *
  * Cap awareness (D6): when `budget` is provided, an option that would
  * push the product over `maxTargets` is disabled with the product
  * explanation. A static `max=10` inside this pill is not sufficient.
  */
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { useMemo } from "react";
-import { ChevronDown, Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   ModelSelector,
   type ModelSelectorExtraOption,
+  type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
-import type { ModelWorkload } from "@/components/chat-v2/shared/available-models";
+import {
+  orgKeysDisallowedNotice,
+  savedModelRow,
+  type ModelWorkload,
+} from "@/components/chat-v2/shared/available-models";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
   modelRowKey,
+  selectionBesideLegacyId,
+  storedModelChoice,
 } from "@/components/chat-v2/shared/model-selection";
 import {
-  syncExplicitModelSelections,
+  modelTargetKey,
+  syncExplicitTargets,
   targetProductCapReason,
   type ModelSelection,
+  type ModelTarget,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
+import { modelTarget } from "@/lib/model-target";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import {
-  harnessModelLockReason,
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import { setEffortForRow } from "@/lib/reasoning-effort-selection";
+import { modelTargetLabel } from "@/lib/environment-label";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  harnessModelLockReasonsByRow,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
@@ -98,45 +117,76 @@ export function ModelsPill({
    */
   workload?: ModelWorkload;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
-  const harnessLockReasons = useMemo(() => {
-    const byId = new Map<string, string>();
-    if (!harnessTargets || harnessTargets.length === 0) return byId;
-    for (const model of availableModels) {
-      const id = String(model.id);
-      const reason = harnessModelLockReason(id, harnessTargets, purpose);
-      if (reason) byId.set(id, reason);
-    }
-    return byId;
-  }, [availableModels, harnessTargets, purpose]);
+  const {
+    availableModels,
+    modelSelectionsSupported,
+    requireOrgKeys,
+    onManageOrgProviders,
+  } = useAvailableModels({ projectId });
+  // Per ROW, not per id: the hosted row and an org-connection row of one id
+  // run on different keys, and a harness may run one and refuse the other.
+  // Under the organization's key policy a harness runs only on an
+  // organization connection to its own vendor.
+  const harnessLockReasons = useMemo(
+    () =>
+      harnessModelLockReasonsByRow(
+        availableModels,
+        harnessTargets ?? [],
+        purpose,
+        { requireOrgKeys },
+      ),
+    [availableModels, harnessTargets, purpose, requireOrgKeys],
+  );
 
-  const explicit = value.explicitModelIds;
-  // The row each explicit id refers to: the one whose selection is saved for
-  // it, else (a legacy pick) the hosted row with that id first.
+  const targets = value.explicitTargets;
+  const explicit = useMemo(
+    () => [...new Set(targets.map((target) => target.modelId))],
+    [targets],
+  );
+  // The row each explicit target refers to: the one its selection was saved
+  // from, else (a legacy pick) the hosted row with that id first. Under the
+  // policy a saved selection matches only its own source and connection.
   const pickedRows = useMemo(
     () =>
-      explicit.map((id) => ({
-        id,
+      targets.map((target) => ({
+        id: target.modelId,
+        key: modelTargetKey(target),
+        target,
         row: findModelForStoredChoice(
-          { modelId: id, selection: value.explicitModelSelections?.[id] },
+          { modelId: target.modelId, selection: target.selection },
           availableModels,
           undefined,
+          { exactSelection: requireOrgKeys },
         ),
       })),
-    [explicit, value.explicitModelSelections, availableModels],
+    [targets, availableModels, requireOrgKeys],
   );
-  const selectedModels = useMemo(
-    () => pickedRows.flatMap(({ row }) => (row ? [row] : [])),
-    [pickedRows],
-  );
-  const staleExplicit = pickedRows
-    .filter(({ row }) => !row)
-    .map(({ id }) => id);
+  // Two efforts of one model resolve to one row: the selector lists it once.
+  const selectedModels = useMemo(() => {
+    const seen = new Set<string>();
+    return pickedRows.flatMap(({ row }) => {
+      if (!row || seen.has(modelRowKey(row))) return [];
+      seen.add(modelRowKey(row));
+      return [row];
+    });
+  }, [pickedRows]);
+  const staleExplicit = [
+    ...new Set(pickedRows.filter(({ row }) => !row).map(({ id }) => id)),
+  ];
+  // While the organization requires its own keys, a picked model the list no
+  // longer offers is one the policy does not allow: named from the hosted
+  // catalog, and the trigger warns about it.
+  const disallowedNotice =
+    requireOrgKeys && staleExplicit.length > 0
+      ? orgKeysDisallowedNotice(savedModelRow(staleExplicit[0]!))
+      : undefined;
   const includeDefaults = value.includeClientDefaults;
   const nameForId = (id: string): string => {
     const row = pickedRows.find((picked) => picked.id === id)?.row;
     const listed =
-      row ?? availableModels.find((model) => String(model.id) === id);
+      row ??
+      availableModels.find((model) => String(model.id) === id) ??
+      (requireOrgKeys ? savedModelRow(id) : undefined);
     return (
       (listed && compactModelLabel(listed.name)) || compactModelLabel(id) || id
     );
@@ -148,24 +198,39 @@ export function ModelsPill({
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
-  // Every edit keeps the saved selections in step with the picked ids; the
-  // row just picked decides the selection saved for its id.
+  // The target a picked row adds. Under the organization's key policy, an
+  // organization row whose id is bare (`gpt-5` on an org OpenAI connection)
+  // is saved under its canonical id with its org selection: the bare id
+  // alone runs as a legacy id, which the policy refuses (`org_keys_required`).
+  // Every other row keeps its own id, and `syncExplicitTargets` adds the
+  // selection it can carry beside it.
+  const pickedTarget = (model: ModelDefinition): ModelTarget => {
+    if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
+      const choice = storedModelChoice(model, undefined, "evalTarget");
+      if (choice.selection?.source === "org") {
+        return modelTarget(choice.modelId, choice.selection);
+      }
+    }
+    return { modelId: String(model.id) };
+  };
+
+  // Every edit fills in the saved selection of a target that has none; the
+  // row just picked decides the selection of its new target.
   const emit = (next: ModelSelection, picked?: ModelDefinition) =>
     onChange(
-      syncExplicitModelSelections(next, {
+      syncExplicitTargets(next, {
         models: availableModels,
-        previous: value,
         ...(picked ? { picked } : {}),
       }),
     );
 
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
-      emit({ includeClientDefaults: checked, explicitModelIds: [] });
+      emit({ includeClientDefaults: checked, explicitTargets: [] });
       return;
     }
     if (checked && replaceSoleChoice) {
-      emit({ includeClientDefaults: true, explicitModelIds: [] });
+      emit({ includeClientDefaults: true, explicitTargets: [] });
       return;
     }
     emit({ ...value, includeClientDefaults: checked });
@@ -174,31 +239,72 @@ export function ModelsPill({
   const removeModelId = (modelId: string) =>
     emit({
       ...value,
-      explicitModelIds: explicit.filter((id) => id !== modelId),
+      explicitTargets: targets.filter((target) => target.modelId !== modelId),
     });
+  // Only the targets of `modelId` that no row resolves. Under the policy a
+  // saved hosted target can be stale while an org target of the same id is
+  // not, and that one stays.
+  const removeStaleTargets = (modelId: string) => {
+    const stale = new Set(
+      pickedRows
+        .filter(({ id, row }) => id === modelId && !row)
+        .map(({ target }) => target),
+    );
+    emit({
+      ...value,
+      explicitTargets: targets.filter((target) => !stale.has(target)),
+    });
+  };
 
   const addModel = (model: ModelDefinition) => {
-    const modelId = String(model.id);
+    const added = pickedTarget(model);
+    const modelId = added.modelId;
     if (mode === "single") {
-      emit(
-        { includeClientDefaults: false, explicitModelIds: [modelId] },
-        model,
-      );
+      emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
       return;
     }
     if (explicit.includes(modelId)) {
-      // Another row with this id was picked: this one takes its place.
-      emit(value, model);
-      return;
-    }
-    if (replaceSoleChoice) {
+      // Another row with this id was picked: this one takes its place. Every
+      // target of the id moves onto the picked row's selection and keeps its
+      // own settings, so Sonnet·Low + Sonnet·High stay two targets.
+      const base =
+        added.selection ?? selectionBesideLegacyId(model, "evalTarget");
+      const moved = targets
+        .filter((target) => target.modelId === modelId)
+        .map((target) => {
+          const settings = target.selection?.settings;
+          return modelTarget(
+            modelId,
+            base ? (settings ? { ...base, settings } : base) : undefined,
+          );
+        });
       emit(
-        { includeClientDefaults: false, explicitModelIds: [modelId] },
+        {
+          ...value,
+          explicitTargets: [
+            ...targets.filter((target) => target.modelId !== modelId),
+            ...(moved.length > 0 ? moved : [added]),
+          ],
+        },
         model,
       );
       return;
     }
-    emit({ ...value, explicitModelIds: [...explicit, modelId] }, model);
+    if (replaceSoleChoice) {
+      emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
+      return;
+    }
+    emit({ ...value, explicitTargets: [...targets, added] }, model);
+  };
+
+  // The id a selected row's targets were saved under. An organization row
+  // picked under the policy is saved under its canonical id, not its own.
+  const savedIdOf = (row: ModelDefinition): string => {
+    const key = modelRowKey(row);
+    const saved = pickedRows.find(
+      (picked) => picked.row && modelRowKey(picked.row) === key,
+    );
+    return saved?.id ?? String(row.id);
   };
 
   // The selector reports the whole next list; one row was added or removed.
@@ -213,7 +319,7 @@ export function ModelsPill({
     const removed = selectedModels.find(
       (model) => !after.has(modelRowKey(model)),
     );
-    if (removed) removeModelId(String(removed.id));
+    if (removed) removeModelId(savedIdOf(removed));
   };
 
   const wouldAddChoice = wouldExceedBudget(budget, { extraChoices: 1 });
@@ -236,7 +342,7 @@ export function ModelsPill({
     mode === "multiple" &&
     !state.selected &&
     // Swapping in another row for a picked id adds no choice.
-    !explicit.includes(String(model.id)) &&
+    !explicit.includes(pickedTarget(model).modelId) &&
     wouldAddChoice &&
     !replaceSoleChoice
       ? capReason
@@ -249,7 +355,7 @@ export function ModelsPill({
     model: ModelDefinition,
     state: { selected: boolean },
   ): string | undefined =>
-    harnessLockReasons.get(String(model.id)) ?? rowCapReason(model, state);
+    harnessLockReasons.get(modelRowKey(model)) ?? rowCapReason(model, state);
 
   const extraOptions: ModelSelectorExtraOption[] = [
     {
@@ -262,13 +368,16 @@ export function ModelsPill({
       onSelect: () => toggleDefaults(!includeDefaults),
       ...(testId ? { testId: `${testId}-client-defaults` } : {}),
     },
-    // A picked id the catalog no longer lists stays removable.
+    // A picked id the catalog no longer lists (or the organization's policy
+    // no longer allows) stays removable.
     ...staleExplicit.map((id): ModelSelectorExtraOption => ({
       id: `stale:${id}`,
-      label: id,
-      description: "No longer in the catalog",
+      label: requireOrgKeys ? nameForId(id) : id,
+      description: requireOrgKeys
+        ? "Not allowed here. Choose an organization model."
+        : "No longer in the catalog",
       checked: true,
-      onSelect: () => removeModelId(id),
+      onSelect: () => removeStaleTargets(id),
     })),
   ];
 
@@ -281,8 +390,16 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
       >
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : null}
         <span className="min-w-0 flex-1 break-words">
           {[
             ...(includeDefaults
@@ -292,7 +409,10 @@ export function ModelsPill({
                     : "Client default",
                 ]
               : []),
-            ...explicit.map(nameForId),
+            // "Sonnet · High" beside "Sonnet · Low": only what differs.
+            ...targets.map((target) =>
+              modelTargetLabel(target, targets, nameForId),
+            ),
           ].join(", ") || "Select models"}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -303,22 +423,110 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className={cn(
           "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
           "outline-none transition-colors",
-          includeDefaults || explicit.length > 0
+          includeDefaults || targets.length > 0
             ? "border-border/60 bg-muted/40 hover:bg-muted/60"
             : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
           disabled && "cursor-not-allowed opacity-60",
         )}
       >
-        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : (
+          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {triggerLabel}
         </span>
         <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
       </button>
     );
+
+  // Efforts live in the menu: each model opens its efforts to the side. In
+  // multiple mode a level toggles that model × effort target in or out, so
+  // Sonnet·Low and Sonnet·High are two targets; in single mode it picks the
+  // model at that effort. A bare-id BYOK row (no saveable selection) offers
+  // none. A harness host offers only the levels its adapter applies (Claude
+  // Code none yet); with several targets the first harness decides.
+  const effortHarness = harnessTargets?.find(Boolean)?.harnessId as
+    | Harness
+    | undefined;
+  const targetAt = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ): ModelTarget | null => {
+    const write = setEffortForRow({
+      row,
+      selection: undefined,
+      effort,
+      purpose: "evalTarget",
+    });
+    return write ? modelTarget(write.modelId, write.selection) : null;
+  };
+  const targetKeys = new Set(targets.map((target) => modelTargetKey(target)));
+  const rowEfforts = (
+    row: ModelDefinition,
+  ): ModelSelectorRowEfforts | undefined => {
+    // Unknown (still loading) counts as supported, as the effort chip did.
+    if (modelSelectionsSupported === false) return undefined;
+    const levels = reasoningEffortOptions(
+      row,
+      reasoningEffortRouteForRow(row),
+      effortHarness,
+    );
+    if (levels.length === 0 || !targetAt(row, levels[0])) return undefined;
+    const picked = (effort: ModelReasoningEffort | undefined) => {
+      const next = targetAt(row, effort);
+      return !!next && targetKeys.has(modelTargetKey(next));
+    };
+    if (mode === "single") {
+      const current = levels.find(picked) ?? (picked(undefined) ? null : undefined);
+      return { levels, ...(current !== undefined ? { current } : {}) };
+    }
+    return {
+      levels,
+      isPicked: picked,
+      // A new level adds a choice, like a new model does.
+      canAdd: !wouldAddChoice || replaceSoleChoice,
+    };
+  };
+  const pickModelEffort = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => {
+    const next = targetAt(row, effort);
+    if (!next) return;
+    if (mode === "single" || replaceSoleChoice) {
+      emit({ includeClientDefaults: false, explicitTargets: [next] }, row);
+      return;
+    }
+    const key = modelTargetKey(next);
+    if (targetKeys.has(key)) {
+      emit({
+        ...value,
+        explicitTargets: targets.filter(
+          (target) => modelTargetKey(target) !== key,
+        ),
+      });
+      return;
+    }
+    if (wouldAddChoice) return;
+    // Right after the model's other efforts, else at the end.
+    let last = -1;
+    targets.forEach((target, index) => {
+      if (target.modelId === next.modelId) last = index;
+    });
+    const explicitTargets = [...targets];
+    explicitTargets.splice(last >= 0 ? last + 1 : targets.length, 0, next);
+    emit({ ...value, explicitTargets }, row);
+  };
 
   return (
     <ModelSelector
@@ -327,6 +535,8 @@ export function ModelsPill({
       disabled={disabled}
       analyticsLocation="environment_composer"
       workload={workload}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}
@@ -337,6 +547,8 @@ export function ModelsPill({
       allowEmptySelection
       extraOptions={extraOptions}
       rowDisabledReason={rowDisabledReason}
+      rowEfforts={rowEfforts}
+      onModelEffortSelect={pickModelEffort}
     />
   );
 }
@@ -350,7 +562,7 @@ export function modelsPillTriggerLabel(
     modelName?: (id: string) => string;
   },
 ): string {
-  const n = value.explicitModelIds.length;
+  const n = value.explicitTargets.length;
   const inheritedRaw = options?.clientDefaultLabel?.trim() ?? "";
   const inherited = inheritedRaw
     ? options?.modelName?.(inheritedRaw) || inheritedRaw
@@ -360,7 +572,7 @@ export function modelsPillTriggerLabel(
     return inherited ? `${inherited} +${n}` : `models +${n}`;
   }
   if (n === 1) {
-    const id = value.explicitModelIds[0];
+    const id = value.explicitTargets[0]!.modelId;
     return options?.modelName?.(id) || "1 model";
   }
   if (n > 1) return `${n} models`;

@@ -205,3 +205,97 @@ export function decideToolPolicy(args: {
   }
   return { allowed: true, reason: "modeDefault", classification };
 }
+
+// ── name validation and the block marker ─────────────────────────────────────
+//
+// Pure policy helpers shared by every enforcement point: the hosted runner's
+// in-process gate (`server/services/evals/tool-policy-gate.ts`, which
+// re-exports them) and the SDK's local suite-file runner. Side-effect
+// manifests and artifact ledgers stay in the server — they bound WHAT a call
+// may write, which only a benchmark with a pinned manifest has.
+
+/**
+ * The key a policy-blocked tool result carries, set to `true`.
+ *
+ * A blocked call never reached an MCP server, so it is not a tool span, not a
+ * tool error and not a call the case can be graded on. Trace wrappers and
+ * tool-call projections recognize the marker (see
+ * {@link isToolPolicyBlockResult}) and leave the call out.
+ */
+export const TOOL_POLICY_BLOCK_MARKER = "mcpjamPolicyBlock";
+
+/** True for a tool result a policy gate produced instead of executing. */
+export function isToolPolicyBlockResult(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>)[TOOL_POLICY_BLOCK_MARKER] === true
+  );
+}
+
+/**
+ * A `deny` name that matches no tool the run can see.
+ *
+ * INVALID INPUT, not a warning: a deny list that names nothing enforces
+ * nothing, and an author who typed `delete_notes` for `delete_note` believes a
+ * destructive tool is fenced off while it runs freely.
+ */
+export class UnmatchedToolPolicyNameError extends Error {
+  readonly code = "TOOL_POLICY_INVALID";
+  /** The unmatched deny names, in authored order. */
+  readonly names: readonly string[];
+
+  constructor(names: string[]) {
+    super(
+      `TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool: ${names.join(
+        ", "
+      )}`
+    );
+    this.name = "UnmatchedToolPolicyNameError";
+    this.names = [...names];
+  }
+}
+
+/**
+ * Check a policy's names against the tool surface it will be enforced on.
+ *
+ * An unmatched `deny` throws {@link UnmatchedToolPolicyNameError}, unless the
+ * name is in `deferredToolNames` — a tool that exists but cannot be listed
+ * until run start — which is a warning instead. An unmatched `allow` is always
+ * a warning: allowing a tool that is not there changes nothing. Returns the
+ * warnings.
+ */
+export function validateToolPolicyNames(args: {
+  policy: EvalSuiteFileToolPolicy;
+  availableToolNames: Iterable<string>;
+  deferredToolNames?: Iterable<string>;
+}): string[] {
+  const availableNames = new Set(args.availableToolNames);
+  const deferredNames = new Set(args.deferredToolNames ?? []);
+  const unmatchedDeny = (args.policy.deny ?? []).filter(
+    (name) => !availableNames.has(name)
+  );
+  const invalidDeny = unmatchedDeny.filter((name) => !deferredNames.has(name));
+  if (invalidDeny.length > 0) {
+    throw new UnmatchedToolPolicyNameError(invalidDeny);
+  }
+  const warnings =
+    unmatchedDeny.length > invalidDeny.length
+      ? [
+          `Tool policy deny name(s) could not be resolved at run start: ${unmatchedDeny
+            .filter((name) => deferredNames.has(name))
+            .join(", ")}`,
+        ]
+      : [];
+  const unmatchedAllow = (args.policy.allow ?? []).filter(
+    (name) => !availableNames.has(name)
+  );
+  if (unmatchedAllow.length > 0) {
+    warnings.push(
+      `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
+        ", "
+      )}`
+    );
+  }
+  return warnings;
+}

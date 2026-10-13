@@ -4,6 +4,7 @@ import { registerAuthCommands } from "./auth.js";
 import { registerCloudLinkCommands } from "./cloud-link.js";
 import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
+import { registerFeedbackCommand } from "./feedback.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
@@ -61,5 +62,10 @@ export function registerCloudCommands(program: Command): Command {
   const goals = registerGoalsCommands(cloud);
   registerSwarmAuthoringCommands(cloud, goals);
   registerStudiesCommands(cloud);
+
+  cloud.commandsGroup("Support:");
+  // Feedback about MCPJam itself, sent to the MCPJam team. A leaf, not a
+  // group: there is one thing to do with it.
+  registerFeedbackCommand(cloud);
   return cloud;
 }

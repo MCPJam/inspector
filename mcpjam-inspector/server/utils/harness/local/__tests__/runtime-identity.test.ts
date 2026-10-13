@@ -20,12 +20,14 @@ import {
 import {
   clearRuntimeVerificationCache,
   computeTreeDigest,
+  predictManagedRuntimeId,
   resolveManagedBundle,
   resolveSystemInstall,
   revalidateRuntime,
   systemInstallSearchPaths,
   verifyRuntime,
 } from "../runtime-identity.js";
+import { inspectorLayerDigest } from "../inspector-layer.js";
 
 let base: string;
 let runtimeRoot: string;
@@ -35,6 +37,23 @@ let runtimeRoot: string;
  * for a bundle to resolve, so the fixtures add them unless a test is
  * specifically about their absence.
  */
+// Resolves once a fresh write gets a ctime later than `ms`.
+//
+// Consent and a real tamper never share a tick of the filesystem clock, which
+// can be 10 ms or coarser. A fast runner can fit a test's snapshot and its
+// same-size rewrite into one tick, leaving every stat field equal, so a test
+// that tampers after a snapshot waits the tick out first. The probe sits
+// outside every bundle root, where a revalidation walk would flag it.
+async function waitForFsClockPast(ms: number): Promise<void> {
+  const probe = join(runtimeRoot, "..", "fs-clock-probe");
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    await writeFile(probe, String(attempt));
+    if ((await stat(probe)).ctimeMs > ms) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("the filesystem clock did not move past the snapshot");
+}
+
 async function writeBundle(
   name: string,
   files: Record<string, string>,
@@ -78,6 +97,7 @@ function manifestFor(
         "darwin-x64": digest,
         "win32-x64": digest,
       },
+      launcherSource: "pack",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       vendorPackages: { "@anthropic-ai/claude-code": "1.2.3" },
@@ -318,6 +338,148 @@ describe("managed bundles", () => {
   });
 });
 
+describe("a harness whose launcher is the Inspector layer (invariant 1)", () => {
+  /** A Codex-shaped pack: vendor bytes only, no launcher and no bridge. */
+  async function codexPack(name: string) {
+    return writeBundle(
+      name,
+      {
+        "node_modules/@openai/codex/bin/codex.js": "// vendor wrapper\n",
+        "node_modules/@openai/codex/package.json": '{"version":"0.149.1"}',
+      },
+      { omitLauncher: true },
+    );
+  }
+  function layered(bundleName: string, digest: string): LocalHarnessCompatibility {
+    const base = manifestFor(bundleName, digest);
+    return {
+      ...LOCAL_HARNESS_MANIFEST.codex,
+      runtime: { ...base.runtime, launcherSource: "inspector-layer" } as LocalHarnessCompatibility["runtime"],
+    };
+  }
+  let layerRoot: string;
+  beforeAll(async () => {
+    layerRoot = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-layer-root-")));
+  });
+
+  it("launches the layer's launcher with the pack's own Node", async () => {
+    const root = await codexPack("layer-codex");
+    const digest = await computeTreeDigest(root);
+    const result = await resolveManagedBundle({
+      manifest: layered("layer-codex", digest),
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+      layerRuntimeRoot: layerRoot,
+    });
+    if (!result.ok) throw new Error(result.message);
+    const layerDigest = inspectorLayerDigest("codex")!;
+    expect(result.runtime.layer).toEqual({
+      root: join(layerRoot, "inspector-layer", layerDigest.slice(7)),
+      digest: layerDigest,
+      files: ["bridge.mjs", "host-tools-mcp.mjs", "launcher.mjs", "layer.json"],
+    });
+    expect(result.runtime.launcherPath).toBe(join(result.runtime.layer!.root, "launcher.mjs"));
+    expect(result.runtime.nodePath).toBe(join(root, "bin/node"));
+    expect(result.runtime.digest).toBe(digest);
+    expect(await revalidateRuntime(result.runtime)).toEqual({ ok: true });
+  });
+
+  it("predicts exactly the runtime id resolution produces — for both launcher kinds", async () => {
+    // Selection keeps a turn on the pack its grant names by PREDICTING that
+    // pack's runtime id; a prediction that drifted from resolution would
+    // quietly stop matching every grant.
+    const root = await codexPack("predict-codex");
+    await writeFile(join(root, "launcher.mjs"), 'await import("./bridge.mjs");');
+    const digest = await computeTreeDigest(root);
+    for (const manifest of [
+      layered("predict-codex", digest),
+      { ...layered("predict-codex", digest), runtime: { ...layered("predict-codex", digest).runtime, launcherSource: "pack" } as LocalHarnessCompatibility["runtime"] },
+    ]) {
+      const resolved = await resolveManagedBundle({ manifest, runtimeRoot, platform: "linux", arch: "x64", layerRuntimeRoot: layerRoot });
+      if (!resolved.ok) throw new Error(resolved.message);
+      expect(predictManagedRuntimeId(manifest, "linux", digest)).toBe(resolved.runtime.runtimeId);
+    }
+    expect(predictManagedRuntimeId(layered("predict-codex", digest), "linux", `sha256:${"0".repeat(64)}`)).not.toBe(
+      predictManagedRuntimeId(layered("predict-codex", digest), "linux", digest),
+    );
+  });
+
+  it("names the layer in the launch identity", async () => {
+    // The same pack bytes resolved as a pack-launcher harness and as a layer
+    // harness are two different launches, so two different runtime ids.
+    const root = await codexPack("identity-codex");
+    await writeFile(join(root, "launcher.mjs"), 'await import("./bridge.mjs");');
+    const digest = await computeTreeDigest(root);
+    const viaLayer = await resolveManagedBundle({
+      manifest: layered("identity-codex", digest),
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+      layerRuntimeRoot: layerRoot,
+    });
+    const viaPack = await resolveManagedBundle({
+      manifest: {
+        ...layered("identity-codex", digest),
+        runtime: { ...layered("identity-codex", digest).runtime, launcherSource: "pack" } as LocalHarnessCompatibility["runtime"],
+      },
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+    });
+    if (!viaLayer.ok || !viaPack.ok) throw new Error("both resolve");
+    expect(viaLayer.runtime.runtimeId).not.toBe(viaPack.runtime.runtimeId);
+    expect(viaPack.runtime.layer).toBeUndefined();
+  });
+
+  it("refuses to launch once the layer changed after resolution — on every platform's path", async () => {
+    const root = await codexPack("tamper-codex");
+    const digest = await computeTreeDigest(root);
+    const result = await resolveManagedBundle({
+      manifest: layered("tamper-codex", digest),
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+      layerRuntimeRoot: layerRoot,
+    });
+    if (!result.ok) throw new Error(result.message);
+    const launcher = result.runtime.launcherPath;
+    await chmod(result.runtime.layer!.root, 0o700);
+    await chmod(launcher, 0o600);
+    await writeFile(launcher, "// a launcher that does not constrain the bridge\n");
+    const revalidated = await revalidateRuntime(result.runtime);
+    expect(revalidated.ok).toBe(false);
+    if (!revalidated.ok) expect(revalidated.message).toMatch(/Inspector layer changed after it was verified/);
+    // Resolving again repairs it from the compiled bytes — a NEW resolution,
+    // never the session that was about to exec.
+    const again = await resolveManagedBundle({
+      manifest: layered("tamper-codex", digest),
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+      layerRuntimeRoot: layerRoot,
+    });
+    if (!again.ok) throw new Error(again.message);
+    expect(await revalidateRuntime(again.runtime)).toEqual({ ok: true });
+  });
+
+  it("still refuses a tampered PACK file under a layer launcher", async () => {
+    const root = await codexPack("tamper-pack-codex");
+    const digest = await computeTreeDigest(root);
+    const result = await resolveManagedBundle({
+      manifest: layered("tamper-pack-codex", digest),
+      runtimeRoot,
+      platform: "linux",
+      arch: "x64",
+      layerRuntimeRoot: layerRoot,
+    });
+    if (!result.ok) throw new Error(result.message);
+    await writeFile(join(root, "node_modules/@openai/codex/bin/codex.js"), "// replaced\n");
+    const revalidated = await revalidateRuntime(result.runtime);
+    expect(revalidated.ok).toBe(false);
+  });
+});
+
 describe("verification cost", () => {
   it("digests a pack once per process and answers from cache after that", async () => {
     // The measured defect: five full digests of a 515 MB tree per session
@@ -326,9 +488,9 @@ describe("verification cost", () => {
     const root = await writeBundle("cached", { "bridge.mjs": "x" });
     const digest = await computeTreeDigest(root);
 
-    const first = await verifyRuntime(root, digest);
+    const first = await verifyRuntime(root, digest, "claude-code");
     expect(first).toMatchObject({ ok: true, cached: false });
-    const second = await verifyRuntime(root, digest);
+    const second = await verifyRuntime(root, digest, "claude-code");
     expect(second).toMatchObject({ ok: true, cached: true });
   });
 
@@ -342,8 +504,8 @@ describe("verification cost", () => {
     clearRuntimeVerificationCache();
 
     const [first, second] = await Promise.all([
-      verifyRuntime(root, digest),
-      verifyRuntime(root, digest),
+      verifyRuntime(root, digest, "claude-code"),
+      verifyRuntime(root, digest, "claude-code"),
     ]);
     // The SAME result object: one verification, awaited twice.
     expect(first).toBe(second);
@@ -367,8 +529,8 @@ describe("verification cost", () => {
     // Same key, but the tree does not match it yet.
     await writeFile(join(root, "bridge.mjs"), "not-x-yet");
     const failures = await Promise.all([
-      verifyRuntime(root, wanted),
-      verifyRuntime(root, wanted),
+      verifyRuntime(root, wanted, "claude-code"),
+      verifyRuntime(root, wanted, "claude-code"),
     ]);
     for (const failure of failures) {
       expect(failure).toMatchObject({ ok: false, reason: "digest-mismatch" });
@@ -376,7 +538,7 @@ describe("verification cost", () => {
 
     // The tree becomes what that key names. A cached refusal would still say no.
     await writeFile(join(root, "bridge.mjs"), "x");
-    await expect(verifyRuntime(root, wanted)).resolves.toMatchObject({
+    await expect(verifyRuntime(root, wanted, "claude-code")).resolves.toMatchObject({
       ok: true,
       cached: false,
     });
@@ -392,7 +554,7 @@ describe("verification cost", () => {
     const digest = await computeTreeDigest(root);
     clearRuntimeVerificationCache();
 
-    const inFlight = verifyRuntime(root, digest);
+    const inFlight = verifyRuntime(root, digest, "claude-code");
     // Exactly what `installRuntimePack` does at activation, while the read
     // above is still walking the tree.
     clearRuntimeVerificationCache();
@@ -402,7 +564,7 @@ describe("verification cost", () => {
     });
 
     // Nothing stale was published: the next caller does the work itself.
-    await expect(verifyRuntime(root, digest)).resolves.toMatchObject({
+    await expect(verifyRuntime(root, digest, "claude-code")).resolves.toMatchObject({
       ok: true,
       cached: false,
     });
@@ -413,9 +575,9 @@ describe("verification cost", () => {
     // different runtime. A cache keyed on the path alone would answer for it.
     clearRuntimeVerificationCache();
     const root = await writeBundle("rekey", { "bridge.mjs": "v1" });
-    await verifyRuntime(root, await computeTreeDigest(root));
+    await verifyRuntime(root, await computeTreeDigest(root), "claude-code");
     await writeFile(join(root, "bridge.mjs"), "v2");
-    const upgraded = await verifyRuntime(root, await computeTreeDigest(root));
+    const upgraded = await verifyRuntime(root, await computeTreeDigest(root), "claude-code");
     expect(upgraded).toMatchObject({ ok: true, cached: false });
   });
 
@@ -423,11 +585,11 @@ describe("verification cost", () => {
     clearRuntimeVerificationCache();
     const root = await writeBundle("nocache", { "bridge.mjs": "x" });
     const wrong = `sha256:${"1".repeat(64)}`;
-    expect(await verifyRuntime(root, wrong)).toMatchObject({
+    expect(await verifyRuntime(root, wrong, "claude-code")).toMatchObject({
       ok: false,
       reason: "digest-mismatch",
     });
-    expect(await verifyRuntime(root, wrong)).toMatchObject({
+    expect(await verifyRuntime(root, wrong, "claude-code")).toMatchObject({
       ok: false,
       reason: "digest-mismatch",
     });
@@ -527,6 +689,8 @@ describe("verification cost", () => {
       ok: true,
     });
 
+    await waitForFsClockPast((await stat(nodePath)).ctimeMs);
+
     // Rewritten in place: same length, same inode, same mode, mtime put back.
     const original = await readFile(nodePath);
     await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
@@ -557,7 +721,7 @@ describe("verification cost", () => {
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
 
-    const verification = await verifyRuntime(root, resolved.runtime.digest);
+    const verification = await verifyRuntime(root, resolved.runtime.digest, "claude-code");
     if (!verification.ok) throw new Error("fixture did not verify");
     const nodePath = join(root, "bin", "node");
     const original = await readFile(nodePath);
@@ -596,16 +760,23 @@ describe("verification cost", () => {
     // very file it was turned on for.
     delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
     clearRuntimeVerificationCache();
-    const root = await writeBundle("baseline", { "bridge.mjs": "x" });
+    const root = await writeBundle("baseline", {
+      "bridge.mjs": "x",
+      "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs": "export {};",
+    });
     const verification = await verifyRuntime(
       root,
       await computeTreeDigest(root),
+      "claude-code",
     );
     expect(verification.ok).toBe(true);
     if (!verification.ok) return;
     expect(Object.keys(verification.snapshot.executableDigests)).toEqual(
-      expect.arrayContaining(["bin/node", "launcher.mjs", "bridge.mjs"]),
+      expect.arrayContaining(["bin/node", "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"]),
     );
+    // The bridge and its launcher are not pack files any more: the Inspector
+    // layer re-hashes them in full before every exec.
+    expect(Object.keys(verification.snapshot.executableDigests)).not.toContain("bridge.mjs");
   });
 });
 
@@ -623,6 +794,7 @@ describe("re-verification immediately before spawn", () => {
       ok: true,
     });
 
+    await waitForFsClockPast((await stat(join(root, "bridge.mjs"))).ctimeMs);
     await writeFile(join(root, "bridge.mjs"), "swapped");
     const result = await revalidateRuntime(resolved.runtime);
     expect(result.ok).toBe(false);

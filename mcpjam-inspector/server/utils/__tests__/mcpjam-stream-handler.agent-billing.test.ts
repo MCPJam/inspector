@@ -292,13 +292,19 @@ describe("Ask MCPJam billing claim on the wire", () => {
     expect(headers["x-inspector-service-token"]).toBeUndefined();
   });
 
-  it("fails the turn loudly when the deployment has no service token", async () => {
-    // Sending a claim that cannot be honoured would 403 every step and read to
-    // the user as the agent being broken for no reason. A misconfigured
-    // deployment should say so.
+  it("sends the claim without a token on a deployment that has none", async () => {
+    // Every self-hosted install (npx, Docker, desktop, source). The backend
+    // authorizes the claim on the user's own sign-in, so the turn goes out
+    // with the user's bearer and no service token — it is not refused here.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
-    await runTurn({ billingFeature: "mcpjam_agent" });
-    expect(global.fetch).not.toHaveBeenCalled();
+    const { headers, body } = await runTurn({ billingFeature: "mcpjam_agent" });
+    expect(global.fetch).toHaveBeenCalled();
+    // To the platform route, never the ordinary one that bills the customer.
+    const url = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0]?.[0];
+    expect(String(url)).toContain("/stream/platform");
+    expect(body.billingFeature).toBe("mcpjam_agent");
+    expect(headers["x-inspector-service-token"]).toBeUndefined();
   });
 });
 

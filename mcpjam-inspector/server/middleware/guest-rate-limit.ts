@@ -15,6 +15,8 @@ import { hasDedicatedPollBudget } from "./server-connection-poll-rate-limit.js";
 
 const GUEST_RATE_LIMIT = 60;
 const GUEST_WINDOW_MS = 60_000;
+const TOO_MANY_MESSAGE =
+  "Guest rate limit exceeded. Try again later or sign in for higher limits.";
 
 const guestWindows = new Map<string, { count: number; windowStart: number }>();
 
@@ -53,11 +55,17 @@ export async function guestRateLimitMiddleware(
   if (entry) {
     if (now - entry.windowStart < GUEST_WINDOW_MS) {
       if (entry.count >= GUEST_RATE_LIMIT) {
+        // `requestLogContextMiddleware` reads the code and message off
+        // `webErrorMeta` for a RETURNED response.
+        c.set("webErrorMeta", {
+          status: 429,
+          code: ErrorCode.RATE_LIMITED,
+          message: TOO_MANY_MESSAGE,
+        });
         return c.json(
           {
             code: ErrorCode.RATE_LIMITED,
-            message:
-              "Guest rate limit exceeded. Try again later or sign in for higher limits.",
+            message: TOO_MANY_MESSAGE,
           },
           429,
           // This is a FIXED window, so the wait is exactly the remainder of it

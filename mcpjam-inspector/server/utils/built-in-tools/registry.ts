@@ -68,6 +68,7 @@ import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
 } from "./exa-web-search.js";
+import type { FailureCapture } from "../agent-failure-capture.js";
 import { buildBashTool, BASH_TOOL_NAME } from "./bash.js";
 import {
   coercePersonalEngineForActor,
@@ -191,15 +192,21 @@ export interface BuiltInToolContext {
   scenarioId?: string;
   /**
    * Ask MCPJam only: the turn is platform-paid, so its web search should be
-   * too. Forwarded to Convex alongside the Inspector service token, which is
-   * what makes the claim credible; Convex refuses rather than falling back to
-   * the customer's credits when it does not hold.
+   * too. Forwarded to Convex, which honours it on the signed-in user's own
+   * login and refuses rather than falling back to the customer's credits when
+   * it does not hold.
    *
    * Only `web_search` reads it. The other built-ins here either cost nothing
    * (workspace reads) or are already bounded by their own rails (bash, the
    * browser), so there is nothing to re-fund.
    */
   billingFeature?: string;
+  /**
+   * Ask MCPJam only: its capture rule, so a failed web search during an agent
+   * turn reaches Sentry like the turn's own failures. Only `web_search` reads
+   * it.
+   */
+  failureCapture?: FailureCapture;
   /**
    * True when this turn belongs to a Journey (swarm) simulated session.
    * Computer-backed tools are suppressed for those UNLESS the turn holds a
@@ -484,6 +491,7 @@ export function resolveHostTools(
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
         // Ask MCPJam's search follows its turn onto MCPJam's budget.
         ...(ctx.billingFeature ? { billingFeature: ctx.billingFeature } : {}),
+        ...(ctx.failureCapture ? { failureCapture: ctx.failureCapture } : {}),
         requireToolApproval: ctx.requireToolApproval,
       });
       continue;

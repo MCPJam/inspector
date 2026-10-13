@@ -77,10 +77,16 @@ describe("internal-code -> public-code mapping", () => {
     "TASKS_UNSUPPORTED",
     "SCENARIO_ACCESS_DENIED",
     "SCENARIO_ACCESS_STALE",
+    // Raised only by the hosted chat routes' loop guard, before `/api/v1`'s
+    // own agent route is involved.
+    "AGENT_STEP_LIMIT",
     // Inspector-only, and mapped at the v1 boundary (`mapErrorToV1`) rather
     // than in the shared table: UNAUTHORIZED + `details.reason`. Pinned in
     // envelope.test.ts.
     "SESSION_REVOKED",
+    // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
+    // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
+    "UPSTREAM_HTTP_ERROR",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

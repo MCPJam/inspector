@@ -22,7 +22,7 @@ import {
 } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -47,6 +47,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { convexErrMessage } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import {
   IMAGE_UPLOAD_ACCEPT,
@@ -117,6 +119,11 @@ import {
 } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { track } from "@/lib/analytics";
+import {
+  beginOrganizationDeletion,
+  endOrganizationDeletion,
+  useOrganizationDeletionStore,
+} from "@/stores/organization-deletion-store";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -124,7 +131,6 @@ interface OrganizationsTabProps {
   children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
-  onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
   onOrganizationDeleted?: (organizationId: string) => void;
 }
@@ -353,7 +359,7 @@ function PendingSeatPaymentNotice({
 // the settings danger zone, so removal rules and error handling stay in sync.
 function useLeaveOrganization(organization: Organization) {
   const appNavigate = useAppNavigate();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const { removeMember } = useOrganizationMutations();
   const currentUserEmail = user?.email;
 
@@ -373,7 +379,8 @@ function useLeaveOrganization(organization: Organization) {
       setLeaveConfirmOpen(false);
       appNavigate("/servers");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
+      reportCaught(error, { source: "organizations_leave" });
+      toast.error(convexErrMessage(error, "Failed to leave organization"));
     } finally {
       setIsLeaving(false);
     }
@@ -498,17 +505,19 @@ export function OrganizationsTab({
   children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
-  onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
   const appNavigate = useAppNavigate();
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
     isAuthenticated,
   });
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
 
   // Find the organization by ID
   const organization = organizationId
@@ -561,6 +570,19 @@ export function OrganizationsTab({
     );
   }
 
+  // Only while the org is still listed: once its delete lands it falls
+  // through to "not found" instead of waiting here forever.
+  if (organization && deletingOrganizationIds.includes(organization._id)) {
+    return (
+      <OrganizationStateShell>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <RefreshCw className="size-4 animate-spin" />
+          Deleting organization...
+        </div>
+      </OrganizationStateShell>
+    );
+  }
+
   if (!organization) {
     return (
       <OrganizationStateShell>
@@ -595,7 +617,6 @@ export function OrganizationsTab({
           : null
       }
       onCheckoutIntentConsumed={onCheckoutIntentConsumed}
-      onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
       navigateBillingInSameTab={navigateBillingInSameTab}
       onOrganizationDeleted={onOrganizationDeleted}
     />
@@ -608,7 +629,6 @@ interface OrganizationPageProps {
   children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
-  onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
   onOrganizationDeleted?: (organizationId: string) => void;
 }
@@ -633,13 +653,12 @@ function OrganizationPage({
   children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
-  onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationPageProps) {
   const appNavigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1249,7 +1268,8 @@ function OrganizationPage({
       });
       toast.success(`Updated role for ${member.email}`);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update member role");
+      reportCaught(error, { source: "organizations_change_member_role" });
+      toast.error(convexErrMessage(error, "Failed to update member role"));
     } finally {
       setRoleUpdatingEmail(null);
     }
@@ -1273,8 +1293,9 @@ function OrganizationPage({
 
       setTransferTargetMember(null);
     } catch (error) {
+      reportCaught(error, { source: "organizations_transfer_ownership" });
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership",
+        convexErrMessage(error, "Failed to transfer organization ownership"),
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -1283,16 +1304,31 @@ function OrganizationPage({
 
   const handleDelete = async () => {
     setIsDeleting(true);
+    beginOrganizationDeletion(organization._id);
     try {
-      await deleteOrganization({ organizationId: organization._id });
-      toast.success("Organization deleted");
+      const result = (await deleteOrganization({
+        organizationId: organization._id,
+      })) as { purgeAfter?: number } | undefined;
+      // The window check keeps a slow client clock from offering a cancel
+      // the backend never granted.
+      const purgeAfter = result?.purgeAfter;
+      toast.success(
+        (organization.deletionCancellationWindowHours ?? 0) > 0 &&
+          typeof purgeAfter === "number" &&
+          purgeAfter > Date.now()
+          ? `Deletion scheduled. You can cancel until ${new Date(purgeAfter).toLocaleString()}.`
+          : "Organization deleted",
+      );
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
         appNavigate("/servers");
       }
     } catch (error) {
-      toast.error((error as Error).message || "Failed to delete organization");
+      // Only on failure: clearing after success re-renders before the org list drops it.
+      endOrganizationDeletion(organization._id);
+      reportCaught(error, { source: "organizations_delete" });
+      toast.error(convexErrMessage(error, "Failed to delete organization"));
     } finally {
       setIsDeleting(false);
     }
@@ -1710,110 +1746,6 @@ function OrganizationPage({
       )
     : null;
 
-  const handleAutoPlanChange = useCallback(
-    async (tier: "pro" | "team", billingInterval: "monthly" | "annual") => {
-      trackBillingEvent("billing_flow_started", {
-        location: "organization_billing",
-        flow: "plan_change",
-        source: "pricing_deep_link",
-        current_plan: billingStatus?.plan ?? "unknown",
-        target_plan: tier,
-        target_interval: billingInterval,
-      });
-      try {
-        const result = await startPlanChange(
-          getBillingReturnUrl(),
-          tier,
-          billingInterval,
-          { confirmPaidPlanChange: false },
-        );
-
-        if (result.kind === "updated") {
-          trackBillingEvent("billing_action_succeeded", {
-            location: "organization_billing",
-            flow: "plan_change",
-            source: "pricing_deep_link",
-            outcome: "updated",
-            current_plan: billingStatus?.plan ?? "unknown",
-            target_plan: tier,
-            target_interval: billingInterval,
-          });
-          toast.success(
-            `Plan updated to ${formatPlanName(
-              result.subscription.plan ?? tier,
-            )}.`,
-          );
-          return;
-        }
-
-        if (result.kind === "scheduled") {
-          trackBillingEvent("billing_action_succeeded", {
-            location: "organization_billing",
-            flow: "plan_change",
-            source: "pricing_deep_link",
-            outcome: "scheduled",
-            current_plan: billingStatus?.plan ?? "unknown",
-            target_plan: tier,
-            target_interval: billingInterval,
-          });
-          toast.success("Plan change scheduled for renewal.");
-          return;
-        }
-
-        const billingUrl =
-          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
-        onCheckoutIntentNavigationStarted?.();
-        await openBillingUrl(billingUrl, "same-tab");
-        trackBillingEvent("billing_handoff_succeeded", {
-          location: "organization_billing",
-          flow: "plan_change",
-          source: "pricing_deep_link",
-          outcome:
-            result.kind === "checkout" ? "checkout_handoff" : "portal_handoff",
-          current_plan: billingStatus?.plan ?? "unknown",
-          target_plan: tier,
-          target_interval: billingInterval,
-        });
-      } catch (error) {
-        trackBillingEvent("billing_flow_failed", {
-          location: "organization_billing",
-          flow: "plan_change",
-          source: "pricing_deep_link",
-          failure_kind:
-            error instanceof Error &&
-            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-              ? "confirmation_required"
-              : "request_failed",
-          current_plan: billingStatus?.plan ?? "unknown",
-          target_plan: tier,
-          target_interval: billingInterval,
-        });
-        if (!(
-          error instanceof Error &&
-          error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-        )) {
-          toast.error(
-            getBillingErrorMessage(
-              error,
-              "Failed to change plan",
-              billingStatus?.canManageBilling ?? false,
-            ),
-          );
-        }
-        throw error;
-      }
-    },
-    [
-      billingStatus?.canManageBilling,
-      getBillingReturnUrl,
-      billingStatus?.plan,
-      onCheckoutIntentNavigationStarted,
-      openBillingUrl,
-      startPlanChange,
-      trackBillingEvent,
-    ],
-  );
-
   const renderPendingSeatPaymentNotice = (surface: SeatPaymentSurface) =>
     activeSeatPaymentIntent && billingStatus?.canManageBilling ? (
       <PendingSeatPaymentNotice
@@ -1930,7 +1862,6 @@ function OrganizationPage({
                   source: sharedBillingSource,
                 })
               }
-              onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
               currentPlanPanel={
@@ -2307,7 +2238,10 @@ function OrganizationPage({
                       </h3>
                       <p className="text-sm text-foreground">
                         {isOwner
-                          ? "Permanently delete this organization. This action cannot be undone."
+                          ? (organization.deletionCancellationWindowHours ??
+                              0) > 0
+                            ? `Delete this organization and its data. You can cancel within ${organization.deletionCancellationWindowHours} hours.`
+                            : "Permanently delete this organization and its data."
                           : "You’ll lose access to this organization and its projects."}
                       </p>
                     </div>
@@ -2537,6 +2471,7 @@ function OrganizationPage({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         name={organization.name}
+        cancellationWindowHours={organization.deletionCancellationWindowHours}
         pending={isDeleting}
         onConfirm={handleDelete}
       />
@@ -2552,5 +2487,3 @@ function OrganizationPage({
     </SettingsPageShell>
   );
 }
-const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
-  "Paid plan changes require an explicit confirmation.";

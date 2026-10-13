@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { logger } from "../utils/logger";
 import { RelayConnection, type RelayConnectionOptions } from "./relay-client";
 import {
@@ -18,6 +19,7 @@ function entryKey(scope: TunnelScope, serverId: string): string {
 }
 
 interface TunnelEntry {
+  secretHash: Buffer;
   connection: RelayConnection;
   /** Public host ({slug}.tunnels.mcpjam.com) registered for isolation checks. */
   host: string;
@@ -57,7 +59,13 @@ class TunnelManager {
       return existingTunnel.baseUrl;
     }
 
-    const host = new URL(options.publicUrl).hostname;
+    const publicUrl = new URL(options.publicUrl);
+    const secret = publicUrl.searchParams.get("k");
+    if (!secret || publicUrl.searchParams.getAll("k").length !== 1) {
+      throw new Error("Tunnel grant must include one bearer secret");
+    }
+    const secretHash = createHash("sha256").update(secret).digest();
+    const host = publicUrl.hostname;
     let registered = false;
     let earlyPermanentFailure: { reason: string; code: number } | null = null;
     const connection = new RelayConnection({
@@ -121,6 +129,7 @@ class TunnelManager {
 
     const baseUrl = `https://${host}`;
     this.tunnels.set(key, {
+      secretHash,
       connection,
       host,
       baseUrl,
@@ -183,6 +192,19 @@ class TunnelManager {
     scope: TunnelScope = "adapter-http"
   ): string | null {
     return this.tunnels.get(entryKey(scope, serverId))?.slug ?? null;
+  }
+
+  verifyTunnelSecret(
+    scope: TunnelScope,
+    serverId: string,
+    secret: string,
+  ): boolean {
+    const entry = this.tunnels.get(entryKey(scope, serverId));
+    if (!entry || !secret) return false;
+    return timingSafeEqual(
+      entry.secretHash,
+      createHash("sha256").update(secret).digest(),
+    );
   }
 
   hasTunnel(): boolean {

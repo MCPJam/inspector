@@ -872,11 +872,64 @@ describe("analysis states and provenance", () => {
   });
 });
 
+describe("analysis the organization's AI key policy stopped", () => {
+  it("reads the automatic findings skip as Not analyzed", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "org_model_unavailable", skipped: true },
+    });
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed").textContent,
+    ).toBe(
+      "Not analyzed because this organization requires its own provider keys and has no compatible default AI model. An organization admin needs to choose one in Organization → AI providers.",
+    );
+  });
+
+  it.each([
+    [
+      "org_keys_required",
+      /^Not analyzed because this organization requires its own provider keys/,
+    ],
+    [
+      "provider_auth_failed",
+      /^Not analyzed\. The organization's provider rejected its API key/,
+    ],
+    ["credential_missing", /^Not analyzed[. ]/],
+  ])("names %s without 'did not complete'", (errorCode, line) => {
+    renderPanel({ analysisFailure: { errorCode } });
+    const note = screen.getByTestId("unified-findings-analysis-failed");
+    expect(note.textContent).toMatch(line);
+    expect(note.textContent).not.toMatch(/did not complete/);
+  });
+
+  it("tells a share-link visitor only that analysis is unavailable", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "org_model_unavailable", skipped: true },
+      visitor: true,
+    });
+    const note = screen.getByTestId("unified-findings-analysis-failed");
+    expect(note.textContent).toBe(
+      "This organization's analysis is unavailable.",
+    );
+    expect(note).not.toHaveAttribute("title");
+  });
+
+  it("words another skip neutrally", () => {
+    renderPanel({
+      analysisFailure: { errorCode: "auto_limit_reached", skipped: true },
+    });
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed").textContent,
+    ).toBe("AI analysis was not run for this run.");
+  });
+});
+
 describe("automatic analysis failure note", () => {
   it("explains analyzer version changes", () => {
     renderPanel({ analysisFailure: { errorCode: "superseded" } });
-    expect(screen.getByTestId("unified-findings-analysis-failed")).toHaveTextContent(
-      "AI analysis did not complete. The analyzer was updated during analysis.",
+    expect(
+      screen.getByTestId("unified-findings-analysis-failed"),
+    ).toHaveTextContent(
+      "AI analysis did not complete. Try running analysis again. The analyzer was updated during analysis.",
     );
   });
   it.each(["evidence_changed", "unknown_failure", undefined])(
@@ -889,8 +942,78 @@ describe("automatic analysis failure note", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.getByTestId("unified-findings-list")).toBeVisible();
       if (errorCode === "unknown_failure") {
-        expect(note.textContent).toBe("AI analysis did not complete.");
+        expect(note.textContent).toBe(
+          "AI analysis did not complete. Try running analysis again.",
+        );
       }
     },
+  );
+});
+
+it.each(["findings", "fallback"])(
+  "shows a safe report failure and retry beside existing %s",
+  (surface) => {
+    const onRun = vi.fn();
+    renderPanel({
+      ...(surface === "fallback"
+        ? {
+            snapshot: null,
+            findings: [],
+            fallback: <p>Recorded eval results</p>,
+          }
+        : {}),
+      build: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        errorCode: "build_retries_exhausted",
+        onRun,
+      },
+      analyze: {
+        available: true,
+        pending: false,
+        error: "Internal detail that must stay private",
+        onRun: vi.fn(),
+      },
+    });
+    expect(
+      screen.getByTestId("unified-findings-build-error"),
+    ).toHaveTextContent("Couldn’t generate the report");
+    expect(screen.queryByText(/Internal detail/)).toBeNull();
+    expect(screen.queryByTestId("unified-findings-analysis-error")).toBeNull();
+    expect(screen.queryByTestId("unified-findings-loading")).toBeNull();
+    if (surface === "fallback") {
+      expect(screen.getByText("Recorded eval results")).toBeVisible();
+    } else {
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("disables the report retry during an active request", () => {
+  const onRun = vi.fn();
+  renderPanel({
+    build: { available: true, pending: true, error: "Failed", onRun },
+  });
+  const retry = screen.getByRole("button", { name: "Try again" });
+  expect(retry).toBeDisabled();
+  fireEvent.click(retry);
+  expect(onRun).not.toHaveBeenCalled();
+});
+
+it("keeps an expected build limit refusal specific", () => {
+  renderPanel({
+    build: {
+      available: true,
+      pending: false,
+      error: "This run exceeds the analysis limit.",
+      errorCode: "run_too_large",
+      onRun: vi.fn(),
+    },
+  });
+  expect(screen.getByTestId("unified-findings-build-error")).toHaveTextContent(
+    "This run exceeds the analysis limit.",
   );
 });

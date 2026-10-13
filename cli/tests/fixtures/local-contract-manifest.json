@@ -13,6 +13,7 @@
     "subscriptions",
     "tasks",
     "telemetry",
+    "test",
     "tools",
     "xaa"
   ],
@@ -93,6 +94,10 @@
     "telemetry": {
       "usage": "Usage: mcpjam telemetry [options] [command]",
       "subcommands": ["status", "disable", "enable"]
+    },
+    "test": {
+      "usage": "Usage: mcpjam test [options] <file>",
+      "subcommands": []
     },
     "tools": {
       "usage": "Usage: mcpjam tools [options] [command]",

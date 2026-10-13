@@ -181,3 +181,9 @@ describe("against the real DefaultChatTransport", () => {
     expect(body.harnessTarget).toEqual(TARGET);
   });
 });
+
+it("sends only a server authorization marker, without a renderer grant token", () => {
+  const request = prepareLocalHarnessSendRequest(sendOptions(), { target: TARGET, token: "", serverAuthorized: true });
+  expect(request.body.harnessTarget).toEqual({ kind: "local-native", serverAuthorized: true });
+  expect(new Headers(request.headers).has(LOCAL_HARNESS_GRANT_HEADER)).toBe(false);
+});

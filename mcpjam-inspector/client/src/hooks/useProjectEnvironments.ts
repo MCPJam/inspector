@@ -79,6 +79,15 @@ export type ProjectEnvironmentServerSkillSelection = {
  * `PlatformEnvironment`: that is the public `/api/v1` wire shape (`id`,
  * `archived: boolean`) and the browser never speaks that API.
  */
+/** Explicit execution selection; omission retains pre-cutover read semantics. */
+export type ProjectEnvironmentServerSelection =
+  | { mode: "selected" | "none" }
+  | { mode: "local"; names: string[] }
+  | {
+      mode: "unresolved";
+      references: Array<{ name: string; serverId?: string; reason: string }>;
+    };
+
 export interface ProjectEnvironmentView {
   environmentId: string;
   projectId: string;
@@ -113,6 +122,7 @@ export interface ProjectEnvironmentView {
   hostId: string;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   /**
    * Stored model override. Absent ⇒ this environment inherits its client's
    * model. Deliberately NOT the effective model: a list row that conflated
@@ -257,6 +267,7 @@ export function useCreateProjectEnvironment(): (args: {
   description?: string;
   hostId: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -289,10 +300,11 @@ export function useCreateProjectEnvironment(): (args: {
  * row. The fingerprint is computed server-side and never crosses the wire,
  * which is what makes a client/server canonicalizer drift impossible.
  *
- * MEMBER-gated, unlike `createEnvironment`'s admin escalation for plugin pins —
- * except that pinning plugins escalates here too, for the same reason it does
- * there: pinning a version is plugin-lifecycle authority, and this must not
- * become a side door into it.
+ * MEMBER-gated, unlike `createEnvironment`'s admin escalation for plugin pins.
+ * Pinning a plugin escalates to admin here too, with one exception: a member
+ * may pin the CURRENT active, ready version of an enabled plugin, which is
+ * what an admin already chose to run (the Playground's hidden environment).
+ * Any other version is plugin-lifecycle authority and stays admin-only.
  *
  * `created` distinguishes a mint from a match. A backend that omits it reads as
  * a reuse, which only costs a word in a toast.
@@ -301,6 +313,7 @@ export function useEnsureAdhocEnvironment(): (args: {
   projectId: string;
   hostId: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -312,6 +325,12 @@ export function useEnsureAdhocEnvironment(): (args: {
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
+  /**
+   * Exact plugin VERSION ids to pin. A member may pin only each enabled
+   * plugin's current active, ready version; any other pin needs a project
+   * admin. Omit (never `[]`) for no pins.
+   */
+  pluginVersionIds?: string[];
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
     "projectEnvironments:ensureAdhocEnvironment" as any,
@@ -335,6 +354,7 @@ export function useEnsureAdhocEnvironments(): (args: {
   stacks: Array<{
     hostId: string;
     serverAttachmentId?: string | null;
+    serverSelection?: ProjectEnvironmentServerSelection;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
     /**
      * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
@@ -414,6 +434,7 @@ export function useUpdateProjectEnvironment(): (args: {
   description?: string | null;
   hostId?: string;
   serverAttachmentId?: string | null;
+  serverSelection?: ProjectEnvironmentServerSelection | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other

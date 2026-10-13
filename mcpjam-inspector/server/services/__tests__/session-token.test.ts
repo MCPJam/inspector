@@ -14,11 +14,24 @@ import {
 
 describe("session-token service", () => {
   describe("generateSessionToken", () => {
-    it("generates a 64-character hex token (256 bits)", () => {
+    it("uses and removes the launcher override", () => {
+      process.env.MCPJAM_SESSION_TOKEN = "launcher-token-with-enough-entropy";
+      expect(generateSessionToken()).toBe("launcher-token-with-enough-entropy");
+      expect(process.env.MCPJAM_SESSION_TOKEN).toBeUndefined();
+    });
+    it.each(["", "short", "a".repeat(24) + "<script>", "a".repeat(24) + "\n"])(
+      "rejects malformed overrides without retaining them",
+      (value) => {
+        process.env.MCPJAM_SESSION_TOKEN = value;
+        expect(() => generateSessionToken()).toThrow("MCPJAM_SESSION_TOKEN");
+        expect(process.env.MCPJAM_SESSION_TOKEN).toBeUndefined();
+      },
+    );
+    it("generates a 32-character URL-safe token (192 bits)", () => {
       const token = generateSessionToken();
 
-      expect(token).toHaveLength(64);
-      expect(token).toMatch(/^[0-9a-f]{64}$/);
+      expect(token).toHaveLength(32);
+      expect(token).toMatch(/^[A-Za-z0-9_-]{32}$/);
     });
 
     it("generates different tokens on each call", () => {
@@ -46,7 +59,7 @@ describe("session-token service", () => {
       const token = getSessionToken();
 
       expect(token).not.toBeNull();
-      expect(token).toHaveLength(64);
+      expect(token).toHaveLength(32);
     });
 
     it("returns the same token on multiple calls", () => {
@@ -78,7 +91,7 @@ describe("session-token service", () => {
 
     it("returns false for token with wrong length", () => {
       // Too short
-      expect(validateToken(validToken.slice(0, 32))).toBe(false);
+      expect(validateToken(validToken.slice(0, 16))).toBe(false);
       // Too long
       expect(validateToken(validToken + "extra")).toBe(false);
     });
@@ -112,7 +125,7 @@ describe("session-token service", () => {
 
       // 256 bits = 32 bytes = 64 hex characters
       // This provides 2^256 brute force resistance
-      expect(token).toHaveLength(64);
+      expect(token).toHaveLength(32);
     });
 
     it("tokens are cryptographically random (no obvious patterns)", () => {

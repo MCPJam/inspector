@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useRouteError } from "react-router";
 import { AlertTriangle, Lock, LogIn } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import { isAuthorizationRefusal } from "@/lib/authorization-refusal";
 import { reportCaught } from "@/lib/error-reporting";
@@ -9,6 +9,7 @@ import { scrubSensitiveUrl } from "@/lib/PosthogUtils";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { track } from "@/lib/analytics";
+import { isModuleLoadError, MODULE_LOAD_ERROR_COPY } from "@/lib/module-load-error";
 
 const GENERIC_MESSAGE = "An unexpected error occurred";
 
@@ -83,12 +84,13 @@ function errorMessage(error: unknown): string {
 export function RouteErrorScreen() {
   const error = useRouteError();
   const refused = isAuthorizationRefusal(error);
+  const moduleLoadFailed = isModuleLoadError(error);
   // Safe here: only the final branch of `main.tsx` renders `AppRouterProvider`,
   // and it sits inside `<AuthKitProvider>`. The branches that mount without
   // AuthKit (iframe shell, connection handoff, the plan-limit preview, the
   // OAuth debug popup) render their own components and never the router, so
   // this hook cannot run outside a provider.
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn } = useInspectorAuth();
 
   // Which advice is correct depends on the VIEWER, not on which backend helper
   // refused — a signed-out visitor needs to sign in whether the refusal came
@@ -192,13 +194,19 @@ export function RouteErrorScreen() {
     >
       <div className="text-center max-w-md">
         <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-semibold mb-2">
+          {moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.title
+            : "Something went wrong"}
+        </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          {errorMessage(error)}
+          {moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.description
+            : errorMessage(error)}
         </p>
         <div className="flex items-center justify-center gap-2">
           <Button onClick={() => location.reload()} variant="outline">
-            Reload
+            {moduleLoadFailed ? MODULE_LOAD_ERROR_COPY.actionLabel : "Reload"}
           </Button>
           <Button onClick={goHome} variant="ghost">
             Go home

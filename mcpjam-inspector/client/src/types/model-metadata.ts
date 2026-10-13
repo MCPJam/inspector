@@ -51,6 +51,12 @@ export interface OpenRouterModel {
   supported_parameters_complete?: boolean;
   free_tier_eligible?: boolean;
   judge_eligible?: boolean;
+  /**
+   * Reasoning efforts `/stream` accepts for this model, low-to-high (backend
+   * `supportedReasoningEfforts`). Absent from a backend that predates it, and
+   * empty for a model with no effort control.
+   */
+  supportedReasoningEfforts?: string[];
   /** When the catalog row's observations were read, epoch ms. */
   catalog_observed_at?: number | null;
 }

@@ -2446,3 +2446,20 @@ describe("ServerPicker — what the popover does NOT warn about", () => {
     expect(screen.queryByText(/real actions/i)).toBeNull();
   });
 });
+
+describe("ServerPicker — long lists", () => {
+  it("caps the popover to the viewport and scrolls the overflow", async () => {
+    mockState.servers = Array.from({ length: 40 }, (_, i) => ({
+      _id: `srv_${i + 1}`,
+      name: `server-${i + 1}`,
+    }));
+    open();
+    const content = (await serverRow("srv_40")).closest(
+      "[data-slot='popover-content']",
+    );
+    expect(content).toHaveClass(
+      "max-h-(--radix-popover-content-available-height)",
+      "overflow-y-auto",
+    );
+  });
+});

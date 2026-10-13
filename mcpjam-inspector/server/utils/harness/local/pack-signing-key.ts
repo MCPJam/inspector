@@ -15,7 +15,7 @@
  *
  * ── Key handling ─────────────────────────────────────────────────────────
  * Ed25519. The private half lives only in the CI secret
- * `LOCAL_HARNESS_PACK_SIGNING_KEY` and is never in this repository, in a
+ * `PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY` in the protected release environment and is never in this repository, in a
  * developer's environment, or in a built artifact. Rotation is additive: a new
  * key is appended here and packs signed by either verify, until the old key's
  * packs are no longer installable and its entry is removed in a later release.
@@ -45,12 +45,12 @@ export interface PackSigningKey {
  */
 export const PACK_SIGNING_KEYS: readonly PackSigningKey[] = [
   {
-    // Generated 2026-09-02. The private half went straight into the CI secret
-    // `LOCAL_HARNESS_PACK_SIGNING_KEY` and exists nowhere else — there is no
-    // copy to lose, and recovery is rotation, not restore.
-    keyId: "pack-2026-09",
+    // Rotated before the first pack publication on 2026-09-28. The private
+    // key was uploaded directly to the protected release environment; no
+    // file or repository-level secret retains it. Recovery is rotation.
+    keyId: "pack-2026-09-28",
     publicKeyPem: `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAjaZXzr+4k5pJEuzIy5JUU858ksLJgjZv9b9jxmNhV6A=
+MCowBQYDK2VwAyEA/8fkvTTgyzjmmlLmN4veODTVpexBi4Ib6SGVq8xmyTs=
 -----END PUBLIC KEY-----
 `,
   },

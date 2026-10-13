@@ -8,7 +8,10 @@
  * left pane is edited. No model runs here — this is the spec made concrete.
  */
 import { ListChecks } from "lucide-react";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import {
+  describeMatchExpectation,
+  type Predicate,
+} from "@mcpjam/sdk/predicates";
 import { Label } from "@mcpjam/design-system/label";
 import type { PromptTurn } from "@/shared/steps";
 import type { ScriptedStep, ScriptedWidgetCheck } from "@/shared/scripted-steps";
@@ -69,6 +72,22 @@ export function describeCheck(p: Predicate): string {
       return `< ${p.count} calls`;
     case "toolCalledBefore":
       return `${p.toolName || "?"} before ${p.beforeToolName || "?"}`;
+    case "toolInputMatches":
+    case "toolResultMatches": {
+      // "no matching call", never "never called": the bounds count calls
+      // (or results) that match every pattern.
+      const isInput = p.type === "toolInputMatches";
+      const count = describeMatchExpectation(
+        { min: p.min ?? 1, max: p.max },
+        isInput ? "call" : "result",
+      );
+      const [first = "", ...rest] = p.patterns ?? [];
+      const more = rest.length > 0 ? ` +${rest.length}` : "";
+      const source = isInput
+        ? `to ${p.toolName || "?"}`
+        : `from ${p.toolName || "any tool"}`;
+      return `${count} ${source}: /${first || "…"}/${more}`;
+    }
     case "noDeprecatedToolCalled":
       return "no deprecated tool";
     case "noDestructiveToolCalled":

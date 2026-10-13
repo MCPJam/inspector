@@ -52,7 +52,7 @@ function record(
     workspaceGrantId: "ws_test",
     targetKind: "local-native",
     lifecycleState: "running",
-    sessionStateDir: join(base, ".mcpjam", "harness-local", "sessions", "s-x"),
+    sessionStateDir: join(base, ".mcpjam", "harness-local-sessions", "s-x"),
     ...overrides,
   };
 }
@@ -428,8 +428,7 @@ describe("the janitor", () => {
       const sessionStateDir = join(
         base,
         ".mcpjam",
-        "harness-local",
-        "sessions",
+        "harness-local-sessions",
         "s-gone",
       );
       await mkdir(sessionStateDir, { recursive: true });

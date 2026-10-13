@@ -1,5 +1,9 @@
 import type { ErrorEvent, EventHint } from "@sentry/react";
-import { isAuthorizationRefusal } from "./authorization-refusal";
+import {
+  isAuthorizationRefusal,
+  isSessionRevokedError,
+  isUnauthenticatedError,
+} from "./authorization-refusal";
 
 let backendHostname: string | undefined;
 
@@ -86,13 +90,39 @@ export function createConvexQueryEventProcessor(limit = 500) {
   const duplicate = createQueryRequestCache(limit);
   return (event: ErrorEvent, hint: EventHint = {}): ErrorEvent | null => {
     try {
+      if (event.tags?.source === "convex_auth_refusal") {
+        // Do not inherit SDK user, URL, breadcrumbs, replay or request context.
+        return {
+          type: event.type,
+          event_id: event.event_id,
+          timestamp: event.timestamp,
+          platform: event.platform,
+          release: event.release,
+          dist: event.dist,
+          environment: event.environment,
+          message: "Convex auth refusal diagnostic",
+          level: "info",
+          tags: {
+            source: "convex_auth_refusal",
+            auth_refusal_id: event.tags.auth_refusal_id,
+            request_id: event.tags.request_id,
+            convex_backend: event.tags.convex_backend,
+          },
+          contexts: { auth_refusal: event.contexts?.auth_refusal },
+        };
+      }
       const values = event.exception?.values;
       const exception = values?.find((value) =>
         queryFailureDetails(value.value ?? ""),
       );
       const details = queryFailureDetails(exception?.value ?? "");
       if (!details) return event;
-      if (isAuthorizationRefusal(hint.originalException)) return null;
+      if (
+        isAuthorizationRefusal(hint.originalException) ||
+        isSessionRevokedError(hint.originalException) ||
+        isUnauthenticatedError(hint.originalException)
+      )
+        return null;
       const tags = queryFailureTags(exception!.value!)!;
       const hostname =
         typeof event.tags?.convex_backend === "string"

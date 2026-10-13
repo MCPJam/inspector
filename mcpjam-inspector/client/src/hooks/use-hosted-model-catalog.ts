@@ -9,6 +9,10 @@ import {
   type ModelObservationStatus,
 } from "@/shared/types";
 import type { OpenRouterModel } from "@/types/model-metadata";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
 
 /**
  * The MCPJam hosted-model catalog for the picker, sourced from the backend
@@ -35,7 +39,10 @@ import type { OpenRouterModel } from "@/types/model-metadata";
 // v3 drops caches written before rows carried catalog observations, release
 // dates and `supportedParametersComplete`, so the offline fallback never mixes
 // the two shapes.
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v3";
+// v4 drops caches written before rows carried `supportedReasoningEfforts`, so a
+// cached row never reads as "the catalog listed no efforts" when it simply
+// predates the field.
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v4";
 
 export type HostedCatalogStatus = "loading" | "live" | "fallback";
 
@@ -115,6 +122,15 @@ export function catalogDtoToModelDefinition(
   const observations = catalogObservations(dto.observations);
   const catalogObservedAt =
     catalogTimestampToMs(dto.catalog_observed_at) ?? envelopeObservedAt;
+  // Only when the backend sent the field (an array, possibly empty), and only
+  // levels this SDK knows: an unknown level would be a value no control can
+  // save (the closed validator refuses it).
+  const efforts = Array.isArray(dto.supportedReasoningEfforts)
+    ? dto.supportedReasoningEfforts.filter(
+        (level): level is ModelReasoningEffort =>
+          (MODEL_REASONING_EFFORTS as readonly string[]).includes(level)
+      )
+    : undefined;
   return {
     id: dto.id,
     name: dto.name || dto.id,
@@ -140,6 +156,7 @@ export function catalogDtoToModelDefinition(
       ? { judgeEligible: dto.judge_eligible }
       : {}),
     ...(catalogObservedAt !== undefined ? { catalogObservedAt } : {}),
+    ...(efforts ? { supportedReasoningEfforts: efforts } : {}),
   };
 }
 

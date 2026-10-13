@@ -12,7 +12,7 @@ import {
   useHostedModelCatalog,
 } from "../use-hosted-model-catalog";
 
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v3";
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v4";
 
 function catalogDto(id: string, guestAllowed = true) {
   return {
@@ -194,6 +194,27 @@ describe("catalogDtoToModelDefinition", () => {
       contextLength: 1000,
       supportedParameters: ["structured_outputs"],
     });
+  });
+
+  it("carries the catalog's supported efforts, dropping levels the SDK does not know", () => {
+    const row = (efforts: unknown) =>
+      catalogDtoToModelDefinition({
+        ...catalogDto("openai/gpt-5"),
+        supportedReasoningEfforts: efforts,
+      } as any);
+    expect(row(["low", "medium", "high"]).supportedReasoningEfforts).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(row(["low", "ultra"]).supportedReasoningEfforts).toEqual(["low"]);
+    // A model the catalog lists no effort control for: present and empty.
+    expect(row([]).supportedReasoningEfforts).toEqual([]);
+    // A backend that predates the field: absent, so the row is unchanged.
+    expect(
+      "supportedReasoningEfforts" in
+        catalogDtoToModelDefinition(catalogDto("openai/gpt-5") as any),
+    ).toBe(false);
   });
 
   it("carries release, retirement, observations and eligibility", () => {

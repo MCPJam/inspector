@@ -25,6 +25,7 @@ export { LOCAL_HARNESS_GRANT_HEADER };
 
 /** The body field, before anything has been checked. */
 export interface RawHarnessTargetInput {
+  serverAuthorized?: unknown;
   kind?: unknown;
   workspaceGrantId?: unknown;
   runtimeId?: unknown;

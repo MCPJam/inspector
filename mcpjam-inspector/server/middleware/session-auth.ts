@@ -17,8 +17,11 @@
  * - Are static assets that don't expose sensitive data
  */
 
+import { tunnelManager } from "../services/tunnel-manager.js";
+import "../types/hono.js";
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
+import { scrubCredentialsInText } from "../../shared/credential-urls.js";
 
 /**
  * Routes that don't require authentication.
@@ -29,7 +32,7 @@ const UNPROTECTED_ROUTES = [
   "/health", // Health check - no sensitive data
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
-  "/api/session-token", // Token endpoint - protected by localhost check instead
+  "/api/session-token", // Credential confirmation endpoint; validates its own header
   // Public model catalog proxy: guests fetch it to populate the picker. It
   // forwards no auth and returns only the keyless backend /v1/models (no
   // sensitive data). Without this exemption the client's authless fetch 401s
@@ -68,8 +71,6 @@ const UNPROTECTED_PREFIXES = [
   // unauthenticated callers from filling the in-memory fileStore with up
   // to 20 MB blobs per request.
   "/api/apps/files/file/",
-  "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
-  "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers
   // CLI OAuth bridge: public front-channel (config metadata + browser
   // redirects through AuthKit). Returns no tokens or sensitive data; the
@@ -120,20 +121,22 @@ const UNPROTECTED_PREFIXES = [
 ];
 
 /**
- * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token (session token), k (tunnel bearer secret), t (the retired
- * harness `?t=` proxy-token fallback), and token (the computer terminal/
- * upload token — routes/web/computer-terminal.ts takes it from the WS
- * subprotocol only, never `?token=`, but this is scrubbed defensively in
- * case a stale client, a proxy, or a future regression puts one in the URL)
- * query parameter values with [REDACTED].
+ * Scrub credentials from a request line before it is logged (the hono/logger
+ * print function in server/index.ts and server/app.ts hands each
+ * `<-- GET /path?query` / `--> GET /path?query 200 3ms` line through here).
+ *
+ * Delegates to the credential registry (`shared/credential-urls.ts`) rather
+ * than keeping its own list. The list this used to keep — `_token` (session
+ * token), `k` (tunnel bearer secret), `t` (the retired harness proxy token)
+ * and `token` (the computer terminal token, scrubbed defensively) — is a
+ * subset of the registry's secret query keys, and it missed the rest: an
+ * OAuth callback's `?code=`/`?state=`, presigned-URL signatures, and every
+ * credential that sits in the PATH (`/results/<token>`,
+ * `/api/web/score/runs/<token>`, …), none of which has a query key at all.
+ * Secret values become the registry's placeholder, `[redacted]`.
  */
 export function scrubTokenFromUrl(url: string): string {
-  return url
-    .replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]")
-    .replace(/([?&])k=[^&]*/g, "$1k=[REDACTED]")
-    .replace(/([?&])t=[^&]*/g, "$1t=[REDACTED]")
-    .replace(/([?&])token=[^&]*/g, "$1token=[REDACTED]");
+  return scrubCredentialsInText(url);
 }
 
 // Routes that typically use query param auth (SSE endpoints)
@@ -168,7 +171,7 @@ export async function sessionAuthMiddleware(
   }
 
   // Only protect API routes - static files and HTML pages don't need auth
-  // The HTML page is where the token gets injected, so it must be accessible
+  // Public documents contain no session credentials.
   if (!path.startsWith("/api/")) {
     return next();
   }
@@ -196,6 +199,27 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // A tunnel bearer is valid only for its exact adapter server, on every
+  // transport path. Never infer authorization from forwarding headers.
+  const adapter = /^\/api\/mcp\/adapter-http\/([^/]+)(?:\/|$)/.exec(path);
+  const secrets = c.req.queries("k");
+  if (adapter && secrets !== undefined) {
+    let serverId: string;
+    try {
+      serverId = decodeURIComponent(adapter[1]);
+    } catch {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (
+      secrets.length !== 1 ||
+      !tunnelManager.verifyTunnelSecret("adapter-http", serverId, secrets[0])
+    ) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    c.set("bridgeCaller", "tunnel");
+    return next();
+  }
+
   // Extract token from header (preferred)
   let token: string | undefined;
   const authHeader = c.req.header("X-MCP-Session-Auth");
@@ -211,6 +235,7 @@ export async function sessionAuthMiddleware(
 
   // No token provided
   if (!token) {
+    c.header("X-MCPJam-Session", "missing");
     return c.json(
       {
         error: "Unauthorized",
@@ -225,6 +250,7 @@ export async function sessionAuthMiddleware(
 
   // Invalid token
   if (!validateToken(token)) {
+    c.header("X-MCPJam-Session", "invalid");
     return c.json(
       {
         error: "Unauthorized",
@@ -235,5 +261,6 @@ export async function sessionAuthMiddleware(
     );
   }
 
+  c.set("bridgeCaller", "local");
   return next();
 }

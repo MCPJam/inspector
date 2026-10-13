@@ -41,6 +41,28 @@ function createServer(name: string): ServerWithName {
 }
 
 describe("OAuthProfileModal", () => {
+  it.each(["none", "bearer", "xaa", "auto"] as const)(
+    "saves the canonical OAuth method when editing a %s target",
+    async (authMethod) => {
+      const user = userEvent.setup();
+      const server = { ...createServer("oauth-target"), authMethod };
+      const { onSave } = renderModal({ server });
+
+      await user.click(
+        screen.getByRole("button", { name: "Save configuration" }),
+      );
+
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          formData: expect.objectContaining({
+            authMethod: "oauth",
+            useOAuth: true,
+          }),
+        }),
+      );
+    },
+  );
+
   it("rejects a duplicate name when adding a new target", async () => {
     // Add mode passes no `server`, so the hook's rename guard never fires —
     // without the modal's own check this save silently overwrote staging-mcp.

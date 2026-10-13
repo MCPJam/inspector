@@ -40,6 +40,7 @@ import {
 } from "../environments/resolve.js";
 import { resolveQuickRunPluginServers } from "../plugins/run-plugin-servers.js";
 import { asBillingRouteError } from "./recorder.js";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   buildPinnedSkillSource,
   type BuiltPinnedSkillSource,
@@ -230,6 +231,10 @@ export function translateQuickRunCommitError(error: unknown): unknown {
   if (error instanceof WebRouteError) return error;
   const billing = asBillingRouteError(error);
   if (billing) return billing;
+  // The organization's AI-key policy refused the launch (its code and the
+  // unavailable dependencies ride in `details`).
+  const aiRefusal = asAiRefusalRouteError(error);
+  if (aiRefusal) return aiRefusal;
   if (isEnvironmentLaunchConflict(error)) {
     return environmentLaunchConflictError(error);
   }
@@ -310,6 +315,9 @@ export async function commitEnvironmentQuickRun(
         startedAt: args.startedAt,
         environment: {
           environmentId: args.resolved.environmentRef.environmentId,
+          ...(args.resolved.runtimeVenue === "local"
+            ? { runtimeVenue: "local" }
+            : {}),
           expectedRevision: args.resolved.environmentRef.revision,
           ...(args.resolved.hostConfigId
             ? { expectedHostConfigId: args.resolved.hostConfigId }

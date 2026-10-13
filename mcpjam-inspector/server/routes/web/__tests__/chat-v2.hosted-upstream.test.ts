@@ -77,6 +77,8 @@ vi.mock("@/shared/types", async (importOriginal) => {
   return { ...actual, isMCPJamProvidedModel: vi.fn().mockReturnValue(true) };
 });
 
+import { MCPClientManager } from "@mcpjam/sdk";
+import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
 const MARKER = /UNEXPECTED_MARKER/;
@@ -207,6 +209,37 @@ describe("hosted chat turn (MJ-001)", () => {
     expect(JSON.parse(payload)._httpLogs?.length).toBeGreaterThan(0);
   });
 
+  it("reports the server's HTTP error after connect by its status line", async () => {
+    // Connects, then answers `tools/list` with its own 500 and an HTML body.
+    upstream.current = async (request) => {
+      const message = (await request
+        .clone()
+        .json()
+        .catch(() => undefined)) as any;
+      if (message?.method === "tools/list") {
+        return new Response(
+          "<html><body>UNEXPECTED_MARKER_BODY fetch failed</body></html>",
+          {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: { "content-type": "text/html", ...EXTRA_HEADERS },
+          },
+        );
+      }
+      return mcpServer(request);
+    };
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", body, token);
+    const payload = await response.text();
+    expect(payload).not.toMatch(MARKER);
+    expect(response.status).toBe(424);
+    const parsed = JSON.parse(payload);
+    expect(parsed.code).toBe("UPSTREAM_HTTP_ERROR");
+    expect(parsed.message).toBe(
+      "The MCP server responded with HTTP 500 Internal Server Error.",
+    );
+  });
+
   it("streams exchange log parts without a stored header value or extra headers", async () => {
     upstream.current = mcpServer;
     const { app, token } = createWebTestApp();
@@ -229,5 +262,44 @@ describe("hosted chat turn (MJ-001)", () => {
           part.data.message.result?.tools,
       ),
     ).toBe(true);
+  });
+
+  it("fails a hung server's tool listing with our own 424 and drops the connect", async () => {
+    // A server that accepts the request and never answers. The abort is the
+    // evidence the stuck connect was cancelled rather than left to run out
+    // the manager's own per-request timeout and retries.
+    let aborted = false;
+    upstream.current = (request) =>
+      new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(request.signal.reason);
+        });
+      });
+    const disconnectAll = vi.spyOn(
+      MCPClientManager.prototype,
+      "disconnectAllServers",
+    );
+    const { prepareChatV2 } = await vi.importActual<
+      typeof import("../../../utils/chat-v2-orchestration.js")
+    >("../../../utils/chat-v2-orchestration.js");
+    prepareChatV2Mock.mockImplementation((args: any) => {
+      // The hosted turn asks for the real budget; shortened here so the test
+      // does not wait 30 s.
+      expect(args.toolListingTimeoutMs).toBe(WEB_CHAT_TOOL_LISTING_TIMEOUT_MS);
+      return prepareChatV2({ ...args, toolListingTimeoutMs: 50 });
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", body, token);
+
+    expect(response.status).toBe(424);
+    const payload = (await response.json()) as any;
+    expect(payload.code).toBe("TIMEOUT");
+    expect(payload.message).toMatch(/MCP server ".*" timed out/);
+    expect(disconnectAll).toHaveBeenCalled();
+    expect(aborted).toBe(true);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    disconnectAll.mockRestore();
   });
 });

@@ -5,9 +5,18 @@
  */
 export function parseHelpCommandNames(help: string): string[] {
   const names: string[] = [];
+  // Positional-argument rows (`Arguments:`) are indented like command rows
+  // but are not commands.
+  let inArguments = false;
   for (const line of help.split("\n")) {
+    if (/^\S.*:$/.test(line)) {
+      inArguments = line === "Arguments:";
+      continue;
+    }
+    if (inArguments) continue;
+    // Arguments may be optional (`[name]`) or required (`<file>`).
     const match = line.match(
-      /^  ([a-z][\w|-]*)(?: \[options\])?(?: \[[^\]]+\])?\s{2,}/
+      /^  ([a-z][\w|-]*)(?: \[options\])?(?: (?:\[[^\]]+\]|<[^>]+>))*\s{2,}/
     );
     if (!match) {
       continue;

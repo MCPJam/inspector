@@ -1,8 +1,15 @@
+import {
+  consumeCallbackProjectReturn,
+  useCallbackProjectReturnRecovery,
+} from "./lib/callback-project-return";
+import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
+import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -12,17 +19,25 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentProps,
   type ReactElement,
 } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
+import {
+  getGuestSessionRefusal,
+  subscribeGuestSessionChanges,
+} from "./lib/guest-session";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -94,7 +109,10 @@ import {
   type FirstRunServerDraft,
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
-import { validateServerFormData } from "@/lib/server-form-validation";
+import {
+  validateBearerTargetUrl,
+  validateServerFormData,
+} from "@/lib/server-form-validation";
 import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
@@ -141,6 +159,7 @@ import {
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
 import { useIsMemberActor } from "./hooks/use-is-member-actor";
+import { FeedbackReporterProvider } from "./components/support/FeedbackReporterContext";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -155,6 +174,24 @@ import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
+import { useSessionPrivacy } from "./hooks/useSessionPrivacy";
+import {
+  telemetryMembershipKey,
+  useTelemetryPrivacyContext,
+} from "./hooks/useTelemetryPrivacyContext";
+import { usePostHogRelayAuth } from "./hooks/usePostHogRelayAuth";
+import {
+  recordingSurface,
+  rememberReplayOff,
+  replayOffRemembered,
+  resolveSessionPrivacy,
+} from "./lib/session-privacy";
+import {
+  resetTelemetryIdentity,
+  setTelemetryActor,
+  setTelemetryCaptureContext,
+  setTelemetryIdentity,
+} from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -168,6 +205,18 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 // Import global styles
 import "./index.css";
 import { track } from "./lib/analytics";
+import {
+  trackFirstRunConnectionCancelled,
+  trackFirstRunConnectionFailed,
+  trackFirstRunConnectionStarted,
+  trackFirstRunConnectionSucceeded,
+  trackFirstRunPlaygroundOpened,
+  trackFirstRunServerSelected,
+  type FirstRunAuthentication,
+  type FirstRunCancelStage,
+  type FirstRunConnectionAnalyticsContext,
+  type FirstRunServerKind as FirstRunAnalyticsServerKind,
+} from "./lib/first-run-onboarding-analytics";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -237,20 +286,11 @@ import {
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
-import {
-  createProjectSignInReturnRecoveryIntent,
-  resolveProjectSignInReturnRecovery,
-  type ProjectSignInReturnRecoveryIntent,
-} from "./lib/project-route-recovery";
+import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
-  consumeAppSignInReturnPath,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
-import {
-  trackSignInReturnRestored,
-  trackStaleProjectReturnRecovered,
-} from "./lib/project-route-telemetry";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -272,19 +312,20 @@ import {
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
-  clearScenarioSignInReturnPath,
+  consumeOAuthCallbackParams,
+  readOAuthCallbackAttempt,
+  readOAuthCallbackParams,
+} from "./lib/oauth-callback-inbox";
+import {
+  FIRST_RUN_OAUTH_CANCELLED_EVENT,
+  getFirstRunOAuthReturnServerName,
+} from "./lib/first-run-oauth-return";
+import {
   readScenarioSession,
   readScenarioSignInReturnPath,
 } from "./lib/scenario-session";
 import {
-  clearCliSignInReturnPath,
-  readCliSignInReturnPath,
-} from "./lib/cli-signin-return-path";
-import {
-  clearApiKeysSignInReturnPath,
-  readApiKeysSignInReturnPath,
-} from "./lib/api-keys-signin-return-path";
-import {
+  OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -405,13 +446,65 @@ const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
+function firstRunAuthentication(source: {
+  authMethod?: unknown;
+  useOAuth?: boolean;
+}): FirstRunAuthentication | undefined {
+  const { authMethod } = source;
+  if (
+    authMethod === "auto" ||
+    authMethod === "oauth" ||
+    authMethod === "none"
+  ) {
+    return authMethod;
+  }
+  return source.useOAuth === false ? "none" : undefined;
+}
+
+function firstRunAnalyticsContextFromDraft(
+  serverKind: FirstRunAnalyticsServerKind,
+  draft: Pick<ServerFormData, "type" | "authMethod" | "useOAuth">,
+): FirstRunConnectionAnalyticsContext {
+  const authentication = firstRunAuthentication(draft);
+  return {
+    serverKind,
+    transport: draft.type,
+    ...(authentication ? { authentication } : {}),
+  };
+}
+
+function firstRunAnalyticsContextFromServer(
+  serverKind: FirstRunAnalyticsServerKind,
+  server: ServerWithName | undefined,
+): FirstRunConnectionAnalyticsContext {
+  if (serverKind === "demo") {
+    return { serverKind, transport: "http", authentication: "none" };
+  }
+  if (!server) return { serverKind };
+
+  const authentication = firstRunAuthentication(server);
+  return {
+    serverKind,
+    transport: server.config.command ? "stdio" : "http",
+    ...(authentication ? { authentication } : {}),
+  };
+}
+
+function mergeFirstRunAnalyticsContext(
+  current: FirstRunConnectionAnalyticsContext | null,
+  fallback: FirstRunConnectionAnalyticsContext,
+): FirstRunConnectionAnalyticsContext {
+  return { ...fallback, ...current };
+}
+
 function getHostedOAuthCallbackErrorMessage(): string {
-  const params = new URLSearchParams(window.location.search);
+  // The inbox, not the address bar: see `lib/oauth-callback-inbox.ts`.
+  const params = readOAuthCallbackParams() ?? new URLSearchParams();
   const error = params.get("error");
   const description = params.get("error_description");
 
   if (error === "access_denied" && !description) {
-    return "Authorization was cancelled. Try again.";
+    return OAUTH_AUTHORIZATION_CANCELLED_MESSAGE;
   }
 
   return sanitizeHostedOAuthErrorMessage(
@@ -442,7 +535,6 @@ function clearHostedCallbackRetryState() {
     }
   }
 }
-
 
 function redactOAuthDebuggerError(error: Error | null) {
   return {
@@ -483,6 +575,8 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
     </div>
   );
 }
+
+const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
 
 function UserSetupError() {
   return (
@@ -934,10 +1028,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-      ? "pending"
-      : routeHosts.some((h) => h.hostId === idShapedHostId)
-      ? "live"
-      : "dead";
+        ? "pending"
+        : routeHosts.some((h) => h.hostId === idShapedHostId)
+          ? "live"
+          : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -987,16 +1081,40 @@ export function HostsRoute() {
     toast.error("That client no longer exists. It may have been deleted.");
   }, [urlHostState, idShapedHostId, navigate]);
 
+  // The client this page last made the project's previewed client. Cleared
+  // when the URL leaves it, so arriving at it again (from the list or another
+  // client) selects it again.
+  const persistedUrlHostIdRef = useRef<string | null>(null);
+
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so surfaces reading `hostsTabSelectedHostId` stay aligned.
+  //
+  // The previewed client is written ONCE per arrival, never re-asserted. That
+  // value is shared by every tab of the project (localStorage), so a page
+  // that wrote its URL's client back whenever the value differed fought any
+  // other tab that picked a different client: two Client configuration tabs
+  // on different clients flipped it forever, and every flip was a client
+  // switch for every open tab (a reconnect of each server, a toast, App
+  // owners closed and rediscovered). A client picked elsewhere after this
+  // page opened stands; this canvas keeps showing its URL's client.
   useEffect(() => {
     if (hostsTabSelectedHostId !== openableHostId) {
       setHostsTabSelectedHostId(openableHostId);
     }
-    if (persistableHostId && previewedHostId !== persistableHostId) {
-      setPreviewedHostId(persistableHostId);
+    if (persistableHostId) {
+      if (persistedUrlHostIdRef.current !== persistableHostId) {
+        persistedUrlHostIdRef.current = persistableHostId;
+        if (previewedHostId !== persistableHostId) {
+          setPreviewedHostId(persistableHostId);
+        }
+      }
+    } else if (persistedUrlHostIdRef.current !== idShapedHostId) {
+      // Left that client (the list, or another id still loading). A host list
+      // reloading under the same URL keeps it, so it is not selected twice.
+      persistedUrlHostIdRef.current = null;
     }
   }, [
+    idShapedHostId,
     openableHostId,
     persistableHostId,
     hostsTabSelectedHostId,
@@ -1556,7 +1674,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
-    ? serversByName.get(selectedServerEntry.name) ?? null
+    ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -1656,7 +1774,7 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
   // document is served with `__MCP_GUEST_BOOTSTRAP__` injected regardless of
   // session cookie, so a signed-in user's first render carries a GUEST bearer:
   // WorkOS says "member", Convex says "authenticated", and the socket holds a
-  // guest. Anything reading `useAuth().user` answers "member" for a caller the
+  // guest. Anything reading `useInspectorAuth().user` answers "member" for a caller the
   // backend will treat as a guest. This hook asks `users:getCurrentUser`, whose
   // answer is resolved from the JWT actually received, so it reports the
   // identity a member-only function would see.
@@ -1822,13 +1940,14 @@ function SwarmsRouteContent() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const { convexProjectId, isAuthenticated, activeProject } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, activeProject } =
+    useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
   // personal-org project and pass `requireProjectRole('member')` server-side
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   // The sidebar filters the Swarms nav item on this flag, but a filtered nav
   // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
@@ -1967,7 +2086,7 @@ export function EnvironmentsRoute() {
   const { environmentId: routeEnvironmentId } = useParams<{
     environmentId?: string;
   }>();
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
     isAuthenticated,
@@ -2097,8 +2216,7 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    | Record<string, ServerWithName>
-    | undefined;
+    Record<string, ServerWithName> | undefined;
   // Names, in both modes. The local manager registers connections under their
   // name, and the hosted API layer resolves a name to its Convex server id
   // inside `buildServerRequest` — so resolving here too would duplicate that,
@@ -2416,6 +2534,7 @@ export function PlaygroundRoute() {
     isWorkOsLoading,
     playgroundServerSelectorProps,
     firstRunPlaygroundPrompt,
+    onFirstRunPlaygroundReady,
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
@@ -2448,6 +2567,7 @@ export function PlaygroundRoute() {
       onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
       firstRunPrompt={firstRunPlaygroundPrompt}
+      onReady={onFirstRunPlaygroundReady}
       onFirstRunPromptConsumed={() => {
         setFirstRunPlaygroundPrompt(null);
         markFirstRunPlaygroundPromptConsumed();
@@ -2598,7 +2718,6 @@ export function OrganizationsRoute({
     routeOrganizationSection,
     checkoutIntentForBilling,
     consumeCheckoutIntent,
-    handleCheckoutIntentNavigationStarted,
     handleOrganizationDeleted,
   } = useAppRouteContext();
 
@@ -2614,7 +2733,6 @@ export function OrganizationsRoute({
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
-      onCheckoutIntentNavigationStarted={handleCheckoutIntentNavigationStarted}
       onOrganizationDeleted={handleOrganizationDeleted}
     />
   );
@@ -2679,11 +2797,16 @@ export default function App() {
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
   const [firstRunOverlayDismissed, setFirstRunOverlayDismissed] =
     useState(false);
-  const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
-    useState(false);
   const [initialFirstRunServerChoiceState] = useState(() =>
     readFirstRunServerChoiceState(),
   );
+  const [isInitialFirstRunOAuthReturn] = useState(() => {
+    return getFirstRunOAuthReturnServerName() !== null;
+  });
+  const isFirstRunOAuthReturnActive =
+    isInitialFirstRunOAuthReturn && !firstRunOverlayDismissed;
+  const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
+    useState(isInitialFirstRunOAuthReturn);
   const skipFirstRunWelcome = Boolean(
     initialFirstRunServerChoiceState?.shownAt,
   );
@@ -2704,6 +2827,18 @@ export default function App() {
             initialFirstRunServerChoiceState.connectedToolCount ?? null,
         };
       }
+      if (
+        isInitialFirstRunOAuthReturn &&
+        initialFirstRunServerChoiceState?.attemptedServerName
+      ) {
+        const serverName = initialFirstRunServerChoiceState.attemptedServerName;
+        return {
+          status: "connecting",
+          serverName,
+          serverKind:
+            serverName === EXCALIDRAW_SERVER_NAME ? "demo" : "personal",
+        };
+      }
       return { status: "idle" };
     });
   const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
@@ -2713,11 +2848,36 @@ export default function App() {
       ? PLAYGROUND_FIRST_RUN_PROMPT
       : null,
   );
+  const [isOpeningFirstRunPlayground, setIsOpeningFirstRunPlayground] =
+    useState(false);
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
+  const firstRunAnalyticsContextRef =
+    useRef<FirstRunConnectionAnalyticsContext | null>(null);
+  const pendingFirstRunAuthorizationRef = useRef<
+    | ((
+        authorization:
+          | boolean
+          | Pick<
+              ServerFormData,
+              | "authMethod"
+              | "oauthProtocolMode"
+              | "registrationMode"
+              | "oauthScopes"
+              | "clientId"
+              | "clientSecret"
+              | "clearClientSecret"
+              | "oauthAllowPathScopedIssuer"
+            >,
+      ) => void)
+    | null
+  >(null);
   const restoredFirstRunSelectionRef = useRef<string | null>(null);
   const restoredFirstRunServerRef = useRef<string | null>(null);
+  const firstRunOAuthReturnServerRef = useRef<string | null>(null);
+  const firstRunAuthorizationRetryServerRef = useRef<string | null>(null);
+  const firstRunOAuthReconnectServerRef = useRef<string | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -2750,8 +2910,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-      ? "xaa"
-      : null;
+        ? "xaa"
+        : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -2760,9 +2920,17 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const guestSessionRefusal = useSyncExternalStore(
+    subscribeGuestSessionChanges,
+    getGuestSessionRefusal,
+    () => null,
+  );
   const actorKey = useActorKey();
+  // Gates the error card's "Report this": reports need an account, and the
+  // identity Convex holds (not WorkOS's) is the one the write would run as.
+  const isFeedbackMember = useIsMemberActor();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip",
@@ -2844,6 +3012,13 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  // The org list once it is authoritative. Its membership key resets the
+  // telemetry identity grant whenever memberships reload; `undefined` until
+  // then, which reads as "still loading", never as "no organizations".
+  const loadedOrganizations =
+    isAuthenticated && !isLoadingOrganizations
+      ? sortedOrganizations
+      : undefined;
   useEffect(() => {
     if (isLoadingOrganizations) {
       return;
@@ -2861,13 +3036,21 @@ export default function App() {
         : nextIds;
     });
   }, [isLoadingOrganizations, sortedOrganizations]);
+  const deletingOrganizationIds = useOrganizationDeletionStore(
+    (state) => state.deletingOrganizationIds,
+  );
   const effectiveOrganizations = useMemo(
     () =>
       sortedOrganizations.filter(
         (organization) =>
+          !deletingOrganizationIds.includes(organization._id) &&
           !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [
+      deletingOrganizationIds,
+      optimisticallyDeletedOrganizationIds,
+      sortedOrganizations,
+    ],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -2902,7 +3085,10 @@ export default function App() {
       return;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started. Read, not consumed: the attempt key dedupes re-runs,
+    // and `finalizeHostedOAuth` consumes it on the way out.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
@@ -2914,10 +3100,17 @@ export default function App() {
     hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
-    const callbackSearch = window.location.search;
+    // Which callback this is. Every pending page has the same URL
+    // (`?oauth_pending=1`), so the URL cannot tell attempts apart; the inbox's
+    // attempt id can, and it is null once the page has left the callback.
+    const callbackAttempt = readOAuthCallbackAttempt();
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       // Ignore a completion after the user has left or started another attempt.
-      if (window.location.pathname !== "/oauth/callback" || window.location.search !== callbackSearch) return;
+      if (
+        window.location.pathname !== "/oauth/callback" ||
+        readOAuthCallbackAttempt() !== callbackAttempt
+      )
+        return;
       if (errorMessage && callbackContext.serverName) {
         markPendingChatScopeStepUpCancelled(
           callbackContext.serverName,
@@ -2937,6 +3130,8 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
+      // The code is spent; it must not outlive the route.
+      consumeOAuthCallbackParams(callbackAttempt);
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
       });
@@ -3054,7 +3249,6 @@ export default function App() {
       .finally(() => {
         setHostedOAuthHandling(false);
       });
-
   }, [
     isAuthLoading,
     isWorkOsLoading,
@@ -3080,7 +3274,22 @@ export default function App() {
     previousWorkOsUserIdRef.current = workOsUserId;
   }, [workOsUser?.id]);
 
+  // Telemetry attributes to this actor from now on. A layout effect, so the
+  // identity grant is cleared before any passive effect — identify, Sentry's
+  // scope — runs for the new actor.
+  useLayoutEffect(() => {
+    setTelemetryActor(actorKey ?? null);
+  }, [actorKey]);
+  // Name and email follow the backend's identity answer for this actor
+  // (set further down, once the contexts in view are known).
   usePostHogIdentify();
+  // PostHog's requests to the relay carry the actor's bearer, so the relay can
+  // check what each event was captured under (server/routes/relay.ts).
+  usePostHogRelayAuth({
+    actorKey,
+    signedIn: !!workOsUser,
+    getAccessToken,
+  });
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
@@ -3120,6 +3329,52 @@ export default function App() {
     isMcpOAuthCallback &&
     getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
+  // A guest whose row vanished was most likely promoted in another tab; a
+  // reload picks up the shared AuthKit session. The sessionStorage flag allows
+  // one reload per tab until a user row is back, and never on a one-shot
+  // callback URL or the hosted chat route.
+  const [guestReloadUsed, setGuestReloadUsed] = useState(() => {
+    try {
+      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
+    } catch {
+      return true;
+    }
+  });
+  const shouldReloadForMissingGuest =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    !isMcpOAuthCallback &&
+    isAuthenticated &&
+    !workOsUser &&
+    !isWorkOsLoading &&
+    currentUser === null &&
+    isUserReady &&
+    !guestReloadUsed;
+  const hasCurrentUser = currentUser != null;
+  useEffect(() => {
+    if (!shouldReloadForMissingGuest) {
+      if (hasCurrentUser && guestReloadUsed) {
+        try {
+          sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
+        } catch {
+          // Re-arm in memory anyway; setItem below falls back to the setup error.
+        }
+        setGuestReloadUsed(false);
+      }
+      return;
+    }
+    try {
+      sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
+    } catch {
+      // Without storage there is no loop guard: show the setup error instead.
+      setGuestReloadUsed(true);
+      return;
+    }
+    window.location.reload();
+    // A cancelled unload leaves the page alive: fall back to the setup error.
+    const fallback = window.setTimeout(() => setGuestReloadUsed(true), 10_000);
+    return () => window.clearTimeout(fallback);
+  }, [shouldReloadForMissingGuest, hasCurrentUser, guestReloadUsed]);
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -3159,51 +3414,22 @@ export default function App() {
     // Preserve the scenario destination until the account sign-in completes.
     const isScenarioReturnWaitingForWorkOs =
       !!readScenarioSignInReturnPath() && (!workOsUser || isWorkOsLoading);
-    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs) return;
+    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs)
+      return;
 
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and
     // first authoritative membership response are ready below.
     if (
       !isAuthLoading &&
+      !isWorkOsLoading &&
+      (!projectTransitionRecovery.store.getState().marker || !!workOsUser) &&
       isAuthenticated &&
       !callbackReturnConsumedRef.current
     ) {
       callbackReturnConsumedRef.current = true;
-      const scenarioReturnPath = readScenarioSignInReturnPath();
-      const persistedCheckoutIntent = readPersistedCheckoutIntent();
-      const billingReturnPath = persistedCheckoutIntent
-        ? readBillingSignInReturnPath()
-        : null;
-      const cliReturnPath = readCliSignInReturnPath();
-      const apiKeysReturnPath = readApiKeysSignInReturnPath();
-      // Consumed (read AND cleared) whether or not it wins: a path left in
-      // storage would outlive this sign-in and hijack the next one.
-      const appReturnPath = consumeAppSignInReturnPath();
-      clearScenarioSignInReturnPath();
-      clearBillingSignInReturnPath();
-      clearCliSignInReturnPath();
-      clearApiKeysSignInReturnPath();
-      // LAST in precedence, deliberately. The scenario, billing, CLI and
-      // API-key flows encode an intent, not just a location, and each has its
-      // own documented ordering; the generic path only says "put me back", so
-      // it fills in for the ordinary case those four do not cover.
-      const restoredPath =
-        scenarioReturnPath ??
-        billingReturnPath ??
-        cliReturnPath ??
-        apiKeysReturnPath ??
-        appReturnPath ??
-        "/";
-      trackSignInReturnRestored(
-        !appReturnPath
-          ? "absent"
-          : restoredPath === appReturnPath
-          ? "restored"
-          : "superseded",
-      );
-      const projectReturnIntent =
-        createProjectSignInReturnRecoveryIntent(restoredPath);
+      const { restoredPath, projectReturnIntent } =
+        consumeCallbackProjectReturn();
       if (projectReturnIntent) {
         setPendingProjectReturnRecovery(projectReturnIntent);
         return;
@@ -3270,6 +3496,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,
     ensureHostedServerIdsForNames,
@@ -3297,6 +3524,7 @@ export default function App() {
     clearConvexActiveProjectSelection,
     clearLocalFallbackProjectSelection,
     pendingDashboardOAuth,
+    clearPendingDashboardOAuth,
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
     // Connect-screen inspector commands (`ui_add_server` & co) delegate to
@@ -3326,6 +3554,19 @@ export default function App() {
       void signIn();
     },
   });
+  const activeProject = projects[activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const hostedServerIdsByName = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
+      ),
+    [serversById],
+  );
   // Keep this explicit sign-out cleanup even though useAppState also cleans up
   // on auth-scope changes: WorkOS navigation can redirect before that effect
   // gets a chance to run.
@@ -3418,8 +3659,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-      ? [appState.selectedServer]
-      : [];
+        ? [appState.selectedServer]
+        : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -3474,9 +3715,11 @@ export default function App() {
     : null;
   const shouldShowPendingDashboardOAuthGate =
     !!pendingDashboardOAuth && !pendingDashboardOAuthServer;
-  const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
-    ? "project-loading"
-    : baseHostedShellGateState;
+  const effectiveHostedShellGateState = isFirstRunOAuthReturnActive
+    ? "ready"
+    : shouldShowPendingDashboardOAuthGate
+      ? "project-loading"
+      : baseHostedShellGateState;
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
@@ -3484,6 +3727,11 @@ export default function App() {
     initialFirstRunServerChoiceState?.status === "started" &&
     pendingDashboardOAuth?.serverName ===
       initialFirstRunServerChoiceState.attemptedServerName;
+  useEffect(() => {
+    if (isReturningFirstRunOAuth && pendingDashboardOAuth) {
+      firstRunOAuthReturnServerRef.current = pendingDashboardOAuth.serverName;
+    }
+  }, [isReturningFirstRunOAuth, pendingDashboardOAuth]);
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
@@ -3532,25 +3780,146 @@ export default function App() {
       !activeProjectId ||
       activeProjectId === "none");
   const openFirstRunServerConnection = useCallback(
-    (draft: FirstRunServerDraft) => {
-      const stdioCommand = parseCommandInput(draft.urlOrCommand.trim());
+    async (draft: FirstRunServerDraft) => {
+      // A token retry or edited submission replaces any OAuth authorization
+      // challenge that is currently awaiting the user's decision.
+      pendingFirstRunAuthorizationRef.current?.(false);
+      pendingFirstRunAuthorizationRef.current = null;
+      firstRunOAuthReturnServerRef.current = null;
+      const attemptId = ++firstRunConnectionAttemptRef.current;
+      const authorizationServerName =
+        firstRunConnectionState.status === "authorization-required"
+          ? firstRunConnectionState.serverName
+          : "";
+      const effectiveServerName = draft.name.trim() || authorizationServerName;
+      const savedServer =
+        projectServers[effectiveServerName] ??
+        appState.servers[effectiveServerName];
+      const savedHttpUrl =
+        savedServer?.config && "url" in savedServer.config
+          ? String(savedServer.config.url)
+          : "";
+      const effectiveUrlOrCommand = draft.urlOrCommand.trim() || savedHttpUrl;
+      const stdioCommand = parseCommandInput(effectiveUrlOrCommand);
+      const authorizationHeader =
+        draft.authentication === "bearer" && draft.bearerToken?.trim()
+          ? `Bearer ${draft.bearerToken.trim()}`
+          : undefined;
+      const clearSavedBearer =
+        draft.authentication !== "bearer" &&
+        savedServer?.hasBearerToken === true;
+      let headerPatch: Record<string, string> | undefined;
+      if (authorizationHeader || clearSavedBearer) {
+        const failHeaderLoad = (error: string) => {
+          setFirstRunConnectionState({
+            status:
+              firstRunAuthorizationRetryServerRef.current ===
+              effectiveServerName
+                ? "authorization-required"
+                : "failed",
+            serverName: effectiveServerName,
+            serverKind: "personal",
+            error,
+          });
+        };
+        const savedRequestHeaders =
+          savedServer?.config && "requestInit" in savedServer.config
+            ? savedServer.config.requestInit?.headers
+            : undefined;
+        let existingHeaders = savedRequestHeaders
+          ? Object.fromEntries(new Headers(savedRequestHeaders).entries())
+          : undefined;
+        if (
+          savedServer?.hasHeaders &&
+          (!existingHeaders || Object.keys(existingHeaders).length === 0)
+        ) {
+          const serverId = hostedServerIdsByName[effectiveServerName];
+          if (!convexProjectId || !serverId) {
+            failHeaderLoad(
+              "Saved server headers are still loading. Try again before changing authentication.",
+            );
+            return;
+          }
+          try {
+            existingHeaders =
+              (
+                await fetchServerSecrets({
+                  projectId: convexProjectId,
+                  serverId,
+                })
+              ).headers ?? undefined;
+          } catch {
+            if (firstRunConnectionAttemptRef.current !== attemptId) return;
+            failHeaderLoad(
+              "Couldn't load this server's saved headers. Try again before changing authentication.",
+            );
+            return;
+          }
+          if (!existingHeaders) {
+            if (firstRunConnectionAttemptRef.current !== attemptId) return;
+            failHeaderLoad(
+              "Couldn't load this server's saved headers. Try again before changing authentication.",
+            );
+            return;
+          }
+        }
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        headerPatch = Object.fromEntries(
+          Object.entries(existingHeaders ?? {}).filter(
+            ([key]) => key.toLowerCase() !== "authorization",
+          ),
+        );
+        if (authorizationHeader)
+          headerPatch.Authorization = authorizationHeader;
+      }
       const formData: ServerFormData = {
-        name: draft.name,
+        name: effectiveServerName,
         type: draft.transport,
         ...(draft.transport === "http"
-          ? { url: draft.urlOrCommand }
+          ? { url: effectiveUrlOrCommand }
           : {
               command: stdioCommand.command,
               args: stdioCommand.args,
             }),
         useOAuth:
           draft.authentication === "auto" || draft.authentication === "oauth",
+        useXaa: draft.authentication === "xaa",
         authMethod: draft.authentication,
+        oauthProtocolMode: draft.oauthProtocolMode,
+        registrationMode: draft.registrationMode,
+        oauthScopes: draft.oauthScopes,
+        clientId: draft.clientId,
+        clientSecret: draft.clientSecret,
+        hasClientSecret: draft.hasStoredClientSecret,
+        clearClientSecret: draft.clearClientSecret,
+        oauthAllowPathScopedIssuer: draft.oauthAllowPathScopedIssuer,
+        xaaClientAuth: draft.xaaClientAuth,
+        xaaAuthzIssuer: draft.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer: draft.xaaAllowPathScopedIssuer,
+        xaaSubject: draft.xaaSubject,
+        xaaEmail: draft.xaaEmail,
+        authServerMode: draft.authentication === "xaa" ? "mcpjam" : undefined,
+        ...(headerPatch
+          ? { headers: headerPatch, secretPatch: { headers: headerPatch } }
+          : {}),
       };
-      const validationError = validateServerFormData(formData);
+      const analyticsContext = firstRunAnalyticsContextFromDraft(
+        "personal",
+        formData,
+      );
+      firstRunAnalyticsContextRef.current = analyticsContext;
+      trackFirstRunServerSelected(analyticsContext);
+      const validationError =
+        (authorizationHeader && draft.transport === "http"
+          ? validateBearerTargetUrl(effectiveUrlOrCommand)
+          : null) ?? validateServerFormData(formData);
       if (validationError) {
+        trackFirstRunConnectionFailed(analyticsContext, "validation");
         setFirstRunConnectionState({
-          status: "failed",
+          status:
+            firstRunAuthorizationRetryServerRef.current === formData.name
+              ? "authorization-required"
+              : "failed",
           serverName: formData.name,
           serverKind: "personal",
           error: validationError,
@@ -3558,7 +3927,6 @@ export default function App() {
         return;
       }
 
-      firstRunConnectionAttemptRef.current += 1;
       markFirstRunServerChoiceStarted(formData.name);
       setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
@@ -3567,10 +3935,23 @@ export default function App() {
         serverKind: "personal",
       });
     },
-    [],
+    [
+      appState.servers,
+      convexProjectId,
+      firstRunConnectionState,
+      hostedServerIdsByName,
+      projectServers,
+    ],
   );
 
   const connectFirstRunDemo = useCallback(() => {
+    firstRunOAuthReturnServerRef.current = null;
+    const analyticsContext = firstRunAnalyticsContextFromDraft(
+      "demo",
+      EXCALIDRAW_SERVER_CONFIG,
+    );
+    firstRunAnalyticsContextRef.current = analyticsContext;
+    trackFirstRunServerSelected(analyticsContext);
     firstRunConnectionAttemptRef.current += 1;
     markFirstRunServerChoiceStarted(EXCALIDRAW_SERVER_CONFIG.name);
     setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
@@ -3587,10 +3968,114 @@ export default function App() {
   // normal save, handshake, compatibility, and tool-discovery path as soon as
   // that project is available instead of surfacing an unusable connection UI.
   const isFirstRunProjectReady =
-    !isConnectionPreflightPending &&
-    (!HOSTED_MODE ||
-      !isAuthenticated ||
-      Boolean(projects[activeProjectId]?.sharedProjectId));
+    !isConnectionPreflightPending && (!HOSTED_MODE || isAuthenticated);
+  useEffect(() => {
+    if (
+      !HOSTED_MODE ||
+      !isSettledSignedOut ||
+      firstRunConnectionState.status !== "preparing"
+    )
+      return;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({
+      status: "failed",
+      serverName: firstRunConnectionState.serverName,
+      serverKind: firstRunConnectionState.serverKind,
+      error:
+        "Your session could not be established. Sign in, then try connecting again.",
+    });
+  }, [isSettledSignedOut, firstRunConnectionState]);
+  const requestFirstRunOAuthAuthorization = useCallback(
+    (serverName: string, attemptId: number) =>
+      new Promise<
+        | boolean
+        | Pick<
+            ServerFormData,
+            | "authMethod"
+            | "oauthProtocolMode"
+            | "registrationMode"
+            | "oauthScopes"
+            | "clientId"
+            | "clientSecret"
+            | "clearClientSecret"
+            | "oauthAllowPathScopedIssuer"
+          >
+      >((resolve) => {
+        if (firstRunConnectionAttemptRef.current !== attemptId) {
+          resolve(false);
+          return;
+        }
+        pendingFirstRunAuthorizationRef.current?.(false);
+        pendingFirstRunAuthorizationRef.current = resolve;
+        setFirstRunConnectionState((current) => ({
+          status: "authorization-required",
+          serverName,
+          serverKind:
+            current.status === "idle"
+              ? serverName === EXCALIDRAW_SERVER_NAME
+                ? "demo"
+                : "personal"
+              : current.serverKind,
+        }));
+      }),
+    [],
+  );
+  const authorizeFirstRunConnection = useCallback(
+    (draft: FirstRunServerDraft) => {
+      const resolve = pendingFirstRunAuthorizationRef.current;
+      const serverName =
+        firstRunConnectionState.status === "authorization-required"
+          ? firstRunConnectionState.serverName
+          : null;
+      if (!serverName) return;
+      firstRunAuthorizationRetryServerRef.current = serverName;
+      setFirstRunConnectionState((current) =>
+        current.status === "authorization-required"
+          ? { ...current, status: "connecting" }
+          : current,
+      );
+      if (resolve) {
+        pendingFirstRunAuthorizationRef.current = null;
+        if (
+          draft.authentication === "oauth" ||
+          draft.authentication === "auto"
+        ) {
+          resolve({
+            authMethod: draft.authentication,
+            oauthProtocolMode: draft.oauthProtocolMode,
+            registrationMode: draft.registrationMode,
+            oauthScopes: draft.oauthScopes,
+            clientId: draft.clientId,
+            clientSecret: draft.clientSecret,
+            clearClientSecret: draft.clearClientSecret,
+            oauthAllowPathScopedIssuer: draft.oauthAllowPathScopedIssuer,
+          });
+        } else {
+          resolve(false);
+          openFirstRunServerConnection(draft);
+        }
+        return;
+      }
+
+      // After an OAuth round trip the original authorization promise no longer
+      // exists. Start a fresh first-run attempt so the settings selected in the
+      // inline authentication editor are applied before retrying. Reconnecting
+      // the saved row directly would silently discard those edits.
+      autoOAuthEscalation.markFailed({
+        projectId: convexProjectId,
+        serverId: hostedServerIdsByName[serverName],
+        serverName,
+      });
+      openFirstRunServerConnection(draft);
+    },
+    [
+      convexProjectId,
+      firstRunConnectionState,
+      hostedServerIdsByName,
+      openFirstRunServerConnection,
+    ],
+  );
+
   useEffect(() => {
     if (
       !pendingFirstRunConnection ||
@@ -3606,15 +4091,90 @@ export default function App() {
       serverName: pendingFirstRunConnection.name,
       serverKind: firstRunConnectionState.serverKind,
     });
+    const attemptId = firstRunConnectionAttemptRef.current;
+    const analyticsContext = firstRunAnalyticsContextFromDraft(
+      firstRunConnectionState.serverKind,
+      pendingFirstRunConnection,
+    );
+    firstRunAnalyticsContextRef.current = analyticsContext;
+    trackFirstRunConnectionStarted(analyticsContext);
     void handleConnect(pendingFirstRunConnection, {
       suppressErrorToast: true,
       suppressSuccessToast: true,
+      requestOAuthAuthorization: (serverName) =>
+        requestFirstRunOAuthAuthorization(serverName, attemptId),
     });
   }, [
     firstRunConnectionState.status,
     handleConnect,
     isFirstRunProjectReady,
     pendingFirstRunConnection,
+    requestFirstRunOAuthAuthorization,
+  ]);
+
+  useEffect(() => {
+    if (firstRunConnectionState.status !== "connecting") return;
+    const serverName = firstRunConnectionState.serverName;
+    if (firstRunOAuthReturnServerRef.current !== serverName) return;
+    if (pendingDashboardOAuth) return;
+    const server = appState.servers[serverName];
+    if (
+      server?.connectionStatus === "connected" ||
+      server?.connectionStatus === "failed" ||
+      firstRunOAuthReconnectServerRef.current === serverName
+    ) {
+      return;
+    }
+
+    // The callback owner normally publishes the terminal runtime row. If it
+    // has released its marker without doing so, retry exactly once rather than
+    // leaving first-run onboarding on an endless spinner.
+    firstRunOAuthReconnectServerRef.current = serverName;
+    const attemptId = firstRunConnectionAttemptRef.current;
+    void reconnectServerWithResult(serverName, {
+      forceOAuthFlow: false,
+      // OAuth has already returned to onboarding. This recovery pass may use
+      // the credential that was just stored, but it must never launch a
+      // second interactive flow (or its generic Authorize toast) while the
+      // onboarding modal is still waiting for a terminal result.
+      allowInteractiveOAuthFlow: false,
+      suppressErrors: true,
+      suppressSuccessToast: true,
+    })
+      .then((result) => {
+        if (result.status === "connected") return;
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        firstRunOAuthReconnectServerRef.current = null;
+        setFirstRunConnectionState({
+          status: "authorization-required",
+          serverName,
+          serverKind:
+            serverName === EXCALIDRAW_SERVER_NAME ? "demo" : "personal",
+          error: sanitizeHostedOAuthErrorMessage(
+            result.error,
+            "MCPJam could not verify the server after authorization. Try again.",
+          ),
+        });
+      })
+      .catch((error: unknown) => {
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        firstRunOAuthReconnectServerRef.current = null;
+        setFirstRunConnectionState({
+          status: "authorization-required",
+          serverName,
+          serverKind:
+            serverName === EXCALIDRAW_SERVER_NAME ? "demo" : "personal",
+          error: sanitizeHostedOAuthErrorMessage(
+            error instanceof Error ? error.message : undefined,
+            "MCPJam could not verify the server after authorization. Try again.",
+          ),
+        });
+      });
+  }, [
+    appState.servers,
+    firstRunConnectionState,
+    reconnectServerWithResult,
+    pendingDashboardOAuth,
   ]);
 
   useEffect(() => {
@@ -3651,8 +4211,16 @@ export default function App() {
     if (!server) return;
 
     if (server.connectionStatus === "connected") {
+      firstRunOAuthReturnServerRef.current = null;
+      firstRunAuthorizationRetryServerRef.current = null;
+      firstRunOAuthReconnectServerRef.current = null;
       const attemptId = firstRunConnectionAttemptRef.current;
       const { serverKind, serverName } = firstRunConnectionState;
+      const analyticsContext = mergeFirstRunAnalyticsContext(
+        firstRunAnalyticsContextRef.current,
+        firstRunAnalyticsContextFromServer(serverKind, server),
+      );
+      firstRunAnalyticsContextRef.current = analyticsContext;
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
         status: "loading-tools",
@@ -3665,6 +4233,11 @@ export default function App() {
           // Persist the real outcome before the user presses the final CTA so
           // a refresh cannot replay onboarding after a successful handshake.
           markFirstRunServerChoiceConnected(serverKind, tools.length);
+          trackFirstRunConnectionSucceeded(
+            analyticsContext,
+            "tools_loaded",
+            tools.length,
+          );
           setFirstRunConnectionState({
             status: "connected",
             serverName,
@@ -3678,6 +4251,7 @@ export default function App() {
           // Keep the server connected and let Playground retry discovery
           // rather than presenting a false connection failure.
           markFirstRunServerChoiceConnected(serverKind, null);
+          trackFirstRunConnectionSucceeded(analyticsContext, "handshake_only");
           setFirstRunConnectionState({
             status: "connected",
             serverName,
@@ -3689,15 +4263,67 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
+      if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
+        autoOAuthEscalation.markFailed({
+          projectId: convexProjectId,
+          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
+          serverName: firstRunConnectionState.serverName,
+        });
+        firstRunOAuthReturnServerRef.current = null;
+        firstRunAuthorizationRetryServerRef.current = null;
+        firstRunOAuthReconnectServerRef.current = null;
+        setPendingFirstRunConnection(null);
+        clearHostedOAuthResumeMarker();
+        clearPendingDashboardOAuth();
+        setFirstRunConnectionState({ status: "idle" });
+        return;
+      }
+      const isOAuthReturnFailure =
+        firstRunOAuthReturnServerRef.current ===
+        firstRunConnectionState.serverName;
+      const isAuthorizationRetryFailure =
+        firstRunAuthorizationRetryServerRef.current ===
+        firstRunConnectionState.serverName;
+      // The saved project row can briefly replay the 401 from before OAuth
+      // while the callback owner is importing the new credential. The
+      // recovery effect above owns that window and will either publish the
+      // credential-aware success or return to the authorization modal. Do not
+      // let this stale failure launch a second account-picker flow.
+      if (isOAuthReturnFailure && pendingDashboardOAuth) return;
+      const analyticsContext = mergeFirstRunAnalyticsContext(
+        firstRunAnalyticsContextRef.current,
+        firstRunAnalyticsContextFromServer(
+          firstRunConnectionState.serverKind,
+          server,
+        ),
+      );
+      firstRunAnalyticsContextRef.current = analyticsContext;
+      trackFirstRunConnectionFailed(analyticsContext, "handshake");
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
-        status: "failed",
+        status:
+          isOAuthReturnFailure || isAuthorizationRetryFailure
+            ? "authorization-required"
+            : "failed",
         serverName: firstRunConnectionState.serverName,
         serverKind: firstRunConnectionState.serverKind,
-        error: server.lastError || "MCPJam could not connect to this server.",
+        error:
+          isOAuthReturnFailure || isAuthorizationRetryFailure
+            ? sanitizeHostedOAuthErrorMessage(
+                server.lastError,
+                "MCPJam could not verify the server with these authorization settings. Review the error and try again.",
+              )
+            : server.lastError || "MCPJam could not connect to this server.",
       });
     }
-  }, [appState.servers, firstRunConnectionState]);
+  }, [
+    appState.servers,
+    clearPendingDashboardOAuth,
+    convexProjectId,
+    firstRunConnectionState,
+    hostedServerIdsByName,
+    pendingDashboardOAuth,
+  ]);
 
   // Repair stale `started` records left by the earlier flow, which created the
   // server successfully but never wrote its onboarding completion marker.
@@ -3749,35 +4375,107 @@ export default function App() {
   ]);
 
   const cancelFirstRunConnection = useCallback(() => {
+    window.dispatchEvent(new Event(FIRST_RUN_OAUTH_CANCELLED_EVENT));
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
+    firstRunAuthorizationRetryServerRef.current = null;
+    firstRunOAuthReconnectServerRef.current = null;
+    // Cancel can happen while the OAuth callback URL is still active. Leave
+    // that route before clearing the state which identifies it as a project
+    // callback; otherwise the generic callback gate takes ownership and
+    // replaces onboarding with a full-page loading screen.
+    if (
+      window.location.pathname === "/oauth/callback" ||
+      window.location.pathname.startsWith("/oauth/callback/")
+    ) {
+      navigateApp(routePaths.home, { replace: true });
+    }
+    clearHostedOAuthResumeMarker();
+    clearPendingDashboardOAuth();
     setPendingFirstRunConnection(null);
     if (firstRunConnectionState.status !== "idle") {
+      const server = appState.servers[firstRunConnectionState.serverName];
+      const analyticsContext = mergeFirstRunAnalyticsContext(
+        firstRunAnalyticsContextRef.current,
+        firstRunAnalyticsContextFromServer(
+          firstRunConnectionState.serverKind,
+          server,
+        ),
+      );
+      const cancelStage: FirstRunCancelStage =
+        firstRunConnectionState.status === "preparing"
+          ? "project_preparing"
+          : firstRunConnectionState.status === "loading-tools"
+            ? "loading_tools"
+            : "connecting";
+      trackFirstRunConnectionCancelled(analyticsContext, cancelStage);
       handleRuntimeDisconnect(firstRunConnectionState.serverName);
     }
+    firstRunAnalyticsContextRef.current = null;
     setFirstRunConnectionState({ status: "idle" });
-  }, [firstRunConnectionState, handleRuntimeDisconnect]);
+  }, [
+    appState.servers,
+    clearPendingDashboardOAuth,
+    firstRunConnectionState,
+    handleRuntimeDisconnect,
+    navigateApp,
+  ]);
 
   const returnToFirstRunChoice = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
+    firstRunAnalyticsContextRef.current = null;
     setFirstRunConnectionState({ status: "idle" });
   }, []);
 
   const openFirstRunPlayground = useCallback(() => {
+    if (firstRunConnectionState.status === "connected") {
+      const server = appState.servers[firstRunConnectionState.serverName];
+      const analyticsContext = mergeFirstRunAnalyticsContext(
+        firstRunAnalyticsContextRef.current,
+        firstRunAnalyticsContextFromServer(
+          firstRunConnectionState.serverKind,
+          server,
+        ),
+      );
+      trackFirstRunPlaygroundOpened(
+        analyticsContext,
+        firstRunConnectionState.toolCount ?? undefined,
+      );
+    }
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
-    setFirstRunConnectionState({ status: "idle" });
-    setFirstRunOverlayDismissed(true);
+    firstRunAnalyticsContextRef.current = null;
+    setIsOpeningFirstRunPlayground(true);
     setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
     markFirstRunServerChoiceCompleted();
     markFirstRunPlaygroundPromptPending();
     navigateApp(routePaths.playground);
-  }, [navigateApp]);
+  }, [appState.servers, firstRunConnectionState, navigateApp]);
+
+  const handleFirstRunPlaygroundReady = useCallback(() => {
+    if (!isOpeningFirstRunPlayground) return;
+    setIsOpeningFirstRunPlayground(false);
+    setFirstRunConnectionState({ status: "idle" });
+    setFirstRunOverlayDismissed(true);
+  }, [isOpeningFirstRunPlayground]);
 
   const dismissFirstRunOverlay = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
+    firstRunAnalyticsContextRef.current = null;
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
   }, []);
@@ -3921,7 +4619,6 @@ export default function App() {
   );
 
   // Get the Convex project ID from the active project
-  const activeProject = projects[activeProjectId];
   const isClientConfigSyncPending =
     useProjectClientConfigSyncPending(activeProjectId);
   // Fallback chain: active named host (top-bar selection or project default
@@ -3938,8 +4635,8 @@ export default function App() {
     activeHost?.clientCapabilities,
     activeProject?.clientConfig,
   );
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig
@@ -3949,7 +4646,8 @@ export default function App() {
   // A skipped query reads as `undefined`, so this already covers the window
   // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
-    Boolean(convexProjectId) && projectServerConfigDto === undefined;
+    shouldQueryProjectId(convexProjectId) &&
+    projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
@@ -3962,7 +4660,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? routeOrganizationId ?? null
+    ? (routeOrganizationId ?? null)
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -4007,6 +4705,78 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
+  // Telemetry privacy for what is in view: the same three organizations
+  // billing reads, plus the active project, resolved by the backend through
+  // this actor's own access (`telemetryPrivacy:getContext`). The most
+  // restrictive context wins; anything it cannot verify is masked and
+  // id-only.
+  const telemetryOrganizationIds = [
+    routeScopedOrganizationId,
+    activeOrganizationId,
+    activeProject?.organizationId,
+  ];
+  const telemetryProjectIds = [convexProjectId];
+  const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  const telemetryPrivacy = useTelemetryPrivacyContext({
+    // Every surface asks: identity applies wherever analytics run, even
+    // where replay is off.
+    enabled: true,
+    actor: telemetryActor,
+    membershipKey: telemetryMembershipKey(loadedOrganizations),
+    projectIds: telemetryProjectIds,
+    organizationIds: telemetryOrganizationIds,
+  });
+  // Every event captured from here on is stamped with these contexts
+  // (lib/telemetry-context.ts). Layout effect: in the same commit that
+  // renders the new context, before anything in it can be captured.
+  useLayoutEffect(() => {
+    setTelemetryCaptureContext({
+      projectIds: telemetryProjectIds,
+      organizationIds: telemetryOrganizationIds,
+    });
+  });
+  // Names follow an affirmative answer for THIS actor only; an answer for
+  // anyone else is ignored, and no answer means id-only.
+  useLayoutEffect(() => {
+    if (telemetryPrivacy.identity === undefined) {
+      resetTelemetryIdentity();
+    } else {
+      setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
+    }
+  }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
+  // Only the backend's own answer can permit recording: a query that fails
+  // or never answers leaves the level `pending`, which records nothing. Replay
+  // `off` is also remembered per person, so someone last answered `off` stays
+  // unrecorded while the next answer is slow, failing or not asked yet.
+  const answeredRecording = telemetryPrivacy.answered
+    ? telemetryPrivacy.policy?.recording
+    : undefined;
+  useEffect(() => {
+    if (answeredRecording !== undefined) {
+      rememberReplayOff(telemetryPrivacy.actor, answeredRecording === "off");
+    }
+  }, [answeredRecording, telemetryPrivacy.actor]);
+  const telemetryRecording =
+    answeredRecording ??
+    (replayOffRemembered(telemetryActor) ? "off" : undefined);
+  // The session privacy level (lib/session-privacy.ts) for both recorders.
+  // Full replay needs the backend to have verified a non-private context and
+  // the destination to have finished loading; until it answers, nothing
+  // records, and after a navigation, recording carries on masked.
+  useSessionPrivacy(
+    resolveSessionPrivacy({
+      surface: recordingSurface(),
+      sharedLink: isScenarioChatRoute,
+      recording: telemetryRecording,
+    }),
+    {
+      contextReady:
+        !isAuthLoading &&
+        !isLoadingOrganizations &&
+        !isProjectServerConfigLoading,
+      permissionKey: telemetryPrivacy.scope,
+    },
+  );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness
@@ -4067,10 +4837,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-    ? "Create or join an organization to create projects"
-    : insufficientOrgRoleForCreate
-    ? "You don't have permission to create projects"
-    : projectCreationGate.denialMessage ?? undefined;
+      ? "Create or join an organization to create projects"
+      : insufficientOrgRoleForCreate
+        ? "You don't have permission to create projects"
+        : (projectCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -4087,12 +4857,22 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
+    // A pending delete hides the org, which nulls billingProjectId; keep the
+    // project so a failed delete gives it back.
+    const activeProjectOrganizationId = activeProject?.organizationId;
+    const isActiveProjectDeletionPending =
+      !!activeProjectOrganizationId &&
+      deletingOrganizationIds.includes(activeProjectOrganizationId) &&
+      !optimisticallyDeletedOrganizationIds.includes(
+        activeProjectOrganizationId,
+      );
     const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
       !isLoadingRemoteProjects &&
       activeProjectId !== "none" &&
       (!!convexProjectId || !activeProject) &&
+      !isActiveProjectDeletionPending &&
       !billingProjectId;
 
     if (!hasStaleCloudProjectSelection) {
@@ -4106,23 +4886,13 @@ export default function App() {
     billingProjectId,
     clearConvexActiveProjectSelection,
     convexProjectId,
+    deletingOrganizationIds,
     isCloudSyncActive,
     isLoadingOrganizations,
     isLoadingRemoteProjects,
+    optimisticallyDeletedOrganizationIds,
   ]);
 
-  // Fetch project servers to map server IDs to names
-  const { serversById } = useProjectServers({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
-  const hostedServerIdsByName = useMemo(
-    () =>
-      Object.fromEntries(
-        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
-      ),
-    [serversById],
-  );
   const oauthTokensByServerId = useMemo(
     () =>
       buildOAuthTokensByServerId(
@@ -4330,7 +5100,9 @@ export default function App() {
     if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
-    toast.error("Tracing isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
+    toast.error(
+      "Tracing isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
+    );
     setActiveOrganizationId(undefined);
     if (window.location.pathname !== routePaths.servers) {
       navigateApp(routePaths.servers, { replace: true });
@@ -4538,8 +5310,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-          ? [focused]
-          : [];
+            ? [focused]
+            : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -4703,11 +5475,7 @@ export default function App() {
     billingSignInStartedRef.current = false;
   }, []);
 
-  const handleCheckoutIntentNavigationStarted = useCallback(() => {
-    consumeCheckoutIntent();
-  }, [consumeCheckoutIntent]);
-
-  // `/billing?plan=&interval=` → auth (if needed) → org billing path → auto-checkout when intent is valid.
+  // `/billing?plan=&interval=` → auth (if needed) → org plans path → plan confirmation when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
@@ -4778,15 +5546,15 @@ export default function App() {
       consumeCheckoutIntent();
       return;
     }
-
-    // Convex guest sessions are authenticated too, so WorkOS is the source of
-    // truth for whether this actor may begin a paid checkout.
     if (!workOsUser) {
       if (isWorkOsLoading || billingSignInStartedRef.current) return;
       billingSignInStartedRef.current = true;
       writeBillingSignInReturnPath(routePaths.billing);
       void Promise.resolve()
         .then(() => signIn())
+        .then((result) => {
+          if (result === "blocked") consumeCheckoutIntent();
+        })
         .catch(() => {
           billingSignInStartedRef.current = false;
           toast.error("Could not start sign in. Try again.");
@@ -4813,17 +5581,14 @@ export default function App() {
       return;
     }
 
-    if (
-      routeOrganizationId === orgId &&
-      routeOrganizationSection === "billing"
-    ) {
+    if (routeOrganizationId === orgId && routeOrganizationSection === "plans") {
       return;
     }
 
     // The current route is the retry guard. If another redirect wins after
     // this navigation, the changed route reruns the effect and resumes the
     // handoff instead of leaving a lifetime ref latched until reload.
-    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
+    navigate(buildOrganizationPath(orgId, "plans"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
@@ -4949,9 +5714,13 @@ export default function App() {
       return;
     }
 
+    // A pending delete holds the route only while the org is still listed, so
+    // Back to an org that is already gone still redirects.
     if (
       routeOrganizationId &&
-      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+      ((deletingOrganizationIds.includes(routeOrganizationId) &&
+        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
+        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
     ) {
       return;
     }
@@ -4974,6 +5743,7 @@ export default function App() {
     }
   }, [
     activeTab,
+    deletingOrganizationIds,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
@@ -4982,6 +5752,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
+    sortedOrganizations,
   ]);
 
   const handleOrganizationDeleted = useCallback(
@@ -5072,8 +5843,8 @@ export default function App() {
     })();
   const requestedFirstRunProjectId =
     typeof window !== "undefined"
-      ? readProjectPathSegment(window.location.pathname) ??
-        readProjectDeepLinkParam(window.location.search)
+      ? (readProjectPathSegment(window.location.pathname) ??
+        readProjectDeepLinkParam(window.location.search))
       : null;
   const hasProjectScopedFirstRunDestination =
     typeof window !== "undefined" &&
@@ -5114,6 +5885,7 @@ export default function App() {
   const shouldRouteToFirstRunHome =
     shouldRouteToFirstRunOnboarding &&
     !firstRunOverlayDismissed &&
+    !isOpeningFirstRunPlayground &&
     activeTab !== "home" &&
     !hasProjectScopedFirstRunDestination;
   // Once the first-run overlay is visible, keep that session mounted until
@@ -5134,6 +5906,19 @@ export default function App() {
     (shouldRouteToFirstRunOnboarding &&
       (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
       !firstRunOverlayDismissed);
+  // On an OAuth return there is a short auth/project hydration window before
+  // the overlay can mount again. Suspending only when it is already visible
+  // lets the background reconciler connect the same server and emit its own
+  // success toast. A persisted started record means onboarding still owns the
+  // connection, but only while the OAuth return is in flight or onboarding can
+  // still open: a stale record on an ineligible route or account would
+  // otherwise pause auto-connect indefinitely, and the repair effect that
+  // clears it needs a connected server to do so.
+  const shouldSuspendFirstRunBackgroundConnections =
+    shouldShowFirstRunOverlay ||
+    (!firstRunOverlayDismissed &&
+      initialFirstRunServerChoiceState?.status === "started" &&
+      (isReturningFirstRunOAuth || shouldRouteToFirstRunOnboarding));
 
   useLayoutEffect(() => {
     if (shouldRouteToFirstRunOnboarding) {
@@ -5147,44 +5932,44 @@ export default function App() {
     }
   }, [shouldRouteToFirstRunHome]);
 
+  const isProjectRecoveryReady =
+    isFeedbackMember === true &&
+    isAuthenticated &&
+    !isAuthLoading &&
+    !isWorkOsLoading &&
+    isUserReady;
   const authoritativeMembershipProjectIds =
-    isUserReady && !isLoadingRemoteProjects
+    isProjectRecoveryReady && !isLoadingRemoteProjects
       ? allMembershipProjectIds
       : undefined;
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
-      : allMembershipProjects?.[0]?._id ?? null;
-  const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
-    intent: pendingProjectReturnRecovery,
+      : (allMembershipProjects?.[0]?._id ?? null);
+  const projectTransitionPending = useProjectTransitionRecovery({
+    actor: actorKey ? `${workOsUser ? "workos" : "guest"}:${actorKey}` : null,
+    ready: isProjectRecoveryReady,
+    routeReady:
+      isAuthenticated &&
+      !isAuthLoading &&
+      !isWorkOsLoading &&
+      isUserReady &&
+      projectRouteState.status === "ready",
     membershipProjectIds: authoritativeMembershipProjectIds,
     fallbackProjectId: fallbackProjectIdForStaleReturn,
   });
-
-  // Resolve while `/callback` still owns the screen. Clear the one-shot intent
-  // before the only navigation so a bad destination can never loop.
-  useLayoutEffect(() => {
-    if (
-      projectReturnRecoveryDecision.kind === "none" ||
-      projectReturnRecoveryDecision.kind === "wait"
-    ) {
-      return;
-    }
-    setPendingProjectReturnRecovery(null);
-    setCallbackCompleted(true);
-    setCallbackRecoveryExpired(false);
-
-    if (projectReturnRecoveryDecision.kind === "home") {
-      trackStaleProjectReturnRecovered("no-fallback");
-      navigateApp(routePaths.root, { replace: true, unscoped: true });
-      return;
-    }
-
-    if (projectReturnRecoveryDecision.kind === "switch") {
-      trackStaleProjectReturnRecovered("switched");
-    }
-    navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-  }, [projectReturnRecoveryDecision]);
+  useCallbackProjectReturnRecovery({
+    intent: pendingProjectReturnRecovery,
+    membershipProjectIds: authoritativeMembershipProjectIds,
+    fallbackProjectId: fallbackProjectIdForStaleReturn,
+    isCallback: isOAuthCallback,
+    ready: isProjectRecoveryReady,
+    onResolved: () => {
+      setPendingProjectReturnRecovery(null);
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+    },
+  });
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -5298,7 +6083,7 @@ export default function App() {
         !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
-        routeOrganizationSection !== "billing" ||
+        routeOrganizationSection !== "plans" ||
         !pendingCheckoutIntent
       ) {
         return null;
@@ -5318,8 +6103,7 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    | PlaygroundServerSelectorProps
-    | undefined => {
+    PlaygroundServerSelectorProps | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -5361,18 +6145,22 @@ export default function App() {
     );
   }
 
-  if (hostedOAuthHandling) {
+  if (hostedOAuthHandling && !isFirstRunOAuthReturnActive) {
     return <LoadingScreen />;
   }
 
   // MCP OAuth completion/reconnect is handled by useServerState above. Keep
   // the app shell hidden until that effect restores the exact saved route so
   // the Servers tab never flashes between the authorization server and chat.
-  if (isMcpOAuthCallback && !isProjectMcpOAuthCallback) {
+  if (
+    isMcpOAuthCallback &&
+    !isProjectMcpOAuthCallback &&
+    !isFirstRunOAuthReturnActive
+  ) {
     return <LoadingScreen />;
   }
 
-  if (isOAuthCallback && !callbackCompleted) {
+  if (isOAuthCallback && !callbackCompleted && !isFirstRunOAuthReturnActive) {
     if (callbackRecoveryExpired) {
       return (
         <div
@@ -5405,7 +6193,7 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (isLoading && !isHostedChatRoute) {
+  if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
     return <LoadingScreen />;
   }
 
@@ -5416,8 +6204,9 @@ export default function App() {
     pendingCheckoutIntent !== null;
 
   if (
-    shouldHoldHostedDefaultRouteForAuth ||
-    shouldHoldHostedHomeRouteForAppReady
+    !isFirstRunOAuthReturnActive &&
+    (shouldHoldHostedDefaultRouteForAuth ||
+      shouldHoldHostedHomeRouteForAppReady)
   ) {
     return <LoadingScreen />;
   }
@@ -5425,10 +6214,14 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
+    !isFirstRunOAuthReturnActive &&
     (currentUser === undefined ||
       // Session revocation can return a null user before Convex's auth state
       // changes or WorkOS finishes navigating away. That is expected at logout.
-      (currentUser === null && (isEnsuringUser || isSignOutInProgress())))
+      (currentUser === null &&
+        (isEnsuringUser ||
+          isSignOutInProgress() ||
+          shouldReloadForMissingGuest)))
   ) {
     return <LoadingScreen />;
   }
@@ -5512,8 +6305,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-              ? () => setOauthServerModalNonce((n) => n + 1)
-              : undefined,
+                ? () => setOauthServerModalNonce((n) => n + 1)
+                : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -5591,6 +6384,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
+    projectTransitionPending,
     projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
@@ -5617,8 +6411,8 @@ export default function App() {
     ensureServersReady,
     evalChatHandoff,
     firstRunPlaygroundPrompt,
-    suspendRouteAutoConnect: shouldShowFirstRunOverlay,
-    handleCheckoutIntentNavigationStarted,
+    onFirstRunPlaygroundReady: handleFirstRunPlaygroundReady,
+    suspendRouteAutoConnect: shouldSuspendFirstRunBackgroundConnections,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,
@@ -5764,6 +6558,7 @@ export default function App() {
               settings={settingsShellActive}
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
+              <PendingOrganizationDeletions />
               {showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
@@ -5871,6 +6666,43 @@ export default function App() {
     </div>
   );
 
+  const firstRunRecoveryServerDraft = (() => {
+    if (firstRunConnectionState.status !== "authorization-required") {
+      return undefined;
+    }
+    const serverName = firstRunConnectionState.serverName;
+    const savedServer =
+      projectServers[serverName] ?? appState.servers[serverName];
+    const savedUrl =
+      savedServer?.config && "url" in savedServer.config
+        ? String(savedServer.config.url)
+        : "";
+    if (!savedUrl) return undefined;
+    return {
+      name: serverName,
+      transport: "http" as const,
+      urlOrCommand: savedUrl,
+      authentication: savedServer.authMethod ?? "auto",
+      oauthProtocolMode: savedServer.oauthProtocolMode,
+      registrationMode: savedServer.registrationMode,
+      oauthScopes: savedServer.oauthFlowProfile?.scopes
+        ?.trim()
+        .split(/[,\s]+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+      clientId: savedServer.oauthFlowProfile?.clientId,
+      hasStoredClientSecret: savedServer.hasClientSecret === true,
+      projectId: convexProjectId,
+      hostedServerId: hostedServerIdsByName[serverName] ?? null,
+      oauthAllowPathScopedIssuer: savedServer.oauthAllowPathScopedIssuer,
+      xaaClientAuth: savedServer.xaaClientAuth,
+      xaaAuthzIssuer: savedServer.xaaAuthzIssuer,
+      xaaAllowPathScopedIssuer: savedServer.xaaAllowPathScopedIssuer,
+      xaaSubject: savedServer.xaaSubject,
+      xaaEmail: savedServer.xaaEmail,
+    };
+  })();
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -5896,7 +6728,7 @@ export default function App() {
             activeHost={activeHost}
             activeHostId={activeHostId}
             isActiveHostSelectionHydrated={isActiveHostSelectionHydrated}
-            suspendAutoConnect={shouldShowFirstRunOverlay}
+            suspendAutoConnect={shouldSuspendFirstRunBackgroundConnections}
           />
           <AppReadyProvider
             isLoadingAppState={isLoading}
@@ -5936,20 +6768,36 @@ export default function App() {
                 ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
-                  appContent
+                  // The app shell's error cards may offer "Report this" to a
+                  // signed-in member on the hosted app, and to nobody else.
+                  <FeedbackReporterProvider
+                    enabled={HOSTED_MODE && isFeedbackMember === true}
+                  >
+                    {appContent}
+                  </FeedbackReporterProvider>
                 )}
               </HostedShellGate>
               <FirstRunOnboardingOverlay
                 open={shouldShowFirstRunOverlay}
                 skipWelcome={skipFirstRunWelcome}
                 connectionState={firstRunConnectionState}
+                recoveryServerDraft={firstRunRecoveryServerDraft}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
+                onAuthorizeConnection={authorizeFirstRunConnection}
                 onCancelConnection={cancelFirstRunConnection}
                 onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}
+                isOpeningPlayground={isOpeningFirstRunPlayground}
                 onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
                 onSkip={dismissFirstRunOverlay}
+                guestSessionRefused={Boolean(guestSessionRefusal)}
+                organizationId={activeOrganizationId}
+                isSignedIn={Boolean(workOsUser)}
+                onSignIn={() => {
+                  captureAppSignInReturnPath();
+                  void Promise.resolve(signIn()).catch(() => {});
+                }}
               />
             </div>
             {shouldShowBillingHandoffOverlay ? (

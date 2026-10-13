@@ -12,6 +12,9 @@ import {
   widgetStateContextText,
 } from "@/shared/user-context-message";
 
+const copiedText = vi.hoisted(() => vi.fn(async (_text: string) => true));
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard: copiedText }));
+
 // Mock PartSwitch
 vi.mock("../thread/part-switch", () => ({
   PartSwitch: ({ part, role }: { part: any; role: string }) => (
@@ -340,6 +343,48 @@ describe("MessageView", () => {
       expect(
         screen.queryByTestId("user-message-bubble"),
       ).not.toBeInTheDocument();
+    });
+
+    it("edits and copies a titled App item using its underlying text", async () => {
+      const onEditUserMessage = vi.fn(async () => true);
+      const message = createMessage({
+        id: "titled-app-message",
+        role: "user",
+        parts: [
+          {
+            type: "data-plugin-message-text",
+            data: { title: "Visible title", text: "Underlying instruction" },
+          },
+          { type: "text", text: "Second block" },
+        ],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+      await waitFor(() =>
+        expect(copiedText).toHaveBeenCalledWith(
+          "Underlying instruction\n\nSecond block",
+        ),
+      );
+      fireEvent.click(editButton());
+      expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+        "Underlying instruction\n\nSecond block",
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "Underlying instruction edited\n\nSecond block" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() =>
+        expect(onEditUserMessage).toHaveBeenCalledWith(
+          message,
+          "Underlying instruction edited\n\nSecond block",
+        ),
+      );
     });
 
     it("preserves every text part of a multi-part user message", () => {
@@ -909,7 +954,9 @@ describe("MessageView", () => {
       },
     };
 
-    it("shows what the turn ran on from the finish message's record", () => {
+    // The record stays on the finish message's metadata, but chat no longer
+    // shows it — only evals and swarms do.
+    it("does not show what the turn ran on, even with a record", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
@@ -918,52 +965,24 @@ describe("MessageView", () => {
 
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
+      expect(screen.getByTestId("part-text")).toBeInTheDocument();
+      expect(screen.queryByText(/Ran on/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Deviation:/)).not.toBeInTheDocument();
       expect(
-        screen.getByTestId("chat-turn-execution-provenance-line"),
-      ).toHaveTextContent(
-        "Ran on openai/gpt-5 via OpenRouter (MCPJam key), effort low, max output provider default",
-      );
-      expect(
-        screen.getByTestId("chat-turn-execution-deviation-banner"),
-      ).toHaveTextContent("Deviation: Provider fallback");
+        screen.queryByTestId("chat-turn-execution-provenance"),
+      ).not.toBeInTheDocument();
     });
 
-    it("shows nothing for a turn without a record", () => {
+    it("still shows the copy action for a turn with a record", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
-        metadata: { inputTokens: 1, outputTokens: 2 },
+        metadata: { execution },
       });
 
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
-      expect(
-        screen.queryByTestId("chat-turn-execution-provenance"),
-      ).not.toBeInTheDocument();
-    });
-
-    it("re-renders when the finish chunk adds the record to an unchanged message", () => {
-      const parts = [{ type: "text" as const, text: "Hi" }];
-      const message = createMessage({ role: "assistant", parts });
-      const { rerender } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
-      );
-      expect(
-        screen.queryByTestId("chat-turn-execution-provenance"),
-      ).not.toBeInTheDocument();
-
-      rerender(
-        <PreferencesStoreProvider themeMode="light" themePreset="default">
-          <MessageView
-            {...defaultProps}
-            message={{ ...message, parts, metadata: { execution } }}
-          />
-        </PreferencesStoreProvider>,
-      );
-
-      expect(
-        screen.getByTestId("chat-turn-execution-provenance"),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /copy/i })).toBeInTheDocument();
     });
   });
 });

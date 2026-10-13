@@ -331,4 +331,27 @@ describe("ChecksSection raw-JSON draft validity", () => {
     fireEvent.change(textarea, { target: { value: '{"type": "object"}' } });
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
+
+  it.each([
+    { type: "toolInputMatches", toolName: "search", patterns: ["ok"] },
+    { type: "toolResultMatches", patterns: ["ok"] },
+  ])("reports a $type pattern re2js cannot compile", (initial) => {
+    // Unlike a JSON draft, the pattern IS written through — the schema
+    // refuses the predicate — and it is reported here too, so a caller that
+    // listens only to this sees it.
+    const onDraftValidityChange = vi.fn();
+    render(
+      <Harness
+        initial={[initial as Predicate]}
+        onDraftValidityChange={onDraftValidityChange}
+      />,
+    );
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+    const pattern = screen.getByLabelText("Pattern 1");
+    fireEvent.change(pattern, { target: { value: "(?=a)" } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.change(pattern, { target: { value: "a" } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+  });
 });

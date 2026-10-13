@@ -9,6 +9,7 @@ import {
   webmcpFrameChannel,
 } from "../webmcp-inspector-store";
 import * as sessionToken from "@/lib/session-token";
+import { rememberAccessToken } from "@/lib/access-link";
 import {
   frameStatsReport,
   notePainted,
@@ -284,13 +285,16 @@ function deferredFetch() {
 
 /** Open a session through the real action, with `fetch` stubbed. */
 async function openSession(session: WebMcpSessionPublic = SESSION) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(session), { status: 201 }),
-  );
+  const fetchSpy = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify(session), { status: 201 }));
   await useWebmcpInspectorStore.getState().startSession("https://shop.test/");
   // The stream is a fetch body and the frame socket's nonce is a request, so
   // neither transport exists at the turn `startSession` resolves on.
   for (let i = 0; i < 20; i++) await Promise.resolve();
+  // fetch is the setup's global mock, and a test's own spyOn returns that same
+  // mock, so drop the opening calls or they count against the test.
+  fetchSpy.mockClear();
   return FakeEventSource.instances.at(-1)!;
 }
 
@@ -312,11 +316,8 @@ describe("webmcp inspector store", () => {
     useWebmcpInspectorStore.getState().disconnect();
     FakeEventSource.instances = [];
     FakeWebSocket.instances = [];
-    // The token the frame socket carries as its subprotocol. Set on `window`
-    // because that is where the real one is injected.
-    (
-      window as unknown as { __MCP_SESSION_TOKEN__?: string }
-    ).__MCP_SESSION_TOKEN__ = "test-token";
+    // The access-link credential the frame socket carries as its subprotocol.
+    rememberAccessToken("test-token");
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,
@@ -1262,9 +1263,7 @@ describe("webmcp inspector store — frame transport", () => {
     useWebmcpInspectorStore.getState().disconnect();
     FakeEventSource.instances = [];
     FakeWebSocket.instances = [];
-    (
-      window as unknown as { __MCP_SESSION_TOKEN__?: string }
-    ).__MCP_SESSION_TOKEN__ = "test-token";
+    rememberAccessToken("test-token");
     vi.restoreAllMocks();
     useWebmcpInspectorStore.setState({
       session: undefined,

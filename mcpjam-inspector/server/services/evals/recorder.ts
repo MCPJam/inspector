@@ -1,4 +1,5 @@
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
@@ -18,14 +19,19 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
-import { runnerCapabilities } from "./runner-capabilities.js";
+import { rerunRefusalError } from "./rerun-refusal.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import { randomUUID } from "node:crypto";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import {
+  readStoredLegacySelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -167,6 +173,8 @@ export type SuiteRunRecorder = {
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    /** OUR infrastructure failed this trial; only with `status: "failed"`. */
+    infraError?: EvalInfraError;
     resultSource?: "reported" | "derived";
     // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
     // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -216,7 +224,8 @@ export const createSuiteRunRecorder = ({
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
   let runtimeAttempt:
-    { attemptId: string; monotonicStartedAt: number } | undefined;
+    | { attemptId: string; monotonicStartedAt: number }
+    | undefined;
   const iterationRuntime = new Map<
     string,
     {
@@ -582,6 +591,8 @@ export const startSuiteRunWithRecorder = async ({
   serverIds,
   replayedFromRunId,
   useCurrentSuiteConfig,
+  rerunOfRunId,
+  rerunScope,
   environmentOverride,
   githubCheckServerOverride,
   toolSnapshot,
@@ -592,6 +603,8 @@ export const startSuiteRunWithRecorder = async ({
   namedHostId,
   runGroupId,
   environmentId,
+  runtimeVenue,
+  localHarnessIds,
   expectedEnvironmentRevision,
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
@@ -615,6 +628,14 @@ export const startSuiteRunWithRecorder = async ({
   serverIds?: string[];
   replayedFromRunId?: string;
   useCurrentSuiteConfig?: boolean;
+  /**
+   * Rerun only the cases of `rerunOfRunId` that did not pass. Sent with
+   * `replayedFromRunId` set to the same run; the backend picks the cases and
+   * refuses `RERUN_NOTHING_TO_RERUN` when none qualify. Forwarded only when
+   * set, so ordinary launches send exactly the args they always sent.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   environmentOverride?: {
     servers: string[];
     serverBindings?: Array<{
@@ -673,6 +694,14 @@ export const startSuiteRunWithRecorder = async ({
    * reconstruction of the mutation args would silently drop it.
    */
   environmentId?: string;
+  runtimeVenue?: "local" | "hosted";
+  /**
+   * The harnesses this runner will execute locally for this launch, checked
+   * by the caller (`eligibleUnattendedLocalHarnesses`). Declared to the
+   * backend as `local-harness:<id>` alongside `runtimeVenue: 'local'`, so the
+   * venue it stamps is the venue this runner uses.
+   */
+  localHarnessIds?: readonly string[];
   /**
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
@@ -770,6 +799,8 @@ export const startSuiteRunWithRecorder = async ({
       passCriteria,
       replayedFromRunId,
       useCurrentSuiteConfig,
+      ...(rerunOfRunId ? { rerunOfRunId } : {}),
+      ...(rerunScope ? { rerunScope } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
@@ -780,6 +811,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(namedHostId ? { namedHostId } : {}),
       ...(runGroupId ? { runGroupId } : {}),
       ...(environmentId ? { environmentId } : {}),
+      ...(runtimeVenue ? { runtimeVenue } : {}),
       ...(expectedEnvironmentRevision !== undefined
         ? { expectedEnvironmentRevision }
         : {}),
@@ -808,7 +840,10 @@ export const startSuiteRunWithRecorder = async ({
       // self-hosted ones this Inspector talks to.
       ...(launcher ? { launcher } : {}),
       ...(ciMetadata ? { ciMetadata } : {}),
-      runnerCapabilities: runnerCapabilities(),
+      runnerCapabilities: [
+        ...runnerCapabilities(),
+        ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
+      ],
     };
     response = await retrySuiteStartOnConflict(() =>
       convexClient.mutation(
@@ -823,6 +858,15 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    // The organization requires its own provider keys (or has no model for
+    // a required role) and the backend refused the launch before creating
+    // anything, listing every unavailable dependency in `problems`. The
+    // organization's configuration, not an outage: its own answer, with the
+    // code the client and the CLI key on.
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) {
+      throw aiRefusal;
     }
     // The environment resolves to no model — no override on it, none pinned on
     // its client — so the backend refused before creating anything. Remediable
@@ -860,6 +904,12 @@ export const startSuiteRunWithRecorder = async ({
     const rejection = environmentLaunchRejectionError(error);
     if (rejection) {
       throw rejection;
+    }
+    // A rerun refused before anything was created: nothing to rerun, a source
+    // still in flight, or a source from another suite.
+    const rerunRefusal = rerunScope ? rerunRefusalError(error) : null;
+    if (rerunRefusal) {
+      throw rerunRefusal;
     }
     throw error;
   }
@@ -921,6 +971,10 @@ export const startSuiteRunWithRecorder = async ({
     if (billing) {
       throw billing;
     }
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) {
+      throw aiRefusal;
+    }
     // `cause` is logged above and recorded on the run; the response carries
     // only the run id (MJ-020, MJ-021).
     throw new WebRouteError(
@@ -953,7 +1007,8 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    import("@/shared/eval-matching").Predicate[] | undefined;
+    | import("@/shared/eval-matching").Predicate[]
+    | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -982,9 +1037,11 @@ export const startSuiteRunWithRecorder = async ({
       suiteDefaults: suiteDefaultPredicates,
       suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        import("@/shared/eval-matching").CasePredicates | undefined,
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
       legacyCase: tc.successPredicates as
-        import("@/shared/eval-matching").Predicate[] | undefined,
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -1015,14 +1072,22 @@ export const startSuiteRunWithRecorder = async ({
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => {
-          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          // Saved selection behind this entry; a STORED legacy one means
+          // "own key only"; invalid or absent ⇒ an unlabelled row (today's
+          // hosted-first read).
           const selection = readStoredModelSelection(model.selection);
+          const legacySelection = selection
+            ? undefined
+            : readStoredLegacySelection(model.selection);
           return {
             title: tc.title,
             query: tc.query,
-            model: model.model,
-            provider: model.provider,
+            // Read defensively: a store-once backend computes `model`, but the
+            // selection is the stored copy.
+            model: model.model ?? selection?.modelId ?? legacySelection?.modelId,
+            provider: model.provider ?? legacySelection?.provider,
             ...(selection ? { selection } : {}),
+            ...(legacySelection ? { legacySelection } : {}),
             runs: tc.runs || 1,
             expectedToolCalls: tc.expectedToolCalls || [],
             isNegativeTest: tc.isNegativeTest,
@@ -1081,15 +1146,17 @@ export const startSuiteRunWithRecorder = async ({
      * "resolve the platform defaults" — the same code path, differing only in
      * which rung each field came from.
      */
-    // Read from the response's `configSnapshot`, where every other frozen
-    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
-    // the top-level spelling as a fallback so the two repos can deploy in
-    // either order.
+    // The backend returns the frozen venue for both fresh and deduped runs.
+    // Never infer it from the new request on an idempotent retry.
+    harnessRuntimeVenue: (response?.configSnapshot?.executionVenue === "local" ? "local" : "hosted") as "local" | "hosted",
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
-      ResolvedExecutionBudgets | undefined,
+      | ResolvedExecutionBudgets
+      | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as
-      "no_customer_credentials" | "suite_credentials" | undefined,
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.
@@ -1104,8 +1171,13 @@ export const startSuiteRunWithRecorder = async ({
     /** The run's status as the platform holds it — `completed` on a replay of
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
+    environmentRef: (response?.configSnapshot as any)?.environmentRef as
+      | { environmentId: string }
+      | undefined,
     hostConfig: response?.hostConfig as
-      Record<string, unknown> | null | undefined,
+      | Record<string, unknown>
+      | null
+      | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -1131,7 +1203,8 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      { mode?: unknown } | undefined,
+      | { mode?: unknown }
+      | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // `vi.hoisted` because both vi.mock factories are lifted above these
@@ -58,6 +59,34 @@ describe("authorization refusals", () => {
     );
 
     expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("drops a signed-out session refusal before it reaches either sink", () => {
+    reportCaught(
+      new ConvexError({
+        kind: "session_revoked",
+        message: "Authentication required",
+      }),
+      { source: "convex_query_subscription" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("drops an unauthenticated refusal before it reaches either sink", () => {
+    // What a live subscription gets when Convex re-runs it between an auth
+    // clear and the re-auth that follows (PLB-159).
+    reportCaught(
+      new ConvexError({
+        kind: "unauthenticated",
+        message: "Authentication required",
+      }),
+      { source: "convex_query_subscription" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
   });
 
   it("still reports a ConvexError that is not a refusal", () => {
@@ -133,6 +162,71 @@ describe("reportCaught", () => {
     const [captured] = captureException.mock.calls[0];
     expect(captured).toBeInstanceOf(Error);
     expect((captured as Error).message).toBe("just a string");
+  });
+
+  it("tags the Convex request id so a screenshot reaches the real stack", () => {
+    // The id the toast shows as `Reference <id>` is the same one the Convex
+    // dashboard's logs page searches by, and the same one the backend's own
+    // Sentry events carry. Tagging (not `extra`) because a tag is indexed:
+    // support looks the issue up BY this value.
+    reportCaught(
+      new Error(
+        "[CONVEX M(members:invite)] [Request ID: da0bbc6cf9261481] Server Error",
+      ),
+      { source: "share_project_dialog_invite" },
+    );
+
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: {
+          source: "share_project_dialog_invite",
+          convex_request_id: "da0bbc6cf9261481",
+        },
+      }),
+    );
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ convex_request_id: "da0bbc6cf9261481" }),
+    );
+  });
+
+  it("leaves the tags alone when there is no request id", () => {
+    reportCaught(new Error("boom"), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ tags: { source: "unit" } }),
+    );
+  });
+
+  it("merges caller tags but never lets one rename the call site", () => {
+    reportCaught(new Error("boom"), {
+      source: "unit",
+      tags: { surface: "share_project_dialog", source: "spoofed" },
+    });
+
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: { source: "unit", surface: "share_project_dialog" },
+      }),
+    );
+  });
+
+  it("still drops a forbidden ConvexError, request id or not", () => {
+    // A refusal stays quiet even though it carries an id: the id exists to
+    // explain incidents, and a refusal is not one.
+    const refusal = new ConvexError({
+      kind: "forbidden",
+      message: "Not a member of this organization",
+    });
+    refusal.message = "[Request ID: da0bbc6cf9261481] Uncaught ConvexError";
+
+    reportCaught(refusal, { source: "share_project_dialog_change_role" });
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
   });
 
   it("carries level and extra through", () => {
@@ -362,5 +456,35 @@ describe("query correlation", () => {
       queryBackend: "another.convex.cloud",
     });
     expect(captureException).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("auth recovery correlation", () => {
+  it("keeps backend request IDs and adds the current recovery ID", async () => {
+    captureException.mockReset();
+    useSessionRefreshStore.setState({
+      recoveryId: "test-recovery",
+      recoveryAt: Date.now(),
+    });
+    reportCaught(
+      new Error(
+        "[CONVEX Q(hosts:getHost)] [Request ID: abc123def4567890] Server Error",
+      ),
+      {
+        source: "convex_query_subscription",
+        queryBackend: "test.convex.cloud",
+      },
+    );
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          auth_recovery_id: "test-recovery",
+          request_id: "abc123def4567890",
+          convex_backend: "test.convex.cloud",
+        }),
+      }),
+    );
+    useSessionRefreshStore.setState({ recoveryId: null, recoveryAt: 0 });
   });
 });

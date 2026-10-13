@@ -3,6 +3,7 @@ import {
   markSignOutInProgress,
   SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
+import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { showSignOutScreen, useSignOutStore } from "@/stores/sign-out-store";
 
@@ -90,7 +91,15 @@ export async function signOutRevokedSession(
   await Promise.all([
     Promise.race([
       Promise.resolve()
-        .then(() => signOut({ returnTo, navigate: false }))
+        .then(() => {
+          // Before `signOut()` empties the WorkOS user, after which Convex
+          // drops its identity and re-runs anything still subscribed without
+          // one. In the microtask, not above: this function can run from a
+          // render-phase read (the query tracer reports what `useQuery`
+          // reads), where `flushSync` cannot flush.
+          pauseQueriesBeforeAuthClear();
+          return signOut({ returnTo, navigate: false });
+        })
         .catch(() => undefined),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS);

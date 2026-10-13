@@ -20,7 +20,7 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation((configs: any) => {
+    MCPClientManager: vi.fn().mockImplementation(function (configs: any) {
       managerConfigs.push(configs);
       return {
         disconnectAllServers: disconnectAllServersMock,
@@ -110,6 +110,14 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     // route MCPJam docs feedback to the MCP project.
     const args = await postAgentTurn();
     expect(args.prepare.excludeMcpToolNames).toContain("submit_feedback");
+  });
+
+  it("declines the platform worker's send_feedback tool too", async () => {
+    // Reachable when MCPJAM_AGENT_PLATFORM_TOOLS=1 restores the platform
+    // worker: a model-authored post to the MCPJam team from inside the user's
+    // chat, unattended. People report through the Send feedback form instead.
+    const args = await postAgentTurn();
+    expect(args.prepare.excludeMcpToolNames).toContain("send_feedback");
   });
 
   it("degrades instead of failing when a knowledge server is down", async () => {

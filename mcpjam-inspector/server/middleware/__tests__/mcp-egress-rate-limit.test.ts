@@ -240,6 +240,28 @@ describe("shared server check admission", () => {
     expect(coordinator).toHaveBeenLastCalledWith("release");
   });
 
+  it("hands the route the arrival time, before the queue wait", async () => {
+    let admit = false;
+    const coordinator: CheckCoordinator = async (operation) =>
+      operation === "admit" || (operation === "poll" && !admit)
+        ? { ...active(), state: "waiting" }
+        : active();
+    let seen: number | undefined;
+    const route = new Hono();
+    route.use("*", createServerCheckMiddleware(() => coordinator));
+    route.post("/check", (c) => {
+      seen = c.get("serverCheckStartedAt");
+      return new Response("ok");
+    });
+    const arrivedAt = Date.now();
+    const result = route.request("/check", { method: "POST" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    admit = true;
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await result).status).toBe(200);
+    // The queue wait counts against the route's deadline.
+    expect(seen).toBe(arrivedAt);
+  });
   it("does not run checks if the coordinator is unavailable", async () => {
     const handler = vi.fn(async () => new Response("ok"));
     const response = await app(async () => {

@@ -53,6 +53,24 @@ function isGoalRunResourceType(type) {
 }
 
 /**
+ * Whether an approved action was a CANCELLATION.
+ *
+ * One definition, because the copy and the routing both need the answer and
+ * two of them would drift. It recognises the two spellings the copy below
+ * uses: `kind` when the server sends one, and the operation name as the
+ * fallback for a server that predates `kind`. A build that matched only the
+ * first would leave every cancellation from an older server announced, and
+ * routed, as an approval.
+ *
+ * @param {{ operation: string, kind?: string | null }} outcome
+ * @returns {boolean}
+ */
+export function isCancellation(outcome) {
+  if (outcome.kind === 'cancel') return true;
+  return outcome.kind == null && outcome.operation === 'cancel_eval_run';
+}
+
+/**
  * What to say once the action has actually run.
  *
  * KIND FIRST. The server tells us what the approved action does — start,
@@ -63,7 +81,9 @@ function isGoalRunResourceType(type) {
  *
  * A URL wins over the copy when there is one, because "follow it here" is the
  * most useful thing we can say — but only when the SERVER built it. A link
- * assembled here would need to know each operation's result shape.
+ * assembled here would need to know each operation's result shape. The one
+ * exception is a cancellation: the link line says "Approved", so a
+ * cancellation keeps its own copy even when it carries a URL.
  *
  * @param {{ operation: string, kind?: string | null, resource?: { url?: string } | null, runUrl?: string | null }} outcome
  * @param {string} userId
@@ -73,7 +93,12 @@ export function announcementFor(outcome, userId) {
     (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+
+  // A cancellation is not an approval, so the URL shortcut must not speak for
+  // one.
+  if (url && !isCancellation(outcome)) {
+    return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+  }
 
   switch (outcome.kind) {
     case 'cancel':
@@ -213,12 +238,19 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   // operation-name ternary stays as the mixed-version fallback for a server
   // that predates `kind`.
   const text = announcementFor(outcome, userId);
+
+  // A cancellation started nothing, so it must not be routed into a run
+  // watcher. Both branches below post their OWN "running…" copy and return,
+  // which would throw away the truthful text above and announce a cancel as a
+  // started run — the same lie the wording was just fixed to stop telling.
+  const watchable = !isCancellation(outcome);
+
   try {
     // A run gets a LIVE message: the same "running… → here's how it went"
     // surface the retired Run-it button gave, now reached through the approval
     // path. Recognised by the server-sent resource type rather than by an
     // operation name, so a future op that also produces a run gets it free.
-    if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
+    if (watchable && outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
       const runId = outcome.resource.id;
       await announceAndWatchRun(client, {
         runId,
@@ -262,6 +294,7 @@ export async function handleProposalButton({ ack, body, client, context, logger,
     // acknowledgement below — the run still starts, but nobody gets the live
     // surface, which is the failure this dual read exists to prevent.
     if (
+      watchable &&
       outcome.resource &&
       isGoalRunResourceType(outcome.resource.type) &&
       outcome.resource.id &&

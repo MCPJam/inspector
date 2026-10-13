@@ -1,7 +1,6 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
 import type { TestStep } from "@/shared/steps";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
-import { getSessionToken } from "@/lib/session-token";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 import {
   buildHostedEvalServerBatchRequest,
@@ -10,6 +9,10 @@ import {
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import {
+  aiLaunchProblemsOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
 import { ConvexError, type Value } from "convex/values";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/steps";
@@ -23,8 +26,6 @@ export const EVALS_API_ENDPOINTS = {
     runTestCase: "/api/mcp/evals/run-test-case",
     streamTestCase: "/api/mcp/evals/stream-test-case",
     replayRun: "/api/mcp/evals/replay-run",
-    traceRepairStart: "/api/mcp/evals/trace-repair/start",
-    traceRepairStop: "/api/mcp/evals/trace-repair/stop",
   },
   hosted: {
     run: "/api/web/evals/run",
@@ -33,8 +34,6 @@ export const EVALS_API_ENDPOINTS = {
     runTestCase: "/api/web/evals/run-test-case",
     streamTestCase: "/api/web/evals/stream-test-case",
     replayRun: "/api/web/evals/replay-run",
-    traceRepairStart: "/api/web/evals/trace-repair/start",
-    traceRepairStop: "/api/web/evals/trace-repair/stop",
   },
 } as const;
 
@@ -397,6 +396,13 @@ async function postEvalRequest<TResponse>(
     if (typeof errorBody?.code === "string") {
       (error as Error & { code?: string }).code = errorBody.code;
     }
+    // A launch the organization's AI key policy refused lists every
+    // dependency that can't run on its providers; keep the list so the run
+    // sheet can show all of them, not only the summary sentence.
+    const problems = aiLaunchProblemsOf(body);
+    if (problems.length > 0) {
+      (error as Error & { problems?: AiLaunchProblem[] }).problems = problems;
+    }
     throw error;
   }
 
@@ -496,52 +502,6 @@ export async function generateNegativeEvalTests(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
         mergeHostedServerBatch(request) as JsonRecord,
       ),
-  });
-}
-
-export type StartTraceRepairParams =
-  | {
-      scope: "suite";
-      suiteId: string;
-      sourceRunId: string;
-      modelApiKeys?: Record<string, string>;
-    }
-  | {
-      scope: "case";
-      suiteId: string;
-      sourceRunId: string;
-      sourceIterationId: string;
-      testCaseId: string;
-      modelApiKeys?: Record<string, string>;
-    };
-
-export async function startTraceRepair(
-  params: StartTraceRepairParams,
-): Promise<{ success: boolean; jobId: string; existing?: boolean }> {
-  return runByMode({
-    local: () =>
-      postEvalRequest(EVALS_API_ENDPOINTS.local.traceRepairStart, {
-        ...params,
-        convexAuthToken: getSessionToken(),
-      } as JsonRecord),
-    hosted: () =>
-      postEvalRequest(EVALS_API_ENDPOINTS.hosted.traceRepairStart, {
-        ...params,
-      } as JsonRecord),
-  });
-}
-
-export async function stopTraceRepair(jobId: string): Promise<void> {
-  await runByMode({
-    local: () =>
-      postEvalRequest(EVALS_API_ENDPOINTS.local.traceRepairStop, {
-        jobId,
-        convexAuthToken: getSessionToken(),
-      } as JsonRecord),
-    hosted: () =>
-      postEvalRequest(EVALS_API_ENDPOINTS.hosted.traceRepairStop, {
-        jobId,
-      } as JsonRecord),
   });
 }
 

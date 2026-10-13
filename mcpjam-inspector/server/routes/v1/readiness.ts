@@ -45,6 +45,7 @@ import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import {
   HOSTED_SUBMISSION_MODES,
@@ -54,6 +55,7 @@ import {
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
 import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const readiness = new Hono();
 
@@ -114,6 +116,15 @@ const startOpenAISchema = z.strictObject({
    * of health, which is the exact failure `incomplete` exists to prevent.
    */
   submissionMode: z.enum(HOSTED_SUBMISSION_MODES),
+});
+
+/**
+ * Muse: the replay guard only. No observation opt-in — Muse has no catalogue
+ * for a model to grade against — so the strict schema refuses the key here,
+ * with a 400 that names it, rather than at the backend.
+ */
+const startMuseSchema = z.strictObject({
+  idempotencyKey: startFields.idempotencyKey,
 });
 
 /**
@@ -226,6 +237,14 @@ readiness.post(
   },
 );
 
+readiness.post(
+  "/projects/:projectId/servers/:serverId/readiness-runs/muse",
+  async (c) => {
+    const body = parseWithSchema(startMuseSchema, await readBody(c));
+    return startRun(c, "muse", undefined, body);
+  },
+);
+
 /**
  * Read the body, treating an ACTUALLY empty one as `{}`.
  *
@@ -260,16 +279,29 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
       runId,
     });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Readiness run" });
+    // The scoping read for the caller-supplied run id. A plain membership
+    // refusal — masked to "Server Error" in production — answers the same 404
+    // an unknown id does instead of the terminal 500 (MJ-021).
+    throw (
+      redactedReadRefusalError(error, "Readiness run not found") ??
+      translateConvexError(error, { resource: "Readiness run" })
+    );
   }
   if (!run) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Readiness run not found",
+    );
   }
   return v1Resource(c, toRunDto(run, projectId));
 });
 
 readiness.get("/projects/:projectId/readiness-runs", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.readiness",
+  );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   const publisher = c.req.query("readinessKind");
@@ -277,7 +309,7 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "readinessKind must be claude or openai",
+      "readinessKind must be claude, openai or muse",
     );
   }
   const serverId = c.req.query("serverId");
@@ -307,7 +339,11 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
       ...(limit !== undefined ? { limit } : {}),
     });
   } catch (error) {
-    throw translateConvexError(error, { resource: "Readiness runs" });
+    // Project-scoped list: same masked-refusal reading as the run read above.
+    throw (
+      redactedReadRefusalError(error, "Readiness runs not found") ??
+      translateConvexError(error, { resource: "Readiness runs" })
+    );
   }
   return v1PageJson(
     c,
@@ -325,10 +361,9 @@ readiness.post(
     const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     try {
-      await convex.mutation(
-        "claudeReadinessRuns:cancelReadinessRun" as any,
-        { runId },
-      );
+      await convex.mutation("claudeReadinessRuns:cancelReadinessRun" as any, {
+        runId,
+      });
     } catch (error) {
       throw translateConvexError(error, { resource: "Readiness run" });
     }
@@ -355,7 +390,11 @@ readiness.get(
         { runId },
       );
     } catch (error) {
-      throw translateConvexError(error, { resource: "Readiness report" });
+      // The report route's own scoping read, same reading as the run detail.
+      throw (
+        redactedReadRefusalError(error, "Readiness report not found") ??
+        translateConvexError(error, { resource: "Readiness report" })
+      );
     }
     if (!blobId) {
       // A run with no report is not a missing run: it may be in flight, it may

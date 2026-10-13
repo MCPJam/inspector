@@ -1,3 +1,4 @@
+import { generateSessionToken } from "../../../services/session-token.js";
 /**
  * Harness proxy-token on `adapter-http` (LOCAL plane, validate-when-present).
  *
@@ -30,6 +31,12 @@ const TURN_ID = "11111111-1111-4111-8111-111111111111";
 describe("adapter-http harness proxy-token (validate-when-present)", () => {
   let manager: MockMCPClientManager;
   let app: Hono;
+  let sessionToken: string;
+  const authenticatedRequest = (url: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set("X-MCP-Session-Auth", `Bearer ${sessionToken}`);
+    return app.request(url, { ...init, headers });
+  };
 
   beforeAll(() => {
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET =
@@ -37,6 +44,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
   });
 
   beforeEach(() => {
+    sessionToken = generateSessionToken();
     vi.clearAllMocks();
     __resetHarnessScopeStepUpForTests();
     manager = createMockMcpClientManager({
@@ -51,17 +59,17 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
         .mockImplementation((id: string) => id === "test-server"),
       listTools: vi.fn().mockResolvedValue({ tools: [{ name: "echo" }] }),
     });
-    app = createTestApp(manager, ["adapter-http"]);
+    app = createTestApp(manager, ["adapter-http"], { withSecurity: true });
   });
 
   const toolsList = (headers: Record<string, string> = {}, query = "") =>
-    app.request(`/api/mcp/adapter-http/test-server${query}`, {
+    authenticatedRequest(`/api/mcp/adapter-http/test-server${query}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ id: 1, method: "tools/list", params: {} }),
     });
 
-  it("200s for external clients (no token) — unaffected", async () => {
+  it("accepts session-authenticated clients without a harness proxy token", async () => {
     const res = await toolsList();
     const { status, data } = await expectJson(res);
     expect(status).toBe(200);
@@ -95,10 +103,13 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
   });
 
   it("401s the GET (SSE) stream when an invalid token is supplied (header)", async () => {
-    const res = await app.request("/api/mcp/adapter-http/test-server", {
+    const res = await authenticatedRequest(
+      "/api/mcp/adapter-http/test-server",
+      {
       method: "GET",
       headers: { "X-MCPJam-Proxy-Token": "bogus" },
-    });
+    },
+    );
     expect(res.status).toBe(401);
   });
 
@@ -106,14 +117,14 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     const challenge = new InsufficientScopeError({
       requiredScope: "bench:write",
       resourceMetadataUrl: new URL(
-        "https://bench.example/.well-known/oauth-protected-resource"
+        "https://bench.example/.well-known/oauth-protected-resource",
       ),
     });
     manager.executeTool.mockRejectedValueOnce(challenge);
     const received: unknown[] = [];
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
 
-    const res = await app.request(
+    const res = await authenticatedRequest(
       `/api/mcp/adapter-http/test-server?${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${TURN_ID}`,
       {
         method: "POST",
@@ -126,7 +137,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
           method: "tools/call",
           params: { name: "bench_write", arguments: { value: "x" } },
         }),
-      }
+      },
     );
 
     const { status, data } = await expectJson(res);
@@ -153,11 +164,11 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     const received: unknown[] = [];
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
 
-    const streamResponse = await app.request(
+    const streamResponse = await authenticatedRequest(
       `/api/mcp/adapter-http/test-server?${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${TURN_ID}`,
       {
         method: "GET",
-      }
+      },
     );
     const reader = streamResponse.body!.getReader();
     const decoder = new TextDecoder();
@@ -171,7 +182,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     const sessionId = /sessionId=([^"&\s]+)/.exec(buffer)?.[1];
     expect(sessionId).toBeTruthy();
 
-    const messageResponse = await app.request(
+    const messageResponse = await authenticatedRequest(
       `/api/mcp/adapter-http/test-server/messages?sessionId=${encodeURIComponent(
         sessionId!
       )}`,
@@ -184,7 +195,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
           method: "tools/call",
           params: { name: "bench_write", arguments: { value: "x" } },
         }),
-      }
+      },
     );
     expect(messageResponse.status).toBe(202);
     expect(received).toEqual([
@@ -211,7 +222,9 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
       }),
     ]) {
       manager.executeTool.mockRejectedValueOnce(error);
-      const res = await app.request("/api/mcp/adapter-http/test-server", {
+      const res = await authenticatedRequest(
+        "/api/mcp/adapter-http/test-server",
+        {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -223,7 +236,8 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
           method: "tools/call",
           params: { name: "bench_write", arguments: {} },
         }),
-      });
+      },
+      );
       expect(res.status).toBe(200);
     }
     expect(received).toEqual([]);

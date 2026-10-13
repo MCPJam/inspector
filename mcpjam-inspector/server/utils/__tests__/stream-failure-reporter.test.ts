@@ -108,3 +108,62 @@ describe("stream failure reporter", () => {
     expect("rpcMethod" in payload).toBe(false);
   });
 });
+
+describe("stream failure reporter — capture outcome", () => {
+  const ALWAYS = {
+    always: true,
+    tags: { surface: "mcpjam_agent", page_class: "incident" },
+  };
+  const capturedReport = {
+    normalized: { slug: "internal/unknown" },
+    origin: "ambiguous",
+    captured: true,
+  };
+
+  it("forwards the event's capture policy into the classification", () => {
+    createSystemStreamFailureReporter("chat")(failure({ capture: ALWAYS }));
+    expect(reportRouteFailure).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ capture: ALWAYS }),
+    );
+  });
+
+  it("records a capture on the request, so the request-log backstop skips it", () => {
+    vi.mocked(reportRouteFailure).mockReturnValueOnce(capturedReport as never);
+    const set = vi.fn();
+    createRequestStreamFailureReporter({ set } as never, "chat")(
+      failure({ capture: ALWAYS }),
+    );
+    expect(set).toHaveBeenCalledWith("failureCaptured", true);
+  });
+
+  it("records nothing for a failure that was not captured", () => {
+    const set = vi.fn();
+    createRequestStreamFailureReporter({ set } as never, "chat")(failure());
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("covers a SECOND failure in a turn: policy forwarded, outcome recorded", () => {
+    // `oncePerTurn` classifies later failures directly rather than through
+    // the reporter, so both the policy and the request's record of the
+    // outcome must survive that shortcut.
+    const set = vi.fn();
+    const turn = oncePerTurn(
+      createRequestStreamFailureReporter({ set } as never, "chat"),
+    );
+    turn(failure());
+    vi.mocked(reportRouteFailure).mockReturnValueOnce(capturedReport as never);
+    const second = turn(failure({ capture: ALWAYS }));
+
+    expect(second.captured).toBe(true);
+    expect(reportRouteFailure).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ capture: ALWAYS }),
+    );
+    expect(set).toHaveBeenCalledWith("failureCaptured", true);
+    // Still one typed event per turn.
+    expect(requestEvent).toHaveBeenCalledTimes(1);
+  });
+});

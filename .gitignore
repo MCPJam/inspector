@@ -6,12 +6,13 @@ node_modules/
 node_modules
 .mcpjam/skills/
 **/.mcpjam/skills/
-.claude/
+# Shared hooks are committed, and skills/ links to .agents/skills; local settings, launch configs and worktrees are not.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 docs/superpowers/
-mcpjam-inspector/server/routes/apps/**/*.bundled.ts
+*.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
-mcpjam-inspector/server/services/plugins/shim/*.bundled.ts
-mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/generated/*.bundled.ts
 cli/dist/
 sdk/dist/
 chat-ui/dist/
@@ -26,3 +27,6 @@ wt-*/
 .playwright-mcp/
 evaluators/dist/
 
+
+# Meticulous AI onboard workspace
+.meticulous-onboard/

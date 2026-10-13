@@ -23,3 +23,29 @@ export function resolveBridgeToolCallTarget(args: {
   }
   return { targetServerId, ...(toolName ? { toolName } : {}) };
 }
+
+/** Reject a qualified tool targeting another configured server. */
+export function isCrossServerToolCall(
+  manager: { hasServer(id: string): boolean },
+  serverId: string,
+  body: any,
+): boolean {
+  const name = body?.method === "tools/call" ? body.params?.name : undefined;
+  if (typeof name !== "string" || !name.includes(":")) return false;
+  const prefix = name.slice(0, name.indexOf(":"));
+  return prefix !== serverId && manager.hasServer(prefix);
+}
+
+/** Keep the shared bridge resolver confined even if the server list changes. */
+export function pinMcpManagerToServer<
+  T extends { hasServer(id: string): boolean },
+>(manager: T, serverId: string): T {
+  return new Proxy(manager, {
+    get(target, key) {
+      if (key === "hasServer")
+        return (id: string) => id === serverId && target.hasServer(id);
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}

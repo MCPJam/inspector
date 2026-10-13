@@ -84,3 +84,17 @@ test("labels a packages-only release by package", () => {
   assert.equal(label, "@mcpjam/sdk 8.18.0");
   assert.equal(releaseRunName(label), "Release @mcpjam/sdk 8.18.0");
 });
+
+test("skip_verify releases without waiting for any check", () => {
+  const decision = decideRelease({ ...ready, greenChecks: [], skipVerify: true });
+  assert.equal(decision.dispatch, true);
+  assert.match(decision.reason, /skip_verify/);
+});
+
+test("skip_verify still ships only the tip, only once, and only what npm lacks", () => {
+  const base = { ...ready, greenChecks: [], skipVerify: true };
+  assert.equal(decideRelease({ ...base, mainSha: "def" }).dispatch, false);
+  assert.equal(decideRelease({ ...base, unpublished: [] }).dispatch, false);
+  const releaseRuns = [{ status: "in_progress", conclusion: null, displayTitle: "Release 3.12.3" }];
+  assert.equal(decideRelease({ ...base, releaseRuns }).dispatch, false);
+});

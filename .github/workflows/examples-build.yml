@@ -28,12 +28,15 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
     # Referenced BY NAME from dependabot-auto-merge.yml. Rename both together.
     name: Build examples
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -65,7 +68,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.changed.outputs.dirs != ''
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 

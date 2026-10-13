@@ -225,10 +225,21 @@ vi.mock("../../../utils/guest-auth.js", () => ({
 // Scenario turns must NEVER skip host-owned config resolution — the route
 // resolves a guest bearer for the fetch when the request carries none.
 const fetchScenarioRuntimeConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("../../../utils/scenario-runtime-config.js", () => ({
-  fetchScenarioRuntimeConfig: (...args: unknown[]) =>
-    fetchScenarioRuntimeConfigMock(...args),
-}));
+vi.mock("../../../utils/scenario-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/scenario-runtime-config.js")
+  >("../../../utils/scenario-runtime-config.js");
+  return {
+    fetchScenarioRuntimeConfig: (...args: unknown[]) =>
+      fetchScenarioRuntimeConfigMock(...args),
+    // Pure; the real ones, so the route sees the marker exactly as served and
+    // words its refusals exactly as it would live.
+    readComputerSandboxHarness: actual.readComputerSandboxHarness,
+    SCENARIO_HARNESS_REPUBLISH_REQUIRED:
+      actual.SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+    scenarioHarnessRepublishRefusal: actual.scenarioHarnessRepublishRefusal,
+  };
+});
 
 // Host-bound direct sessions (Playground `hostId`) resolve their host config
 // through this fetch; the task-created delivery tests use it to turn the
@@ -362,6 +373,143 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       expect(res.status).toBe(502);
+    });
+  });
+
+  describe("scenario harness on a disposable box", () => {
+    it("REFUSES it here, naming where it runs: this route cannot provision the box", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          harness: "claude-code",
+          computer: { kind: "personal" },
+          computerSandbox: { mode: "ephemeral", harness: true },
+        },
+      });
+
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.reason).toBe("not_a_data_plane");
+      expect(body.error).toMatch(/MCPJam web app/);
+    });
+
+    it("leaves a marker-less harness scenario (an older backend) to the usual gates", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: { harness: "claude-code", computer: { kind: "personal" } },
+      });
+
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      const body = await res.json().catch(() => ({}));
+      expect(body?.reason).not.toBe("not_a_data_plane");
+    });
+
+    // A HOST-BACKED scenario: a scenario scope and no marker, so no box exists
+    // anywhere for its harness.
+    const hostBacked = (accessKind: string) =>
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          harness: "claude-code",
+          computer: { kind: "personal" },
+          accessKind,
+          executionScope: {
+            kind: "swarm",
+            swarmId: "cbx_1",
+            accessVersion: 1,
+            projectId: "project-1",
+            workspaceId: "ws_1",
+          },
+        },
+      });
+
+    it("REFUSES a host-backed scenario's harness for a member with a 409 telling them to republish", async () => {
+      hostBacked("project_member");
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.code).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.error).toMatch(/Republish the scenario from an environment/);
+    });
+
+    it("REFUSES it for a participant with copy free of internals", async () => {
+      hostBacked("swarm_grant");
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.code).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.error).toBe(
+        "This study isn't available right now. Let the person who shared it know."
+      );
+    });
+
+    it("leaves a harness scenario whose marker lacks the harness field (an older backend) to the usual gates", async () => {
+      for (const computerSandbox of [
+        { mode: "ephemeral" },
+        { mode: "unavailable", reason: "no ready build" },
+      ]) {
+        fetchScenarioRuntimeConfigMock.mockResolvedValue({
+          ok: true,
+          config: {
+            harness: "claude-code",
+            computer: { kind: "personal" },
+            computerSandbox,
+          },
+        });
+
+        const res = await postAuthenticatedJson({
+          scenarioId: "cbx_1",
+          messages: [{ role: "user", content: "hi" }],
+          model: { id: "gpt-4", provider: "openai" },
+        });
+
+        const body = await res.json().catch(() => ({}));
+        expect(body?.reason).not.toBe("not_a_data_plane");
+      }
+    });
+  });
+
+  describe("host runtime-config gate", () => {
+    it("fails closed with the network code in the body, not the copy", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+        networkCode: "ENOTFOUND",
+      });
+
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostId: "host-1",
+      });
+
+      expect(res.status).toBe(502);
+      const body = await res.json();
+      expect(body.networkCode).toBe("ENOTFOUND");
+      expect(body.error).not.toContain("ENOTFOUND");
     });
   });
 
@@ -499,10 +647,198 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  describe("local computer engine boundary", () => {
+    // A consent capability is a header; it outlives a sign-out. Only a
+    // POSITIVELY verified member may spend it on local bash — a guest of the
+    // selected authority, an expired/forged bearer, or no bearer at all never
+    // resolves the local engine, however valid the leftover consent is.
+    async function engineFor(actor: unknown, consentValid = true) {
+      const classifier = await import(
+        "../../../utils/computers/local-engine-request.js"
+      );
+      const consent = await import("../../../utils/computers/local-consent.js");
+      const registry = await import(
+        "../../../utils/built-in-tools/registry.js"
+      );
+      const classify = vi
+        .spyOn(classifier, "classifyChatRequestActor")
+        .mockResolvedValue(actor as never);
+      const verify = vi
+        .spyOn(consent, "verifyLocalComputerConsent")
+        .mockResolvedValue(consentValid);
+      const resolveTools = vi.spyOn(registry, "resolveHostTools");
+      try {
+        const res = await app.request("/api/mcp/chat-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer some-bearer",
+            "x-mcpjam-local-consent": "leftover-member-consent",
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "run ls" }],
+            model: { id: "gpt-4", provider: "openai" },
+            apiKey: "test-key",
+            projectId: "project-1",
+            computerEngine: "local",
+          }),
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        const context = resolveTools.mock.calls.at(-1)?.[1] as
+          | { computerEngine?: string; localComputerRequested?: boolean }
+          | undefined;
+        return {
+          engine: context?.computerEngine,
+          requested: context?.localComputerRequested,
+          consentChecked: verify.mock.calls.length > 0,
+        };
+      } finally {
+        classify.mockRestore();
+        verify.mockRestore();
+        resolveTools.mockRestore();
+      }
+    }
+
+    it.each([
+      ["a backend-issued guest", { kind: "guest", guestId: "g-1" }],
+      ["an arbitrary bearer", { kind: "unverified", reason: "unverified" }],
+      ["an expired token", { kind: "unverified", reason: "unverified" }],
+      ["no identity", { kind: "anonymous" }],
+    ])(
+      "%s carrying leftover member consent never gets the local engine",
+      async (_label, actor) => {
+        const result = await engineFor(actor);
+        expect(result.engine).not.toBe("local");
+        expect(result.requested).toBe(false);
+        // The capability is not even consulted for a non-member.
+        expect(result.consentChecked).toBe(false);
+      },
+    );
+
+    it("a verified member with valid consent gets the local engine", async () => {
+      const result = await engineFor({
+        kind: "member",
+        actor: {
+          credential: "authkit",
+          userId: "authkit:user_1",
+          subject: "user_1",
+        },
+      });
+      expect(result.engine).toBe("local");
+      expect(result.consentChecked).toBe(true);
+    });
+
+    it("a verified member without valid consent does not", async () => {
+      const result = await engineFor(
+        {
+          kind: "member",
+          actor: {
+            credential: "authkit",
+            userId: "authkit:user_1",
+            subject: "user_1",
+          },
+        },
+        false,
+      );
+      expect(result.engine).not.toBe("local");
+    });
+  });
+
+  describe("local browser engine boundary", () => {
+    // Same boundary as local bash: a browser-consent capability is a header
+    // that outlives a sign-out, so spending it on this machine takes a
+    // POSITIVELY verified member (or a guest the rollout admitted by id).
+    // "Not a guest of the selected authority" is not membership.
+    async function browserReadinessFor(actor: unknown) {
+      const classifier = await import(
+        "../../../utils/computers/local-engine-request.js"
+      );
+      const consent = await import(
+        "../../../utils/computers/browser-consent.js"
+      );
+      const rollout = await import(
+        "../../../utils/computers/browser-rollout.js"
+      );
+      const classify = vi
+        .spyOn(classifier, "classifyChatRequestActor")
+        .mockResolvedValue(actor as never);
+      const guestCheck = vi
+        .spyOn(classifier, "isGuestOrAnonymousRequest")
+        .mockResolvedValue(false);
+      const verify = vi
+        .spyOn(consent, "verifyLocalBrowserConsent")
+        .mockResolvedValue(true);
+      const resolveRollout = vi
+        .spyOn(rollout, "resolveBrowserRollout")
+        .mockResolvedValue({
+          enabled: true,
+          actor: { id: "test-member", guest: false },
+        });
+      try {
+        const res = await app.request("/api/mcp/chat-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer some-bearer",
+            "x-mcpjam-browser-consent": "leftover-member-consent",
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "open the docs" }],
+            model: { id: "gpt-4", provider: "openai" },
+            apiKey: "test-key",
+            projectId: "project-1",
+            builtInToolIds: ["browser"],
+            browserEngine: "local",
+          }),
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        return capturedStreamEvents.find(
+          (event) => event.type === "data-browser-readiness",
+        )?.data.reason as string | null | undefined;
+      } finally {
+        classify.mockRestore();
+        guestCheck.mockRestore();
+        verify.mockRestore();
+        resolveRollout.mockRestore();
+      }
+    }
+
+    it.each([
+      ["an arbitrary bearer", { kind: "unverified", reason: "unverified" }],
+      ["an expired token", { kind: "unverified", reason: "unverified" }],
+      ["no identity", { kind: "anonymous" }],
+    ])(
+      "%s carrying leftover browser consent is asked to allow Browser again, not run locally",
+      async (_label, actor) => {
+        const reason = await browserReadinessFor(actor);
+        expect(reason).toContain("browser_consent_required");
+      },
+    );
+
+    it("a verified member with valid consent gets the local browser", async () => {
+      const reason = await browserReadinessFor({
+        kind: "member",
+        actor: {
+          credential: "authkit",
+          userId: "authkit:user_1",
+          subject: "user_1",
+        },
+      });
+      // Consent is accepted for a verified member; whether a local browser
+      // runtime is actually available on the test machine is a different
+      // reason and not this boundary's concern.
+      expect(reason ?? "").not.toContain("browser_consent_required");
+    });
+  });
+
   describe("success cases", () => {
     it("keeps guest local Browser independent of member-only project settings", async () => {
       const guest = await import("../../../utils/computers/local-engine-request.js");
-      const guestCheck = vi.spyOn(guest, "isGuestChatRequest").mockReturnValue(true);
+      const guestCheck = vi
+        .spyOn(guest, "isGuestOrAnonymousRequest")
+        .mockResolvedValue(true);
       const rollout = await import("../../../utils/computers/browser-rollout.js");
       const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
         enabled: true, actor: { id: "guest-browser-user", guest: true },
@@ -810,7 +1146,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("maps direct MCP image tool history to media content before streaming", async () => {
+    it("maps direct MCP image tool history to AI SDK 7 file content before streaming", async () => {
       const { streamText } = await import("ai");
       manager.getToolsForAiSdk.mockResolvedValue({
         qa_return_image_tool_result: {
@@ -879,8 +1215,8 @@ describe("POST /api/mcp/chat-v2", () => {
                     type: "content",
                     value: [
                       {
-                        type: "media",
-                        data: "aGVsbG8=",
+                        type: "file",
+                        data: { type: "data", data: "aGVsbG8=" },
                         mediaType: "image/png",
                       },
                     ],
@@ -2321,6 +2657,77 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("answers a key-policy refusal from /stream/org/resolve as the refusal, not an internal 500", async () => {
+      // The organization requires its own provider keys and this connection
+      // runs on a local runtime, so the backend refuses before handing back
+      // any key. That is the organization's configuration, not an MCPJam
+      // fault: the answer keeps the refusal's status, code and copy, is not
+      // reported as an internal failure (which pages), and never falls back
+      // to another rail.
+      const { logger } = await import("../../../utils/logger");
+      const errorSpy = vi.spyOn(logger, "error");
+      const refusalSentence =
+        "This organization runs AI only on its own provider keys.";
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org/resolve") {
+          return Response.json(
+            { ok: false, code: "org_keys_required", error: refusalSentence },
+            { status: 403 },
+          );
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+        });
+        const { status, data } = await expectJson<{
+          code: string;
+          message: string;
+          error?: string;
+          details: Record<string, unknown>;
+          origin?: string;
+        }>(res);
+
+        expect(status).toBe(403);
+        expect(data.code).toBe("FORBIDDEN");
+        expect(data.details).toMatchObject({
+          code: "org_keys_required",
+          remediation: "choose_org_model",
+        });
+        expect(data.message).toContain(refusalSentence);
+        expect(data.error).toBeUndefined();
+        expect(data.origin).toBe("user_config");
+        expect(res.headers.get("x-mcpjam-error-origin")).toBe("user_config");
+        expect(
+          errorSpy.mock.calls.some(
+            ([, , context]) =>
+              (context as { hop?: unknown } | undefined)?.hop ===
+              "mcpjam_internal",
+          ),
+        ).toBe(false);
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+        errorSpy.mockRestore();
+      }
+    });
+
     it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
       // A `custom:` provider is local-runtime-eligible, so without the flag this
       // chat resolves + runs the model locally (see the test above). When a
@@ -3264,6 +3671,245 @@ describe("POST /api/mcp/chat-v2", () => {
       } finally {
         global.fetch = originalFetch;
       }
+    });
+  });
+
+  describe("the saved selection decides the rail (execution reader)", () => {
+    const HOSTED_ID = "openai/gpt-5-mini";
+    const none = { provider: "none", model: "none" } as const;
+    let fetchMock: ReturnType<typeof vi.fn>;
+    const originalFetch = global.fetch;
+
+    beforeEach(async () => {
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      // The hosted list says the id is MCPJam-hosted: only the selection can
+      // move it off credits.
+      vi.mocked(isHostedCatalogModel).mockImplementation(
+        (id: string) => id === HOSTED_ID,
+      );
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+      fetchMock = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (
+          url === "https://test-convex.example.com/stream" ||
+          url === "https://test-convex.example.com/stream/org"
+        ) {
+          return createSseResponse(completedStreamEvents());
+        }
+        if (url === "https://test-convex.example.com/ingest-chat") {
+          return new Response(null, { status: 200 });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+      global.fetch = originalFetch;
+    });
+
+    const streamedTo = () =>
+      fetchMock.mock.calls
+        .map(([input]) => String(input).replace("https://test-convex.example.com", ""))
+        .filter((path) => path.startsWith("/stream"));
+
+    const hostWith = (modelSelection?: unknown) =>
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+        ok: true,
+        config: {
+          hostId: "host-1",
+          modelId: HOSTED_ID,
+          ...(modelSelection !== undefined ? { modelSelection } : {}),
+        },
+      });
+
+    const turn = (extra: Record<string, unknown> = {}) =>
+      postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        projectId: "project-1",
+        hostId: "host-1",
+        ...extra,
+      });
+
+    it("no selection: today's hosted-list path (MCPJam /stream)", async () => {
+      hostWith();
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a hosted selection: MCPJam /stream", async () => {
+      hostWith({ modelId: HOSTED_ID, source: "hosted", fallback: none });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a STORED legacy selection never reaches the hosted rail, however hosted the id is", async () => {
+      hostWith({ source: "legacy", modelId: HOSTED_ID });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+      const body = JSON.parse(
+        String(
+          (fetchMock.mock.calls.find(([input]) =>
+            String(input).endsWith("/stream/org"),
+          )![1] as RequestInit).body,
+        ),
+      );
+      expect(body).toMatchObject({ providerKey: "openai", model: HOSTED_ID });
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("an org selection runs on the org connection even when the request carries a key", async () => {
+      hostWith({
+        modelId: HOSTED_ID,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_1" },
+        fallback: none,
+      });
+      const res = await turn({ apiKey: "sk-request-key" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+    });
+
+    it("a local selection runs on the request's own key, never MCPJam or the org", async () => {
+      hostWith({
+        modelId: HOSTED_ID,
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "openai" },
+        fallback: none,
+      });
+      delete process.env.CONVEX_HTTP_URL;
+      const res = await turn({ apiKey: "sk-request-key" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: HOSTED_ID, hosted: false }),
+        "sk-request-key",
+        expect.anything(),
+        undefined,
+      );
+    });
+
+    // The organization's config, with its AI-key policy. A turn on its own
+    // key reaches nothing else on the backend.
+    const answerOrgConfig = (aiKeyPolicy: Record<string, unknown>) =>
+      fetchMock.mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith("/org-model-config/resolve")) {
+          return Response.json({ ok: true, providers: [], aiKeyPolicy });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+    it("a local selection on a strict organization's project is refused before any provider call", async () => {
+      // The organization requires its own keys. A key on this machine is no
+      // exemption: the turn reads the policy and is refused server-side, so
+      // the picker is not the only guard.
+      answerOrgConfig({ requireOrgKeys: true, revision: 2 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-strict",
+        modelSelection: {
+          modelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      const { status, data } = await expectJson<{
+        code: string;
+        details: Record<string, unknown>;
+      }>(res);
+      expect(status).toBe(403);
+      expect(data.code).toBe("FORBIDDEN");
+      expect(data.details).toMatchObject({ code: "org_keys_required" });
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).endsWith("/org-model-config/resolve"),
+        ),
+      ).toBe(true);
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
+    it("a local selection runs as before when the organization does not require its own keys", async () => {
+      answerOrgConfig({ requireOrgKeys: false, revision: 1 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-open",
+        modelSelection: {
+          modelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "llama3" }),
+        "local",
+        expect.anything(),
+        undefined,
+      );
+    });
+
+    it("a selection for a DIFFERENT model than the turn's is ignored (today's path for this model)", async () => {
+      hostWith({ source: "legacy", modelId: "openai/some-other-model" });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a turn's own stored legacy selection (no host) also stays off credits", async () => {
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        projectId: "project-1",
+        modelSelection: { source: "legacy", modelId: HOSTED_ID },
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+    });
+
+    it("an org selection with no project to resolve it in is refused, never run elsewhere", async () => {
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        apiKey: "sk-request-key",
+        modelSelection: {
+          modelId: HOSTED_ID,
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "orgprov_1" },
+          fallback: none,
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "credential_missing",
+      );
+      expect(streamedTo()).toEqual([]);
     });
   });
 });

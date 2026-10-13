@@ -1,3 +1,4 @@
+import { provisionInspectorRuntime } from "./support/inspector-runtime.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
@@ -223,7 +224,7 @@ async function startMockInspector(options: {
 
     if (request.method === "GET" && request.url === "/api/session-token") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ token: "test-token" }));
+      response.end(JSON.stringify({ ok: true }));
       return;
     }
 
@@ -253,6 +254,7 @@ async function startMockInspector(options: {
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const { port } = server.address() as AddressInfo;
+  provisionInspectorRuntime(port);
 
   return {
     port,

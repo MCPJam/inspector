@@ -37,6 +37,7 @@ export const FROZEN_LOCAL_COMMANDS = [
   "subscriptions",
   "tasks",
   "telemetry",
+  "test",
   "tools",
   "xaa",
 ] as const;

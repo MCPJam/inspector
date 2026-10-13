@@ -258,6 +258,16 @@ function expectNoFrontendBearerShortcut(record: ConnectRequestRecord) {
 
 test.describe("OAuth Debugger e2e", () => {
   test("recovers from a failed app bootstrap chunk", async ({ page }) => {
+    const cloudAuthRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.hostname === "oauth-debugger-e2e.convex.cloud" ||
+        url.pathname === "/api/web/guest-session"
+      ) {
+        cloudAuthRequests.push(url.pathname);
+      }
+    });
     await page.route("**/src/app-bootstrap.tsx*", (route) => route.abort(), {
       times: 1,
     });
@@ -266,6 +276,7 @@ test.describe("OAuth Debugger e2e", () => {
     await page.getByRole("button", { name: "Reload MCPJam" }).click();
     await waitForHarnessReady(page);
     await expect(page.getByRole("alert")).toHaveCount(0);
+    expect(cloudAuthRequests).toEqual([]);
   });
 
   test("covers first connect and reconnect for plain and OAuth MCP servers", async ({

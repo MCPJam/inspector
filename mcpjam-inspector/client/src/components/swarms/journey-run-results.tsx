@@ -22,7 +22,6 @@ import {
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
-import { ExecutionProvenance } from "@/components/evals/execution-provenance";
 import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
   liveSessionTrace,
@@ -37,6 +36,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isBusyReservationRefusal,
 } from "@/shared/swarm-attempt-error";
 import {
   describeProviderRateLimit,
@@ -83,7 +83,7 @@ export type SwarmAttemptOutcome = {
   status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
   errorCode?: string | null;
   errorMessage?: string | null;
-  /** The session's execution record, raw; see `ExecutionProvenance`. */
+  /** The session's execution record, raw; read through `readExecutionRecord`. */
   execution?: unknown;
 };
 
@@ -589,20 +589,25 @@ export function SwarmLiveStreamPane({
   // provider throttling their key. Only the second gets the card — the first is
   // lifted by credit or BYOK, and this copy would point at the wrong fix. The
   // attempt row decides it: a whole-run spend-cap finalize stamps its code with
-  // no message, so the stream's text alone cannot tell the two apart.
+  // no message, so the stream's text alone cannot tell the two apart. A busy
+  // reservation is a third thing: MCPJam's own wait, with no provider involved.
+  // Until the row lands the live event decides it, by the code it carries
+  // beside the humanized sentence, and by the sentence when it did not. Every
+  // reading of the failure below goes by that one code, so a pane that is ahead
+  // of its row words the session the way the row will.
+  const errorCode = attempt?.errorCode ?? live?.errorCode;
   const rateLimitInfo =
     outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
           attempt?.errorMessage ?? live?.errorMessage ?? null,
-          attempt?.errorCode,
+          errorCode,
         )
       : null;
+  const rateLimitCode = errorCode ?? rateLimitInfo?.code;
   const providerRateLimit =
     rateLimitInfo &&
-    !isAccountLimit(
-      rateLimitInfo.message,
-      attempt?.errorCode ?? rateLimitInfo.code,
-    )
+    !isAccountLimit(rateLimitInfo.message, rateLimitCode) &&
+    !isBusyReservationRefusal(rateLimitCode, rateLimitInfo.message)
       ? describeProviderRateLimit(
           providerLabelForModelId(convexSession?.modelId),
         )
@@ -617,7 +622,7 @@ export function SwarmLiveStreamPane({
     outcome === "failed" || outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
           attempt?.errorMessage ?? live?.errorMessage,
-          attempt?.errorCode,
+          errorCode,
         )
       : null;
 
@@ -679,20 +684,12 @@ export function SwarmLiveStreamPane({
             variant="inline"
             error={describeSwarmAttemptFailure(
               attempt?.errorMessage ?? live?.errorMessage,
-              attempt?.errorCode,
+              errorCode,
               providerLabelForModelId(convexSession?.modelId),
             )}
           />
         </div>
       ) : null}
-
-      {/* What this session's target model ran on, and a deviation banner when
-          that differed from the request. Nothing for a session recorded before
-          the record existed. */}
-      <ExecutionProvenance
-        execution={attempt?.execution}
-        testIdPrefix="swarm-live-pane-execution"
-      />
 
       {/* Setup notes for this session — e.g. a host built-in that was
           deliberately not advertised. Shown as its own line, not folded into

@@ -121,7 +121,7 @@ type Window = { count: number; windowStart: number };
 /** No window for this key yet — the caller decides whether to create one. */
 const ABSENT = "absent" as const;
 
-interface FixedWindowMap {
+export interface FixedWindowMap {
   /**
    * Charge a key that already has a window. `null` = allowed, a number =
    * refused with ms until it rolls, `ABSENT` = no window exists yet.
@@ -139,7 +139,10 @@ interface FixedWindowMap {
   size: () => number;
 }
 
-function createFixedWindowMap(limit: number, windowMs: number): FixedWindowMap {
+export function createFixedWindowMap(
+  limit: number,
+  windowMs: number,
+): FixedWindowMap {
   const windows = new Map<string, Window>();
 
   setInterval(() => {
@@ -194,7 +197,7 @@ const tokenWindows = createFixedWindowMap(TOKEN_LIMIT, TOKEN_WINDOW_MS);
 const ipWindows = createFixedWindowMap(IP_LIMIT, IP_WINDOW_MS);
 const unattestedWindows = createFixedWindowMap(
   UNATTESTED_IP_LIMIT,
-  IP_WINDOW_MS
+  IP_WINDOW_MS,
 );
 
 /** The map key for a bearer. Hashed — see the header. */
@@ -202,16 +205,25 @@ function bearerKey(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 32);
 }
 
+const TOO_MANY_MESSAGE = "Too many requests. Slow down and retry.";
+
 function tooMany(c: Context, retryAfterMs: number) {
+  // `requestLogContextMiddleware` reads the code and message off
+  // `webErrorMeta` for a RETURNED response.
+  c.set("webErrorMeta", {
+    status: 429,
+    code: ErrorCode.RATE_LIMITED,
+    message: TOO_MANY_MESSAGE,
+  });
   return c.json(
     {
       code: ErrorCode.RATE_LIMITED,
-      message: "Too many requests. Slow down and retry.",
+      message: TOO_MANY_MESSAGE,
     },
     429,
     {
       "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
-    }
+    },
   );
 }
 
@@ -228,7 +240,7 @@ const METERED_AUTH_METHODS: ReadonlySet<string> = new Set([
  */
 export async function passthroughRateLimitMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
   const authMethod = c.get("authMethod");

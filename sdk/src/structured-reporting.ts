@@ -16,6 +16,12 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import {
+  formatLocalEvalRunSummary,
+  isLocalEvalRunReport,
+  localRunJUnitProperties,
+  renderLocalRunHtmlSection,
+} from "./suite-file-run/report.js";
 
 export type StructuredCaseClassification =
   | "breaking"
@@ -457,14 +463,29 @@ export function renderStructuredRunJUnitXml(
   // is omit the chain while the JSON and HTML terminals show it: a team whose CI
   // reads JUnit would then be the only audience that cannot see why a run
   // failed, and they are the audience most likely to be looking.
-  const systemOut =
-    redactedReport.decisionSummary === undefined
+  //
+  // A LOCAL run's report carries its own explanation instead: the local
+  // decision, provenance and partial-state warnings, in the same words the
+  // CLI prints — plus `<properties>` naming it local and emulated, so a
+  // consumer reading attributes alone cannot mistake it for a hosted run.
+  const local = isLocalEvalRunReport(redactedReport) ? redactedReport : undefined;
+  const systemOut = local
+    ? `\n    <system-out>${escapeXml(formatLocalEvalRunSummary(local))}</system-out>`
+    : redactedReport.decisionSummary === undefined
       ? ""
       : `\n    <system-out>${escapeXml(
           formatEvalRunDecisionSummary(redactedReport.decisionSummary)
         )}</system-out>`;
+  const properties = local
+    ? `    <properties>\n${localRunJUnitProperties(local)
+        .map(
+          ([name, value]) =>
+            `      <property name="${escapeXml(name)}" value="${escapeXml(value)}"/>`
+        )
+        .join("\n")}\n    </properties>\n`
+    : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n${casesXml}${systemOut}\n  </testsuite>\n</testsuites>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n${properties}${casesXml}${systemOut}\n  </testsuite>\n</testsuites>\n`;
 }
 
 /** `who`, `why`, `until when` — the charter's three facts, on one line. */
@@ -509,6 +530,12 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
     // is the reason the page is not what it otherwise appears to be, and a
     // reader who scrolls no further must still have seen it.
     renderHtmlWaiverSection(waivedCases),
+    // A local run says so first: local, emulated, which verdict authority,
+    // and whether the evidence is complete. Narrowed on the validated local
+    // contract, never on an unchecked metadata cast.
+    isLocalEvalRunReport(redacted)
+      ? renderLocalRunHtmlSection(redacted, escapeHtml)
+      : "",
     renderHtmlSummary(
       redacted.summary,
       observedFailures.length === 0 && diagnosticCases.length > 0

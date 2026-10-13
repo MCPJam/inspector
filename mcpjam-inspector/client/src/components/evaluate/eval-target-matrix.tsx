@@ -2,24 +2,53 @@ import { useMemo, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ModelSelector,
+  OrgKeysDisallowedTriggerLabel,
+  type ModelSelectorRowEfforts,
+} from "@/components/chat-v2/chat-input/model-selector";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import {
   applyHarnessModelLocks,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
+  emptyModelSelection,
   modelSelectionForHost,
-  syncExplicitModelSelections,
+  modelTargetKey,
+  syncExplicitTargets,
   type ModelSelection,
+  type ModelTarget,
 } from "@/components/environment-composer/environment-stack";
+import { modelTarget } from "@/lib/model-target";
+import {
+  pickedModelTarget,
+  resolveEvalModelChoice,
+} from "@/lib/org-keys-model-target";
+import { modelTargetLabel } from "@/lib/environment-label";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import {
+  selectionReasoningEffort,
+  setEffortForRow,
+} from "@/lib/reasoning-effort-selection";
+import type {
+  ModelReasoningEffort,
+  ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
 
 import type { HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -33,7 +62,7 @@ type TargetMatrixHost = Pick<
    * when known. When the caller does not supply it the matrix reads it from
    * the host's config, so the model pickers can disable what it cannot run.
    */
-  harness?: HarnessModelTarget | null;
+  harness?: HarnessModelTarget | HostListItem["harness"] | null;
 };
 
 type TargetMatrixModel = {
@@ -91,8 +120,17 @@ function modelLabelsForSelection(
       defaultModel ? `Client default · ${defaultModel}` : "Client default",
     );
   }
-  for (const modelId of selection?.explicitModelIds ?? []) {
-    labels.push(modelNames.get(modelId) ?? compactModelLabel(modelId));
+  // Model name plus only what differs among its siblings: "Sonnet 4.5 · High"
+  // beside "Sonnet 4.5 · Low"; a lone model has no suffix.
+  const targets = selection?.explicitTargets ?? [];
+  for (const target of targets) {
+    labels.push(
+      modelTargetLabel(
+        target,
+        targets,
+        (modelId) => modelNames.get(modelId) ?? compactModelLabel(modelId),
+      ),
+    );
   }
   return labels;
 }
@@ -144,10 +182,14 @@ export function EvalTargetMatrix({
 }) {
   const reduceMotion = useReducedMotion();
   const readHarnessByHost = useHostHarnessTargets(hostIds);
-  const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
+  const harnessFor = (
+    hostId: string,
+  ): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     return host?.harness !== undefined
-      ? host.harness
+      ? typeof host.harness === "string"
+        ? { harnessId: host.harness }
+        : host.harness
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({
@@ -251,10 +293,7 @@ export function EvalTargetMatrix({
                     projectId={projectId}
                     value={modelSelectionForHost(
                       {
-                        modelSelection: modelSelection ?? {
-                          includeClientDefaults: true,
-                          explicitModelIds: [],
-                        },
+                        modelSelection: modelSelection ?? emptyModelSelection(),
                         modelSelectionsByHost,
                       },
                       row.hostId,
@@ -270,7 +309,7 @@ export function EvalTargetMatrix({
                   />
                 ) : (
                   <span className="block px-2 py-2 text-xs">
-                    {row.modelLabels.join(" · ")}
+                    {row.modelLabels.join(", ")}
                   </span>
                 )}
               </td>
@@ -384,7 +423,8 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, requireOrgKeys, onManageOrgProviders } =
+    useAvailableModels({ projectId });
   return (
     <EvalModelChoices
       {...{
@@ -396,6 +436,8 @@ function EvalModelPicker({
         defaultModelId,
         availableModels,
         harness,
+        requireOrgKeys,
+        onManageOrgProviders,
       }}
     />
   );
@@ -410,7 +452,26 @@ export function EvalModelChoices({
   defaultModelId,
   availableModels: catalogModels,
   harness,
+  effortEditable = true,
+  requireOrgKeys = false,
+  onManageOrgProviders,
 }: {
+  /**
+   * Offer each model's reasoning efforts in the model menus. Off where the
+   * surface cannot persist a selection (the case run sheet writes model
+   * strings).
+   */
+  effortEditable?: boolean;
+  /**
+   * The organization requires its own provider keys for AI features: a saved
+   * model the list no longer offers shows on its trigger as not allowed.
+   */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -426,102 +487,258 @@ export function EvalModelChoices({
    */
   harness?: HarnessModelTarget | null;
 }) {
+  // Under the organization's key policy a harness runs only on an
+  // organization connection to its own vendor; the lock says so.
   const availableModels = useMemo(
-    () => applyHarnessModelLocks(catalogModels, [harness], "eval"),
-    [catalogModels, harness],
+    () =>
+      applyHarnessModelLocks(catalogModels, [harness], "eval", {
+        requireOrgKeys,
+      }),
+    [catalogModels, harness, requireOrgKeys],
   );
-  const resolveModel = (id: string): ModelDefinition =>
-    availableModels.find((model) => String(model.id) === id) ?? {
-      id,
-      name: compactModelLabel(id),
-      provider: "unknown",
-    };
+  const selectionsSupported = useModelSelectionsSupported();
+  // A saved selection names its source and connection. Under the policy only
+  // that exact row is the target, so a hosted target never borrows an org row
+  // that lists the same id. The warning names the model from the catalog,
+  // since the menu would otherwise mark that org row as picked.
+  const resolveModel = (
+    id: string,
+    saved = true,
+    selection?: SavedModelSelection,
+  ): ModelDefinition =>
+    resolveEvalModelChoice(id, availableModels, requireOrgKeys, {
+      saved,
+      selection,
+    });
+  const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
       ? [
           {
             key: "default",
-            model: resolveModel(defaultModelId ?? "Client default"),
+            model: resolveModel(
+              defaultModelId ?? "Client default",
+              defaultModelId !== undefined,
+            ),
             inherited: true,
+            target: undefined as ModelTarget | undefined,
           },
         ]
       : []),
-    ...value.explicitModelIds.map((id) => ({
-      key: id,
-      model: resolveModel(id),
+    ...targets.map((target) => ({
+      key: modelTargetKey(target),
+      model: resolveModel(target.modelId, true, target.selection),
       inherited: false,
+      target: target as ModelTarget | undefined,
     })),
   ];
+  const emit = (next: ModelSelection, picked?: ModelDefinition) =>
+    onChange(
+      syncExplicitTargets(next, {
+        models: availableModels,
+        ...(picked ? { picked } : {}),
+      }),
+    );
+  // Replace (or, with no model, remove) one choice; the default row becomes
+  // an explicit target when a model is picked on it.
   const changeChoice = (
     key: string,
     inherited: boolean,
     model?: ModelDefinition,
   ) => {
-    const remaining = value.explicitModelIds.filter(
-      (id) => inherited || id !== key,
+    const remaining = targets.filter(
+      (target) => inherited || modelTargetKey(target) !== key,
     );
-    onChange(
-      syncExplicitModelSelections(
-        {
-          includeClientDefaults: inherited
-            ? false
-            : value.includeClientDefaults,
-          explicitModelIds: model
-            ? [...new Set([...remaining, String(model.id)])]
-            : remaining,
-        },
-        { models: availableModels, previous: value, picked: model },
+    emit(
+      {
+        includeClientDefaults: inherited ? false : value.includeClientDefaults,
+        explicitTargets: model
+          ? [...remaining, pickedModelTarget(model, requireOrgKeys)]
+          : remaining,
+      },
+      model,
+    );
+  };
+  // An effort a sibling target of the model already runs is not applied:
+  // two targets never share a comparisonKey (the menu greys that level out).
+  const replaceTarget = (key: string, next: ModelTarget) => {
+    const nextKey = modelTargetKey(next);
+    if (
+      nextKey !== key &&
+      targets.some((target) => modelTargetKey(target) === nextKey)
+    )
+      return;
+    emit({
+      ...value,
+      explicitTargets: targets.map((target) =>
+        modelTargetKey(target) === key ? next : target,
       ),
+    });
+  };
+  const effortsOn = effortEditable && selectionsSupported;
+  /**
+   * The target a pick of `row` at `effort` saves (`base` is the selection it
+   * keeps, when the pick stays on the same model), or null when an effort
+   * can't be saved for this row here (a bare-id model on your own key).
+   */
+  const targetAt = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+    base?: SavedModelSelection,
+  ): ModelTarget | null => {
+    const write = setEffortForRow({
+      row,
+      selection: base,
+      effort,
+      purpose: "evalTarget",
+    });
+    return write ? modelTarget(write.modelId, write.selection) : null;
+  };
+  /**
+   * The efforts a menu offers for `row`. `current` is the target the menu
+   * edits (absent for "Add model" and the client's own model); its own key
+   * never counts as taken, so its current level stays pickable.
+   */
+  const effortsFor =
+    (current?: ModelTarget) =>
+    (row: ModelDefinition): ModelSelectorRowEfforts | undefined => {
+      if (!effortsOn) return undefined;
+      const levels = reasoningEffortOptions(
+        row,
+        reasoningEffortRouteForRow(row),
+        harness?.harnessId as Harness | undefined,
+      );
+      if (levels.length === 0 || !targetAt(row, levels[0])) return undefined;
+      const sameModel = current?.modelId === String(row.id);
+      const base = sameModel ? current?.selection : undefined;
+      const currentKey = current ? modelTargetKey(current) : undefined;
+      const takenKeys = new Set(
+        targets
+          .map((target) => modelTargetKey(target))
+          .filter((key) => key !== currentKey),
+      );
+      return {
+        levels,
+        ...(sameModel
+          ? { current: selectionReasoningEffort(current?.selection) ?? null }
+          : {}),
+        isTaken: (effort) => {
+          const next = targetAt(row, effort, base);
+          return next !== null && takenKeys.has(modelTargetKey(next));
+        },
+      };
+    };
+  // A model "Add model" can still add: one with an effort left to pick, or
+  // (no efforts) one that is not picked yet.
+  const addable = (model: ModelDefinition) => {
+    const efforts = effortsFor()(model);
+    if (!efforts) {
+      return !choices.some(
+        (choice) => String(choice.model.id) === String(model.id),
+      );
+    }
+    return [undefined, ...efforts.levels].some(
+      (level) => !efforts.isTaken?.(level),
     );
   };
   return (
     <div data-testid={testId} className="space-y-1">
-      {choices.map(({ key, model, inherited }) => (
-        <div key={key} className="flex min-w-0 items-start">
-          <ModelSelector
-            inModal={inModal}
-            currentModel={model}
-            availableModels={availableModels}
-            disabled={disabled}
-            analyticsLocation="eval_suite"
-            workload="evalTarget"
-            onModelChange={(next) => changeChoice(key, inherited, next)}
-            trigger={
+      {choices.map(({ key, model, inherited, target }) => {
+        const effort = selectionReasoningEffort(target?.selection);
+        return (
+          <div key={key} className="flex min-w-0 items-start">
+            <ModelSelector
+              inModal={inModal}
+              currentModel={model}
+              availableModels={availableModels}
+              disabled={disabled}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
+              analyticsLocation="eval_suite"
+              workload="evalTarget"
+              onModelChange={(next) => changeChoice(key, inherited, next)}
+              rowEfforts={effortsFor(target)}
+              onModelEffortSelect={(row, level) => {
+                const next = targetAt(
+                  row,
+                  level,
+                  target?.modelId === String(row.id)
+                    ? target.selection
+                    : undefined,
+                );
+                if (!next) return;
+                // Only this target changes; a sibling effort stays. The
+                // client's own model becomes an explicit pick, as a model
+                // change there already does.
+                if (inherited || !target) {
+                  emit(
+                    {
+                      includeClientDefaults: false,
+                      explicitTargets: [...targets, next],
+                    },
+                    row,
+                  );
+                } else {
+                  replaceTarget(key, next);
+                }
+              }}
+              trigger={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+                >
+                  {isOrgKeysDisallowedRow(model) ? (
+                    <>
+                      <OrgKeysDisallowedTriggerLabel model={model} />
+                      {/* Tells apart two targets of one model. */}
+                      {effort ? (
+                        <span className="shrink-0 text-muted-foreground">
+                          {reasoningEffortLabel(effort)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={model.provider}
+                        customProviderName={model.customProviderName}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 break-words">
+                        {compactModelLabel(model.name)}
+                        {effort ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {reasoningEffortLabel(effort)}
+                          </span>
+                        ) : null}
+                      </span>
+                    </>
+                  )}
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                </Button>
+              }
+            />
+            {choices.length > 1 ? (
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 disabled={disabled}
-                className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+                className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${model.name} model`}
+                title={`Remove ${model.name} model`}
+                onClick={() => changeChoice(key, inherited)}
               >
-                <ProviderLogo
-                  provider={model.provider}
-                  customProviderName={model.customProviderName}
-                  className="size-4 shrink-0"
-                />
-                <span className="min-w-0 flex-1 break-words">
-                  {compactModelLabel(model.name)}
-                </span>
-                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                <X className="size-3.5" />
               </Button>
-            }
-          />
-          {choices.length > 1 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={disabled}
-              className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-              aria-label={`Remove ${model.name} model`}
-              title={`Remove ${model.name} model`}
-              onClick={() => changeChoice(key, inherited)}
-            >
-              <X className="size-3.5" />
-            </Button>
-          ) : null}
-        </div>
-      ))}
+            ) : null}
+          </div>
+        );
+      })}
       <ModelSelector
         inModal={inModal}
         currentModel={{
@@ -529,26 +746,31 @@ export function EvalModelChoices({
           name: "Add model",
           provider: "unknown",
         }}
-        availableModels={availableModels.filter(
-          (model) =>
-            !choices.some(
-              (choice) => String(choice.model.id) === String(model.id),
-            ),
-        )}
+        availableModels={availableModels.filter(addable)}
         disabled={disabled}
+        requireOrgKeys={requireOrgKeys}
+        onManageOrgProviders={onManageOrgProviders}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>
-          onChange(
-            syncExplicitModelSelections(
-              {
-                ...value,
-                explicitModelIds: [...value.explicitModelIds, String(model.id)],
-              },
-              { models: availableModels, previous: value, picked: model },
-            ),
+          emit(
+            {
+              ...value,
+              explicitTargets: [
+                ...targets,
+                pickedModelTarget(model, requireOrgKeys),
+              ],
+            },
+            model,
           )
         }
+        rowEfforts={effortsFor()}
+        onModelEffortSelect={(row, level) => {
+          const next = targetAt(row, level);
+          if (next) {
+            emit({ ...value, explicitTargets: [...targets, next] }, row);
+          }
+        }}
         trigger={
           <Button
             type="button"

@@ -11,7 +11,19 @@
  * unit-testable without stubbing globals.
  */
 
+import { clientRequestUrl, stripQueryAndFragment } from "./breadcrumb-urls";
+import {
+  credentialRouteTemplate,
+  scrubCredentialUrl,
+  scrubTelemetryEvent,
+} from "./credential-urls";
 import { isInjectedScriptException } from "./injected-script-frames";
+import {
+  describeShape,
+  MAX_ERROR_TEXT_CHARS,
+  scrubLogPayload,
+  scrubLogText,
+} from "./log-scrubber";
 
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
@@ -173,12 +185,17 @@ const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
  * the four ways browsers spell "the network went away". Applied to the client
  * and Electron-renderer builders only — on the server these strings would
  * suppress real upstream failures.
+ *
+ * String entries match by substring, so the bare-network spellings are
+ * anchored: Chromium's "Failed to fetch dynamically imported module: <url>"
+ * is a code-split chunk that no longer exists on the server, not the network
+ * going away, and must keep reporting.
  */
 export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
   "ResizeObserver loop limit exceeded",
   "ResizeObserver loop completed with undelivered notifications",
   /^AbortError/,
-  "Failed to fetch",
+  /^(?:TypeError: )?Failed to fetch$/,
   "NetworkError when attempting to fetch resource",
   "Load failed",
 ];
@@ -217,6 +234,8 @@ export interface FingerprintableEvent {
       stacktrace?: { frames?: { filename?: string; function?: string }[] };
     }[];
   };
+  tags?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -255,8 +274,64 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
 }
 
 /**
+ * Group OAuth-debugger step failures by WHAT failed, not by where they were
+ * reported.
+ *
+ * The inverse of the problem above. There, one bug's frames moved with every
+ * build and scattered it across nine issues. Here, every step failure the
+ * debugger has — a missing metadata document, a registration endpoint that
+ * wants a token, a wrong client secret, a server answering 404 where MCP
+ * requires 401 — is reported from the SAME line (`withStepFailureReporting` in
+ * `debug-state-machine-adapter.ts` builds the `Error` there), so they share one
+ * stack and Sentry files them all as one issue.
+ *
+ * INSPECTOR-CLIENT-2FE shows the cost. Titled "Dynamic Client Registration
+ * failed (400)", its 9 events are five unrelated findings; the headline is one
+ * of them. And because the bundle hash is in the frames, each release opens a
+ * fresh catch-all issue — INSPECTOR-CLIENT-2F9 is the same bucket for the
+ * previous build — so every deploy re-alerts on nothing new.
+ *
+ * Keyed on the step and `extra.finding`, which the reporting adapter computes
+ * with the SDK's `stepFailureFindingKey`, not on the message text. Why the
+ * text is wrong in both directions, and what the key does instead, is written
+ * once, on `stepFailureFindingKey`. It lives in the SDK next to the code that
+ * writes these messages.
+ *
+ * A report without `finding` — none should exist, since the adapter and this
+ * rule ship together — falls back to its message capped at the same length,
+ * which splits rather than merges.
+ *
+ * `environment` for the same reason `groupDomMutationConflicts` carries it:
+ * stack grouping kept dev and prod apart only by accident of their bundles, and
+ * a message-keyed fingerprint would otherwise merge them.
+ *
+ * Only `oauth_debugger_step`. `oauth_debugger_advance` is a genuine exception
+ * thrown out of the flow, and its stack is the useful part.
+ */
+export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
+  event: T,
+): T {
+  if (event.tags?.source !== "oauth_debugger_step") return event;
+
+  const reported = event.extra?.finding;
+  const finding =
+    typeof reported === "string" && reported !== ""
+      ? reported
+      : (event.exception?.values?.[0]?.value ?? "").slice(0, 160);
+  const step = event.extra?.step;
+
+  event.fingerprint = [
+    "oauth-debugger-step",
+    typeof step === "string" && step !== "" ? step : "unknown",
+    finding,
+    event.environment ?? "unknown",
+  ];
+  return event;
+}
+
+/**
  * The browser `beforeSend`: drop injected-script crashes, then group the DOM
- * mutation conflicts that survive.
+ * mutation conflicts and OAuth-debugger step failures that survive.
  *
  * Sentry keeps its own `window.onerror` handler — `initSentry()` passes an
  * `integrations` array without `defaultIntegrations: false`, so
@@ -283,7 +358,9 @@ export function buildBrowserBeforeSend(origin?: string) {
       });
       if (isInjectedScriptException(stacks, origin)) return null;
     }
-    return groupDomMutationConflicts(event);
+    return scrubSentryCredentials(
+      groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event)),
+    );
   };
 }
 
@@ -309,6 +386,292 @@ export function buildBrowserBeforeSend(origin?: string) {
  */
 function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
   return frames.length === 1 && frames[0]?.function === "?";
+}
+
+/**
+ * Minimal structural view of what a Node SDK attaches to an event ON ITS OWN:
+ * the incoming request, the exception's text, a captured message. Declared
+ * here for the same reason as `FingerprintableEvent`.
+ */
+export interface ScrubbableEvent extends FingerprintableEvent {
+  message?: string;
+  transaction?: string;
+  logentry?: { message?: string; params?: unknown[] };
+  request?: {
+    url?: string;
+    query_string?: unknown;
+    cookies?: unknown;
+    headers?: Record<string, string>;
+    data?: unknown;
+  };
+}
+
+/**
+ * Request headers whose VALUES are kept. Every other header keeps its name —
+ * "an Authorization header was present" is a diagnostic — and loses its value.
+ */
+const KEPT_REQUEST_HEADERS = new Set([
+  "accept",
+  "content-length",
+  "content-type",
+  "host",
+  "origin",
+  "user-agent",
+]);
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return stripQueryAndFragment(url);
+  }
+}
+
+/** `a=1&b=2` (or its object / pair-list spellings) → `a=[redacted]&b=[redacted]`. */
+function queryParamNames(query: unknown): string | undefined {
+  let names: string[] = [];
+  if (typeof query === "string") {
+    names = query
+      .replace(/^\?/, "")
+      .split("&")
+      .filter(Boolean)
+      .map((pair) => pair.split("=")[0] ?? "");
+  } else if (Array.isArray(query)) {
+    names = query.map((pair) => String(Array.isArray(pair) ? pair[0] : pair));
+  } else if (query && typeof query === "object") {
+    names = Object.keys(query);
+  }
+  return names.length > 0
+    ? names.map((name) => `${scrubLogText(name, 40)}=[redacted]`).join("&")
+    : undefined;
+}
+
+/**
+ * The SDK captures up to ~10KB of the raw body and sends it as a string. Its
+ * structure is the useful part; a body cut off mid-JSON (or not JSON at all)
+ * can only report its length.
+ */
+function describeRequestBody(data: unknown): string {
+  if (typeof data !== "string") return describeShape(data);
+  try {
+    return describeShape(JSON.parse(data));
+  } catch {
+    return describeShape(data);
+  }
+}
+
+/**
+ * The server-side `beforeSend`: take customer content out of what the Node SDK
+ * attaches by itself, keep everything a triager reads.
+ *
+ * - `request.data`. The http integration attaches the incoming body to every
+ *   error event — a chat turn's messages, a tool call's arguments — whatever
+ *   `sendDefaultPii` says. It becomes a shape summary rather than being turned
+ *   off: "this route got `{messages: array(14)…}`" still reproduces.
+ * - `request.url` / `query_string` / `cookies` / `headers`. The path stays;
+ *   query values, cookies and header values go.
+ * - Exception and message text, capped and redacted like the log rows: an
+ *   upstream error quotes URLs, response bodies and, now and then, a token.
+ *   Grouping is by stack frames, which are untouched.
+ * - `extra.__serialized__`, where the SDK dumps a thrown NON-Error object.
+ *
+ * Everything else in `extra` was already scrubbed by `logger.ts`, the
+ * server's only capture path, and is left alone: a shape summary scrubbed
+ * twice would collapse to `string(N)`.
+ */
+export function scrubServerSentryEvent<T extends ScrubbableEvent>(event: T): T {
+  const scrubbable: ScrubbableEvent = event;
+
+  for (const exception of scrubbable.exception?.values ?? []) {
+    if (typeof exception.value === "string") {
+      exception.value = scrubLogText(exception.value, MAX_ERROR_TEXT_CHARS);
+    }
+  }
+  if (typeof scrubbable.message === "string") {
+    scrubbable.message = scrubLogText(scrubbable.message, MAX_ERROR_TEXT_CHARS);
+  }
+  if (scrubbable.logentry) {
+    const { message, params } = scrubbable.logentry;
+    if (typeof message === "string") {
+      scrubbable.logentry.message = scrubLogText(message, MAX_ERROR_TEXT_CHARS);
+    }
+    if (Array.isArray(params)) {
+      scrubbable.logentry.params = params.map(describeShape);
+    }
+  }
+
+  const request = scrubbable.request;
+  if (request) {
+    if (typeof request.url === "string") {
+      request.url = scrubCredentialUrl(stripQueryAndFragment(request.url));
+    }
+    if (request.query_string !== undefined) {
+      request.query_string = queryParamNames(request.query_string);
+    }
+    delete request.cookies;
+    if (request.headers) {
+      request.headers = Object.fromEntries(
+        Object.entries(request.headers).map(([name, value]) => [
+          name,
+          KEPT_REQUEST_HEADERS.has(name.toLowerCase()) ? value : "[redacted]",
+        ]),
+      );
+    }
+    if (request.data !== undefined) {
+      request.data = describeRequestBody(request.data);
+    }
+  }
+
+  if (scrubbable.extra && "__serialized__" in scrubbable.extra) {
+    scrubbable.extra.__serialized__ = scrubLogPayload(
+      scrubbable.extra.__serialized__,
+    );
+  }
+  if (typeof scrubbable.transaction === "string") {
+    scrubbable.transaction = sentryTransactionTemplate(scrubbable.transaction);
+  }
+  return event;
+}
+
+/**
+ * A transaction name with any credential path replaced by its template:
+ * `GET /api/web/score/runs/<token>` → `GET /api/web/score/runs/:token`.
+ * Keeps an HTTP method prefix if there is one.
+ */
+export function sentryTransactionTemplate(name: string): string {
+  const match = /^([A-Z]+ )?(\/\S*)$/.exec(name);
+  if (!match) return scrubCredentialUrl(name);
+  const [, method = "", path] = match;
+  const pathname = path.split(/[?#]/)[0];
+  const template = credentialRouteTemplate(pathname);
+  return template
+    ? `${method}${template}`
+    : `${method}${scrubCredentialUrl(path)}`;
+}
+
+/**
+ * The last step of every Sentry hook on every surface: every credential out
+ * of the whole event (`shared/credential-urls.ts`) — request URLs,
+ * transaction names, span descriptions, breadcrumbs, exception text, tags,
+ * contexts, extras — whatever the SDK or our own code put there.
+ *
+ * Fail closed. If the walker cannot finish, the URL-bearing fields are
+ * deleted and the rest scrubbed; if even that fails, `null` drops the event.
+ */
+export function scrubSentryCredentials<T extends object>(event: T): T | null {
+  return scrubTelemetryEvent(event);
+}
+
+/** Minimal structural view of a Sentry breadcrumb. */
+export interface ScrubbableBreadcrumb {
+  category?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * How much of a console call's first argument survives. Enough for the label
+ * (`"[chat] stream failed:"`), not for a payload interpolated after it.
+ */
+const CONSOLE_BREADCRUMB_MAX_CHARS = 120;
+
+function describeConsoleCall(
+  args: unknown[] | undefined,
+  fallback: string | undefined,
+): string {
+  if (!args || args.length === 0) {
+    return scrubLogText(fallback ?? "", CONSOLE_BREADCRUMB_MAX_CHARS);
+  }
+  const [first] = args;
+  const head =
+    typeof first === "string"
+      ? scrubLogText(first, CONSOLE_BREADCRUMB_MAX_CHARS)
+      : first instanceof Error
+        ? `${first.name}: ${scrubLogText(first.message, CONSOLE_BREADCRUMB_MAX_CHARS)}`
+        : describeShape(first);
+  return args.length > 1 ? `${head} (+${args.length - 1} args)` : head;
+}
+
+/**
+ * Every surface's `beforeBreadcrumb`.
+ *
+ * - `console`: the SDK joins EVERY argument into `message` and keeps the raw
+ *   values in `data.arguments` — the payload someone logged while debugging.
+ *   Level and category stay; the message becomes the first argument's label
+ *   and an argument count.
+ * - `http` / `fetch` / `xhr`: the query string and fragment always go. On the
+ *   server (`"origin"`) the path goes too — outgoing requests there are to a
+ *   customer's MCP server, and its host is what tells you which one. The
+ *   browser keeps the path of a call to its own origin (`appOrigin`), whose
+ *   paths are ours, and only the origin of a call anywhere else.
+ * - `navigation`: the query goes (an OAuth callback carries `code`/`state`).
+ * - Anything else: its message is redacted and capped.
+ */
+export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
+  breadcrumb: T,
+  urlDetail: "origin" | { appOrigin: string | undefined },
+): T | null {
+  const crumb: ScrubbableBreadcrumb = breadcrumb;
+  const data = crumb.data;
+  switch (crumb.category) {
+    case "console": {
+      const args = Array.isArray(data?.arguments) ? data.arguments : undefined;
+      crumb.message = describeConsoleCall(args, crumb.message);
+      crumb.data = {
+        ...(data?.logger !== undefined ? { logger: data.logger } : {}),
+        ...(args ? { argumentCount: args.length } : {}),
+      };
+      break;
+    }
+    case "http":
+    case "fetch":
+    case "xhr": {
+      if (data && typeof data.url === "string") {
+        data.url =
+          urlDetail === "origin"
+            ? originOf(data.url)
+            : clientRequestUrl(data.url, urlDetail.appOrigin);
+      }
+      delete data?.["http.query"];
+      delete data?.["http.fragment"];
+      break;
+    }
+    case "navigation": {
+      for (const key of ["from", "to"]) {
+        const value = data?.[key];
+        if (data && typeof value === "string") {
+          data[key] = stripQueryAndFragment(value);
+        }
+      }
+      break;
+    }
+    default:
+      if (typeof crumb.message === "string") {
+        crumb.message = scrubLogText(crumb.message, MAX_ERROR_TEXT_CHARS);
+      }
+  }
+  // Every category, Electron's (`electron`) and any the SDK adds later
+  // included: whatever URL a breadcrumb carries — `data.url`, `from`, `to` —
+  // loses its credentials. A crumb that cannot be shown clean is dropped.
+  return scrubSentryCredentials(breadcrumb) as T;
+}
+
+/**
+ * `beforeBreadcrumb` for the browser client and Electron renderer.
+ * `appOrigin` is the app's own origin, read by the caller.
+ */
+export function scrubClientSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
+  breadcrumb: T,
+  appOrigin: string | undefined,
+): T | null {
+  return scrubSentryBreadcrumb(breadcrumb, { appOrigin });
+}
+
+/** `beforeBreadcrumb` for the Node surfaces: the server and Electron main. */
+export function scrubServerSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
+  breadcrumb: T,
+): T | null {
+  return scrubSentryBreadcrumb(breadcrumb, "origin");
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
@@ -362,7 +725,8 @@ export function buildClientSentryConfig(
     replayEnabled?: boolean;
     /**
      * The app's own origin, used to spot frames the browser stamped with the
-     * document. The caller reads it — this module stays globals-free.
+     * document and to tell the app's own requests from a third party's in
+     * breadcrumbs. The caller reads it — this module stays globals-free.
      */
     documentOrigin?: string;
   },
@@ -372,8 +736,16 @@ export function buildClientSentryConfig(
     ignoreErrors: BROWSER_IGNORE_ERRORS,
     // Browser surfaces only. A `NotFoundError` on the server is an upstream
     // or storage failure that has nothing to do with DOM mutation, and
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects. The OAuth
+    // debugger runs only in the browser client too.
     beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
+    // Spans and transaction names carry request URLs (`GET /api/web/score/
+    // runs/<token>`). Names are set to route templates at the source; this is
+    // the backstop for everything else in a transaction.
+    beforeSendTransaction: scrubSentryCredentials,
+    // Console arguments are whatever a component logged — often a payload.
+    beforeBreadcrumb: <T extends ScrubbableBreadcrumb>(breadcrumb: T) =>
+      scrubClientSentryBreadcrumb(breadcrumb, ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),

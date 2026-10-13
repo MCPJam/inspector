@@ -108,8 +108,16 @@ async function main() {
       });
   try {
     const page = await context.newPage();
+    // This hop proves the policy still lets the browser reach the public
+    // internet. It deliberately asserts nothing about what example.com says:
+    // IANA reworded that page in September 2026 and the old `/Example Domain/`
+    // match took every branch's CI down with it. Reaching a live site and
+    // getting text back is the whole signal.
     await page.goto("https://example.com/");
-    assert.match(await page.pageText(), /Example Domain/);
+    assert.ok(
+      (await page.pageText()).trim().length > 0,
+      "expected text back from example.com",
+    );
     await page.goto(websiteUrl);
     assert.match(await page.pageText(), /Local development works/);
     const secret = join(directory, "synthetic-secret.txt");

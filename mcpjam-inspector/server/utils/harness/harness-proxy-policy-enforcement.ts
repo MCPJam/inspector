@@ -163,10 +163,11 @@ export const HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON =
  */
 export function harnessToolPolicyLaunchRefusal(args: {
   hasToolPolicy: boolean;
+  localExecution?: boolean;
   /** The run's harness, or undefined for the emulated engine. */
   harness: HarnessId | undefined;
 }): string | null {
-  if (!args.hasToolPolicy || !args.harness) return null;
+  if (!args.hasToolPolicy || !args.harness || args.localExecution) return null;
   if (getHarnessAdapter(args.harness).mcpDelivery !== "native") return null;
   return isHarnessProxyPolicySealAvailable()
     ? null

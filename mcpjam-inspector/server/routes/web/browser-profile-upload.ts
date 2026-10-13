@@ -19,8 +19,13 @@ import {
 } from "../../middleware/internal-service-auth.js";
 import { logger } from "../../utils/logger.js";
 import { isUsableStorageDestination } from "../../utils/storage-destination.js";
+import {
+  confirmUploadedObject,
+  type UploadDestination,
+} from "../../utils/upload-receipt.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, handleRoute } from "./auth.js";
+import { hostedOnlyRouteError } from "./errors.js";
 
 export const MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
 
@@ -65,6 +70,9 @@ function declaredLength(header: string | undefined): number | null {
 export const BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE =
   "Saving browser profiles isn't available on this server.";
 
+/** The feature name the shared hosted-only answer uses for this route. */
+export const BROWSER_PROFILE_SAVE_FEATURE = "Saving browser profiles";
+
 /**
  * Where to store one archive, asked for on the caller's behalf: the backend's
  * internal route checks the caller's bearer against the project and answers.
@@ -74,7 +82,7 @@ export const BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE =
 async function requestArchiveDestination(
   c: Context,
   projectId: string,
-): Promise<string> {
+): Promise<UploadDestination> {
   const serviceToken = getConfiguredInspectorServiceToken();
   if (!serviceToken) {
     throw HOSTED_MODE
@@ -83,11 +91,7 @@ async function requestArchiveDestination(
           ErrorCode.INTERNAL_ERROR,
           "Server missing INSPECTOR_SERVICE_TOKEN configuration",
         )
-      : new WebRouteError(
-          503,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
-        );
+      : hostedOnlyRouteError(BROWSER_PROFILE_SAVE_FEATURE);
   }
   const bearer = await getConvexBearerForRequest(c);
   const path = "/internal/v1/browser-profiles/upload-url";
@@ -107,6 +111,7 @@ async function requestArchiveDestination(
     });
     const body = (await response.json().catch(() => null)) as {
       uploadUrl?: unknown;
+      uploadGrantId?: unknown;
       code?: unknown;
       error?: unknown;
     } | null;
@@ -119,14 +124,21 @@ async function requestArchiveDestination(
         typeof body?.error === "string" ? body.error : "Backend error",
       );
     }
-    if (!isUsableStorageDestination(body?.uploadUrl)) {
+    if (
+      !isUsableStorageDestination(body?.uploadUrl) ||
+      (body?.uploadGrantId !== undefined &&
+        (typeof body.uploadGrantId !== "string" || !body.uploadGrantId))
+    ) {
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,
         UPLOAD_FAILED_MESSAGE,
       );
     }
-    return body.uploadUrl;
+    return {
+      uploadUrl: body.uploadUrl,
+      uploadGrantId: body.uploadGrantId as string | undefined,
+    };
   } catch (error) {
     if (error instanceof WebRouteError) throw error;
     if (controller.signal.aborted) {
@@ -171,11 +183,7 @@ function limitedBody(
 export function handleBrowserProfileUpload(c: Context) {
   return handleRoute(c, async () => {
     if (!HOSTED_MODE && !getConfiguredInspectorServiceToken()) {
-      throw new WebRouteError(
-        503,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        BROWSER_PROFILE_SAVE_UNAVAILABLE_MESSAGE,
-      );
+      throw hostedOnlyRouteError(BROWSER_PROFILE_SAVE_FEATURE);
     }
     const projectId = c.req.query("projectId")?.trim();
     if (!projectId) {
@@ -217,7 +225,7 @@ export function handleBrowserProfileUpload(c: Context) {
       ARCHIVE_UPLOAD_TIMEOUT_MS,
     );
     try {
-      const response = await fetch(destination, {
+      const response = await fetch(destination.uploadUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -248,6 +256,14 @@ export function handleBrowserProfileUpload(c: Context) {
           UPLOAD_FAILED_MESSAGE,
         );
       }
+      await confirmUploadedObject({
+        convexHttpUrl: convexHttpUrl(),
+        bearer: await getConvexBearerForRequest(c),
+        serviceToken: getConfiguredInspectorServiceToken(),
+        uploadGrantId: destination.uploadGrantId,
+        storageId: stored.storageId,
+        signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
+      });
       return { storageId: stored.storageId };
     } catch (error) {
       if (error instanceof WebRouteError) throw error;

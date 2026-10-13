@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./evals/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -81,11 +82,7 @@ import type {
   OpenEvalSuiteFormInspectorCommand,
   RunEvalSuiteInspectorCommand,
 } from "@/shared/inspector-command.js";
-import type {
-  EvalSuite,
-  EvalSuiteOverviewEntry,
-  EvalSuiteRun,
-} from "./evals/types";
+import type { EvalSuite, EvalSuiteOverviewEntry } from "./evals/types";
 import {
   CI_OWNED_REASON_COPY,
   isCiOwnedSuite,
@@ -173,6 +170,8 @@ function EvalsTabContent({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -340,8 +339,9 @@ function EvalsTabContent({
       selectedSuite,
       suiteDetails.testCases,
       activeIterations,
+      runsForSelectedSuite,
     );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  }, [selectedSuite, suiteDetails, activeIterations, runsForSelectedSuite]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],
@@ -740,7 +740,7 @@ function EvalsTabContent({
     );
   };
 
-  const resolveRun = (raw: unknown): EvalSuiteRun => {
+  const resolveRun = (raw: unknown): EvalSuiteRunListItem => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -748,7 +748,7 @@ function EvalsTabContent({
       );
     }
     const wanted = raw.trim();
-    const runsById = new Map<string, EvalSuiteRun>();
+    const runsById = new Map<string, EvalSuiteRunListItem>();
     const visibleRuns = [
       ...runsForSelectedSuite,
       ...visibleSuites.flatMap((entry) => [
@@ -1240,6 +1240,8 @@ function EvalsTabContent({
           allIterations={sortedIterations}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
+          runHistoryStatus={queries.runHistoryStatus}
+          onLoadMoreRuns={queries.loadMoreRuns}
           aggregate={suiteAggregate}
           /*
            * The suite's configuration lives in a repository (a committed suite
@@ -1278,6 +1280,8 @@ function EvalsTabContent({
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
           availableModels={availableModels}
+          requireOrgKeys={requireOrgKeys}
+          onManageOrgProviders={onManageOrgProviders}
           route={route}
           userMap={userMap}
           projectId={projectId}

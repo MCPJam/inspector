@@ -534,3 +534,10 @@ describe("naming three servers (review)", () => {
     expect(copy?.detail).toMatch(/a, b and 2 more/);
   });
 });
+
+it("allows local Claude Code to reach local servers without admitting cloud targets", () => {
+  const target = client("Claude Code", 1, { serverIds: [STDIO._id], localExecution: true });
+  expect(assessCloudServerReadiness({ targets: [target], servers: [STDIO] })).toEqual({ status: "ok" });
+  expect(assessCloudServerReadiness({ targets: [target, client("Cloud client", 1, { serverIds: [STDIO._id] })], servers: [STDIO] }).status).not.toBe("ok");
+  expect(assessCloudServerReadiness({ targets: [client("Empty client", 0, { localExecution: true })], servers: [] }).status).toBe("no_servers");
+});

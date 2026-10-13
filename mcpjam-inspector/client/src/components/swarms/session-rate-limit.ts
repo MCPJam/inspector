@@ -11,6 +11,7 @@
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import {
   describeError,
@@ -24,6 +25,13 @@ import {
   isProviderNotAllowlistedCode,
 } from "@/lib/provider-not-allowlisted";
 import { getProviderDisplayName } from "@/lib/provider-registry";
+import {
+  describeOrgKeysRefusal,
+  isRetryableOrgKeysRefusal,
+  orgKeysRefusalCodeInText,
+  orgKeysRefusalCodeOf,
+  orgKeysRefusalNextStep,
+} from "@/lib/org-keys-refusal";
 
 /** Used whenever the model id does not name a provider outright. */
 const GENERIC_PROVIDER_LABEL = "Your provider";
@@ -89,6 +97,78 @@ export function describeProviderRateLimit(
   };
 }
 
+/**
+ * The card shown on a session that stopped while other requests held the last
+ * credits (`holds_committed`).
+ *
+ * It is deliberately not the catalog's `provider/mcpjam_limit` copy: that entry
+ * is titled "Out of MCPJam credits" and sends the user to upgrade or buy
+ * credits, and a hold is neither an empty balance nor something a purchase
+ * lifts. The slug and severity stay the catalog's so the card renders amber
+ * like every other MCPJam limit. The backend's own sentence stays as the body:
+ * it carries how many requests were holding credits.
+ *
+ * Two things in that entry are about buying credits and would contradict the
+ * title, so both are replaced: its "Learn more" link (the buy-credits section;
+ * a hold has its own note), and the backend's closing "Top up to add more
+ * credits." which it appends to a hold's details for an organization that can
+ * top up.
+ */
+export function describeHeldCredits(message: string): NormalizedError {
+  const base = describeAsSlug("provider/mcpjam_limit");
+  return {
+    ...base,
+    docsAnchor: base.docsAnchor.replace(/#.*$/, "#credits-temporarily-held"),
+    title: "Credits temporarily held",
+    oneLine: message.replace(/\s*Top up to add more credits\.?/i, "").trim(),
+    likelyCauses: [
+      "Other requests from your organization were in flight and held the remaining credits until they finished.",
+    ],
+    nextSteps: [
+      "Run the session again once your other sessions have finished.",
+      "Start fewer sessions at once if this keeps happening.",
+    ],
+    rawMessage: message,
+  };
+}
+
+/**
+ * The card for a session the organization's AI key policy (or its own
+ * provider) refused, or `undefined`. A stored code is the answer; the message
+ * is read only when the row has none, since it may mention a code
+ * incidentally.
+ */
+function describeOrgKeysSwarmRefusal(
+  rawMessage: string | null | undefined,
+  errorCode: string | null | undefined,
+  info: ReturnType<typeof humanizeSwarmAttemptError>,
+): NormalizedError | undefined {
+  const orgKeysCode =
+    orgKeysRefusalCodeOf(errorCode) ??
+    (errorCode == null
+      ? (orgKeysRefusalCodeOf(info.code) ??
+        orgKeysRefusalCodeInText(rawMessage))
+      : undefined);
+  if (!orgKeysCode) return undefined;
+  const described = describeOrgKeysRefusal(orgKeysCode, "member");
+  const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
+  return {
+    ...describeError(info.message),
+    slug: "swarm/ai_refused",
+    title: described.title,
+    oneLine: described.body,
+    severity: retryable ? "info" : "warning",
+    likelyCauses: [],
+    nextSteps: [
+      retryable
+        ? "Run the session again in a moment."
+        : orgKeysRefusalNextStep(described.remediation),
+    ],
+    rawMessage: rawMessage ?? info.message,
+    rawCode: orgKeysCode,
+  };
+}
+
 /** Use the producer's humanized meaning, while retaining raw diagnostics. */
 export function describeSwarmAttemptFailure(
   rawMessage: string | null | undefined,
@@ -97,6 +177,16 @@ export function describeSwarmAttemptFailure(
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
   const code = errorCode ?? info.code;
+  // The organization's AI key policy (or its own provider) refused the
+  // session's model. Checked first: read by status it would card as a
+  // provider credential failure or an MCPJam limit, and offer a top-up for
+  // what is configuration.
+  const orgKeysRefusal = describeOrgKeysSwarmRefusal(
+    rawMessage,
+    errorCode,
+    info,
+  );
+  if (orgKeysRefusal) return orgKeysRefusal;
   // The hosted gateway refused the host's model provider. Checked before the
   // status-driven paths below: read as a 401/403 it would card as a provider
   // credential failure and send the user to fix a key that was never used.
@@ -106,6 +196,15 @@ export function describeSwarmAttemptFailure(
   ) {
     return {
       ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  // A hold is a wait, not an empty balance, and the limit branch below would
+  // card the same sentence as "Out of MCPJam credits".
+  if (isHeldCreditsRefusal(code, info.refusalReason, info.message)) {
+    return {
+      ...describeHeldCredits(info.message),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

@@ -65,7 +65,7 @@ export interface LocalHarnessProcessRecord {
   targetKind: "local-native" | "local-isolated";
   lifecycleState: LocalHarnessLifecycleState;
   /** Session state directory to remove once the tree is gone. Always inside
-   *  the local harness state root — the janitor re-checks that before any
+   *  the sibling sessions root — the janitor re-checks that before any
    *  deletion. */
   sessionStateDir: string;
 }
@@ -271,7 +271,7 @@ async function removeSessionState(dir: string): Promise<void> {
   // string accepts `<root>/../../etc`, which resolves outside the root — and
   // this function ends in a recursive delete, so a corrupt or hand-edited
   // registry must not be able to aim it.
-  const root = resolve(localHarnessStateRoot());
+  const root = resolve(`${localHarnessStateRoot()}-sessions`);
   const target = resolve(dir);
   if (target === root || !target.startsWith(root + sep)) {
     logger.warn("[local-harness] refusing to clean state outside the root", {

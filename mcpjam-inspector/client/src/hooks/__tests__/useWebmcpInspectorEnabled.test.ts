@@ -36,7 +36,7 @@ describe.each([false, true])("WebMCP visibility, hosted=%s", (hosted) => {
         [key]: enabled,
         [other]: true,
         "webmcp-inspector-enabled": true,
-        "computers-enabled": true,
+        "sandbox-images-enabled": true,
       };
       const hooks = await import("../useWebmcpInspectorEnabled");
       expect(hooks.WEBMCP_INSPECTOR_FEATURE_FLAG).toBe(key);

@@ -76,34 +76,59 @@ docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 
 Network access requires **Docker**. A native (`npx`) install binds to
 `127.0.0.1` (localhost only) and has no bind-address override, so it is not
-reachable from another machine. The Docker image binds `0.0.0.0`, so it is.
+reachable from another machine. The Docker image binds `0.0.0.0` inside the
+container, so it is reachable once you publish the port beyond loopback.
 
-For security, the inspector only issues its session token to `localhost`. When
-you open a Docker install from another machine (e.g. `http://192.168.1.50:6274`),
-it will otherwise dead-end on an authentication error. To allow a specific host,
-set `MCPJAM_ALLOWED_HOSTS` to that hostname (or a comma-separated list; wildcards
-like `*.example.com` are supported), and publish the port on your network
-interface (drop the `127.0.0.1:` prefix from `-p`):
+Open the private link printed in the terminal (or `docker logs <container>`) to
+sign this browser in. A plain address displays instructions to open that link.
+The browser remembers access for this origin until the Inspector restarts.
+Keep the link private: it grants control of the local Inspector and its tools.
+
+For another computer, set `MCPJAM_ALLOWED_HOSTS` to the hostname or IP you use,
+and publish the port on the host address that clients will connect to:
 
 ```bash
-docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
 ```
 
-For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
+A bare `-p 6274:6274` publishes the port on every host interface, IPv4 and IPv6.
+Anything that can route to a published address can reach the Inspector, so
+publish it only on a network you trust and only for as long as you need it. On
+Linux, Docker writes its own firewall rules for published ports, so ufw and
+firewalld rules do not block them.
 
-If you use a **wildcard** entry (e.g. `MCPJAM_ALLOWED_HOSTS=*.lan`), also set
-`MCPJAM_ALLOW_WILDCARD_ORIGINS=true`. Wildcards deliver the session token on
-their own, but for security the request-origin check ignores wildcard hosts
-unless you opt in with that variable — without it, API calls still 403. A
-single exact host (like the IP above) needs no extra flag.
+If you only need to reach a remote install from your own machine, keep the
+remote port bound to loopback and use `ssh -L 6274:127.0.0.1:6274 user@host`
+instead; it needs only SSH access and keeps the Inspector port off the network.
+Open the terminal link at the forwarded address.
 
-Only add hosts you trust. Allowlisting a host does more than expose the session
-token: the same host is accepted as a request Origin, which also reaches the
-local shell and agent-browser tools that are enabled by default in self-hosted
-mode. Any client that can reach an allowlisted host can obtain the session token
-and drive those tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and
-`MCPJAM_LOCAL_BROWSER_ENABLED=false` if you don't want that. Tunnel/relay domains
-are never allowed, even if listed.
+Open the printed Network link, or paste the link/code into the access screen at
+that address. If ports are remapped, keep the `#token=…` fragment and change the
+address. `MCPJAM_INSPECTOR_FRONTEND_URL=http://devbox.local:8080` sets the printed
+browser address explicitly. Cross-tab continuation works only on the same origin.
+
+For IPv6, bracket the allowlist entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
+Wildcards such as `*.lan` additionally require
+`MCPJAM_ALLOW_WILDCARD_ORIGINS=true` for the request-origin check. The allowlist
+never grants credentials by itself.
+
+Optionally set `MCPJAM_SESSION_TOKEN` to a strong random URL-safe secret (at least
+24 characters) to keep a link across restarts. Generate one with
+`node -e "process.stdout.write(require('crypto').randomBytes(24).toString('base64url'))"`.
+The default is a new random credential on each launch. Local CLI attachment reads
+a same-user discovery file under `~/.mcpjam/inspector/`, readable only by its owner;
+update `@mcpjam/cli` alongside the Inspector.
+
+Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and
+`MCPJAM_LOCAL_BROWSER_ENABLED=false` to disable the local computer/browser tools.
+
+Plugin Apps can open and save files on this machine only inside folders you
+allow. Set `MCPJAM_PLUGIN_LOCAL_FILE_ROOTS` to a JSON list of
+`{"actorId", "projectId", "serverId", "root"}` entries (`root` is an absolute
+folder), then list the files in the client's
+`mcpProfile.extensions["mcpjam/plugin-file-targets"]`. When it is unset, opening
+local files is refused with a message in the Logs panel, and files open
+read-only.
 
 # Key features
 

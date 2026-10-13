@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { matchedRoutes } from "hono/route";
 import { randomUUID } from "node:crypto";
 import {
   resolveEnvironment,
@@ -9,6 +10,73 @@ import {
 import { getRequestLogger } from "../utils/request-logger.js";
 import { logger } from "../utils/logger.js";
 import { classifyError } from "../utils/error-classify.js";
+import { describeError } from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "../utils/error-origin-capture.js";
+import {
+  agentCapturePolicy,
+  isAgentRequestPath,
+} from "../utils/agent-failure-capture.js";
+
+/**
+ * Whether the server sent a failure on this request to Sentry: `1` or `0`.
+ * Set on every Ask MCPJam response so the client reports exactly what the
+ * server did not.
+ */
+export const FAILURE_CAPTURED_HEADER = "x-mcpjam-failure-captured";
+
+function setFailureCapturedHeader(c: Context, captured: boolean): void {
+  const value = captured ? "1" : "0";
+  try {
+    c.res.headers.set(FAILURE_CAPTURED_HEADER, value);
+  } catch {
+    // An immutable header set (a proxied fetch Response). Re-wrap once.
+    c.res = new Response(c.res.body, c.res);
+    c.res.headers.set(FAILURE_CAPTURED_HEADER, value);
+  }
+}
+
+/**
+ * The BACKSTOP for Ask MCPJam: every ≥400 its routes answer reaches Sentry.
+ *
+ * Extends this middleware rather than adding one, because it is the one place
+ * that already sees every response, including the ones no route catch ever
+ * held — the bearer 401 and the guest and passthrough 429s are answered by
+ * middleware in front of the route.
+ *
+ * Captures only what was not already captured, by the RECORDED outcome:
+ * `webErrorMeta.captured` for a route's own decision, `failureCaptured` for a
+ * request-scoped stream reporter's. The capture stamp is not consulted — it
+ * says a decision was made, and a decline makes one too. Never throws.
+ */
+function captureUnreportedAgentFailure(
+  c: Context,
+  status: number,
+  meta: { code?: string; message?: string } | undefined,
+  route: string,
+): boolean {
+  try {
+    const error = new Error(
+      `Ask MCPJam request failed: ${status}${meta?.code ? ` ${meta.code}` : ""}`,
+    );
+    return maybeCaptureOriginError(error, describeError(error), {
+      source: "route:request-log.agent-backstop",
+      extra: {
+        status,
+        route,
+        ...(meta?.code ? { code: meta.code } : {}),
+        ...(meta?.message ? { message: meta.message.slice(0, 500) } : {}),
+        requestId: c.res.headers.get("x-request-id") ?? undefined,
+      },
+      capture: agentCapturePolicy({
+        source: "request-log.agent-backstop",
+        httpStatus: status,
+        ...(meta?.code ? { code: meta.code } : {}),
+      }),
+    }).captured;
+  } catch {
+    return false;
+  }
+}
 
 // Exact-match health endpoints we know about; anything else ending in
 // "/health" or "/healthz" is also treated as a probe.
@@ -108,6 +176,15 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
 
   // routePath is set by the matched handler after next(); read it now
   const route = c.req.routePath || "unmatched";
+  // A middleware that answers first (a rate limiter's 429) leaves `route` at
+  // its own mount pattern. The next concrete route after it is the handler the
+  // request was headed for, as a pattern, so path parameters never reach the
+  // log. Later wildcards (the dev `/*` mount, the SPA fallback) are not it.
+  const targetRoute = route.endsWith("*")
+    ? matchedRoutes(c)
+        .slice(c.req.routeIndex + 1)
+        .find((r) => !r.path.endsWith("*"))?.path
+    : undefined;
 
   const status = c.res.status;
   const reqLogger = getRequestLogger(c, "http");
@@ -116,6 +193,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     ...(c.var.requestLogContext as RequestLogContext),
     component: "http",
     route,
+    ...(targetRoute ? { targetRoute } : {}),
     statusCode: status,
   };
   c.set("requestLogContext", enriched);
@@ -126,6 +204,10 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
   // this, SSE/MCP routes would generate zero telemetry.
   if (isStreaming(c) && !thrown) {
     reqLogger.event("http.stream.opened", { statusCode: status });
+    // A stream fails AFTER these headers leave, so "0" here means only that
+    // nothing failed before it opened. Its later failures say whether they
+    // were captured on their own error trace events.
+    if (isAgentRequestPath(c.req.path)) setFailureCapturedHeader(c, false);
 
     const body = c.res.body;
     if (body) {
@@ -210,6 +292,35 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       ? thrown.status
       : 500
     : status;
+
+  // Ask MCPJam: capture what nothing else did, and say so on the response.
+  // A throw is left to `onError`, which reports it on its own path. A caller
+  // that went away is the user pressing Stop, whatever status the route then
+  // answered with (the v1 agent answers a disconnect with 504 TIMEOUT), so an
+  // aborted request is never captured here; 499 is kept for routes that use it.
+  if (!thrown && isAgentRequestPath(c.req.path)) {
+    const meta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    let captured =
+      meta?.captured === true || c.var.failureCaptured === true;
+    const callerAborted = c.req.raw.signal?.aborted === true;
+    if (
+      !captured &&
+      !callerAborted &&
+      effectiveStatus >= 400 &&
+      effectiveStatus !== 499
+    ) {
+      captured = captureUnreportedAgentFailure(
+        c,
+        effectiveStatus,
+        meta,
+        targetRoute ?? route,
+      );
+    }
+    setFailureCapturedHeader(c, captured);
+  }
 
   // 424 joins the 5xx range as a FAILURE for logging purposes. It is the one
   // 4xx this server emits for "we could not reach the dependency the request

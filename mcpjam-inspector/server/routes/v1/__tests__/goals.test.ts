@@ -58,10 +58,11 @@ vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
 }));
 
 import goals from "../goals.js";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import { v1OnError } from "../envelope.js";
 
-const PROJECT = "proj_a";
-const OTHER_PROJECT = "proj_b";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const OTHER_PROJECT = "projbxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const JOURNEY = "jrn_1";
 const RUN = "run_1";
 
@@ -311,6 +312,27 @@ describe("POST .../goal-runs/:runId/cancel", () => {
     });
   });
 
+  it("returns asynchronous stop acceptance with the current status", async () => {
+    queryMock.mockResolvedValueOnce(runRow());
+    mutationMock.mockResolvedValue({
+      runId: RUN,
+      status: "running",
+      canceled: true,
+      alreadyCanceled: false,
+      finalized: 0,
+      cleanupPending: true,
+    });
+    const res = await cancel();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id: RUN,
+      status: "running",
+      canceled: true,
+      finalized: 0,
+      cleanupPending: true,
+    });
+  });
+
   it("is idempotent — a re-cancel is success, not a conflict", async () => {
     // A canceled run is no longer `running`, so a naive implementation would
     // 409 every retry of a dropped response.
@@ -449,6 +471,63 @@ describe("POST .../goals/:goalId/runs", () => {
     expect(res.status).toBe(403);
     expect((await res.json()) as { message?: string }).toMatchObject({
       message: "Swarms is not currently available.",
+    });
+  });
+
+  it("forwards expectedSponsored (including 0) and reports the funding the launch returns", async () => {
+    launchMock.mockResolvedValue({
+      runId: "run_new",
+      funding: { sponsored: 0, credits: 3, total: 3 },
+    });
+    const res = await launch({
+      body: JSON.stringify({ expectedSponsored: 0 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(202);
+    expect(launchMock.mock.calls[0]![1]).toMatchObject({ expectedSponsored: 0 });
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      funding: { sponsored: 0, credits: 3, total: 3 },
+    });
+  });
+
+  it("rejects a malformed expectedSponsored as a 400 without launching", async () => {
+    for (const expectedSponsored of [-1, 1.5, "3"]) {
+      const res = await launch({
+        body: JSON.stringify({ expectedSponsored }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a funding mismatch as a 409 CONFLICT carrying the typed details", async () => {
+    launchMock.mockRejectedValue(
+      new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        "Sponsored conversations changed",
+        {
+          code: "swarm_funding_changed",
+          expectedSponsored: 5,
+          actualSponsored: 3,
+          totalConversations: 15,
+        },
+      ),
+    );
+    const res = await launch({
+      body: JSON.stringify({ expectedSponsored: 5 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()) as Record<string, any>).toMatchObject({
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
     });
   });
 
@@ -764,4 +843,29 @@ describe("the deprecated /journeys alias", () => {
       message: "Goal not found",
     });
   });
+});
+
+describe("run cancellation reads", () => {
+  it.each(["goal", "journey"])(
+    "exposes the durable Stop request on the %s route",
+    async (surface) => {
+      queryMock.mockResolvedValue(
+        runRow({
+          status: "running",
+          cancelRequested: true,
+          cleanupPending: true,
+        }),
+      );
+      const res = await makeApp().request(
+        `/api/v1/projects/${PROJECT}/${surface}-runs/${RUN}`,
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        status: "running",
+        canceled: false,
+        cancelRequested: true,
+        cleanupPending: true,
+      });
+    },
+  );
 });

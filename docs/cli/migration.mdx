@@ -17,8 +17,9 @@ mcpjam cloud tunnel --server dev -- npm start           # local target, Cloud re
 
 ## What did not change
 
-- Frozen local commands: `server`, `tools`, `resources`, `prompts`, `subscriptions`, `tasks`, `apps`, `oauth`, `protocol`, `xaa`, `compat`, `inspector`, `mcp`, `telemetry`
-- Local commands still reject `--api-key` / `--api-url` / `--project`
+- Frozen local commands: `server`, `tools`, `resources`, `prompts`, `subscriptions`, `tasks`, `apps`, `oauth`, `protocol`, `xaa`, `compat`, `inspector`, `mcp`, `telemetry`, and `test`
+- Local commands still reject `--api-key` / `--api-url` / `--project` — except `test`, which accepts them (with `--api-header`) only to reach MCPJam-hosted inference, and never uploads
+- To run a suite file on your machine instead of hosted, use [`mcpjam test <file>`](/cli/local-evals); `mcpjam cloud eval run --file <file>` remains the hosted path
 - Hosted `readiness start|status|list|cancel|report` stays under the root `readiness` command (leaf `--api-key`; no Cloud project link)
 - Local `mcpjam mcp` protocol `serverInfo.name` is still `mcpjam` (title is now `MCPJam CLI`)
 

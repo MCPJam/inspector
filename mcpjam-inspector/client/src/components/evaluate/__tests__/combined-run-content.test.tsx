@@ -19,9 +19,14 @@ const mocks = vi.hoisted(() => ({
     errorCount: 0,
     retry: vi.fn(),
   },
+  toast: vi.fn(),
+  chainStatus: "ready",
   decision: vi.fn(),
   generation: vi.fn(),
   requestInsight: vi.fn(),
+}));
+vi.mock("../run-error-breakdown", () => ({
+  useRunErrorBreakdownToast: (...args: unknown[]) => mocks.toast(...args),
 }));
 vi.mock("../../evals/use-server-quality", () => ({
   useServerQuality: (run: EvalSuiteRun, options: unknown) => {
@@ -101,7 +106,10 @@ vi.mock("@/hooks/use-eval-run-decision-summary", () => ({
   },
 }));
 vi.mock("@/hooks/use-eval-run-iteration-chains", () => ({
-  useEvalRunIterationChains: () => ({ chains: new Map(), status: "ready" }),
+  useEvalRunIterationChains: () => ({
+    chains: new Map(),
+    status: mocks.chainStatus,
+  }),
 }));
 
 function run(
@@ -181,6 +189,8 @@ beforeEach(() => {
   );
   mocks.history.loading = false;
   mocks.history.errorCount = 0;
+  mocks.toast.mockClear();
+  mocks.chainStatus = "ready";
   mocks.decision.mockReset();
   mocks.generation.mockClear();
   mocks.requestInsight.mockClear();
@@ -642,5 +652,71 @@ describe("combined run report", () => {
     expect(combinedReportView(runs, iterations, [passing], false).pending).toBe(
       true,
     );
+  });
+});
+
+describe("whole launch error toast", () => {
+  const last = () => mocks.toast.mock.calls.at(-1)?.[1];
+  const errorHistory = () => {
+    mocks.history.details.set("2", {
+      run: runs[1],
+      iterations: [
+        {
+          ...iterations[1],
+          status: "failed",
+          error: "Missing required input filterId",
+        },
+      ],
+    });
+  };
+  it("waits for slow reads even when filters hide that member", async () => {
+    errorHistory();
+    mocks.decision.mockImplementation(({ runId }: { runId: string }) => ({
+      status: runId === "2" ? "loading" : "ready",
+      summary: null,
+      diagnostics: [],
+    }));
+    const user = userEvent.setup();
+    const view = render(<CombinedRunContent {...props} />);
+    expect(last()).toBeNull();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "ChatGPT", exact: true }),
+    );
+    expect(last()).toBeNull();
+    mocks.decision.mockReset();
+    view.rerender(<CombinedRunContent {...props} />);
+    expect(last()).toMatchObject({ errored: 1, finished: 3 });
+    expect(mocks.toast.mock.calls.at(-1)?.[0]).toBe("same");
+    expect(last().groups[0].errors).toEqual([
+      { message: "Missing required input filterId", count: 1 },
+    ]);
+  });
+  it("allows a retry after a failed results read and waits for chains", () => {
+    errorHistory();
+    mocks.history.errorCount = 1;
+    const view = render(<CombinedRunContent {...props} />);
+    expect(last()).toBeNull();
+    mocks.history.errorCount = 0;
+    mocks.chainStatus = "loading";
+    view.rerender(<CombinedRunContent {...props} />);
+    expect(last()).toBeNull();
+    mocks.chainStatus = "ready";
+    view.rerender(<CombinedRunContent {...props} />);
+    expect(last()).toMatchObject({ errored: 1, finished: 3 });
+  });
+  it("does not summarize missing member results", () => {
+    errorHistory();
+    mocks.history.details.delete("1");
+    const view = render(<CombinedRunContent {...props} />);
+    expect(last()).toBeNull();
+    mocks.history.details.set("1", {
+      run: runs[0],
+      iterations: [iterations[0]],
+    });
+    view.rerender(<CombinedRunContent {...props} />);
+    expect(last()).toMatchObject({ errored: 1, finished: 3 });
   });
 });

@@ -1,26 +1,15 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
+vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
+vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-/**
- * What a REPLAY tells the runner about its Project Environment — and why the
- * honest answer is neither an id nor silence.
- *
- * A replay run genuinely HAS an environment: `startTestSuiteRun` copies the
- * source run's `configSnapshot.environmentRef` forward verbatim, and
- * `resolveGrantForSandbox` follows that id, so the replay's boxes really can
- * carry a brokered secret's egress transform. But nothing projects that ref
- * back out — not the run-start return (it carries `configSnapshot.environment`,
- * the servers snapshot, and no `environmentRef`), not `getRunReplayMetadata`,
- * not the sandbox reservation — so this process cannot name it.
- *
- * Staying silent would make the harness read the absence as "no environment,
- * therefore nothing granted" and tell the reader to fix a selection they never
- * made. These cases pin the alternative: an explicit reason, and no invented id.
- */
+// Replays use the frozen client and environment; old backends fail closed
+// when they cannot identify the environment whose secrets would be delivered.
 
-const runEvalSuiteWithAiSdkMock = vi.fn(async () => undefined);
+const runEvalSuiteWithAiSdkMock = vi.fn(async (_options: Record<string, unknown>) => undefined);
 vi.mock("../../evals-runner.js", () => ({
   runEvalSuiteWithAiSdk: (...args: unknown[]) =>
-    runEvalSuiteWithAiSdkMock(...(args as [])),
+    runEvalSuiteWithAiSdkMock(args[0] as Record<string, unknown>),
 }));
 
 const startSuiteRunWithRecorderMock = vi.fn(async () => ({
@@ -55,7 +44,8 @@ vi.mock("../compat-runtime.js", () => ({
   loadSuiteHostConfig: vi.fn(async () => ({ harness: "harness:cursor" })),
 }));
 
-vi.mock("@mcpjam/sdk/host-config/internal", () => ({
+vi.mock("@mcpjam/sdk/host-config/internal", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@mcpjam/sdk/host-config/internal")>(),
   resolveOpenAiCompatForHostConfig: vi.fn(() => false),
 }));
 
@@ -67,8 +57,10 @@ vi.mock("../grading-mode.js", () => ({
   resolveFrozenRunGradingMode: vi.fn(() => undefined),
 }));
 
-vi.mock("../../../utils/org-model-config.js", () => ({
-  resolveOrgModelConfig: vi.fn(async () => undefined),
+const resolveOrgModelConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/org-model-config.js")>(),
+  resolveOrgModelConfig: resolveOrgModelConfigMock,
 }));
 
 import { prepareSuiteReplayFromRun } from "../replay-suite-run.js";
@@ -87,7 +79,13 @@ function convexClient() {
 
 beforeEach(() => {
   runEvalSuiteWithAiSdkMock.mockClear();
+  resolveOrgModelConfigMock.mockReset().mockResolvedValue({
+    aiKeyPolicy: { requireOrgKeys: false }, providers: [],
+  });
+  vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
   it("hands the runner a REASON instead of silence, and never an invented id", async () => {
@@ -119,5 +117,81 @@ describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
     expect(options.projectEnvironmentUnresolvedReason).toMatch(
       /Project Environment/,
     );
+  });
+});
+
+it("passes the saved Claude client and frozen environment to the shared executor", async () => {
+  startSuiteRunWithRecorderMock.mockResolvedValueOnce({
+    runId: "local-replay", recorder: { id: "recorder" },
+    config: { tests: [], environment: { servers: ["srv"] } },
+    hostConfig: { harness: "claude-code" }, gradingEngine: undefined,
+    environmentRef: { environmentId: "frozen-environment" },
+  } as any);
+  const prepared = await prepareSuiteReplayFromRun({
+    convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source",
+  });
+  await prepared.execute();
+  expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledWith(expect.objectContaining({
+    suiteHostConfig: { harness: "claude-code" },
+    projectEnvironmentId: "frozen-environment",
+  }));
+  expect(runEvalSuiteWithAiSdkMock.mock.calls[0]?.[0]).not.toHaveProperty("projectEnvironmentUnresolvedReason");
+});
+
+it.each(["execution", "harness", "policy"] as const)("refuses replay when %s admission fails, before any model runs", async gate => {
+  admission.failed.mockClear();
+  if (gate === "policy") admission.policy.mockReturnValueOnce("Policy cannot be enforced" as never);
+  else admission[gate].mockReturnValueOnce({ ok: false, reason: "Client cannot execute" } as never);
+  await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
+  expect(admission.failed).toHaveBeenCalledOnce();
+  expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
+  it("still reads the organization's AI-key policy and hands the runner its config", async () => {
+    const strict = {
+      aiKeyPolicy: { requireOrgKeys: true },
+      providers: [{ providerKey: "openai", exportDenied: true }],
+    };
+    resolveOrgModelConfigMock.mockResolvedValueOnce(strict);
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: convexClient(),
+      convexAuthToken: "token",
+      sourceRunId: "keyed-run",
+      modelApiKeys: { openai: "sk-personal" },
+    });
+    await prepared.execute();
+
+    expect(resolveOrgModelConfigMock).toHaveBeenCalledWith(
+      { projectId: "project-1" },
+      expect.objectContaining({ bearerToken: "token" }),
+    );
+    // The runner refuses personal and hosted selections under this config.
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelApiKeys: { openai: "sk-personal" },
+        orgModelConfig: strict,
+      }),
+    );
+  });
+
+  it("refuses before the replay run is created when the policy can't be read", async () => {
+    admission.failed.mockClear();
+    startSuiteRunWithRecorderMock.mockClear();
+    resolveOrgModelConfigMock.mockRejectedValueOnce(
+      new Error("The organization's AI key policy could not be read"),
+    );
+    await expect(
+      prepareSuiteReplayFromRun({
+        convexClient: convexClient(),
+        convexAuthToken: "token",
+        sourceRunId: "keyed-run",
+        modelApiKeys: { openai: "sk-personal" },
+      }),
+    ).rejects.toThrow(/policy could not be read/);
+    // Nothing was created or reserved, so there is no run to fail.
+    expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    expect(admission.failed).not.toHaveBeenCalled();
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
   });
 });

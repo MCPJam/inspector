@@ -53,11 +53,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
 // (directly and through `createConvexClients`), so a single mock here backs
 // both the read (`query`) and write (`mutation`) paths.
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";
@@ -196,7 +198,7 @@ describe("v1 client routes", () => {
 
   describe("auth", () => {
     it("rejects a request with no bearer token (401)", async () => {
-      const res = await request("GET", "/api/v1/projects/p1/clients", {
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         token: null,
       });
       expect(res.status).toBe(401);
@@ -210,7 +212,7 @@ describe("v1 client routes", () => {
         valid: true,
         guestId: "guest_1",
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients", {
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         token: "guest-jwt",
       });
       expect(res.status).toBe(401);
@@ -224,20 +226,20 @@ describe("v1 client routes", () => {
   describe("GET list + detail", () => {
     it("lists hosts in the public DTO shape (id, no hostId leak)", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/clients");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: Record<string, unknown>[] };
       expect(body.items).toHaveLength(1);
       expect(body.items[0]).toMatchObject({ id: "h1", name: "Alpha" });
       expect(body.items[0]).not.toHaveProperty("hostId");
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:listHosts", {
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
 
     it("returns host detail and forwards the path projectId to getHost", async () => {
       mockQuery({ "hosts:getHost": { ...DETAIL_ROW, versionId: "version1", versionNumber: 1 } });
-      const res = await request("GET", "/api/v1/projects/p1/clients/h1");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body).toMatchObject({ id: "h1", name: "Alpha", configId: "hc1", versionId: "version1", versionNumber: 1 });
@@ -245,13 +247,13 @@ describe("v1 client routes", () => {
       // Project scope is enforced inside Convex — the route must pass projectId.
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:getHost", {
         hostId: "h1",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
 
     it("returns 404 when getHost yields null (missing or cross-project id)", async () => {
       mockQuery({ "hosts:getHost": null });
-      const res = await request("GET", "/api/v1/projects/p1/clients/other");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/other");
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
     });
@@ -261,7 +263,7 @@ describe("v1 client routes", () => {
     it("creates a host from a full config and returns 201", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Alpha", config: { modelId: "gpt-4o-mini" } },
       });
       expect(res.status).toBe(201);
@@ -269,7 +271,7 @@ describe("v1 client routes", () => {
         id: "h1",
       });
       expect(convexMutationMock).toHaveBeenCalledWith("hosts:createHost", {
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         name: "Alpha",
         input: { modelId: "gpt-4o-mini" },
       });
@@ -295,7 +297,7 @@ describe("v1 client routes", () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
 
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Claude", template: "claude", theme: "light" },
       });
 
@@ -335,7 +337,7 @@ describe("v1 client routes", () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
 
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Future Host", template: "future-host" },
       });
 
@@ -358,7 +360,7 @@ describe("v1 client routes", () => {
         "mistral"
       );
 
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Mistral", template: "mistral" },
       });
 
@@ -388,7 +390,7 @@ describe("v1 client routes", () => {
         "mistral"
       );
 
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Mistral", template: "mistral" },
       });
 
@@ -405,7 +407,7 @@ describe("v1 client routes", () => {
     });
 
     it("rejects an unknown key rather than silently dropping it (400)", async () => {
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: {
           name: "Alpha",
           config: { modelId: "gpt-4o-mini" },
@@ -420,7 +422,7 @@ describe("v1 client routes", () => {
     });
 
     it("rejects a body with neither template nor config (400)", async () => {
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: { name: "Alpha" },
       });
       expect(res.status).toBe(400);
@@ -444,7 +446,7 @@ describe("v1 client routes", () => {
       ])(
         "rejects a config whose modelId is %s (400)",
         async (_label, extra) => {
-          const res = await request("POST", "/api/v1/projects/p1/clients", {
+          const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
             body: { name: "Alpha", config: { systemPrompt: "hi", ...extra } },
           });
           expect(res.status).toBe(400);
@@ -458,7 +460,7 @@ describe("v1 client routes", () => {
       it("reports the XOR problem — not the model — for an empty config", async () => {
         // `{}` picked neither branch. Naming the model would send the caller
         // to add one field when they need to choose a shape.
-        const res = await request("POST", "/api/v1/projects/p1/clients", {
+        const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
           body: { name: "Alpha", config: {} },
         });
         expect(res.status).toBe(400);
@@ -472,7 +474,7 @@ describe("v1 client routes", () => {
         // would be persisted as a distinct — and unrecognized — model.
         convexMutationMock.mockResolvedValue({ hostId: "h1" });
         mockQuery({ "hosts:getHost": DETAIL_ROW });
-        const res = await request("POST", "/api/v1/projects/p1/clients", {
+        const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
           body: { name: "Alpha", config: { modelId: "  openai/gpt-5  " } },
         });
         // Assert the create SUCCEEDED before reading the mutation args: a
@@ -506,7 +508,7 @@ describe("v1 client routes", () => {
         );
         convexMutationMock.mockResolvedValue({ hostId: "h1" });
         mockQuery({ "hosts:getHost": DETAIL_ROW });
-        const res = await request("POST", "/api/v1/projects/p1/clients", {
+        const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
           body: { name: "Alpha", template: "claude" },
         });
         expect(res.status).toBe(201);
@@ -532,7 +534,7 @@ describe("v1 client routes", () => {
             })
           )
         );
-        const res = await request("POST", "/api/v1/projects/p1/clients", {
+        const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
           body: { name: "Alpha", template: "claude" },
         });
         expect(res.status).toBe(400);
@@ -548,7 +550,7 @@ describe("v1 client routes", () => {
     it("renames through the partial mutation, carrying the name token", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { name: "Renamed", expectedName: "Alpha" },
       });
       expect(res.status).toBe(200);
@@ -559,7 +561,7 @@ describe("v1 client routes", () => {
         "hosts:updateHostFields",
         {
           hostId: "h1",
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "Renamed",
           expectedName: "Alpha",
         }
@@ -569,7 +571,7 @@ describe("v1 client routes", () => {
     it("applies a partial `set` edit with the config token", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { expectedConfigId: "hc1", set: { temperature: 0.2 } },
       });
       expect(res.status).toBe(200);
@@ -577,7 +579,7 @@ describe("v1 client routes", () => {
         "hosts:updateHostFields",
         {
           hostId: "h1",
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           set: { temperature: 0.2 },
           expectedHostConfigId: "hc1",
         }
@@ -587,7 +589,7 @@ describe("v1 client routes", () => {
     it("forwards a null in `set` verbatim — it is the clear/reset signal", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { expectedConfigId: "hc1", set: { harness: null } },
       });
       expect(res.status).toBe(200);
@@ -597,11 +599,65 @@ describe("v1 client routes", () => {
       );
     });
 
+    it("forwards `set.modelSelection` and pins its model when modelId is omitted", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const selection = {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        settings: { reasoningEffort: "high" },
+        fallback: { provider: "none", model: "none" },
+      };
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: { expectedConfigId: "hc1", set: { modelSelection: selection } },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHostFields",
+        expect.objectContaining({
+          set: { modelSelection: selection, modelId: "openai/gpt-5" },
+        })
+      );
+    });
+
+    it("clears the saved selection with `set.modelSelection: null`", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: { expectedConfigId: "hc1", set: { modelSelection: null } },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHostFields",
+        expect.objectContaining({ set: { modelSelection: null } })
+      );
+    });
+
+    it("refuses a selection for another model, an unknown effort and a secret-bearing key", async () => {
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const base = {
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      };
+      for (const set of [
+        { modelId: "anthropic/claude-sonnet-4.5", modelSelection: base },
+        { modelSelection: { ...base, settings: { reasoningEffort: "turbo" } } },
+        { modelSelection: { ...base, apiKey: "sk-secret" } },
+      ]) {
+        const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+          body: { expectedConfigId: "hc1", set },
+        });
+        expect(res.status).toBe(400);
+      }
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a config edit with no `expectedConfigId` (400)", async () => {
       // The whole point of the canonical surface: an unpreconditioned config
       // write can silently revert a concurrent edit.
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { set: { temperature: 0.2 } },
       });
       expect(res.status).toBe(400);
@@ -612,7 +668,7 @@ describe("v1 client routes", () => {
     it("rejects a rename with no `expectedName` (400)", async () => {
       // A rename does not rotate the config, so the config token is blind to a
       // concurrent one — it needs its own.
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { name: "Renamed" },
       });
       expect(res.status).toBe(400);
@@ -621,7 +677,7 @@ describe("v1 client routes", () => {
     });
 
     it("rejects `config` and `set` together (400)", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: {
           expectedConfigId: "hc1",
           config: { modelId: "gpt-4o-mini" },
@@ -636,7 +692,7 @@ describe("v1 client routes", () => {
     it("rejects an unknown field inside `set` (400)", async () => {
       // `set` is a named field list, not a passthrough: an unrecognized key is
       // a caller mistake the route can name, not something to forward.
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { expectedConfigId: "hc1", set: { hostStyle: "claude" } },
       });
       expect(res.status).toBe(400);
@@ -655,7 +711,7 @@ describe("v1 client routes", () => {
           },
         })
       );
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { expectedConfigId: "hc1", set: { temperature: 0.2 } },
       });
       expect(res.status).toBe(409);
@@ -669,7 +725,7 @@ describe("v1 client routes", () => {
     });
 
     it("rejects an empty update (no name, config or set) with 400", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: {},
       });
       expect(res.status).toBe(400);
@@ -680,7 +736,7 @@ describe("v1 client routes", () => {
     });
 
     it("rejects an unknown key rather than silently dropping it (400)", async () => {
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { name: "Renamed", expectedName: "Alpha", theme: "dark" },
       });
       expect(res.status).toBe(400);
@@ -701,7 +757,7 @@ describe("v1 client routes", () => {
           // that can strip the model off an existing host — the invariant
           // `create` enforces would otherwise be one PATCH wide open.
           mockQuery({ "hosts:getHost": DETAIL_ROW });
-          const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+          const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
             body: {
               expectedConfigId: "hc1",
               config: { systemPrompt: "hi", modelId },
@@ -723,7 +779,7 @@ describe("v1 client routes", () => {
         mockQuery({
           "hosts:getHost": { ...DETAIL_ROW, config: { modelId: "" } },
         });
-        const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
           body: {
             expectedConfigId: "hc1",
             config: { systemPrompt: "edited", modelId: "" },
@@ -742,7 +798,7 @@ describe("v1 client routes", () => {
       it("TRIMS a padded model on the PATCH boundary too", async () => {
         convexMutationMock.mockResolvedValue({ hostId: "h1" });
         mockQuery({ "hosts:getHost": DETAIL_ROW });
-        const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
           body: {
             expectedConfigId: "hc1",
             config: { modelId: "  openai/gpt-5  " },
@@ -767,7 +823,7 @@ describe("v1 client routes", () => {
     it("strips the read-only projection keys on PATCH", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: {
           expectedConfigId: "hc1",
           config: {
@@ -790,7 +846,7 @@ describe("v1 client routes", () => {
     it("strips them on create too", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("POST", "/api/v1/projects/p1/clients", {
+      const res = await request("POST", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients", {
         body: {
           name: "Alpha",
           config: { id: "hc1", schemaVersion: 2, modelId: "gpt-4o-mini" },
@@ -798,7 +854,7 @@ describe("v1 client routes", () => {
       });
       expect(res.status).toBe(201);
       expect(convexMutationMock).toHaveBeenCalledWith("hosts:createHost", {
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         name: "Alpha",
         input: { modelId: "gpt-4o-mini" },
       });
@@ -809,7 +865,7 @@ describe("v1 client routes", () => {
     it("leaves an unrecognized key alone", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: {
           expectedConfigId: "hc1",
           config: { modelId: "openai/gpt-5", typodField: 1 },
@@ -831,7 +887,7 @@ describe("v1 client routes", () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/servers",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/servers",
         { body: { serverIds: ["s1"], expectedConfigId: "hc1" } }
       );
       expect(res.status).toBe(200);
@@ -839,7 +895,7 @@ describe("v1 client routes", () => {
         "hosts:updateHostServers",
         expect.objectContaining({
           hostId: "h1",
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverIds: ["s1"],
           expectedHostConfigId: "hc1",
         })
@@ -852,7 +908,7 @@ describe("v1 client routes", () => {
       // from losing one — that is what the token is for.
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/servers",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/servers",
         { body: { serverIds: ["s1"] } }
       );
       expect(res.status).toBe(400);
@@ -863,7 +919,7 @@ describe("v1 client routes", () => {
     it("rejects an unknown key rather than silently dropping it (400)", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/servers",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/servers",
         {
           body: {
             serverIds: ["s1"],
@@ -890,7 +946,7 @@ describe("v1 client routes", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/duplicate",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/duplicate",
         { body: {} }
       );
       expect(res.status).toBe(400);
@@ -902,7 +958,7 @@ describe("v1 client routes", () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/duplicate",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/duplicate",
         { body: { name: "Copy", force: true } }
       );
       expect(res.status).toBe(400);
@@ -917,13 +973,13 @@ describe("v1 client routes", () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/clients/h1/duplicate",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1/duplicate",
         { body: {} }
       );
       expect(res.status).toBe(201);
       expect(convexMutationMock).toHaveBeenCalledWith(
         "hosts:duplicateHost",
-        expect.objectContaining({ hostId: "h1", projectId: "p1" })
+        expect.objectContaining({ hostId: "h1", projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" })
       );
     });
   });
@@ -931,7 +987,7 @@ describe("v1 client routes", () => {
   describe("DELETE", () => {
     it("deletes a host, forwarding only { hostId, projectId } (no force)", async () => {
       convexMutationMock.mockResolvedValue(undefined);
-      const res = await request("DELETE", "/api/v1/projects/p1/clients/h1");
+      const res = await request("DELETE", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1");
       expect(res.status).toBe(200);
       expect((await res.json()) as Record<string, unknown>).toEqual({
         id: "h1",
@@ -939,12 +995,12 @@ describe("v1 client routes", () => {
       });
       expect(convexMutationMock).toHaveBeenCalledWith("hosts:deleteHost", {
         hostId: "h1",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
 
     it("rejects a delete body carrying a legacy `force` field (400)", async () => {
-      const res = await request("DELETE", "/api/v1/projects/p1/clients/h1", {
+      const res = await request("DELETE", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
         body: { force: true },
       });
       expect(res.status).toBe(400);
@@ -955,11 +1011,11 @@ describe("v1 client routes", () => {
     });
 
     it("rejects a delete body even with only a synthesized-looking key (400)", async () => {
-      // The route reads the raw body, so a payload like `{ "projectId": "p1" }`
+      // The route reads the raw body, so a payload like `{ "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }`
       // is still a body and is rejected — DELETE is truly bodyless, not merely
       // "no fields other than the ones synthesizeServerBody would inject".
-      const res = await request("DELETE", "/api/v1/projects/p1/clients/h1", {
-        body: { projectId: "p1" },
+      const res = await request("DELETE", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1", {
+        body: { projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
       });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
@@ -972,7 +1028,7 @@ describe("v1 client routes", () => {
   describe("read-backs and the private-backing filter", () => {
     it("emits configId, ownerScope, hasComputer, timestamps and impact", async () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("GET", "/api/v1/projects/p1/clients/h1");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body).toMatchObject({
@@ -991,7 +1047,7 @@ describe("v1 client routes", () => {
 
     it("hides User Testing backing clients from the list by default", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW, PRIVATE_BACKING_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/clients");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients");
       const body = (await res.json()) as { items: Array<{ id: string }> };
       expect(body.items.map((item) => item.id)).toEqual(["h1"]);
     });
@@ -1000,7 +1056,7 @@ describe("v1 client routes", () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW, PRIVATE_BACKING_ROW] });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/clients?includePrivateBacking=true"
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients?includePrivateBacking=true"
       );
       const body = (await res.json()) as { items: Array<{ id: string }> };
       expect(body.items.map((item) => item.id)).toEqual(["h1", "h9"]);
@@ -1017,7 +1073,7 @@ describe("v1 client routes", () => {
           ownerScope: { type: "user_testing" },
         },
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients/h9");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h9");
       expect(res.status).toBe(404);
     });
   });
@@ -1029,15 +1085,15 @@ describe("v1 client routes", () => {
         if (fn === "hosts:getHost") return DETAIL_ROW;
         return null;
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients/Alpha");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/Alpha");
       expect(res.status).toBe(200);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "hosts:resolveHostByNameOrId",
-        { projectId: "p1", selector: "Alpha", includePrivateBacking: false }
+        { projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", selector: "Alpha", includePrivateBacking: false }
       );
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:getHost", {
         hostId: "h1",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
 
@@ -1052,10 +1108,10 @@ describe("v1 client routes", () => {
         if (fn === "hosts:getHost") return DETAIL_ROW;
         return null;
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients/alpha");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/alpha");
       expect(res.status).toBe(200);
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:listHosts", {
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
 
@@ -1072,7 +1128,7 @@ describe("v1 client routes", () => {
         }
         return null;
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients/Alpha");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/Alpha");
       expect(res.status).not.toBe(200);
       expect(calls).not.toContain("hosts:listHosts");
     });
@@ -1087,7 +1143,7 @@ describe("v1 client routes", () => {
         }
         return null;
       });
-      const res = await request("GET", "/api/v1/projects/p1/clients/Alpha");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/Alpha");
       expect(res.status).toBe(409);
       expect(JSON.stringify(await res.json())).toMatch(/matches 2 clients/i);
     });
@@ -1101,7 +1157,7 @@ describe("v1 client routes", () => {
   describe("deprecated /hosts aliases", () => {
     it("still returns `hostConfigId`, not `configId`, on the list", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/hosts");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: Record<string, unknown>[] };
       expect(body.items[0]).toMatchObject({ id: "h1", hostConfigId: "hc1" });
@@ -1114,14 +1170,14 @@ describe("v1 client routes", () => {
 
     it("does NOT filter private backing rows — the old surface never did", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW, PRIVATE_BACKING_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/hosts");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts");
       const body = (await res.json()) as { items: Array<{ id: string }> };
       expect(body.items.map((item) => item.id)).toEqual(["h1", "h9"]);
     });
 
     it("returns the old three-field detail shape", async () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("GET", "/api/v1/projects/p1/hosts/h1");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts/h1");
       expect(await res.json()).toEqual({
         id: "h1",
         name: "Alpha",
@@ -1131,27 +1187,27 @@ describe("v1 client routes", () => {
 
     it("marks every alias response `Deprecation: true`", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/hosts");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts");
       expect(res.headers.get("Deprecation")).toBe("true");
       expect(res.headers.get("Link")).toContain("successor-version");
     });
 
     it("leaves the canonical surface unmarked", async () => {
       mockQuery({ "hosts:listHosts": [LIST_ROW] });
-      const res = await request("GET", "/api/v1/projects/p1/clients");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients");
       expect(res.headers.get("Deprecation")).toBeNull();
     });
 
     it("still accepts a tokenless PATCH and still calls updateHost", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts/h1", {
         body: { name: "Renamed" },
       });
       expect(res.status).toBe(200);
       expect(convexMutationMock).toHaveBeenCalledWith("hosts:updateHost", {
         hostId: "h1",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         name: "Renamed",
       });
     });
@@ -1160,7 +1216,7 @@ describe("v1 client routes", () => {
       // The alias body is strict and unchanged: a caller sending the new
       // contract to the old path is making a mistake worth naming, not one to
       // quietly half-honor.
-      const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+      const res = await request("PATCH", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts/h1", {
         body: { expectedConfigId: "hc1", set: { temperature: 0.2 } },
       });
       expect(res.status).toBe(400);
@@ -1172,7 +1228,7 @@ describe("v1 client routes", () => {
       mockQuery({ "hosts:getHost": DETAIL_ROW });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/hosts/h1/servers",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts/h1/servers",
         { body: { serverIds: ["s1"] } }
       );
       expect(res.status).toBe(200);
@@ -1190,14 +1246,14 @@ describe("v1 client routes", () => {
       // Teaching the deprecated surface to resolve names would hand it a
       // capability the canonical one is meant to be the reason to move to.
       mockQuery({ "hosts:getHost": DETAIL_ROW });
-      await request("GET", "/api/v1/projects/p1/hosts/Alpha");
+      await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hosts/Alpha");
       expect(convexQueryMock).not.toHaveBeenCalledWith(
         "hosts:resolveHostByNameOrId",
         expect.anything()
       );
       expect(convexQueryMock).toHaveBeenCalledWith("hosts:getHost", {
         hostId: "Alpha",
-        projectId: "p1",
+        projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
     });
   });

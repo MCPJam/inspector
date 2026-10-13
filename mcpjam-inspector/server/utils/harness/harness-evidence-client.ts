@@ -35,6 +35,11 @@
 import { logger } from "../logger.js";
 import { writeUntilAcknowledged } from "../acknowledged-write.js";
 import type { WriteAttempt } from "../acknowledged-write.js";
+import {
+  getServiceCredential,
+  hasServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../services/service-credential.js";
 
 /**
  * Attempts per write, and the backoff between them. Worst case per write is
@@ -201,7 +206,7 @@ function classify(response: EvidenceTransportResponse): WriteAttempt<true> {
   // permanent turns one throttled attempt into a refused tool call (start)
   // or a falsely incomplete turn (settle).
   if (response.status === 429 || response.status === 408) {
-    return { status: "retryable", reason };
+    return { status: "retryable", reason, ...(typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0 ? { retryAfterMs: body.retryAfterMs } : {}) };
   }
   // Any other 4xx the backend did not label is a request this client built
   // wrong; repeating it verbatim will not fix it.
@@ -223,7 +228,7 @@ function classify(response: EvidenceTransportResponse): WriteAttempt<true> {
 export function isHarnessEvidenceConfigured(): boolean {
   return Boolean(
     process.env.CONVEX_HTTP_URL?.trim() &&
-    process.env.INSPECTOR_SERVICE_TOKEN?.trim(),
+    hasServiceCredential(),
   );
 }
 
@@ -235,11 +240,11 @@ export function isHarnessEvidenceConfigured(): boolean {
  * retryable, and losing that because the body was HTML would turn a blip into
  * a refused tool call.
  */
-export function createConvexEvidenceTransport(): HarnessEvidenceTransport {
+export function createConvexEvidenceTransport(bearer?: string): HarnessEvidenceTransport {
   return async (path, body, init) => {
     const base = process.env.CONVEX_HTTP_URL?.trim();
-    const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (!base || !token) {
+    const token = getServiceCredential();
+    if (!base || (!token && !bearer)) {
       return {
         status: 500,
         body: { code: "evidence_not_configured", retryable: false },
@@ -251,7 +256,7 @@ export function createConvexEvidenceTransport(): HarnessEvidenceTransport {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-inspector-service-token": token,
+          ...(bearer ? { authorization: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}` } : { [INSPECTOR_SERVICE_TOKEN_HEADER]: token! }),
         },
         body: JSON.stringify(body),
         ...(init.signal ? { signal: init.signal } : {}),

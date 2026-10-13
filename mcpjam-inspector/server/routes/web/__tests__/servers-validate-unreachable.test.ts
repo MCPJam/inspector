@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
 
 /**
  * BB-48. A hosted connect to a well-formed but unreachable URL must come back
@@ -37,18 +38,22 @@ vi.mock("@mcpjam/sdk", async () => {
   );
   return {
     ...actual,
-    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
-      getToolsForAiSdk: getToolsForAiSdkMock,
-      disconnectAllServers: disconnectAllServersMock,
-      setPerRequestLogLevel: vi.fn(),
-      getInitializationInfo: vi.fn(() => ({
-        serverInfo: { name: "test-server", version: "1.0.0" },
-      })),
-    })),
+    MCPClientManager: mcpClientManagerMock.mockImplementation(function () {
+      return {
+        getToolsForAiSdk: getToolsForAiSdkMock,
+        disconnectAllServers: disconnectAllServersMock,
+        setPerRequestLogLevel: vi.fn(),
+        getInitializationInfo: vi.fn(() => ({
+          serverInfo: { name: "test-server", version: "1.0.0" },
+        })),
+      };
+    }),
   };
 });
 
-const serversRoute = (await import("../servers.js")).default;
+const { default: serversRoute, remainingServerCheckBudget } = await import(
+  "../servers.js"
+);
 
 // The failure the SDK raises for a hostname that does not resolve. The wording
 // matters: `mapTargetServerError` only downgrades a connection-class failure
@@ -168,5 +173,87 @@ describe("hosted /api/web/servers/validate — unreachable target", () => {
     // reach the target at all.
     expect(res.status).toBe(400);
     expect(getToolsForAiSdkMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The hosted Connect deadline. The button gives up 50 s after it sends the
+ * request, so the server must answer with its own reason inside that: 45 s
+ * from the request's arrival, which the server-check middleware records.
+ */
+describe("hosted /api/web/servers/validate — connect deadline", () => {
+  const originalFetch = global.fetch;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+
+  /** The route behind a stand-in for the middleware's arrival stamp. */
+  function postWithArrival(startedAt: number | undefined) {
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      if (startedAt !== undefined) c.set("serverCheckStartedAt", startedAt);
+      await next();
+    });
+    app.route("/", serversRoute);
+    return app.request("/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({ projectId: "prj_1", serverId: "srv_1" }),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    global.fetch = vi.fn(async () => authorizeBatchResponse()) as typeof fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    }
+  });
+
+  it("counts the budget from the request's arrival", () => {
+    expect(remainingServerCheckBudget(undefined)).toBeUndefined();
+    expect(remainingServerCheckBudget(1_000, 1_000)).toBe(45_000);
+    expect(remainingServerCheckBudget(1_000, 31_000)).toBe(15_000);
+    expect(remainingServerCheckBudget(1_000, 99_000)).toBe(0);
+  });
+
+  it("answers a hung connect with a 424 TIMEOUT and tears the connect down", async () => {
+    getToolsForAiSdkMock.mockReturnValue(new Promise(() => {}));
+
+    // Arrived 44.95 s ago (as after a long queue wait): 50 ms are left.
+    const res = await postWithArrival(Date.now() - 44_950);
+
+    expect(res.status).toBe(424);
+    const body = (await res.json()) as { message?: string; code?: string };
+    expect(body.code).toBe("TIMEOUT");
+    expect(body.message).toMatch(/MCP server "srv_1" timed out/);
+    expect(disconnectAllServersMock).toHaveBeenCalled();
+  });
+
+  it("still returns a connect that finishes inside the budget", async () => {
+    getToolsForAiSdkMock.mockResolvedValue({});
+
+    const res = await postWithArrival(Date.now());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("sets no deadline when no server-check middleware ran (outside hosted)", async () => {
+    getToolsForAiSdkMock.mockReturnValue(new Promise(() => {}));
+
+    const settled = await Promise.race([
+      Promise.resolve(postWithArrival(undefined)).then(() => "answered"),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 200)),
+    ]);
+
+    expect(settled).toBe("pending");
   });
 });

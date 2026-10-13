@@ -1,3 +1,4 @@
+import { provisionInspectorRuntime } from "./support/inspector-runtime.js";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -79,7 +80,7 @@ test("browser consent validates before storing, and refuses old Inspectors", asy
     res.end(
       JSON.stringify(
         req.url === "/api/session-token"
-          ? { token: "session-token" }
+          ? { ok: true }
           : req.url === "/api/web/computers/config"
           ? { capabilities: { browserConsent: supported } }
           : { valid }
@@ -87,6 +88,7 @@ test("browser consent validates before storing, and refuses old Inspectors", asy
     );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  provisionInspectorRuntime((server.address() as { port: number }).port);
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const file = await stateFile({ version: 1, consent: "legacy-shell-token" });
   const args = [
@@ -528,7 +530,7 @@ test("Browser consent precedence is flag, Browser environment, then Browser stat
     }
     res.setHeader("content-type", "application/json");
     if (req.url === "/api/session-token")
-      res.end(JSON.stringify({ token: "session-token" }));
+      res.end(JSON.stringify({ ok: true }));
     else if (req.url === "/api/web/computers/config")
       res.end(JSON.stringify({ capabilities: { browserConsent: true } }));
     else {
@@ -539,6 +541,7 @@ test("Browser consent precedence is flag, Browser environment, then Browser stat
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  provisionInspectorRuntime((server.address() as { port: number }).port);
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const file = await stateFile({
     version: 1,

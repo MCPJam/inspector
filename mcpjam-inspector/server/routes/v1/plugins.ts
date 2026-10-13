@@ -26,6 +26,7 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const plugins = new Hono();
 
@@ -122,7 +123,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -135,8 +136,10 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
  * convex/plugins.ts): `NOT_FOUND` for a missing/invalid id, `FORBIDDEN` for
  * a non-member. Both become 404 — confirming that a version id exists to
  * someone outside its project would be a free existence oracle. Everything
- * else goes through the shared read classifier (bad credential → 401,
- * anything of ours → redacted 502).
+ * else goes through the shared read classifier (bad credential → 401, a
+ * production-masked plain refusal → the same 404, anything else of ours →
+ * 502). `redactedIsRefusal` because every read here scopes a caller-supplied
+ * id, and without it a cross-tenant probe answered 502 (MJ-021).
  */
 function translatePluginReadError(error: unknown): WebRouteError {
   const data = (error as { data?: unknown } | null)?.data;
@@ -150,6 +153,7 @@ function translatePluginReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1/plugins",
     notFoundMessage: "Plugin or project not found, or you do not have access.",
+    redactedIsRefusal: true,
   });
 }
 
@@ -158,13 +162,13 @@ function translatePluginReadError(error: unknown): WebRouteError {
 // GET /v1/projects/:projectId/plugins — the LIVE (non-uninstalled) plugins
 // installed in a project, disabled ones included (marked `enabled: false`).
 plugins.get("/projects/:projectId/plugins", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.plugins");
   const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: PluginRow[] | null | undefined;
   try {
     rows = (await readClient.query(
       "plugins:listProjectPlugins" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as PluginRow[] | null | undefined;
   } catch (error) {
     throw translatePluginReadError(error);
@@ -182,7 +186,7 @@ plugins.get("/plugin-versions/:pluginVersionId", async (c) => {
   try {
     row = (await readClient.query(
       "plugins:getPluginVersion" as any,
-      { pluginVersionId } as any
+      { pluginVersionId } as any,
     )) as PluginVersionRow | null | undefined;
   } catch (error) {
     throw translatePluginReadError(error);
@@ -191,7 +195,7 @@ plugins.get("/plugin-versions/:pluginVersionId", async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "Plugin version not found"
+      "Plugin version not found",
     );
   }
   return v1Resource(c, toPluginVersionDto(row));

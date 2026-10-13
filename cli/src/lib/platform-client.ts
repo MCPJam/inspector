@@ -5,6 +5,7 @@ import {
   PlatformApiClient,
   platformRefusalHint,
   RUN_LAUNCH_HEADERS,
+  type PlatformApiError,
 } from "@mcpjam/sdk/platform";
 import { detectCiMetadata } from "@mcpjam/sdk";
 import { readFileSync } from "node:fs";
@@ -285,10 +286,6 @@ export function webOriginForApiBaseUrl(baseUrl: string): string {
 }
 
 /**
- * Map platform API failures onto CLI errors: the stable wire code becomes
- * the CLI error code (exit 1), with login guidance on auth failures.
- */
-/**
  * Whether a platform refusal is the CI-owned suite lock.
  *
  * Reads `details.reason`, which is the platform's stable code, rather than the
@@ -303,7 +300,64 @@ function ciOwnedSuiteReason(details: unknown): boolean {
   );
 }
 
-export function toCliError(error: unknown): CliError {
+/**
+ * The failing request's id, carried in `details` (the JSON a script reads) so
+ * a bug report can quote the id the API logged that request under. Client-side
+ * failures (network, timeout) never reached the API and carry none.
+ */
+function withRequestId(
+  details: Record<string, unknown> | undefined,
+  requestId: string | undefined,
+): Record<string, unknown> | undefined {
+  return requestId ? { ...(details ?? {}), requestId } : details;
+}
+
+/** Failures that may be MCPJam's own fault, and so worth reporting. */
+const REPORTABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  "INTERNAL_ERROR",
+  "FEATURE_NOT_SUPPORTED",
+]);
+
+/**
+ * The gateway in front of the platform, or the user's own server behind it,
+ * failing: an envelope-less 502 still decodes as `INTERNAL_ERROR`, but it is
+ * not a platform bug worth a report.
+ */
+const GATEWAY_FAILURE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+const FEEDBACK_COMMAND = "cloud feedback";
+
+/**
+ * The ready-to-run report command for a platform fault, or nothing.
+ *
+ * Only with a request id — a report without one cannot be joined to the
+ * server's logs, and the id is the reason to report from the terminal rather
+ * than later — and never on `cloud feedback` itself.
+ */
+function feedbackHint(
+  error: PlatformApiError,
+  command: string | undefined,
+): string | undefined {
+  if (command === FEEDBACK_COMMAND) return undefined;
+  if (!error.requestId) return undefined;
+  if (!REPORTABLE_ERROR_CODES.has(error.code)) return undefined;
+  if (GATEWAY_FAILURE_STATUSES.has(error.status)) return undefined;
+  const kind =
+    error.code === "FEATURE_NOT_SUPPORTED" ? "missing_capability" : "bug";
+  return `Report it: \`mcpjam cloud feedback --kind ${kind} --request-id ${error.requestId} --summary "…"\``;
+}
+
+/**
+ * Map platform API failures onto CLI errors: the stable wire code becomes
+ * the CLI error code (exit 1), with login guidance on auth failures.
+ *
+ * `command` is the failing command's path (`cloud eval run`), when the caller
+ * knows it.
+ */
+export function toCliError(
+  error: unknown,
+  context: { command?: string } = {},
+): CliError {
   if (error instanceof CliError) {
     return error;
   }
@@ -319,7 +373,7 @@ export function toCliError(error: unknown): CliError {
         `${error.message} If this run is syncing a suite file, make sure the file's ` +
           "`suite.id` still matches the suite it created — a renamed id no longer owns it.",
         1,
-        error.details,
+        withRequestId(error.details, error.requestId),
       );
     }
     // A usage-limit refusal keeps its exit code and wire code (it is not an
@@ -332,14 +386,22 @@ export function toCliError(error: unknown): CliError {
         error.code,
         `${error.message} ${platformRefusalHint(refusal)}`,
         1,
-        { ...(error.details ?? {}), refusal },
+        withRequestId({ ...(error.details ?? {}), refusal }, error.requestId),
       );
     }
+    const hint = feedbackHint(error, context.command);
     const message =
       error.code === "UNAUTHORIZED"
         ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
-        : error.message;
-    return cliError(error.code, message, 1, error.details);
+        : hint
+          ? `${error.message} ${hint}`
+          : error.message;
+    return cliError(
+      error.code,
+      message,
+      1,
+      withRequestId(error.details, error.requestId),
+    );
   }
   return cliError(
     "INTERNAL_ERROR",

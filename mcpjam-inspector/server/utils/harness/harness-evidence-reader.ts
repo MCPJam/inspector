@@ -16,6 +16,10 @@
  */
 import { logger } from "../logger.js";
 import type { EvidenceRow } from "../../services/evals/harness-evidence-merge.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../services/service-credential.js";
 
 /** Pages, not rows: a bound on requests for a turn with pathological fan-out. */
 const MAX_PAGES = 50;
@@ -52,18 +56,18 @@ export type EvidenceReadTransport = (body: {
 }) => Promise<{ status: number; body: Record<string, unknown> | null }>;
 
 /** The production transport: the backend's service-token read route. */
-export function createConvexEvidenceReadTransport(): EvidenceReadTransport {
+export function createConvexEvidenceReadTransport(bearer?: string): EvidenceReadTransport {
   return async (body) => {
     const base = process.env.CONVEX_HTTP_URL?.trim();
-    const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (!base || !token) return { status: 500, body: null };
+    const token = getServiceCredential();
+    if (!base || (!token && !bearer)) return { status: 500, body: null };
     const response = await fetch(
       new URL("/eval-harness-tool-calls/read", base).toString(),
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-inspector-service-token": token,
+          ...(bearer ? { authorization: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}` } : { [INSPECTOR_SERVICE_TOKEN_HEADER]: token! }),
         },
         body: JSON.stringify(body),
       },

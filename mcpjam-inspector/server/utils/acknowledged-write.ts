@@ -31,7 +31,7 @@
 export type WriteAttempt<T> =
   | { status: "acknowledged"; value: T }
   /** Not this time — the same attempt is worth making again. */
-  | { status: "retryable"; reason: string }
+  | { status: "retryable"; reason: string; retryAfterMs?: number }
   /** Never, however many times it is tried. */
   | { status: "permanent"; reason: string };
 
@@ -60,8 +60,13 @@ function defaultDelayMsForAttempt(attempt: number): number {
   return attempt === 1 ? 250 : 1_000;
 }
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", finish); resolve(); };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
+  });
 
 /**
  * Attempt a durable write until it is acknowledged, its budget runs out, or it
@@ -75,7 +80,7 @@ export async function writeUntilAcknowledged<T>(
 ): Promise<AcknowledgedWriteResult<T>> {
   const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
   const delayFor = options.delayMsForAttempt ?? defaultDelayMsForAttempt;
-  const sleep = options.sleep ?? defaultSleep;
+  const sleep = options.sleep ?? ((ms: number) => defaultSleep(ms, options.signal));
 
   let lastReason = "write was never attempted";
 
@@ -125,7 +130,7 @@ export async function writeUntilAcknowledged<T>(
     }
 
     if (attemptNumber < maxAttempts) {
-      const delayMs = delayFor(attemptNumber);
+      const delayMs = Math.max(delayFor(attemptNumber), outcome.retryAfterMs ?? 0);
       if (delayMs > 0) await sleep(delayMs);
     }
   }

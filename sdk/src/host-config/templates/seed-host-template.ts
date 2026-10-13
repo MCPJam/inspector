@@ -283,12 +283,12 @@ const DEFAULT_SEED_THEME: HostThemeMode = "dark";
 
 /**
  * Model pinned by the default ("mcpjam") template. A hosted catalog id in its
- * dotted spelling (`anthropic/claude-haiku-4.5`, not `…-4-5`), so a seeded
+ * dotted spelling (`anthropic/claude-haiku-5.5`, not `…-5-5`), so a seeded
  * host is runnable on MCPJam-provided models without a picker round trip.
  * Consumers that seed a default host re-export this rather than repeating the
  * literal.
  */
-export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-4.5";
+export const DEFAULT_TEMPLATE_MODEL_ID = "anthropic/claude-haiku-5.5";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -656,45 +656,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -709,6 +688,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
+            // Prober runs in claude.ai and Claude Desktop: the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
@@ -842,7 +826,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         // The 2026-09-02 capture reports a uniform 12px inset on every edge;
@@ -913,45 +897,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // templating (Handlebars, Vue full build, etc.) work here
               // but break in hosts that don't grant it.
               //
-              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
-              // adds at the proxy layer (NOT in advertised metadata).
-              // Including them here is safe under the union merge rule
-              // (PR 2142) — they can only grant capabilities, never
-              // narrow what a widget declared.
+              // `assets.claude.ai` is added by Claude itself (NOT in
+              // advertised metadata): it shows up in the App's
+              // `resource-src` without being declared. `esm.sh` is not:
+              // the prober loaded it undeclared inside claude.ai and Claude
+              // Desktop, and Claude's CSP blocked every load, so it is not
+              // listed here.
               cspDirectives: {
                 "script-src": [
                   "'self'",
                   "'unsafe-eval'",
-                  "https://esm.sh",
                   "https://assets.claude.ai",
                 ],
-                "style-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "img-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "connect-src": ["'self'", "https://esm.sh"],
-                "font-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "media-src": [
-                  "'self'",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
-                "worker-src": [
-                  "'self'",
-                  "blob:",
-                  "https://esm.sh",
-                  "https://assets.claude.ai",
-                ],
+                "style-src": ["'self'", "https://assets.claude.ai"],
+                "img-src": ["'self'", "https://assets.claude.ai"],
+                "connect-src": ["'self'"],
+                "font-src": ["'self'", "https://assets.claude.ai"],
+                "media-src": ["'self'", "https://assets.claude.ai"],
+                "worker-src": ["'self'", "blob:", "https://assets.claude.ai"],
                 "frame-src": ["'self'"],
                 "base-uri": ["'self'"],
                 "form-action": ["'self'"],
@@ -966,6 +929,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // allow-forms`). The first two are spec-mandated; `allow-forms`
             // is the host's addition so `<form>` POSTs work inside widgets.
             sandboxAttrs: ["allow-forms"],
+            // Prober runs in claude.ai and Claude Desktop: the
+            // App has a real `<hash>.claudemcpcontent.com` origin, because
+            // Claude loads its sandbox page with `stable-origin=true`.
+            // Without that flag the page mounts an opaque `srcdoc` frame.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy entries on the
             // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
             // write *`; clipboard-write is the spec permission (lives in
@@ -984,6 +952,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification
@@ -1107,10 +1077,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // followed `nextCursor` to page two of tools/list, and opened
         // `subscriptions/listen` — which is how a client listens on that lane,
         // so the absent standalone GET SSE stream is correct rather than a
-        // miss. `refetches` stays absent: probe-list-changed was never run
-        // against this client, so nothing was published for it to react to.
+        // miss. 2026-09-29: list_changed was delivered on that listen stream
+        // and Claude Code re-issued tools/list 136 ms later.
         paginationTraversal: "full",
-        toolListChanged: { listens: true },
+        toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Capability provenance above is from the v2.1.176 probe. The
@@ -1121,7 +1091,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.246",
+            version: "2.1.259",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1178,12 +1148,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
-        platform: "desktop",
+        platform: "web",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -1204,7 +1174,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same capture: ChatGPT never opened a `subscriptions/listen` stream,
         // so no server notification can reach it. `refetches` stays absent —
         // unprovable while nothing is ever delivered.
-        toolListChanged: { listens: false },
+        toolListChanged: { listens: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
@@ -1212,14 +1182,33 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
+          // OpenAI plugin extensions (sidebar Apps, forms, …) are on for
+          // ChatGPT; each one can be switched off in the client's Apps tab.
+          // This seed emulates ChatGPT on the web, so the extensions the
+          // OpenAI extensions spec's Platform Support table marks "Not
+          // supported" on Web start off: fileViewers, localFiles,
+          // fileResources and mentions. Mirrors the backend template.
+          pluginExtensions: {
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              mentions: false,
+            },
+            enabled: true,
+          },
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`
           // (e.g. OpenAI Apps SDK widgets) need this to take that path.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "0.0.1" },
+            hostInfo: { name: "chatgpt", version: "unknown" },
           },
           mcpAppsOverrides: {
+            // 2026-09-29 capture (ChatGPT web): insets sent (all 0), and
+            // only inline + fullscreen offered — no pip.
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             // One directive, one answer: the declared wss endpoint connected
@@ -1281,31 +1270,52 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             csp: {
               mode: "declared",
               // ChatGPT's own baseline allowlist, merged with the widget's
-              // declared domains. The 2026-08-19 probe loaded these origins
-              // without declaring them, while undeclared frame origins were
-              // blocked. Keep this intentionally limited to what was probed.
+              // declared domains. The prober loaded each of these origins
+              // undeclared for fetch, xhr, script, style, image, font and
+              // media, while undeclared frame origins were blocked. Keep this
+              // limited to origins the prober has checked.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {
               mode: "custom",
-              // Per ui/initialize hostCapabilities only `microphone` is
-              // advertised. Per the outer iframe `allow=` attribute,
-              // `clipboard-write` is ALSO emitted at runtime even though
-              // it's not in the advertised metadata. Include both so a
-              // widget testing in MCPJam-as-ChatGPT actually gets what
-              // the production iframe grants.
-              allow: { microphone: true, clipboardWrite: true },
+              // 2026-09-29: ChatGPT's OUTER frame may still carry
+              // `clipboard-write` (captured 2026-05-18), but the widget's own
+              // frame is `allow="fullscreen *; microphone *"` and its
+              // Permissions Policy blocks clipboard-write, so a widget cannot
+              // write. Microphone is delegated and reads `granted`.
+              allow: { microphone: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one
@@ -1331,12 +1341,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               "allow-popups",
               "allow-popups-to-escape-sandbox",
             ],
+            // The same capture's inner iframe keeps `allow-same-origin`.
+            sameOriginAppIframe: true,
             // allowFeatures — non-spec Permissions Policy extras on the
             // outer iframe. Real ChatGPT emits
             // `clipboard-write *; local-network-access *; microphone *;
             // midi *`:
             //   - clipboard-write + microphone → spec features, modeled
-            //     in `permissions.allow` above.
+            //     in `permissions.allow` above (clipboard-write stops at the
+            //     outer frame; see there).
             //   - local-network-access + midi → ALREADY in MCPJam's
             //     renderer baseline (sandboxed-iframe.tsx's
             //     `outerAllowAttribute` memo), auto-granted to every
@@ -1857,10 +1870,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. The 3.14.27 version is identity
-            // metadata only; the capability notes above remain attributed to
-            // their named probes until a fresh probe updates both.
-            hostInfo: { name: "Cursor", version: "3.14.27" },
+            // need this to take that path. The version is identity metadata
+            // only; bumped with the 2026-09-29 re-probe (was 3.14.27), which
+            // re-confirmed every capability note above.
+            hostInfo: { name: "Cursor", version: "3.21.16" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
@@ -1951,8 +1964,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           [MCP_UI_EXTENSION_ID]: {
             mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
           },
+          // Since 0.158 (2026-09-29) Codex also advertises OpenAI's form
+          // extensions. The plugin extension host answers
+          // `openai/elicitation/create`, so mirror the real client; turning
+          // the client's plugin extensions (or forms) off removes both.
+          "openai/elicitation": { form: {} },
+          "openai/form": {},
         },
-        elicitation: { form: {}, url: {} },
+        // Form only: on 2026-10-12 URL elicitation failed with -32600.
+        elicitation: { form: {} },
       };
       base.hostContext = {
         theme: "dark",
@@ -1967,42 +1987,74 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
-        // Probed 2026-08-26: Codex asked for tools/list once and never sent
-        // back the `nextCursor` it was handed.
-        paginationTraversal: "firstPageOnly",
+        // Probed 2026-10-12 (2026-07-28 lane): followed `nextCursor` and
+        // fetched page two. The 2026-08-26 legacy run had stopped at page one.
+        paginationTraversal: "full",
         // Same capture: Codex opens the standalone GET SSE stream and
         // list_changed reached it on the call's response stream, but no
         // tools/list followed.
         toolListChanged: { listens: true, refetches: false },
+        // 2026-10-12: Codex now connects over `server/discover` at 2026-07-28.
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // 2026-10-12 capture. Was `codex-mcp-client` 0.158.0-alpha.2.1.
           clientInfo: {
-            name: "codex-mcp-client",
-            title: "Codex",
-            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
-            version: "0.150.0-alpha.12.2",
+            name: "openai-mcp (Codex)",
+            version: "1.0.0",
           },
         },
         apps: {
+          // OpenAI plugin extensions are on by default for Codex; each one
+          // can be switched off in the client's Apps tab.
+          pluginExtensions: { enabled: true },
           sandbox: {
             // Codex honors the widget's declared CSP lists; the directives
             // below are its own baseline, merged on top of that declaration.
             csp: {
               mode: "declared",
+              // Same baseline as ChatGPT: the prober loaded each of these
+              // origins undeclared for fetch, xhr, script, style, image, font
+              // and media.
               cspDirectives: {
                 "connect-src": [
                   "https://cdn.jsdelivr.net",
                   "https://unpkg.com",
+                  "https://esm.sh",
                 ],
-                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "script-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "style-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "img-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "font-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
+                "media-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                  "https://esm.sh",
+                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
             },
+            // 2026-10-12: clipboard write now works (refused on 2026-09-29).
+            // Microphone was refused on 2026-09-29; camera and geolocation
+            // were only undeclared canaries. All three stay off.
+            permissions: { mode: "custom", allow: { clipboardWrite: true } },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2011,10 +2063,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // The prober saw the App iframe carry `allow-same-origin`, with a
+            // real origin of its own.
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
-            // The 2026-09-01 and 2026-09-02 captures both omit the key entirely.
-            safeAreaInsets: false,
+            // Correction: absent through 2026-09-02; the 2026-09-29 capture
+            // (Codex 0.158) sends `hostContext.safeAreaInsets`, all zeros.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -2176,13 +2232,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
-        // Real Microsoft 365 Copilot routes through OpenAI's chat-class
-        // models under the hood, so the OpenAI-shaped Apps SDK is the
-        // right protocol bucket here. `openai/gpt-5.3-chat` is the closest
-        // MCPJam-guest-allowed analog (Copilot's flagship is chat-tuned,
-        // not nano-tier), so the App Builder works out-of-the-box without
-        // a BYOK while staying faithful to the host's real model class.
-        modelId: "openai/gpt-5.3-chat",
+        // Match the backend's supported default for Copilot so offline
+        // template creation uses the same model as the live catalog.
+        modelId: "openai/gpt-5.6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2195,17 +2247,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         ...base.clientCapabilities,
         experimental: { "microsoft/copilot": { enabled: true } },
       };
-      // Capability advertise: tracks Microsoft's published "Supported MCP
-      // Apps capabilities in Copilot" table. Only `app.openLink`,
-      // `app.callServerTool`, `app.sendMessage`, and `app.updateModelContext`
-      // are documented as supported; `app.sendLog` is explicitly ❌, and
-      // there is no documented `callServerResource`/`readResource` bridge in
-      // Copilot — so `logging` and `serverResources` are intentionally
-      // omitted. `text` sub-fields mirror the style entry for consistency.
-      // Source: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot
+      // Capability advertise, from the 2026-10-12 probe's ui/initialize.
+      // Microsoft's doc lists only openLink, callServerTool, sendMessage and
+      // updateModelContext, but real Copilot also advertises serverResources,
+      // logging and downloadFile. `text` sub-fields mirror the style entry.
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
+        serverResources: {},
+        logging: {},
+        downloadFile: {},
         message: { text: {} },
         updateModelContext: { text: {} },
       };
@@ -2250,17 +2301,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         // Probed 2026-08-26: followed `nextCursor` and fetched page two.
         paginationTraversal: "full",
-        // Same capture, and the odd one out: Copilot never opened the GET SSE
-        // stream, yet list_changed still reached it on the tools/call response
-        // stream and a tools/list followed. Hence listens:false + refetches:
-        // true — a real combination, see the note on the field itself.
-        // The re-fetch was 30,496 ms late (VS Code and Cursor: ~200 ms), close
-        // enough to a routine listing that the pairing rule cannot separate
-        // reaction from coincidence.
-        toolListChanged: { listens: false, refetches: true },
+        // Copilot never opens the GET SSE stream, so listens:false.
+        // `refetches` is deliberately absent (unknown): the 2026-08-26
+        // re-fetch came 30,496 ms late (likely routine listing; reacting hosts
+        // take ~250 ms) and the 2026-09-29 run saw none within ~6 s.
+        toolListChanged: { listens: false },
         // Parked: probed but not published (no field, no caniuse row).
         // 2026-08-26: no tools/call carried `_meta.progressToken` (0/3).
         // progressToken: "never",
+        // 2026-10-12: Copilot now connects over `server/discover` at 2026-07-28.
+        mcpProtocolVersion: "auto",
         initialize: {
           // Measured on the wire 2026-08-26: Copilot proposes 2024-11-05, the
           // oldest MCP revision, not the 2025-11-25 previously assumed.
@@ -2270,24 +2320,19 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             "2025-06-18",
             "2025-11-25",
           ],
-          // The real handshake sends `name: "mcs"` plus Copilot's routing
-          // fields. `agentName`, `appId` and `cdsBotId` are in the capture too
-          // and are deliberately omitted: they identify one tenant's agent.
+          // 2026-10-12 `server/discover` capture: `Sydney` 1.0.0. Its `title`
+          // (`T_<uuid>`) identifies one tenant's agent, so it is omitted. The
+          // older legacy handshake sent `mcs` plus routing fields.
           clientInfo: {
-            name: "mcs",
+            name: "Sydney",
             version: "1.0.0",
-            channelId: "pva-studio",
-            lcat: "M365_COPILOT_USER",
-            agentAuthenticationMode: "Integrated",
           },
         },
         apps: {
           uiInitialize: {
-            // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
-            // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path. Version 1.0.1 is MCPJam's compatibility-profile
-            // label, not a Microsoft-published host build number.
-            hostInfo: { name: "Copilot", version: "1.0.1" },
+            // MCP Apps extension: hostInfo sent in `ui/initialize`, as
+            // measured by the 2026-10-12 probe.
+            hostInfo: { name: "M365Copilot", version: "1.0.0" },
           },
           // Vendor compat-runtime shims. Copilot routes widgets through
           // the OpenAI Apps SDK under the hood, so the `window.openai`
@@ -2323,37 +2368,20 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // SEP-1865 intersection rule and silently break widgets
               // reaching anything else.
               //
-              // `frameDomains: []` IS set below — Microsoft's doc marks
-              // `frameDomains` as ❌ for Copilot (real Copilot drops the
-              // field), and the symmetric move is to deny iframe nesting
-              // at the host layer too. Encoded as an explicit empty
-              // allowlist so the intent is captured in the config; the
-              // SEP-1865 schema is allowlist-only by design (no deny
-              // primitive — see CspDomainSet in client-config-v2.ts), and
-              // the current MCP Apps renderer gates `restrictToConfigured`
-              // on non-empty arrays, so this empty-list intent is not yet
-              // enforced at runtime. Renderer-side enforcement (treat an
-              // explicit empty allowlist as deny) is a follow-up that
-              // pairs with the `containerDimensions.maxHeight` clamp
-              // noted above — until both land, iframe-nesting widgets
-              // will work in MCPJam-as-Copilot but fail in production.
+              // No `frameDomains` restriction either: on 2026-10-12 a
+              // declared frame origin loaded in real Copilot.
               mode: "declared",
-              restrictTo: { frameDomains: [] },
             },
             permissions: {
               mode: "custom",
-              // Deny by default. Microsoft's doc marks
-              // `_meta.ui.permissions` ❌ (Copilot ignores permissions
-              // a widget declares in its resource `_meta.ui`) and says
-              // nothing about which Permissions-Policy features Copilot
-              // attaches to its own iframe. The only documented signal
-              // is "no permissions surface", so MCPJam-as-Copilot
-              // mirrors that: granting nothing rather than inventing a
-              // host-side grant. Other vendor templates set
-              // `clipboardWrite: true` from live probes — Copilot has
-              // no equivalent capture, so we hold the line.
-              allow: {},
+              // 2026-10-12 probe: clipboard write works. Microphone was
+              // refused even though Copilot advertises it.
+              allow: { clipboardWrite: true },
             },
+            // The App iframe carries `allow-same-origin`, but the prober
+            // saw its origin as `"null"` (an opaque `about:srcdoc` frame),
+            // so the App gets no real origin of its own.
+            sameOriginAppIframe: false,
           },
         },
       };
@@ -2444,11 +2472,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         toolListChanged: { listens: true, refetches: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
+          clientInfo: { name: "Visual Studio Code", version: "1.136.1" },
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.134.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.136.1" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {

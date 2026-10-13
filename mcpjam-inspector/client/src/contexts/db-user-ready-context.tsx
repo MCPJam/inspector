@@ -22,13 +22,14 @@ export function DbUserReadyProvider({
   isUserReady: boolean;
 }) {
   const queriesPaused = useSessionRefreshStore((state) => state.queriesPaused);
+  const authConfirmed = useSessionRefreshStore((state) => state.authConfirmed);
   useEffect(() => {
-    // Bootstrap readiness becomes true only after Convex confirms the identity
-    // and its database user is ready. Token retrieval alone cannot release the
-    // pause. Do not depend on queriesPaused: the old readiness may still be
-    // true when the token fetcher pauses queries before Convex drops auth.
-    if (isUserReady) useSessionRefreshStore.getState().resumeQueries();
-  }, [isUserReady]);
+    // The current connection must confirm auth AND finish user setup. A stale
+    // readiness value or a token fetch alone must never reopen subscriptions.
+    if (isUserReady && authConfirmed) {
+      useSessionRefreshStore.getState().resumeQueries();
+    }
+  }, [isUserReady, authConfirmed]);
   return (
     <DbUserReadyContext.Provider
       value={{ isEnsuringUser, isUserReady: isUserReady && !queriesPaused }}

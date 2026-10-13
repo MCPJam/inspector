@@ -1,5 +1,10 @@
+import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
+import {
+  formatOrgKeysRefusalEnvelope,
+  formatPrefixedOrgKeysRefusal,
+} from "./org-keys-error";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -405,6 +410,29 @@ const formatMCPJamModelLimit = (
     : {}),
 });
 
+function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
+  const sentinel =
+    "Backend step returned no content (stream error or empty response)";
+  if (
+    typeof message !== "string" ||
+    !message.startsWith(sentinel) ||
+    (message !== sentinel &&
+      (!message.includes(
+        "the model emitted no text, no reasoning and no tool call",
+      ) ||
+        !/\(finishReason: (?:none reported|stop|tool-calls|error|other|unknown)\)/.test(
+          message,
+        )))
+  )
+    return null;
+  return {
+    message: "The model returned no response. Please try again.",
+    code: "provider_empty_response",
+    isRetryable: true,
+    details: JSON.stringify({ message }),
+  };
+}
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -458,6 +486,13 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           ? parsed.retryAfter
           : undefined;
 
+      const orgKeysRefusal = formatOrgKeysRefusalEnvelope(
+        parsed,
+        message,
+        details,
+      );
+      if (orgKeysRefusal) return orgKeysRefusal;
+
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
           formatRetryAfter(parsed.retryAfter) ??
@@ -470,6 +505,17 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           },
         );
       }
+
+      const emptyResponse = summarizeEmptyModelResponse(message);
+      if (emptyResponse)
+        return {
+          ...emptyResponse,
+          ...(typeof code === "string" ? { code } : {}),
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+          details: preserveServerMessageInDetails(message, parsed.details),
+        };
 
       // Connection failures get human copy; the server's own wording stays
       // reachable under "More details" rather than leading the banner. Copy
@@ -530,8 +576,14 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const prefixedOrgKeysRefusal = formatPrefixedOrgKeysRefusal(errorString);
+  if (prefixedOrgKeysRefusal) return prefixedOrgKeysRefusal;
+
   const protocolPin = summarizeProtocolVersionPin(errorString);
   if (protocolPin) return protocolPin;
+
+  const emptyResponse = summarizeEmptyModelResponse(errorString);
+  if (emptyResponse) return emptyResponse;
 
   const opaque = summarizeOpaquePayload(errorString);
   if (opaque) return opaque;
@@ -797,14 +849,9 @@ export function cloneUiMessages(messages: UIMessage[]): UIMessage[] {
 
 /** First text part of a user message, used to seed prompt previews. */
 export function extractUserMessageText(message: UIMessage): string {
-  const parts = (message.parts ?? []) as Array<{
-    type?: string;
-    text?: unknown;
-  }>;
-  for (const part of parts) {
-    if (part?.type === "text" && typeof part.text === "string") {
-      return part.text;
-    }
+  for (const part of message.parts ?? []) {
+    const text = messagePartPlainText(part);
+    if (text !== undefined) return text;
   }
   return "";
 }

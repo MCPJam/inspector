@@ -1,3 +1,6 @@
+import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
+import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
+import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, readLocalHarnessAuthorization, acknowledgeLocalHarnessAutoApprove } from "../../utils/harness/local/authorization.js";
 /**
  * Local-harness control routes — `/api/mcp/local-harness/*`.
  *
@@ -65,7 +68,9 @@ import {
   currentLocalPlatform,
   localPackTarget,
   LOCAL_HARNESS_POLICY_VERSION,
+  SUPPORTED_LOCAL_HARNESS_IDS,
   type LocalPermissionProfile,
+  type SupportedLocalHarnessId,
 } from "../../utils/harness/local/targets.js";
 import {
   contextCredentialClass,
@@ -75,6 +80,39 @@ import { registerLocalInstance } from "../../utils/harness/harness-model-broker.
 import { stopAllLocalHarnessSessions } from "../../utils/harness/local/session-registry.js";
 
 const localHarness = new Hono();
+
+/**
+ * Which local harness a request is about. Each one has its own pack, runtime,
+ * rollout, authorization and grants (D3–D5), so every route takes the id —
+ * from the JSON body for a POST, the query for a GET. Absent means Claude
+ * Code, which is what every route meant before there was a second harness; an
+ * id this build has no local runtime for is refused rather than defaulted.
+ */
+function harnessIdOf(value: unknown): SupportedLocalHarnessId | null {
+  if (value === undefined || value === null || value === "") return "claude-code";
+  return typeof value === "string" &&
+    (SUPPORTED_LOCAL_HARNESS_IDS as readonly string[]).includes(value)
+    ? (value as SupportedLocalHarnessId)
+    : null;
+}
+
+/**
+ * The ONE answer to "which harness" for a request, read by the rollout gate
+ * and by every handler alike. A POST names it in the JSON body only (a query
+ * parameter on a POST is ignored), a GET in the query only: were the gate and
+ * a handler to read different places, `?harnessId=claude-code` with a Codex
+ * body would pass Claude Code's rollout and then install or authorize Codex.
+ * Hono caches the parsed body, so the handler's own read sees the same one.
+ */
+async function requestHarnessId(c: {
+  req: { method: string; query(name: string): string | undefined; json(): Promise<unknown> };
+}): Promise<SupportedLocalHarnessId | null> {
+  if (c.req.method === "POST") {
+    const body = (await c.req.json().catch(() => null)) as { harnessId?: unknown } | null;
+    return harnessIdOf(body?.harnessId);
+  }
+  return harnessIdOf(c.req.query("harnessId"));
+}
 
 localHarness.use("/*", bearerAuthMiddleware, requireVerifiedAuth());
 localHarness.use("/*", async (c, next) => {
@@ -89,7 +127,57 @@ localHarness.use("/*", async (c, next) => {
       403,
     );
   }
+  const harnessId = await requestHarnessId(c);
+  if (harnessId === null) {
+    return c.json({ error: "Unknown local harness" }, 400);
+  }
+  if (c.req.method === "POST" && /\/(runtime\/install|workspace-grant|consent\/grant)$/.test(c.req.path) &&
+      !(await localHarnessAccountEnabled(c.req.header("authorization"), undefined, harnessId))) {
+    return c.json({ error: `Local ${LOCAL_HARNESS_DISPLAY_NAMES[harnessId]} is unavailable for this account or rollout verification is temporarily unavailable` }, 403);
+  }
   return next();
+});
+
+// Setup is the Add client action. Readiness renews execution credentials from
+// durable server state and can resume an interrupted, already-authorized install.
+for (const path of ["/setup", "/readiness"] as const) {
+  localHarness.post(path, async (c) => {
+    if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body.projectId !== "string" || !body.projectId) return c.json({ error: "projectId is required" }, 400);
+    if (path === "/setup" && body.accepted !== true) return c.json({ error: "Local execution authorization is required" }, 400);
+    const harnessId = await requestHarnessId(c);
+    if (harnessId === null) return c.json({ error: "Unknown local harness" }, 400);
+    try {
+      const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      const ready = path === "/setup"
+        ? await setupLocalHarness({ bearer, waitForInstall: false, projectId: body.projectId, harnessId, ...(typeof body.workspacePath === "string" ? { workspacePath: body.workspacePath } : {}) })
+        : await ensureLocalHarnessTarget({ bearer, waitForInstall: false, projectId: body.projectId, scope: "attended", harnessId });
+      const { grantToken, actingUserId: _user, ...target } = ready.target;
+      return c.json({ state: "ready", target: { ...target, harnessId }, serverAuthorized: true, expiresAt: ready.expiresAt, grantId: ready.grantId, workspaceDisplayRoot: ready.workspaceDisplayRoot, runtime: ready.runtime, grantedAt: new Date().toISOString() });
+    } catch (error) {
+      if (error instanceof LocalRuntimePreparingError) return c.json({ state: "installing" }, 202);
+      return c.json({ error: error instanceof Error ? error.message : `${LOCAL_HARNESS_DISPLAY_NAMES[harnessId]} setup failed` }, 409);
+    }
+  });
+}
+
+/** Same-origin explicit Off acknowledgement; identity and machine are server-derived. */
+localHarness.post("/consent/auto-approve", async (c) => {
+  if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.projectId !== "string" || !body.projectId || !["claude-code", "codex"].includes(body.harnessId)) {
+    return c.json({ error: "projectId and a supported harnessId are required" }, 400);
+  }
+  const actor = await resolveConsentActor(c);
+  if (!actor.ok) return c.json({ error: actor.message }, actor.status);
+  try {
+    await verifyLocalHarnessMember(c.req.header("authorization") ?? "", body.projectId);
+    await acknowledgeLocalHarnessAutoApprove({ userId: actor.actor.userId, machineId: await getLocalMachineId(), projectId: body.projectId, harnessId: body.harnessId });
+    return c.json({ autoApproveAcknowledged: true });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Consent could not be recorded" }, 409);
+  }
 });
 
 /**
@@ -133,26 +221,26 @@ function displayRoot(canonicalPath: string): string {
  * from, with no absolute paths and no secrets.
  */
 localHarness.get("/availability", async (c) => {
+  const harnessId = (await requestHarnessId(c))!;
   const platform = currentLocalPlatform(process.platform);
-  const manifest = LOCAL_HARNESS_MANIFEST["claude-code"];
+  const manifest = LOCAL_HARNESS_MANIFEST[harnessId];
 
   const compatibility =
     platform === null
       ? null
       : resolveLocalCompatibility(
           {
-            harnessId: "claude-code",
+            harnessId,
             platform,
             targetKind: "local-native",
             permissionProfile: "workspace-edits",
+            packTarget: localPackTarget(),
             installedAdapterVersion: manifest.adapterVersion,
           },
           LOCAL_HARNESS_MANIFEST,
         );
 
-  const runtimeStatus = await readRuntimeInstallStatus({
-    harnessId: "claude-code",
-  });
+  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
 
   let machineId: string | null = null;
   let keyFingerprint: string | null = null;
@@ -182,8 +270,9 @@ localHarness.get("/availability", async (c) => {
     const resolved = await resolveManagedBundle({
       manifest: manifestWithExpectedBundleDigest(
         manifest,
-        "claude-code",
+        harnessId,
         localPackTarget(),
+        runtimeStatus.digest,
       ),
       runtimeRoot: runtimeStatus.runtimeRoot,
       platform,
@@ -206,7 +295,7 @@ localHarness.get("/availability", async (c) => {
   // shape of the consent flow.
   const packTarget = localPackTarget(process.platform, process.arch);
   const expectedPack =
-    packTarget === null ? null : expectedPackFor("claude-code", packTarget);
+    packTarget === null ? null : expectedPackFor(harnessId, packTarget);
 
   // Whether a CLOUD execution target is infrastructurally available on this
   // server. Deliberately narrow: it says the computers data plane is
@@ -218,8 +307,19 @@ localHarness.get("/availability", async (c) => {
   const hostedAvailable = isComputersDataPlaneConfigured();
 
   const suggestedWorkspace = await resolveSuggestedWorkspace({ displayRoot });
+  const projectId = c.req.query("projectId");
+  // Per harness: each has its own rollout, conformance and authorization.
+  const preferredVenue = projectId && await shouldUseLocalHarness(harnessId, c.req.header("authorization"), projectId) ? "local" : "hosted";
 
+  const actor = projectId ? await resolveConsentActor(c) : null;
+  const authorization = actor?.ok && machineId && projectId && (harnessId === "claude-code" || harnessId === "codex")
+    ? await readLocalHarnessAuthorization(actor.actor.userId, machineId, projectId, harnessId)
+    : null;
   return c.json({
+    harnessId,
+    autoApproveAcknowledged: Boolean(authorization?.autoApproveAcknowledgedAt),
+    preferredVenue,
+    setupAvailable: isLocalHarnessVenue(harnessId) && await localHarnessAccountEnabled(c.req.header("authorization"), undefined, harnessId),
     available:
       compatibility?.ok === true && ownershipProvable && runtime !== null,
     // A named status the UI can render specifically, rather than a boolean it
@@ -276,11 +376,12 @@ localHarness.get("/availability", async (c) => {
  * pre-consent check does.
  */
 localHarness.get("/runtime/status", async (c) => {
+  const harnessId = (await requestHarnessId(c))!;
   const verify = c.req.query("verify") === "1";
   return c.json(
     verify
-      ? await readVerifiedRuntimeStatus({ harnessId: "claude-code" })
-      : await readRuntimeInstallStatus({ harnessId: "claude-code" }),
+      ? await readVerifiedRuntimeStatus({ harnessId })
+      : await readRuntimeInstallStatus({ harnessId }),
   );
 });
 
@@ -306,8 +407,10 @@ localHarness.get("/runtime/status", async (c) => {
  */
 localHarness.post("/runtime/install", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
+    harnessId?: unknown;
     expectedPack?: { packVersion?: unknown; treeDigest?: unknown };
   } | null;
+  const harnessId = (await requestHarnessId(c))!;
   // The pack the CLIENT approved, compared against what this build expects
   // before a byte moves. A server that updated between the dialog opening and
   // the click would otherwise download a runtime whose identity the user was
@@ -322,7 +425,7 @@ localHarness.post("/runtime/install", async (c) => {
       : undefined;
 
   const started = await startRuntimeInstall({
-    harnessId: "claude-code",
+    harnessId,
     ...(approved ? { expectedPack: approved } : {}),
   });
 
@@ -333,6 +436,18 @@ localHarness.post("/runtime/install", async (c) => {
     logger.warn("[local-harness] runtime install refused", {
       reason: started.reason,
     });
+    // An administrator's `updates: manual` policy, or a pack MCPJam withdrew:
+    // neither is the request's fault, and neither is fixed by retrying it.
+    if (started.refusal === "policy" || started.refusal === "revoked") {
+      return c.json(
+        {
+          error: started.reason,
+          status: started.status,
+          reason: started.refusal === "policy" ? "updates-managed" : "revoked",
+        },
+        started.refusal === "policy" ? 403 : 409,
+      );
+    }
     return c.json(
       {
         error: started.reason,
@@ -349,7 +464,9 @@ localHarness.post("/runtime/install", async (c) => {
     );
   }
 
-  c.header("Location", "/api/mcp/local-harness/runtime/status");
+  // Claude Code keeps its original URL; another harness names itself.
+  const statusUrl = `/api/mcp/local-harness/runtime/status${harnessId === "claude-code" ? "" : `?harnessId=${harnessId}`}`;
+  c.header("Location", statusUrl);
   // Seconds. Long enough not to hammer a machine that is also downloading
   // 200 MB, short enough that a percentage looks live.
   c.header("Retry-After", "1");
@@ -358,7 +475,7 @@ localHarness.post("/runtime/install", async (c) => {
       state: started.kind,
       ...(started.attemptId ? { attemptId: started.attemptId } : {}),
       status: started.status,
-      statusUrl: "/api/mcp/local-harness/runtime/status",
+      statusUrl,
       retryAfterSeconds: 1,
     },
     202,
@@ -452,6 +569,7 @@ localHarness.post("/workspace-grant", async (c) => {
  */
 localHarness.post("/consent/grant", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
+    harnessId?: unknown;
     projectId?: unknown;
     workspaceGrantId?: unknown;
     expect?: {
@@ -493,9 +611,8 @@ localHarness.post("/consent/grant", async (c) => {
     return c.json({ error: workspace.message }, 400);
   }
 
-  const runtimeStatus = await readRuntimeInstallStatus({
-    harnessId: "claude-code",
-  });
+  const harnessId = (await requestHarnessId(c))!;
+  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
   if (runtimeStatus.state !== "ready") {
     return c.json(
       {
@@ -513,9 +630,10 @@ localHarness.post("/consent/grant", async (c) => {
   }
   const resolved = await resolveManagedBundle({
     manifest: manifestWithExpectedBundleDigest(
-      LOCAL_HARNESS_MANIFEST["claude-code"],
-      "claude-code",
+      LOCAL_HARNESS_MANIFEST[harnessId],
+      harnessId,
       localPackTarget(),
+      runtimeStatus.digest,
     ),
     runtimeRoot: runtimeStatus.runtimeRoot,
     platform,
@@ -626,23 +744,23 @@ localHarness.post("/consent/grant", async (c) => {
     machineId,
     projectId,
     workspaceGrantId,
-    harnessId: "claude-code",
+    harnessId,
     targetKind: "local-native",
     runtimeId: resolved.runtime.runtimeId,
     permissionProfile: "workspace-edits",
     policyVersion: LOCAL_HARNESS_POLICY_VERSION,
   };
-  const granted = await grantLocalHarnessConsent(binding);
+  const granted = await grantLocalHarnessConsent(binding, { ttlMs: 15 * 60_000 });
+  await updateAuthorizedWorkspace({ userId, machineId, projectId, workspaceGrantId, harnessId });
 
   return c.json({
     grantId: granted.grantId,
-    // The plaintext capability, returned exactly once. Only its hash is stored.
-    token: granted.token,
+    serverAuthorized: true,
     expiresAt: granted.expiresAt,
     // The ids a turn will send back, so the client never has to re-derive them.
     target: {
       kind: "local-native",
-      harnessId: "claude-code",
+      harnessId,
       machineId,
       workspaceGrantId,
       runtimeId: resolved.runtime.runtimeId,
@@ -668,10 +786,16 @@ localHarness.post("/consent/grant", async (c) => {
  * the user means when they click the button with nothing in flight.
  */
 localHarness.post("/consent/revoke", async (c) => {
+  const actor = await resolveConsentActor(c);
+  if (!actor.ok) return c.json({ error: actor.message }, actor.status);
+
   const body = (await c.req.json().catch(() => null)) as {
     grantId?: unknown;
+    projectId?: unknown;
+    forget?: unknown;
   } | null;
   const grantId = typeof body?.grantId === "string" ? body.grantId : null;
+  if (body?.forget === true || !grantId) await revokeLocalHarnessAuthorization(actor.actor.userId, typeof body?.projectId === "string" ? body.projectId : undefined);
   const removed = await revokeLocalHarnessGrants(
     grantId ? { grantId } : undefined,
   );

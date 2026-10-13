@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  SdkErrorCode,
+  SdkHttpError,
+  SseError,
+} from "@modelcontextprotocol/client";
+import {
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
@@ -10,6 +16,7 @@ import {
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
+import { PlatformApiError } from "../../src/platform/errors.js";
 import { ProtocolVersionPinUnsupported } from "../../src/mcp-client-manager/managed-mcp-client.js";
 
 function makeError(message: string, extras: Record<string, unknown> = {}) {
@@ -981,4 +988,227 @@ it("does not call a partial balance used up when the request needs more than is 
   expect(result.oneLine).toBe(
     "This request needs about 30 MCPJam credits; your organization has 23 left today.",
   );
+});
+
+describe("an MCP server's HTTP error answer", () => {
+  // The Streamable HTTP transport's error class sets no `name`; it is known by
+  // class, like the real one.
+  class StreamableHTTPError extends Error {
+    constructor(
+      readonly code: number,
+      message: string,
+    ) {
+      super(`Streamable HTTP error: ${message}`);
+    }
+  }
+
+  function httpError(status: number, statusText: string) {
+    return new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      `Error POSTing to endpoint (HTTP ${status} ${statusText}): <html>…</html>`,
+      { status, statusText, text: "<html>…</html>" },
+    );
+  }
+
+  /** The connect failure the manager throws when both transports got 404. */
+  function connectFailure404() {
+    const error = new Error(
+      "Server returned HTTP 404 at https://example.com/. Check the MCP endpoint and server logs.",
+      { cause: new SseError(404, "Non-200 status code (404)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(404, "Not Found"),
+      enumerable: false,
+    });
+    return error;
+  }
+
+  it("reads an all-404 connect failure as the server's HTTP error", () => {
+    const d = describeError(connectFailure404());
+    expect(d.slug).toBe("server/http_error");
+    expect(d.title).toBe("MCP server returned an HTTP error");
+    expect(d.oneLine).toBe("The MCP server answered the request with HTTP 404.");
+    expect(d.rawCode).toBe(404);
+    expect(originOf(d)).toBe("user_server");
+  });
+
+  it.each([
+    [404, "Not Found"],
+    [405, "Method Not Allowed"],
+    [500, "Internal Server Error"],
+  ])("reads a raw SdkHttpError %s as the server's HTTP error", (status, text) => {
+    const d = describeError(httpError(status, text));
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(status);
+    // The response body never reaches the visible line.
+    expect(d.oneLine).not.toContain("<html>");
+  });
+
+  it("finds the status on the Streamable HTTP attempt beside an SSE cause", () => {
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. SSE error: fetch failed.',
+      { cause: new TypeError("fetch failed") },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: new StreamableHTTPError(405, "Method Not Allowed"),
+      enumerable: false,
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it("names both statuses when the attempts failed differently, the Streamable one first", () => {
+    // A Streamable HTTP 500, then a modern-only server's 405 to the SSE GET.
+    const error = new Error(
+      'Failed to connect to MCP server "srv" using HTTP transports. Streamable HTTP error: Version negotiation failed: the server answered the probe with HTTP 500. SSE error: SSE error: Non-200 status code (405).',
+      { cause: new SseError(405, "Non-200 status code (405)", {} as ErrorEvent) },
+    );
+    Object.defineProperty(error, "streamableCause", {
+      value: httpError(500, "Internal Server Error"),
+      enumerable: false,
+    });
+    const d = describeError(error);
+    expect(d.slug).toBe("server/http_error");
+    expect(d.rawCode).toBe(500);
+    expect(d.oneLine).toBe(
+      "The MCP server answered the request with HTTP 500, then with HTTP 405 to the SSE fallback.",
+    );
+  });
+
+  it("finds the status through the era-negotiation wrapper", () => {
+    const error = makeError("negotiation failed", {
+      name: "SdkError",
+      code: "ERA_NEGOTIATION_FAILED",
+      data: { cause: httpError(502, "Bad Gateway") },
+    });
+    expect(describeError(error).slug).toBe("server/http_error");
+  });
+
+  it.each([
+    [401, "auth/http_401"],
+    [403, "auth/http_403"],
+    [429, "provider/quota"],
+  ])("keeps the existing slug for a transport %s", (status, slug) => {
+    expect(describeError(httpError(status, "x")).slug).toBe(slug);
+  });
+
+  it("does not read a bare status as the MCP server's answer", () => {
+    // MCPJam's own route errors and LLM provider errors carry a `status` too;
+    // neither is the user's server.
+    expect(
+      describeError(makeError("Project not found", { status: 404 })).slug,
+    ).toBe("internal/unknown");
+    expect(
+      describeError(makeError("Provider exploded", { statusCode: 500 })).slug,
+    ).toBe("internal/unknown");
+  });
+});
+
+describe("organization AI-key policy refusals", () => {
+  const CASES: Array<[string, string]> = [
+    ["org_keys_required", "org/keys_required"],
+    ["org_model_unconfigured", "org/model_unconfigured"],
+    ["org_runtime_unsupported", "org/runtime_unsupported"],
+    ["ai_scope_unresolved", "org/scope_unresolved"],
+    ["ai_key_policy_unavailable", "org/key_policy_unavailable"],
+    ["provider_auth_failed", "org/provider_auth_failed"],
+    ["provider_unavailable", "org/provider_unavailable"],
+  ];
+
+  it.each(CASES)("maps the %s code field to %s", (code, slug) => {
+    // Ahead of the status branches: a 403 here is the org's policy, not an
+    // MCP server rejecting a token.
+    expect(describeError({ code, status: 403, message: "Forbidden" }).slug).toBe(
+      slug,
+    );
+    expect(describeError({ data: { code }, message: "x" }).slug).toBe(slug);
+    expect(describeError({ body: { code }, message: "x" }).slug).toBe(slug);
+    expect(orgPolicySlugForCode(code)).toBe(slug);
+    expect(orgPolicySlugForCode(code.toUpperCase())).toBe(slug);
+  });
+
+  it.each(CASES)("reads %s out of a JSON envelope in the message", (code, slug) => {
+    const result = describeError(
+      new Error(
+        `HTTP 403: {"ok":false,"code":"${code}","error":"Refused.","remediation":"choose_org_model"}`,
+      ),
+    );
+    expect(result.slug).toBe(slug);
+    expect(result.rawCode).toBe(code);
+  });
+
+  it.each(CASES)(
+    "reads %s from a PlatformApiError's details when the message names no code",
+    (code, slug) => {
+      // The platform API puts the policy code in the envelope's `details`, and
+      // its message is plain prose. Without `details.code` the 403 would read
+      // as an authentication failure.
+      const error = new PlatformApiError(
+        "Choose an organization provider.",
+        "FORBIDDEN",
+        { status: 403, details: { code } },
+      );
+      expect(error.message).not.toContain(code);
+      const result = describeError(error);
+      expect(result.slug).toBe(slug);
+      expect(result.rawCode).toBe(code);
+    },
+  );
+
+  it.each(CASES)(
+    "reads %s off a wrapped error's cause before its 403",
+    (code, slug) => {
+      // The wrapper's own fields and message name no code; the 403 is found
+      // through the cause chain, so the code must be too.
+      const wrapped = new Error("Request failed", {
+        cause: { code, status: 403, message: "Forbidden" },
+      });
+      const result = describeError(wrapped);
+      expect(result.slug).toBe(slug);
+      expect(result.rawCode).toBe(code);
+    },
+  );
+
+  it("reads a distinctive code out of a stored refusal sentence", () => {
+    expect(
+      describeError(
+        "Model selection refused — org_keys_required: This organization requires its own provider keys for AI features.",
+      ).slug,
+    ).toBe("org/keys_required");
+  });
+
+  it("reads the generic-sounding codes only where the text says they are codes", () => {
+    expect(
+      describeError("The provider failed. (provider_unavailable, HTTP 503)")
+        .slug,
+    ).toBe("org/provider_unavailable");
+    expect(describeError("provider_auth_failed: key rejected").slug).toBe(
+      "org/provider_auth_failed",
+    );
+    // An MCP server's own prose is not the org's provider refusing.
+    expect(
+      describeError("upstream says provider_unavailable today").slug,
+    ).not.toBe("org/provider_unavailable");
+  });
+
+  it("does not map unrelated codes", () => {
+    expect(orgPolicySlugForCode("credential_missing")).toBeUndefined();
+    expect(orgPolicySlugForCode(undefined)).toBeUndefined();
+    expect(describeError({ code: "user_rate_limit", message: "x" }).slug).not.toMatch(
+      /^org\//,
+    );
+  });
+
+  it("never pages for a configuration refusal", () => {
+    for (const [code] of CASES) {
+      const origin = describeError({ code, message: "x" }).origin;
+      if (code === "ai_key_policy_unavailable") {
+        // Fail-closed read of the policy: the store is ours.
+        expect(origin).toBe("mcpjam");
+      } else if (code === "provider_unavailable") {
+        expect(origin).toBe("ambiguous");
+      } else {
+        expect(origin).toBe("user_config");
+      }
+    }
+  });
 });

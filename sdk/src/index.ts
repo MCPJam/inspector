@@ -105,11 +105,13 @@ export {
   MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -402,6 +404,61 @@ export type {
   SuiteFileLocation,
 } from "./suite-file-loader.js";
 
+// ── local suite-file execution ──────────────────────────────────────────────
+/**
+ * `runSuiteFile` executes a suite file locally against explicitly bound MCP
+ * servers and decides it with the v2 verdict policy — the engine behind
+ * `mcpjam test <file>`. Node-only (it connects servers and runs models), so it
+ * is exported here and never from the browser or contract entries.
+ * `createSuiteFileRunner` is the internal seam the SDK's and CLI's own tests
+ * inject model doubles through.
+ */
+export {
+  LOCAL_EVAL_RUN_REPORT_KIND,
+  LOCAL_VERDICT_AUTHORITY,
+  SUITE_FILE_RUN_DEFAULT_CONCURRENCY,
+  SUITE_FILE_RUN_DEFAULT_ITERATION_TIMEOUT_MS,
+  SUITE_FILE_RUN_DEFAULT_MAX_STEPS,
+  SUITE_FILE_RUN_DEFAULT_SETUP_TIMEOUT_MS,
+  SUITE_FILE_RUN_ERROR_CODES,
+  SuiteFileRunError,
+  createSuiteFileRunner,
+  formatLocalEvalRunSummary,
+  isLocalEvalRunReport,
+  isSuiteFileRunError,
+  localEvalRunMetadataSchema,
+  platformCaseFromSuiteFileCase,
+  runSuiteFile,
+  suiteFileSourceHash,
+} from "./suite-file-run/index.js";
+export type {
+  LocalEvalRunMetadata,
+  LocalEvalRunReport,
+  McpjamInferenceConnection,
+  RunSuiteFileOptions,
+  SuiteFileCaseRun,
+  SuiteFileImportApproval,
+  SuiteFileInferenceMode,
+  SuiteFileInferenceOptions,
+  SuiteFileInferenceRail,
+  SuiteFileIterationEvidence,
+  SuiteFileJudgeState,
+  SuiteFileRefusalAttribution,
+  SuiteFileRunErrorCategory,
+  SuiteFileRunErrorCode,
+  SuiteFileRunErrorDetails,
+  SuiteFileRunIssue,
+  SuiteFileRunnerRuntime,
+  SuiteFileRunPhase,
+  SuiteFileRunProblem,
+  SuiteFileRunProgressEvent,
+  SuiteFileRunResult,
+  SuiteFileRunTermination,
+  SuiteFileRunVerdict,
+  SuiteFileServerBinding,
+  SuiteFileToolPolicyBlock,
+} from "./suite-file-run/index.js";
+
 // ── the one grading policy: SDK integration seam ────────────────────────────
 /**
  * How a suite file, a hosted suite read and a reported run each reach the
@@ -413,6 +470,7 @@ export type {
  */
 export {
   GRADING_POLICY_READ_REFUSALS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   gradingPolicyForReportedRun,
   gradingPolicyFromLoadedSuiteFile,
@@ -659,6 +717,12 @@ export {
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// Muse (Meta) connector readiness. The barrel is pure data and grading; the
+// gatherer dials, so it is exported only from this Node entry.
+export * from "./muse-readiness/index.js";
+export { gatherMuseReadinessEvidence } from "./muse-readiness/gather.js";
+export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather.js";
 
 // The OpenAI readiness modules that touch the network, exported only from the
 // Node entry. They are deliberately absent from `openai-readiness/index.ts` so
@@ -1024,6 +1088,14 @@ export type {
   ProviderLanguageModel,
 } from "./model-factory.js";
 
+// Reviewed canonical ↔ native model ids (the BYOK Anthropic path sends the
+// native one). Also on `@mcpjam/sdk/model-factory`.
+export {
+  ANTHROPIC_NATIVE_MODEL_IDS,
+  anthropicNativeModelId,
+} from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
+
 // Which sampling parameters a model accepts. Also exported from
 // `@mcpjam/sdk/browser` so client code can gate a temperature control without
 // pulling the Node graph in; exported here so a Node consumer building its own
@@ -1086,6 +1158,7 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 export {
   describeError,
   describeAsSlug,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -1102,6 +1175,24 @@ export type {
   ErrorCatalogEntry,
   ErrorCatalogSlug,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; also exported from `@mcpjam/sdk/browser`.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 // OAuth conformance
 export {
@@ -1635,6 +1726,23 @@ export {
   selectionKey,
   defaultFallbackForPurpose,
 } from "./host-config/index.js";
+export {
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
+  supportedReasoningEfforts,
+  harnessReasoningEfforts,
+} from "./host-config/index.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
+} from "./host-config/index.js";
 export type {
   ModelSelection,
   ModelSelectionSource,
@@ -1825,10 +1933,15 @@ export {
   releaseMcpjamModelLeases,
   McpjamLeaseClient,
   McpjamLeaseError,
+  McpjamModelLeaseScope,
+  classifyMcpjamLeaseError,
 } from "./mcpjam-model-lease.js";
 export type {
   McpjamModelLease,
   McpjamLeaseClientOptions,
+  McpjamAuthContext,
+  McpjamGetAuth,
+  McpjamLeaseRefusalKind,
 } from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {

@@ -1,4 +1,19 @@
 import { normalizedResponseDistance } from "./response-close-to.js";
+import {
+  compileMatchPatterns,
+  describeInputMatch,
+  describeResultMatch,
+  encodeCallSubject,
+  encodeResultSubject,
+  MAX_DISPLAYED_PATTERN_CHARS,
+  matchRuleConfigError,
+  matchVerdict,
+  parseMatchPath,
+  resultValueAt,
+  type CompiledMatchPattern,
+  type MatchTally,
+  type PatternMatchRule,
+} from "./pattern-match.js";
 /**
  * Pure evaluator for the state-based predicate library.
  *
@@ -607,6 +622,109 @@ function estimatedTokens(bytes: number): string {
 }
 
 /** Evaluate a single predicate against the iteration transcript. */
+/**
+ * Everything `toolInputMatches` and `toolResultMatches` need before reading a
+ * single unit, or the reason the rule cannot be graded at all.
+ *
+ * A rule that reached us without passing the schema (a loose API path, a row
+ * from a newer writer) is unscored rather than failed: a check nobody could
+ * validly have written says nothing about the server.
+ */
+function preparePatternMatch(
+  predicate: Extract<
+    Predicate,
+    { type: "toolInputMatches" | "toolResultMatches" }
+  >
+):
+  | {
+      ok: true;
+      compiled: CompiledMatchPattern[];
+      key: string | undefined;
+      bounds: { min: number; max: number | undefined };
+      patternsShown: string;
+    }
+  | { ok: false; reason: string } {
+  const configError = matchRuleConfigError(
+    predicate.type,
+    predicate as Partial<Record<keyof PatternMatchRule, unknown>>
+  );
+  if (configError !== undefined) return { ok: false, reason: configError };
+  const compiled = compileMatchPatterns(predicate.patterns, predicate.flags);
+  if (!compiled.ok) {
+    // The engine's message quotes the pattern, so it is scrubbed like the
+    // pattern itself would be.
+    return {
+      ok: false,
+      reason:
+        `${predicate.type} pattern ${compiled.index + 1} does not compile ` +
+        `in re2js: ${truncate(scrubText(compiled.message), MAX_VALUE_CHARS)}`,
+    };
+  }
+  let key: string | undefined;
+  if (predicate.path !== undefined) {
+    const parsed = parseMatchPath(predicate.path);
+    // Unreachable past `matchRuleConfigError`, which applies the same rule.
+    if (!parsed.ok) return { ok: false, reason: parsed.message };
+    key = parsed.key;
+  }
+  // Authored patterns are shown through the FREE-TEXT scrubber: an author who
+  // pinned a literal token in a pattern must not see it persisted into every
+  // reason. The stored predicate keeps it as written — it is the rule.
+  const flags = predicate.flags ?? "";
+  const patternsShown =
+    predicate.patterns
+      .slice(0, MAX_ITEMS_SHOWN)
+      .map(
+        (pattern) =>
+          `/${truncate(
+            scrubText(pattern),
+            MAX_DISPLAYED_PATTERN_CHARS
+          )}/${flags}`
+      )
+      .join(", ") +
+    (predicate.patterns.length > MAX_ITEMS_SHOWN
+      ? `, +${predicate.patterns.length - MAX_ITEMS_SHOWN} more`
+      : "");
+  return {
+    ok: true,
+    compiled: compiled.compiled,
+    key,
+    bounds: { min: predicate.min ?? 1, max: predicate.max },
+    patternsShown,
+  };
+}
+
+/** ONE unit, ALL patterns. */
+function matchesEvery(
+  compiled: readonly CompiledMatchPattern[],
+  subject: string
+): boolean {
+  return compiled.every((pattern) => pattern.test(subject));
+}
+
+/**
+ * The units that did not match, shown only when too FEW matched: they are
+ * the evidence. A too-many failure's evidence is the count itself, and a pass
+ * or an unscored row shows none.
+ */
+function samplesOnShortfall<T>(
+  verdict: "pass" | "fail" | "unscored",
+  tally: MatchTally,
+  bounds: { min: number; max: number | undefined },
+  unmatched: readonly T[],
+  sample: (unit: T) => string
+): string | undefined {
+  const tooMany = bounds.max !== undefined && tally.matched > bounds.max;
+  if (verdict !== "fail" || tooMany || unmatched.length === 0) {
+    return undefined;
+  }
+  return `[${unmatched.slice(0, MAX_ITEMS_SHOWN).map(sample).join(", ")}${
+    unmatched.length > MAX_ITEMS_SHOWN
+      ? `, +${unmatched.length - MAX_ITEMS_SHOWN} more`
+      : ""
+  }]`;
+}
+
 export function evaluatePredicate(
   transcript: IterationTranscript,
   predicate: Predicate
@@ -2005,6 +2123,211 @@ export function evaluatePredicate(
           ? `no full page from ${scopeLabel(predicate.toolName)} to inspect`
           : `all ${inspected} full page(s) carried continuation metadata`
       );
+    }
+
+    case "toolInputMatches": {
+      const prepared = preparePatternMatch(predicate);
+      if (!prepared.ok) return evidenceError(predicate, prepared.reason);
+      const { compiled, key, bounds, patternsShown } = prepared;
+      const calls = callsTo(transcript, predicate.toolName);
+      const tally: MatchTally = {
+        units: calls.length,
+        matched: 0,
+        unreadable: 0,
+        missing: 0,
+      };
+      // Every call is read, so every count in the reason is exact.
+      const unmatched: TranscriptToolCall[] = [];
+      for (const call of calls) {
+        const subject = encodeCallSubject(call.arguments, key);
+        if (subject.kind === "missing") {
+          tally.missing += 1;
+          unmatched.push(call);
+        } else if (subject.kind === "unreadable") {
+          tally.unreadable += 1;
+        } else if (matchesEvery(compiled, subject.text)) {
+          tally.matched += 1;
+        } else {
+          unmatched.push(call);
+        }
+      }
+      const verdict = matchVerdict(tally, bounds);
+      // Values keep their KEY on the way through `brief()` — the argument's
+      // own name, or the whole arguments object — so `SENSITIVE_KEY`
+      // redaction still sees `apiKey`. A bare value would lose the one thing
+      // redaction keys on.
+      const sample = (call: TranscriptToolCall): string => {
+        const args = (call.arguments ?? {}) as Record<string, unknown>;
+        if (key === undefined) return brief(args);
+        return Object.prototype.hasOwnProperty.call(args, key)
+          ? brief({ [key]: args[key] })
+          : `(no "${key}")`;
+      };
+      const reason = describeInputMatch({
+        toolName: predicate.toolName,
+        key,
+        patternCount: predicate.patterns.length,
+        tally,
+        bounds,
+        verdict,
+        patternsShown,
+        samplesShown: samplesOnShortfall(
+          verdict,
+          tally,
+          bounds,
+          unmatched,
+          sample
+        ),
+      });
+      if (verdict === "pass") return pass(predicate, reason);
+      if (verdict === "fail") return fail(predicate, reason);
+      return evidenceError(predicate, reason);
+    }
+
+    case "toolResultMatches": {
+      const prepared = preparePatternMatch(predicate);
+      if (!prepared.ok) return evidenceError(predicate, prepared.reason);
+      const { compiled, key, bounds, patternsShown } = prepared;
+      const scope = resultScope(transcript, predicate.toolName);
+      const describe = (
+        tally: MatchTally,
+        verdict: ReturnType<typeof matchVerdict>,
+        extra: { gap?: string; samplesShown?: string } = {}
+      ): string =>
+        describeResultMatch({
+          toolName: predicate.toolName,
+          key,
+          patternCount: predicate.patterns.length,
+          tally,
+          bounds,
+          verdict,
+          patternsShown,
+          ...extra,
+        });
+
+      // ── Completeness, the way `toolResultContains` reads it ─────────────
+      //
+      // A counting verdict is a claim about EVERY result in scope, so the
+      // results we did not read are unknowns on both sides of it (see
+      // `matchVerdict`): a pass needs proof, and "no result matched" is only
+      // proof when nothing in scope went unread. Three sources of unknowns,
+      // each taken from the rule `toolResultContains` already applies:
+      //
+      //   1. EMPTY scope — `emptyScopeIsScored` decides, unchanged. Scored
+      //      (the channel was captured completely and no call in scope ran)
+      //      means nothing was returned, and the bounds grade that: a pass
+      //      for `min: 0`, a fail otherwise. Unscored (nothing captured, or
+      //      calls in scope that carry no result) is unscored outright, even
+      //      where a bound could in principle be settled — kept identical so
+      //      the two result-content checks never disagree about whether an
+      //      iteration was measured.
+      //   2. The capture half of `incompleteScopeReason` — a channel that is
+      //      not `complete` may have dropped rows in scope, so an UNBOUNDED
+      //      number of results went unread (`unseen = Infinity`). Matches we
+      //      did read still prove a `min`, and an excess over `max` is still
+      //      proof; anything that needs the unread rows is unscored.
+      //   3. Its truncation half — a row whose text was cut for storage is an
+      //      UNREADABLE unit here (`encodeResultSubject`), counted neither
+      //      way, rather than a reason to refuse the whole scope. With a
+      //      `path` the text is never read, so a truncated row is graded on
+      //      its `structuredContent` / `json`, which are stored whole.
+      //
+      // As in `toolResultContains`, a complete channel with at least one
+      // result in scope is the whole story for that scope: observed calls
+      // without a result row are not counted as unread results there.
+      if (scope.length === 0) {
+        const empty = emptyScopeIsScored(
+          transcript,
+          "toolResults",
+          predicate.toolName
+        );
+        const none: MatchTally = {
+          units: 0,
+          matched: 0,
+          unreadable: 0,
+          missing: 0,
+        };
+        if (!empty.scored) {
+          return evidenceError(
+            predicate,
+            describe(none, "unscored", { gap: empty.reason })
+          );
+        }
+        const verdict = matchVerdict(none, bounds);
+        return verdict === "pass"
+          ? pass(predicate, describe(none, verdict))
+          : fail(predicate, describe(none, verdict));
+      }
+
+      const tally: MatchTally = {
+        units: scope.length,
+        matched: 0,
+        unreadable: 0,
+        missing: 0,
+      };
+      const unmatched: TranscriptToolResult[] = [];
+      for (const result of scope) {
+        const subject = encodeResultSubject(result, key);
+        if (subject.kind === "missing") {
+          tally.missing += 1;
+          unmatched.push(result);
+        } else if (subject.kind === "unreadable") {
+          tally.unreadable += 1;
+        } else if (matchesEvery(compiled, subject.text)) {
+          tally.matched += 1;
+        } else {
+          unmatched.push(result);
+        }
+      }
+      // Truncation is already counted per row above; only the capture state
+      // is asked here.
+      const gap = incompleteScopeReason(
+        transcript,
+        "toolResults",
+        scope.length
+      );
+      const verdict = matchVerdict(
+        tally,
+        bounds,
+        gap === undefined ? 0 : Number.POSITIVE_INFINITY
+      );
+      // Same redaction rule as the input side: a value keeps its key (the
+      // `path` key, or the payload's own keys) through `brief()`. A result is
+      // SERVER prose as well, so the free-text scrubber runs over the output
+      // too — a string value can carry `token=…` that no key names.
+      const sample = (result: TranscriptToolResult): string => {
+        const prefix =
+          predicate.toolName === undefined ? `"${result.toolName}" ` : "";
+        if (key !== undefined) {
+          const value = resultValueAt(result, key);
+          return value === undefined
+            ? `${prefix}(no "${key}")`
+            : `${prefix}${scrubText(brief({ [key]: value }))}`;
+        }
+        const payload =
+          result.structuredContent !== undefined
+            ? result.structuredContent
+            : result.json;
+        if (payload !== undefined) {
+          return `${prefix}${scrubText(brief(payload))}`;
+        }
+        return `${prefix}${JSON.stringify(
+          truncate(scrubText(result.text ?? ""), MAX_VALUE_CHARS)
+        )}`;
+      };
+      const reason = describe(tally, verdict, {
+        ...(verdict === "unscored" && gap !== undefined ? { gap } : {}),
+        samplesShown: samplesOnShortfall(
+          verdict,
+          tally,
+          bounds,
+          unmatched,
+          sample
+        ),
+      });
+      if (verdict === "pass") return pass(predicate, reason);
+      if (verdict === "fail") return fail(predicate, reason);
+      return evidenceError(predicate, reason);
     }
 
     default: {

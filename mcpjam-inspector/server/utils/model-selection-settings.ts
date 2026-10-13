@@ -10,7 +10,9 @@
  *
  * PRECEDENCE, per setting, highest first:
  *
- *   1. per-run override  (the eval case's `advancedConfig`)
+ *   1. per-run override  (the eval case's `advancedConfig` TEMPERATURE only;
+ *      `advancedConfig` carries no effort, and a stored
+ *      `advancedConfig.reasoningEffort` is refused by the eval runner)
  *   2. saved selection   (`selection.settings`)
  *   3. host defaults     (the host config's `temperature`)
  *
@@ -32,14 +34,16 @@
  *    the effective temperature as the top-level field, which the backend
  *    prefers over the selection's, so the two can never disagree.
  *  - `orgCloud`: backend `/stream/org`. Applies the selection's temperature
- *    (top-level first, as on `/stream`) but not a reasoning effort, so an
- *    effort is refused on this route.
+ *    (top-level first, as on `/stream`) and its reasoning effort (mapped per
+ *    org provider; the backend refuses one it cannot map), so an effort is
+ *    kept for it to apply, as on `hosted`.
  *  - `org`: an org selection before its runtime is known (the org config
  *    decides cloud vs local at call time). Temperature is resolved now; the
  *    effort is checked on the concrete rail by the caller that learns it.
  */
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
+import { reasoningEffortProviderOptions as sdkReasoningEffortProviderOptions } from "@mcpjam/sdk/browser";
 import {
   modelDefinitionSupportsTemperature,
   type ModelDefinition,
@@ -77,7 +81,11 @@ export type ResolveEffectiveModelSettingsInput = {
   /** The model the call runs (its provider and temperature support). */
   modelDefinition: Pick<ModelDefinition, "id" | "provider"> &
     Partial<ModelDefinition>;
-  /** Precedence 1: this run's own settings (eval `advancedConfig`). */
+  /**
+   * Precedence 1: this run's own settings. The eval runner passes only a
+   * `temperature` here (from `advancedConfig`); `reasoningEffort` exists for
+   * per-request carriers such as a chat turn's top-level field.
+   */
   override?: { temperature?: number; reasoningEffort?: ModelReasoningEffort };
   /** Precedence 2: the saved selection. */
   selection?: Pick<ModelSelection, "modelId" | "settings">;
@@ -131,12 +139,6 @@ export function resolveEffectiveModelSettings(
   let providerOptions: DirectProviderOptions | undefined;
 
   if (effort) {
-    if (route === "orgCloud") {
-      return refuse(
-        `reasoning effort "${effort.value}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
-        { setting: "reasoningEffort", route, modelId },
-      );
-    }
     if (route === "direct") {
       const options = reasoningEffortProviderOptions({
         providerKey: String(modelDefinition.provider),
@@ -203,71 +205,19 @@ export function resolveEffectiveModelSettings(
 
 // ── Reasoning effort on a direct provider call ─────────────────────────────
 
-const OPENAI_EFFORTS: readonly ModelReasoningEffort[] = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
-const ANTHROPIC_EFFORTS: readonly ModelReasoningEffort[] = [
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-];
-const GOOGLE_EFFORTS: readonly ModelReasoningEffort[] = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-];
-
-/** The model name without a `provider/` prefix. */
-function bareModelName(modelId: string): string {
-  const slash = modelId.indexOf("/");
-  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
-}
-
 /**
  * The provider options that apply `effort` on a direct AI SDK call, or
  * `undefined` when this provider/model has no effort control the installed
- * AI SDK provider exposes (the caller refuses the setting then). Levels are
- * the AI SDK provider's own enums; the model families are the ones whose
- * effort control the provider documents (OpenAI reasoning models, Claude,
- * Gemini 3+). The same mapping the backend uses for `/stream`.
+ * AI SDK provider exposes (the caller refuses the setting then). The level
+ * tables and model families live in `@mcpjam/sdk` beside the capability
+ * helper the pickers use, so what the UI offers and what the runner accepts
+ * are one table.
  */
 export function reasoningEffortProviderOptions(args: {
   providerKey: string;
   modelId: string;
   effort: ModelReasoningEffort;
 }): DirectProviderOptions | undefined {
-  const name = bareModelName(args.modelId);
-  switch (args.providerKey) {
-    case "openai":
-      return /^(gpt-5|o[1-9])(?:[.-]|$)/.test(name) &&
-        OPENAI_EFFORTS.includes(args.effort)
-        ? { openai: { reasoningEffort: args.effort } }
-        : undefined;
-    case "anthropic":
-      return /^claude-/.test(name) && ANTHROPIC_EFFORTS.includes(args.effort)
-        ? {
-            anthropic: {
-              effort: args.effort,
-              ...(/^claude-opus-4[.-]5(?:-|$)/.test(name)
-                ? {}
-                : { thinking: { type: "adaptive" } }),
-            },
-          }
-        : undefined;
-    case "google":
-      return /^gemini-([3-9]|[1-9][0-9])(?:[.-]|$)/.test(name) &&
-        GOOGLE_EFFORTS.includes(args.effort)
-        ? { google: { thinkingConfig: { thinkingLevel: args.effort } } }
-        : undefined;
-    default:
-      return undefined;
-  }
+  return sdkReasoningEffortProviderOptions(args) as
+    DirectProviderOptions | undefined;
 }

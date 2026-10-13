@@ -1,0 +1,202 @@
+---
+title: "Local Evals"
+description: "Run an MCPJam eval suite file on your machine with mcpjam test — no account needed for BYOK, and nothing is ever uploaded"
+icon: "flask"
+---
+
+`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and no MCPJam account is required. With MCPJam-hosted inference it uses your existing CLI login and billing.
+
+Results are **never uploaded**. The command writes to your terminal and, if you ask, to a report file — nothing else. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+
+## Quick start
+
+### 1. Write a suite
+
+Save this as `.mcpjam/evals/example.yaml`:
+
+```yaml
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note
+    title: reads the note it was asked about
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What does note 7 say?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+  - id: c_never_deletes
+    title: never deletes when only asked to read
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Summarize note 7.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: delete_note
+```
+
+`mcpjam cloud eval validate --file .mcpjam/evals/example.yaml` checks the file offline, with no account.
+
+### 2. Configure the server
+
+`mcpjam test` binds each `target.servers[].name` to a local MCP config. The simplest is a `.mcp.json` next to where you run the command:
+
+```json
+{
+  "mcpServers": {
+    "notes": {
+      "command": "node",
+      "args": ["./notes-server.js"],
+      "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
+    }
+  }
+}
+```
+
+### 3. Supply a key and run
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+mcpjam test .mcpjam/evals/example.yaml
+```
+
+### 4. Fail one on purpose, then rerun it
+
+Change `toolName: read_note` to `toolName: echo` in the first case and run again: the command exits `1` and names the failing assertion. Fix it, then rerun just that case and keep a report:
+
+```bash
+mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+```
+
+`--case` takes the exact authored id and is repeatable.
+
+## Server bindings
+
+For each target server name, the first source with an entry wins — the whole entry, never a field-level merge:
+
+1. `--server <name>=<url>` (repeatable; HTTP(S) only). For a suite with exactly one target, `--url` / `--command` and their auth flags bind it instead.
+2. `--mcp-config <path>` — an explicit MCP JSON config. A missing or invalid explicit file fails setup.
+3. `./.mcp.json`
+4. `./.mcpjam/mcp.json`
+
+Paths are relative to the directory you run the command in, not to the suite file. An explicit `--mcp-config` can bind some servers while the two conventional files still supply the rest. A lower-precedence file is read only while names remain unbound, and entries for servers the suite does not target are ignored — their processes are never started. Every name still unbound is reported together (exit `4`).
+
+Config entries use the standard `mcpServers` shape (`command`/`args`/`env`/`cwd` for stdio, `url`/`headers` for HTTP, with `type`/`transport` spellings such as `stdio`, `http`, `sse`, `streamable-http`). `${VAR}` and `${VAR:-default}` are expanded in the winning entries only; an unset `${VAR}` fails setup naming the variable, never its value. Nothing is shell-expanded. A relative `cwd` (or `credentialsFile`) resolves against the config file's directory; a stdio entry with no `cwd` runs in the invocation directory.
+
+One credential is never shared across servers: servers that need their own auth each get their own config entry.
+
+## Inference
+
+| `--inference` | Model id | Rail |
+|---|---|---|
+| `auto` (default) | `provider/model` and the provider's key is set | BYOK |
+| `auto` | `provider/model`, no key | MCPJam, when it serves the model and you are signed in |
+| `auto` or `mcpjam` | `mcpjam/provider/model` | MCPJam |
+| `byok` | `mcpjam/…` | refused — the prefix is explicit routing intent |
+| `byok` | `provider/model` | BYOK; the provider key is required |
+| `mcpjam` | `provider/model` | MCPJam; the model must be one MCPJam serves |
+
+There is no fallback: a key the provider rejects is a credential failure (exit `3`), never a reason to spend platform credits instead.
+
+BYOK keys are read from the standard variables: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` (or `GEMINI_API_KEY`), `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `XAI_API_KEY`. `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and `OLLAMA_BASE_URL` point a provider at a gateway or proxy.
+
+MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCPJAM_API_KEY` > `mcpjam cloud login`) and project precedence (`--project` > `MCPJAM_PROJECT` > `mcpjam cloud link` > most recently updated), plus `--api-url` / `--api-header`. The platform is contacted only when a selected case needs it. Hosted inference still makes inference and billing requests; "no upload" means no eval results or artifacts are ever sent.
+
+## Hosts
+
+`--host <template>` emulates one existing host template — its `initialize` identity, advertised capabilities, protocol versions and tool visibility, plus its model settings where the suite does not set them. It never launches the real client, and reports say "emulated". The suite's model, and any authored `systemPrompt` / `temperature`, win over the template's. `target.hosts` in the file is recorded as declared but not executed, and `target.environment` as declared but not resolved.
+
+## Reasoning effort
+
+A local suite file does **not** take a reasoning effort yet: `defaults` has no
+`reasoningEffort` key (a dialect-2 default needs a matching backend field on the
+suite's default config, which has not shipped), so the value is rejected as an
+unknown key rather than accepted and ignored. Ways to run a local suite at an
+effort today:
+
+- Run it against a **saved client** with `runWithClient`: the client's hosted
+  model selection carries `settings.reasoningEffort`, and the runner applies it
+  (and refuses a model that cannot) — see [`HostRunner`](/sdk/reference/host-runner#reasoningeffort).
+- Build the runner yourself with `HostRunner({ reasoningEffort })`.
+- Set the effort on the hosted suite's model selection with
+  `mcpjam cloud eval update --effort <level>` (see the [CLI reference](/cli/reference#reasoning-effort)).
+
+## Tool policy
+
+A suite's `defaults.toolPolicy` is enforced before the MCP call: a denied tool never reaches the server, the model receives the refusal, and the report records the block by case, iteration and call id. A blocked call is not graded as a call and is not an executed tool span. A `deny` name that matches no tool the servers expose is invalid input (exit `2`); an unmatched `allow` is a warning. With no `toolPolicy`, nothing is restrained.
+
+## Imported cases
+
+Native and claimed-`exact` imported cases run with no approval. An `approximated` case runs only when this invocation approves it:
+
+```bash
+mcpjam test .mcpjam/evals/imported.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric"
+```
+
+`unsupported` and `unresolved` cases never run. Approving a native, `exact`, disabled, unselected or unknown case is refused. A local approval is recorded as local evidence; it claims no hosted approver.
+
+## What runs locally
+
+| Capability | Local behavior |
+|---|---|
+| Prompt steps (including several per case) | Run as one conversation per iteration |
+| Deterministic assertions (steps and `assertions`) | Graded with the hosted assertion engine |
+| Direct `toolCall` steps | Refused before anything runs — use a prompt, or run hosted |
+| `interact` steps, widget/render and tool-discovery assertions | Refused before anything runs |
+| Gating assertions on tool results or per-call latency (`toolResultContains`, `toolResultMatches`, `toolResultMatchesSchema`, `toolResultSizeUnder`, `toolLatencyUnder`) | Refused before anything runs — a local run does not capture tool results or timings yet. An advisory one is reported as not measured |
+| An enabled gating or required judge | Refused before anything runs |
+| An advisory judge (including the hosted default) | Not run; the report says so |
+| `suppressedSuiteStandardCheckIds` | Refused — a local run has no suite-standard registry |
+
+Every selected case is checked before any model or tool call, so an unsupported later case costs nothing. Hosted-only capabilities run with `mcpjam cloud eval run --file <file>`.
+
+## Output
+
+- With `--format human` (the default on a terminal), a summary: the verdict, each case's gradeable-iteration count against its threshold, failing assertions, not-measured iterations, policy blocks and un-run judges.
+- With `--format json` (the default when stdout is not a terminal: a pipe, a CI log, or an agent's shell), one JSON report on stdout (`kind: "eval-local-run"`). Pass `--format human` to get the summary there instead.
+- `--reporter json-summary|junit-xml|html` writes that document to stdout; the human summary and progress go to stderr.
+- `--out <path>` writes the report atomically (in the `--reporter` format, else JSON) and prints the path.
+
+Every report identifies the run as local and emulated, carries the source-file sha256, the per-case evaluator hashes, the selection, the effective model and rail per case and each server's binding source, and states that upload was off. Server headers, environment objects, command lines and token-bearing URLs never appear in any output, and every credential the run was given is redacted wherever observed text (an error, a tool argument) repeats it.
+
+The unit of a verdict is the **case**; iterations are evidence. A JUnit consumer receives a `<failure>` only for a measured failure — provider errors, evaluator errors and interrupted work are reported as skipped, never as failed assertions.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | The run completed and its decision passed |
+| `1` | The run completed and its decision failed — the only source of `1` |
+| `2` | Invalid file or flags, an unsupported local capability, an import/approval refusal, or an invalid tool-policy deny name |
+| `3` | Missing or rejected model or platform credentials, including during execution |
+| `4` | Setup, connection, tool catalog, binding, interpolation or billing failure, or a report that could not be written |
+| `5` | Inconclusive, interrupted, an integrity failure, or no complete verdict |
+
+`Ctrl-C` stops the run cooperatively: completed evidence is kept, the report is written, and the command exits `5` — an interrupted run is never presented as a completed release gate. A second `Ctrl-C` exits immediately.
+
+## From code
+
+The same engine is `runSuiteFile` in `@mcpjam/sdk`. It takes explicit bindings and credentials — it reads no files, environment or login store — and returns the decision and the report. See [runSuiteFile](/sdk/reference/run-suite-file).

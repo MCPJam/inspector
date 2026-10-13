@@ -1,13 +1,20 @@
+import { LoginRequiredError } from "@workos-inc/authkit-react";
 import { describe, expect, it } from "vitest";
 
-import { isLoginRequiredError } from "../login-required-error";
+import {
+  LOGIN_REQUIRED_ERROR_MESSAGE,
+  isLoginRequiredError,
+} from "../login-required-error";
 
 describe("isLoginRequiredError", () => {
   it("recognizes the error authkit actually throws", () => {
-    // authkit's `LoginRequiredError` never assigns `name`, so a real instance
-    // arrives as a plain `Error` carrying only the fixed message.
-    const error = new Error("No access token available");
+    // The real class, not a hand-written double: this is the test that fails
+    // when an authkit release renames the message the matcher depends on.
+    // `LoginRequiredError` never assigns `name`, so a real instance arrives
+    // as a plain `Error` carrying only the fixed message.
+    const error = new LoginRequiredError();
     expect(error.name).toBe("Error");
+    expect(error.message).toBe(LOGIN_REQUIRED_ERROR_MESSAGE);
     expect(isLoginRequiredError(error)).toBe(true);
   });
 

@@ -86,6 +86,31 @@ describe("what it meters", () => {
     expect(retryAfter).toBeLessThanOrEqual(60);
   });
 
+  it("types the refusal for the request log", async () => {
+    // Without it the 429 row carries no code or message, so a storm from this
+    // limiter is indistinguishable from the guest one (PLB-145).
+    let meta: unknown;
+    const a = new Hono();
+    a.use("*", async (c, next) => {
+      c.set("authMethod", "unverified_passthrough");
+      await next();
+      meta = c.var.webErrorMeta;
+    });
+    a.use("*", passthroughRateLimitMiddleware);
+    a.get("/x", (c) => c.json({ ok: true }));
+    for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT; i++) {
+      await a.request("/x", req("tok-meta"));
+    }
+
+    await a.request("/x", req("tok-meta"));
+
+    expect(meta).toEqual({
+      status: 429,
+      code: "RATE_LIMITED",
+      message: "Too many requests. Slow down and retry.",
+    });
+  });
+
   it("meters a gateway-VERIFIED AuthKit JWT exactly like an unverified one", async () => {
     // Verification says who the caller is, not how fast they may call: a
     // verified session token has no budget of its own anywhere else either.

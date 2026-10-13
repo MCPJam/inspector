@@ -23,6 +23,20 @@ Set `PLAYWRIGHT_BASE_URL` to skip the local server and drive a deployed target:
 PLAYWRIGHT_BASE_URL=https://staging.mcpjam.com npm run test:e2e -w @mcpjam/inspector
 ```
 
+## The local-access spec
+
+The smoke config signs every page in by seeding the `mcpjam.local-access` key,
+so `local-access.spec.ts`, which checks what a browser without that key sees,
+runs under its own config instead and is skipped by `test:e2e`:
+
+```bash
+npm run test:e2e:local-access -w @mcpjam/inspector
+```
+
+It boots its own production server on `http://127.0.0.1:6284` with a fixed
+token, so it needs the same build as the smoke run and never targets a deployed
+URL.
+
 ## The WebMCP frame-stream spec
 
 `webmcp-frame-stream.spec.ts` is the one spec here that does not drive the app

@@ -22,10 +22,7 @@ import {
   mountHostedOpenRoutes,
 } from "../middleware/hosted-partition.js";
 import { __resetModelsCacheForTests } from "../routes/mcp/models.js";
-import {
-  generateSessionToken,
-  getSessionToken,
-} from "../services/session-token.js";
+import { generateSessionToken } from "../services/session-token.js";
 import { isLocalhostRequest } from "../utils/localhost-check.js";
 
 /**
@@ -63,7 +60,7 @@ function createSecureTestApp(): Hono {
     if (!isLocalhostRequest(host)) {
       return c.json({ error: "Token only available via localhost" }, 403);
     }
-    return c.json({ token: getSessionToken() });
+    return c.json({ code: "ACCESS_LINK_REQUIRED" }, 401);
   });
   app.get("/api/apps/mcp-apps/widget", (c) => c.json({ widget: true }));
 
@@ -138,24 +135,24 @@ describe("Auth Integration", () => {
   });
 
   describe("session token endpoint", () => {
-    it("returns token for localhost requests", async () => {
+    it("refuses credential acquisition for localhost requests", async () => {
       const res = await app.request("/api/session-token", {
         headers: { Host: "localhost:6274" },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.token).toBe(validToken);
+      expect(data.code).toBe("ACCESS_LINK_REQUIRED");
     });
 
-    it("returns token for 127.0.0.1 requests", async () => {
+    it("refuses credential acquisition for 127.0.0.1 requests", async () => {
       const res = await app.request("/api/session-token", {
         headers: { Host: "127.0.0.1:6274" },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.token).toBe(validToken);
+      expect(data.code).toBe("ACCESS_LINK_REQUIRED");
     });
 
     it("rejects token request from non-localhost", async () => {
@@ -234,6 +231,26 @@ describe("Auth Integration", () => {
       });
 
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    });
+
+    // This stack runs outside hosted mode, like a local or desktop run. A
+    // local run behind a TLS proxy is served on https://localhost, where HSTS
+    // would pin every localhost port to HTTPS, so a forwarded https scheme
+    // must not turn it on here. Hosted-mode HSTS is covered in
+    // security-headers.test.ts.
+    it("omits Strict-Transport-Security outside hosted mode even when x-forwarded-proto is https", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+          "x-forwarded-proto": "https",
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Strict-Transport-Security")).toBeNull();
     });
 
     it("sets X-Robots-Tag header", async () => {

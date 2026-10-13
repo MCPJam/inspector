@@ -1,3 +1,4 @@
+import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
   withAdmissionRetry,
@@ -33,7 +34,8 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
-import type { ModelDefinition } from "@/shared/types";
+import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
+import { hostedCatalogModelDefinitions } from "../hosted-model-catalog.js";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
 // (org-model-config.ts) — that helper falls back to BYOK provider parsing
 // when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
@@ -43,6 +45,11 @@ import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js"
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
+import {
+  SWARM_SPONSORED_FEATURE,
+  SWARM_SPONSORSHIP_REJECTED_CODE,
+  sponsoredPlatformFailure,
+} from "../../../shared/swarm-sponsorship.js";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
@@ -137,6 +144,7 @@ import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 
 export interface SimulationManagerFactory {
   /**
@@ -319,6 +327,13 @@ export interface SyntheticHostRuntime {
    * the swarm runner pins its own, the scenario runner keeps the default.
    */
   maxSteps?: number;
+  /**
+   * Output-token ceiling for each assistant step, sent as the hosted body's
+   * `maxOutputTokens`. Absent ⇒ the backend sizes it to the model, and holds
+   * credits against that. The swarm runner pins its own
+   * (`HOSTED_STEP_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
+   */
+  maxOutputTokens?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -383,6 +398,7 @@ export interface SyntheticHostRuntime {
    * host config or run snapshot).
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   harness?: Harness;
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
@@ -419,6 +435,14 @@ export interface SyntheticHostRuntime {
    * box that then fails vendor auth against a placeholder.
    */
   environmentId?: string;
+  /**
+   * Set only for a SPONSORED conversation (the backend allocated it to the
+   * platform-paid allowance). Every host step then carries the platform claim,
+   * and only on the MCPJam-hosted rail: a sponsored conversation never falls
+   * back to BYOK or a harness, and a platform failure ends it as a platform
+   * problem instead of surfacing as an org spend cap.
+   */
+  sponsorship?: { targetId: string; sessionIdx: number };
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
@@ -522,6 +546,7 @@ export async function runSyntheticHostSession(
     systemPrompt,
     temperature,
     maxSteps,
+    maxOutputTokens,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -534,12 +559,20 @@ export async function runSyntheticHostSession(
     harness,
     sandboxBinding,
     harnessSandboxBinding,
+    harnessExecutionTarget,
     accessVersion,
     scenarioId,
     environmentId,
     modelSelection,
     reasoningEffort,
   } = runtime;
+  // What the session records for each turn: the selection it ran, effort
+  // included. (A swarm session's backend pins it from the run snapshot.)
+  const sessionModelSelection = ranTurnSelection({
+    selection: modelSelection,
+    model: modelDefinition,
+    reasoningEffort,
+  });
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
   // does not go through `resolveHostTools`, so without an explicit ephemeral
@@ -665,6 +698,9 @@ export async function runSyntheticHostSession(
         scenarioId,
         accessVersion,
         serverIds: selectedServerIds,
+        // The same selection the turns route by, so this attribution row
+        // cannot name a different source than a real turn would have.
+        ...(modelSelection ? { modelSelection } : {}),
       });
       emptySessionModelSource = resolution.source;
     } catch {
@@ -676,6 +712,7 @@ export async function runSyntheticHostSession(
     const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
+      modelSelection: sessionModelSelection,
       modelSource: emptySessionModelSource,
       authHeader,
       projectId,
@@ -907,6 +944,8 @@ export async function runSyntheticHostSession(
         harness,
         modelId: String(modelDefinition.id),
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        ...(modelSelection ? { selection: modelSelection } : {}),
         hasProjectId: Boolean(projectId),
       });
 
@@ -968,18 +1007,18 @@ export async function runSyntheticHostSession(
             }
           : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
-        ? { kind: "none" }
-        : {
-            kind: "pinned",
-            skills: pinnedSkills.map(
-              (a): PinnableSkill => ({
-                name: a.name,
-                description: a.description,
-                content: a.content,
-                contentHash: a.contentHash,
-              }),
-            ),
-          };
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map(
+                (a): PinnableSkill => ({
+                  name: a.name,
+                  description: a.description,
+                  content: a.content,
+                  contentHash: a.contentHash,
+                }),
+              ),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -1093,9 +1132,9 @@ export async function runSyntheticHostSession(
         if (turn === 0) {
           throw Object.assign(
             new Error(
-              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt."
+              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt.",
             ),
-            { details: { reason: "persona_ended_before_start" } }
+            { details: { reason: "persona_ended_before_start" } },
           );
         }
         break;
@@ -1103,9 +1142,9 @@ export async function runSyntheticHostSession(
       if (!next.message.trim()) {
         throw Object.assign(
           new Error(
-            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt."
+            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt.",
           ),
-          { details: { reason: "persona_empty_message" } }
+          { details: { reason: "persona_empty_message" } },
         );
       }
 
@@ -1151,6 +1190,7 @@ export async function runSyntheticHostSession(
             systemPrompt: prepared.enhancedSystemPrompt,
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
+            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
@@ -1247,6 +1287,7 @@ export async function runSyntheticHostSession(
             // The attempt's own disposable box for the HARNESS turn. Only meaningful
             // when a harness is selected — the emulated engine's shell binds through
             // `resolveHostTools` above instead.
+            ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
             ...(harness && harnessSandboxBinding
               ? { harnessSandboxBinding }
               : {}),
@@ -1287,6 +1328,9 @@ export async function runSyntheticHostSession(
               : {}),
             ...(modelSelection ? { modelSelection } : {}),
             ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(runtime.sponsorship
+              ? { sponsorship: runtime.sponsorship }
+              : {}),
           }),
         admissionOptions,
       ).catch((error: unknown) => {
@@ -1377,6 +1421,7 @@ export async function runSyntheticHostSession(
       const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
+        modelSelection: sessionModelSelection,
         modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,
@@ -1467,9 +1512,9 @@ export async function runSyntheticHostSession(
     if (messageHistory.length === 0) {
       throw Object.assign(
         new Error(
-          "The simulation ended without starting a conversation. The assistant was not tested."
+          "The simulation ended without starting a conversation. The assistant was not tested.",
         ),
-        { details: { reason: "simulation_no_conversation" } }
+        { details: { reason: "simulation_no_conversation" } },
       );
     }
     await ensureSessionPersisted();
@@ -1503,6 +1548,34 @@ export async function runSyntheticHostSession(
       error instanceof RecordedAssistantTurnError
         ? error.errorRefusal
         : spendRefusalOf(error);
+    // A SPONSORED conversation that hit the platform's limit (or a claim the
+    // backend would not honour) is MCPJam's to explain. It is never an org
+    // spend cap, never retried, and never re-run on the organization's credits,
+    // so it must not fall through to the rate-limit fold below (whose "429"
+    // match would hand it to the whole-run spend-cap stop).
+    const sponsoredFailure = runtime.sponsorship
+      ? sponsoredPlatformFailure({
+          code: errorRefusal?.code ?? readErrorReason(error),
+          message,
+        })
+      : undefined;
+    if (sponsoredFailure) {
+      logger.warn("[sessionSimulation.runner] sponsored session stopped", {
+        runId,
+        chatSessionId,
+        code: sponsoredFailure.code,
+      });
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage: sponsoredFailure.message,
+      });
+      return {
+        outcome: "failed",
+        errorMessage: sponsoredFailure.message,
+        errorReason: sponsoredFailure.code,
+      };
+    }
     // Single source of truth for the spend-cap / rate-limit fold — shared with
     // the per-runtime `classifyFailure` so the regex can't drift. Return the
     // message on the rate-limited branch too: the swarm fan-out runner inspects
@@ -1908,8 +1981,23 @@ export async function drainAssistantTurn(
      * `resolveTurnRuntime` on the rail it resolves.
      */
     reasoningEffort?: ModelReasoningEffort;
+    /**
+     * Per-step output-token ceiling for the hosted body (see
+     * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
+     * against it, so a realistic ceiling is a realistic hold. Sent on the
+     * MCPJam-hosted rail only (see `resolveTurnRuntime`), and never to a
+     * harness host's model broker (see the harness options below).
+     */
+    maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
+    /**
+     * Sponsored swarm step: send the platform claim so the backend bills MCPJam
+     * instead of the organization. `sessionIdx` is omitted for the target-level
+     * setup turn. Honoured only on the MCPJam-hosted rail; anywhere else the
+     * step is refused rather than run on a paid path.
+     */
+    sponsorship?: { targetId: string; sessionIdx?: number };
   },
 ): Promise<{
   history: ModelMessage[];
@@ -1930,12 +2018,15 @@ export async function drainAssistantTurn(
     harnessMcpProxy,
     pinnedHarnessSkills,
     harnessSandboxBinding,
+    harnessExecutionTarget,
     environmentId,
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
     modelSelection,
     reasoningEffort,
+    sponsorship,
+    maxOutputTokens,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1961,6 +2052,8 @@ export async function drainAssistantTurn(
   // body as an extra field. The backend spend writer ignores unknown fields
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
   // so this is forward-compatible and inert for the scenario path.
+  // `maxOutputTokens` is NOT merged here: it rides the MCPJam-hosted rail only,
+  // so `resolveTurnRuntime` adds it once the rail is known.
   const mergedExtraBodyFields =
     journeyRunId !== undefined
       ? { ...(extraBodyFields ?? {}), journeyRunId }
@@ -1997,6 +2090,7 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     // What the engine is handed below, so the rail applies the effort and
     // the local execution record states the settings actually sent.
     ...(args.temperature !== undefined || reasoningEffort !== undefined
@@ -2010,6 +2104,41 @@ export async function drainAssistantTurn(
         }
       : {}),
   });
+
+  // Sponsored claim, attached AFTER rail resolution so it can only ever ride
+  // the MCPJam-hosted `/stream` rail. The stream handler turns
+  // `billingFeature` into the platform route plus the service-token proof; on
+  // BYOK or a harness the claim would be incoherent (the customer's own key or
+  // box is not MCPJam paying), and dropping it would quietly run a sponsored
+  // conversation on a paid path. Refuse instead.
+  if (sponsorship) {
+    if (
+      rt.runtime.kind !== "hosted" ||
+      rt.modelSource !== "mcpjam" ||
+      args.harness ||
+      rt.runtime.harness ||
+      !journeyRunId ||
+      !hostId
+    ) {
+      throw new Error(
+        "A sponsored conversation runs only on an MCPJam-hosted model without a harness, and this step resolved to a different rail, so it was not run " +
+          `(${SWARM_SPONSORSHIP_REJECTED_CODE}).`,
+      );
+    }
+    rt.runtime = {
+      ...rt.runtime,
+      extraBodyFields: {
+        ...(rt.runtime.extraBodyFields ?? {}),
+        billingFeature: SWARM_SPONSORED_FEATURE,
+        journeyRunId,
+        hostId,
+        targetId: sponsorship.targetId,
+        ...(sponsorship.sessionIdx !== undefined
+          ? { sessionIdx: sponsorship.sessionIdx }
+          : {}),
+      },
+    };
+  }
 
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
@@ -2108,6 +2237,28 @@ export async function drainAssistantTurn(
     };
   }
 
+  // The id `/stream` is sent must be the one the hosted check decided on. A
+  // snapshot pinned before selections existed carries the bare id
+  // (`gpt-5.6-luna`), which `isHostedCatalogModel` canonicalizes to
+  // `openai/gpt-5.6-luna` to route the turn here, while the engine writes
+  // `modelDefinition.id` into the body and `/stream`'s catalog knows only the
+  // prefixed id, refusing the bare one as `invalid_model`. Canonicalized
+  // against the live hosted catalog too, so a model the backend added after
+  // the snapshot resolves the same way. Same override the hosted eval turn
+  // makes. `/stream/org` keeps the bare id: that is the org provider's own
+  // model name.
+  const turnModelDefinition =
+    rt.modelSource === "mcpjam"
+      ? {
+          ...modelDefinition,
+          id: getCanonicalModelId(
+            String(modelDefinition.id),
+            modelDefinition.provider,
+            hostedCatalogModelDefinitions(),
+          ),
+        }
+      : modelDefinition;
+
   // Hosted engines (JAM-paid `/stream`, cloud org-BYOK `/stream/org`). The
   // endpoint + extra body fields + harness selector ride `rt.runtime`.
   const result = await runUnifiedAssistantTurn({
@@ -2116,7 +2267,7 @@ export async function drainAssistantTurn(
     persistMode: "caller",
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
-    modelDefinition,
+    modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
     ...(args.temperature !== undefined
       ? { temperature: args.temperature }
@@ -2153,6 +2304,12 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // No ceiling for a harness host: its model broker clamps `max_tokens` to it
+    // without touching the model's thinking budget, so one below the broker's
+    // own default (64,000) can make Anthropic refuse every thinking turn. The
+    // ceiling rides the hosted `/stream` body only, and `resolveTurnRuntime`
+    // withholds it from a harness host even when `maxOutputTokens` is set.
+    ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the
     // emulated engine, which resolves no such credential.

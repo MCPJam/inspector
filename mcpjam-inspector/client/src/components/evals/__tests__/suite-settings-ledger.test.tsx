@@ -9,6 +9,11 @@ import {
   v2Suite,
 } from "./settings-sheet-harness";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 const composeCapability = vi.hoisted(() => ({
   value: true as boolean | undefined,
 }));
@@ -19,6 +24,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: (name: string) =>
     name === "testSuites:applySuiteSettings"
       ? mocks.applySuiteSettings
@@ -30,9 +37,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -226,14 +232,14 @@ describe("suite settings ledger", () => {
     // that actually run, and the judge, rubric and matcher editors are on the
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
-    expect(
-      screen.getByRole("heading", { name: "Evaluators" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Evaluators" })).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),
     ).toBeNull();
-    for (const key of ["judge", "judgeRubric", "matchOptions", "validity"]) {
+    // Grading instructions are hidden for now: the judge section shows only
+    // the judge model (SETTINGS_PAGE_HIDDEN_KEYS says where they live).
+    for (const key of ["judge", "matchOptions", "validity"]) {
       expect(
         container.querySelector(`[data-setting-key="${key}"]`),
         key,

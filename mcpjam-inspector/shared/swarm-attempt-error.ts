@@ -29,6 +29,11 @@ import {
   isXaaConnectFailureReason,
   XaaConnectFailureReason,
 } from "./xaa-connect-failure.js";
+import {
+  AI_RETRYABLE_REFUSAL_CODES,
+  isOrgKeyPolicyRefusalCode,
+} from "./ai-execution-refusal.js";
+import { describeAiRefusal } from "./ai-refusal-copy.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
 const AGENT_ERROR_ENVELOPE =
@@ -59,11 +64,189 @@ export const SPEND_REFUSAL_REASONS = [
   "insufficient_for_request",
 ] as const;
 
-export function isTransientSpendRefusal(
-  code?: string,
-  refusalReason?: string,
+/**
+ * The backend's sentence for a `holds_committed` refusal
+ * (`buildSpendRefusalBody` in the backend's `convex/lib/spendRefusal.ts`):
+ * "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the
+ * remaining credits and release them as they finish."
+ *
+ * A stored attempt row keeps that sentence and the generic `user_rate_limit`
+ * code, but not the `refusalReason`, so on a row the sentence is the only
+ * signal left that the credits were HELD rather than spent. Anchored on the
+ * backend's own words: "in-flight" alone turns up in unrelated text.
+ */
+const HOLDS_COMMITTED_SENTENCE =
+  /MCPJam model limit reached for the moment\b|in-flight request\(s\) hold the remaining credits/i;
+
+/**
+ * The whole held-credits sentence, for taking it OUT of a text so what is left
+ * can be read for anything else the text says.
+ */
+const HOLDS_COMMITTED_SENTENCE_TEXT =
+  /MCPJam model limit reached for the moment\b[^.]*\.?|in-flight request\(s\) hold the remaining credits[^.]*\.?/gi;
+
+/** `text` without the backend's held-credits sentence. */
+export function withoutHeldCreditsSentence(text: string): string {
+  return text.replace(HOLDS_COMMITTED_SENTENCE_TEXT, " ");
+}
+
+/**
+ * What an exhaustion SAYS, in words. Kept apart from the codes because the
+ * codes also ride a hold (`user_rate_limit` is the generic code for both), so
+ * only these phrases can tell a text that also states an exhaustion from a text
+ * that is only a hold.
+ */
+export const EXHAUSTION_PHRASES: readonly RegExp[] = [
+  /mcpjam[\w\s-]{0,40}model limit/i,
+  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
+  /\bThis request needs about \d+ MCPJam credits\b/i,
+  /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i,
+];
+
+/**
+ * The exhaustion codes that never ride a hold. A hold answers with the generic
+ * `user_rate_limit` (`buildSpendRefusalBody`), so that one says nothing next to
+ * the sentence; these three do.
+ */
+const EXHAUSTION_ONLY_CODES =
+  /\b(?:mcpjam_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
+
+/**
+ * Does this text state an exhaustion once the held-credits sentence is taken
+ * out of it? The sentence is a hold; what is left may not be.
+ */
+export function statesExhaustion(text: string): boolean {
+  const rest = withoutHeldCreditsSentence(text);
+  return (
+    EXHAUSTION_PHRASES.some((phrase) => phrase.test(rest)) ||
+    EXHAUSTION_ONLY_CODES.test(rest)
+  );
+}
+
+/**
+ * Codes that name a refusal other than a hold. A hold answers with the generic
+ * `user_rate_limit` (not here); a flattened message has no code at all, and a
+ * stored row can carry the runner's own generic code (`rate_limited`,
+ * `session_failed`) when the backend's was lost. None of those rules a hold
+ * out. These do: a locked wallet answers `wallet_locked` with the same
+ * sentence, and the rest are an exhaustion in their own right or a limit no
+ * purchase of credits lifts.
+ */
+const NON_HOLD_CODES: ReadonlySet<string> = new Set([
+  "wallet_locked",
+  "spend_budget_reached",
+  "organization_spend_budget_reached",
+  "platform_free_budget_exhausted",
+  "platform_capacity",
+  "account_suspended",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+  "mcpjam_rate_limit",
+  "org_rate_limit",
+  "billing_limit_reached",
+]);
+
+/** The code names a refusal other than a hold; see {@link NON_HOLD_CODES}. */
+export function namesAnotherRefusal(code?: string | null): boolean {
+  return !!code && NON_HOLD_CODES.has(code.toLowerCase());
+}
+
+/**
+ * `holds_committed`: other in-flight requests hold the last credits and
+ * release them as they finish.
+ *
+ * This is the one reading of a hold: the card, the retry, the describer and the
+ * dialog all come through it (the dialog by way of `isHoldRefusal`, which reads
+ * a refusal's fields and calls this).
+ *
+ * - A code that names a different refusal rules it out first (see
+ *   {@link namesAnotherRefusal}): a locked wallet answers `wallet_locked` with
+ *   the same sentence, and can carry the structured reason too.
+ * - A structured `refusalReason` is the backend's own verdict and decides alone:
+ *   the sentence is only a fallback for a stored attempt row, which keeps the
+ *   sentence and loses the reason. Reading the sentence first would let a
+ *   refusal that quotes one (or aggregates several) outvote its own reason.
+ * - The sentence is anchored on the backend's own words, and a text that also
+ *   states an exhaustion is an exhaustion: the hold must not hide it.
+ *
+ * Split from {@link isTransientSpendRefusal} because a hold and a busy
+ * reservation are both waits but read differently to the user: a hold is about
+ * credits, a busy reservation is not.
+ */
+export function isHeldCreditsRefusal(
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
 ): boolean {
-  return code === "user_rate_limit" && refusalReason === "holds_committed";
+  if (namesAnotherRefusal(code)) return false;
+  if (refusalReason) return refusalReason === "holds_committed";
+  return (
+    !!message &&
+    HOLDS_COMMITTED_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
+ * `spending_reservation_busy` (503): MCPJam's own reservation lost its
+ * concurrency race on every retry and committed nothing, so the model was not
+ * called, so asking again is safe (`runSpendingReservationWithOccRetry` in the
+ * backend's `convex/lib/occRetry.ts`).
+ *
+ * A wait on MCPJam's side: no provider throttled anything and no purchase
+ * helps, so a surface must not call it either.
+ */
+export function isBusyReservation(code?: string | null): boolean {
+  return code === "spending_reservation_busy";
+}
+
+/**
+ * The busy reservation's own sentences: the backend's ("could not reserve
+ * spending capacity because ...", and its older "spend capacity" and "MCPJam
+ * is temporarily busy" wordings) and the one {@link humanizeSwarmAttemptError}
+ * words it with. All of them say MCPJam is the one waiting.
+ */
+const BUSY_RESERVATION_SENTENCE =
+  /\bcould not reserve (?:spend|spending) capacity\b|\bMCPJam is temporarily busy\b|\btemporarily busy reserving spending capacity\b/i;
+
+/**
+ * A busy reservation by its code, or by its own sentence when the code was
+ * lost: a live event carries only the humanized message, and a stored row can
+ * carry the runner's generic code (or, from before the runner kept the busy
+ * code, the credit denial) beside it. The same fallback a hold has.
+ *
+ * A code that names a different refusal rules the sentence out, and a text
+ * that also states an exhaustion is an exhaustion.
+ */
+export function isBusyReservationRefusal(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (isBusyReservation(code)) return true;
+  return (
+    !!message &&
+    !namesAnotherRefusal(code) &&
+    BUSY_RESERVATION_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
+ * A refusal that lifts in seconds on its own: a wait, never an exhausted
+ * wallet.
+ *
+ * - `holds_committed`: see {@link isHeldCreditsRefusal}.
+ * - A busy reservation: see {@link isBusyReservation}.
+ */
+export function isTransientSpendRefusal(
+  code?: string | null,
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  return (
+    isBusyReservation(code) ||
+    isHeldCreditsRefusal(code, refusalReason, message)
+  );
 }
 
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
@@ -90,17 +273,26 @@ export type SwarmAttemptErrorInfo = {
   httpStatus?: number;
 };
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{")) return null;
+/**
+ * The JSON object an error string wraps. Error envelopes often prefix the
+ * response body with a URL and a status, so this starts at the first `{`.
+ */
+export function parseJsonEnvelope(text: string): Record<string, unknown> | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
   try {
-    const parsed: unknown = JSON.parse(trimmed);
+    const parsed: unknown = JSON.parse(text.slice(start));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") ? parseJsonEnvelope(trimmed) : null;
 }
 
 function str(value: unknown): string | undefined {
@@ -173,6 +365,31 @@ const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
 };
 
 /**
+ * A refusal by the organization's AI-key policy ("Use your keys for all AI
+ * features"), in plain words. The backend's own sentence is written for the
+ * request, not for the person reading a session row, and a configuration
+ * refusal must read as one — "add or configure an organization provider",
+ * never a wait or a credit problem — so the shared copy wins. Member
+ * audience: the row is read by whoever opens the run, and the member copy
+ * points at an admin rather than at settings the reader may not have.
+ *
+ * `isRetryable` is the policy's own verdict: only the two transient refusals
+ * lift on their own; every configuration refusal stops retrying.
+ */
+function orgKeyPolicyRefusalInfo(
+  code: string,
+  httpStatus?: number,
+): SwarmAttemptErrorInfo {
+  const normalized = code.trim().toLowerCase();
+  return {
+    code: normalized,
+    message: describeAiRefusal(normalized, "member").body,
+    isRetryable: AI_RETRYABLE_REFUSAL_CODES.has(normalized),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+  };
+}
+
+/**
  * Extract a clean message + structured hints from whatever the runner caught.
  *
  * Never throws and never returns an empty message — an unparseable input is
@@ -195,6 +412,9 @@ export function humanizeSwarmAttemptError(
         "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
     };
   }
+  if (errorCode && isOrgKeyPolicyRefusalCode(errorCode)) {
+    return orgKeyPolicyRefusalInfo(errorCode);
+  }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
     : undefined;
@@ -202,12 +422,18 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  if (errorCode === "spending_reservation_busy") {
+    return {
+      code: errorCode,
+      message:
+        "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    };
+  }
   // Older backend failures were truncated JSON envelopes. Recognize this
   // specific reservation conflict even when the JSON can no longer be parsed.
   if (
-    errorCode === "spending_reservation_busy" ||
-    (input.includes("streamSpendingReservations") &&
-      input.includes("changed while this mutation was being run"))
+    input.includes("streamSpendingReservations") &&
+    input.includes("changed while this mutation was being run")
   ) {
     return {
       code: "spending_reservation_busy",
@@ -254,6 +480,9 @@ export function humanizeSwarmAttemptError(
       const status = detail[2] ?? detail[3];
       if (status && httpStatus === undefined) httpStatus = Number(status);
     }
+    if (engineCode && isOrgKeyPolicyRefusalCode(engineCode)) {
+      return orgKeyPolicyRefusalInfo(engineCode, httpStatus);
+    }
     const stripped = scrub(body);
     // `scrub(input)` rescues an envelope that consumed the whole string. Past a
     // stripped suffix the raw input only holds that suffix again, and a
@@ -276,6 +505,9 @@ export function humanizeSwarmAttemptError(
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
   const code = str(parsed.code);
+  if (code && isOrgKeyPolicyRefusalCode(code)) {
+    return orgKeyPolicyRefusalInfo(code, httpStatus);
+  }
   // `provider_not_allowlisted` carries the gateway's own instruction to its
   // account owner ("Update your Provider Allowlist settings…") in `details`.
   // That is MCPJam's setting, not the reader's; the headline already names

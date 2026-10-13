@@ -1,3 +1,5 @@
+import { authRefusalDiagnostics } from "../auth/auth-refusal-diagnostics";
+import { guestTabRecovery } from "../auth/guest-tab-recovery";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexReactClient } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -5,6 +7,10 @@ import { ConvexError } from "convex/values";
 vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
 import { reportCaught } from "../error-reporting";
 import { traceConvexQueries } from "../trace-convex-queries";
+import {
+  resetSessionRevokedForTests,
+  setSessionRevokedHandler,
+} from "../auth/session-revoked";
 
 const query = makeFunctionReference<"query">("scenarios:listScenarios");
 const failure = new Error(
@@ -48,6 +54,27 @@ function fixture() {
 describe("traced watches", () => {
   beforeEach(() => {
     vi.mocked(reportCaught).mockReset();
+    resetSessionRevokedForTests();
+    authRefusalDiagnostics.dispose();
+    guestTabRecovery.setGuest(null);
+  });
+  it("still handles revocation when diagnostics throw", () => {
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const diagnostic = vi.spyOn(authRefusalDiagnostics, "record").mockImplementation(() => { throw Error("logging failed"); });
+    const f = fixture();
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(handler).toHaveBeenCalledOnce();
+    diagnostic.mockRestore();
+  });
+  it("does not sign WorkOS out for a stale guest watch", () => {
+    guestTabRecovery.setGuest("old-guest");
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const f = fixture(); const watch = f.client.watchQuery(query, {});
+    guestTabRecovery.setGuest(null);
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    watch.onUpdate(() => {});
+    expect(handler).not.toHaveBeenCalled();
   });
   it("preserves args, options, results, other watch methods and cleanup", () => {
     const f = fixture();
@@ -136,6 +163,61 @@ describe("traced watches", () => {
     const f = fixture();
     const refused = new ConvexError({ kind: "forbidden" });
     f.set(undefined, refused);
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow();
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+  it("signs the tab out once, and reports nothing, when its session was signed out elsewhere", () => {
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const revoked = new ConvexError({
+      kind: "session_revoked",
+      message: "Authentication required",
+    });
+    const f = fixture();
+    f.set(undefined, revoked);
+    const first = f.client.watchQuery(query, {});
+    first.onUpdate(() => {});
+    const second = f.client.watchQuery(query, { other: true });
+    second.onUpdate(() => {});
+    expect(() => first.localQueryResult()).toThrow(revoked);
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(signOut).toHaveBeenCalledOnce();
+  });
+  it("neither reports nor signs out a subscription re-run without identity", () => {
+    // Auth is already on its way back; the readiness gate re-subscribes.
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const unauthenticated = new ConvexError({
+      kind: "unauthenticated",
+      message: "Authentication required",
+    });
+    const f = fixture();
+    f.set(undefined, unauthenticated);
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow(unauthenticated);
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+  });
+  it("still reports a plain Server Error and does not sign out", () => {
+    const signOut = vi.fn();
+    setSessionRevokedHandler(signOut);
+    const f = fixture();
+    f.set(undefined, failure);
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(reportCaught).toHaveBeenCalledOnce();
+    expect(signOut).not.toHaveBeenCalled();
+  });
+  it("does not report a run or suite the user deleted", () => {
+    const f = fixture();
+    const deleted = new ConvexError({
+      code: "NOT_FOUND",
+      reason: "eval_parent_deleted",
+      message: "Suite run not found",
+    });
+    f.set(undefined, deleted);
     const watch = f.client.watchQuery(query, {});
     watch.onUpdate(() => {});
     expect(() => watch.localQueryResult()).toThrow();

@@ -5,8 +5,11 @@
  * Each tool IS a `PlatformOperation`, adapted per the catalog's design
  * ("defined once and adapted per surface"): name, description, input schema,
  * and execute come from the operation — identical to the MCP worker's tools
- * — so the catalog ids registered in the backend `builtInTools` table are
- * the operation names, unchanged. The operations call the platform's own
+ * — so the tool names the in-app chat advertises are the operation names,
+ * unchanged. They are wired straight into the mcpjam-agent route: there is no
+ * backend `builtInTools` table, and the host-config built-in catalog
+ * (mcpjam-backend `convex/lib/builtInTools.ts`) deliberately does not list
+ * them. The operations call the platform's own
  * `/api/v1`; in-app the injected `PlatformApiClient` self-dispatches into
  * this server's Hono app (see routes/web/mcpjam-platform-client.ts), so no
  * forked handler logic and no network hop.
@@ -101,6 +104,7 @@ import {
   readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -181,6 +185,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -325,6 +330,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  // A person in the app reports through the Send feedback form, which shows
+  // them where the text goes. A model-authored post to the MCPJam team from
+  // inside someone's chat is a different act, and this surface declines it.
+  send_feedback:
+    "in-app users get the Send feedback form; model-authored posts to the team are declined here",
   connect_eval_github_repo:
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   connect_eval_check_repo:

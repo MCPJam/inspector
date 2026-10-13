@@ -1,0 +1,85 @@
+import { useId } from "react";
+import { Badge } from "@mcpjam/design-system/badge";
+import { cn } from "@/lib/utils";
+import type { BillingInterval } from "@/hooks/useOrganizationBilling";
+
+const INTERVALS = ["monthly", "annual"] as const;
+
+function otherInterval(interval: BillingInterval): BillingInterval {
+  return interval === "monthly" ? "annual" : "monthly";
+}
+
+export function BillingIntervalToggle({
+  billingInterval,
+  onChange,
+  annualDiscount = 0,
+  className,
+  size = "default",
+}: {
+  billingInterval: BillingInterval;
+  onChange: (interval: BillingInterval) => void;
+  annualDiscount?: number;
+  className?: string;
+  size?: "default" | "sm";
+}) {
+  const groupName = useId();
+  const compact = size === "sm";
+  return (
+    <fieldset
+      className={cn(
+        "relative inline-grid grid-cols-2 rounded-xl border border-border bg-secondary/50 p-1",
+        className,
+      )}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onChange(otherInterval(billingInterval));
+        }
+      }}
+    >
+      <legend className="sr-only">Billing interval</legend>
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-foreground transition-transform duration-200 ease-out motion-reduce:transition-none",
+          billingInterval === "annual" && "translate-x-full",
+        )}
+      />
+      {INTERVALS.map((interval) => {
+        const selected = billingInterval === interval;
+        return (
+          <label key={interval} className="relative z-10 cursor-pointer">
+            <input
+              type="radio"
+              name={groupName}
+              value={interval}
+              checked={selected}
+              onChange={() => onChange(interval)}
+              onClick={() => {
+                if (selected) onChange(otherInterval(interval));
+              }}
+              className="peer sr-only"
+            />
+            <span
+              className={cn(
+                "flex h-full w-full items-center justify-center rounded-lg font-medium transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring",
+                selected
+                  ? "text-background"
+                  : "text-muted-foreground hover:text-foreground",
+                compact
+                  ? "min-h-8 gap-1 px-2 text-xs"
+                  : "min-h-10 gap-1.5 px-2.5 text-xs sm:px-3 sm:text-sm",
+              )}
+            >
+              {interval === "monthly" ? "Monthly" : "Annual"}
+              {interval === "annual" && annualDiscount > 0 ? (
+                <Badge className="rounded-lg px-1 py-px text-[10px] leading-tight">
+                  Save {annualDiscount}%
+                </Badge>
+              ) : null}
+            </span>
+          </label>
+        );
+      })}
+    </fieldset>
+  );
+}

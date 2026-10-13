@@ -221,11 +221,11 @@ version first and prints the fix.
 ### Docker
 
 ```bash
-# Build Docker image
-docker build -t mcpjam/mcp-inspector .
+# Build Docker image (from the repo root; the Dockerfile copies sibling workspaces)
+docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 
 # Run container
-docker run -p 6274:6274 mcpjam/mcp-inspector
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
 ## Next Steps

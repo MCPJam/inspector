@@ -11,7 +11,6 @@ import {
   useEffect,
   useId,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -206,14 +205,16 @@ export function ClientContextHeader({
     )
   );
   const [shouldBlink, setShouldBlink] = useState(false);
-  const prevViolationCount = useRef(violationCount);
+  const [prevViolationCount, setPrevViolationCount] = useState(violationCount);
 
-  useEffect(() => {
-    if (violationCount > prevViolationCount.current) {
+  // Update during this render so a burst of synchronous store notifications
+  // cannot keep queuing effect updates and exceed React's update depth.
+  if (violationCount !== prevViolationCount) {
+    setPrevViolationCount(violationCount);
+    if (violationCount > prevViolationCount) {
       setShouldBlink(true);
     }
-    prevViolationCount.current = violationCount;
-  }, [violationCount]);
+  }
 
   const fallbackLocale = navigator.language || "en-US";
   const fallbackTimeZone =

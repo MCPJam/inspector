@@ -14,6 +14,10 @@ import {
   type MapRuntimeErrorOptions,
 } from "../web/errors.js";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import {
+  agentRouteCapture,
+  isAgentRequestPath,
+} from "../../utils/agent-failure-capture.js";
 import { internalErrorResponseView } from "../web/hosted-internal-error.js";
 import {
   v1ErrorBody,
@@ -120,6 +124,12 @@ export interface V1ErrorMapping {
   origin?: ErrorOrigin;
   /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
   slug?: string;
+  /**
+   * Whether the mapping's capture decision sent this to Sentry. Recorded on
+   * `webErrorMeta` by `v1OnError` so the request-log backstop captures only
+   * what nothing else did.
+   */
+  captured?: boolean;
 }
 
 /**
@@ -154,28 +164,41 @@ export function mapErrorToV1(
   // on-call rotation. Their verdicts have to win, so they are taken first.
   if (safeIsMcpAuthError(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    // A surface's own rule (Ask MCPJam) applies on these early branches too.
+    const capture = options?.capture?.({
+      status: V1_ERROR_STATUS.OAUTH_REQUIRED,
+      code: "OAUTH_REQUIRED",
+    });
     const decision = maybeCaptureOriginError(error, describeError(error), {
       source: "v1.mapErrorToV1",
       extra: { code: "OAUTH_REQUIRED" },
+      ...(capture ? { capture } : {}),
     });
     return {
       code: "OAUTH_REQUIRED",
       message,
       origin: decision.origin,
       slug: decision.slug,
+      captured: decision.captured,
     };
   }
   if (isMcpMethodNotFound(error)) {
     const message = error instanceof Error ? error.message : String(error);
+    const capture = options?.capture?.({
+      status: V1_ERROR_STATUS.FEATURE_NOT_SUPPORTED,
+      code: "FEATURE_NOT_SUPPORTED",
+    });
     const decision = maybeCaptureOriginError(error, describeError(error), {
       source: "v1.mapErrorToV1",
       extra: { code: "FEATURE_NOT_SUPPORTED" },
+      ...(capture ? { capture } : {}),
     });
     return {
       code: "FEATURE_NOT_SUPPORTED",
       message,
       origin: decision.origin,
       slug: decision.slug,
+      captured: decision.captured,
     };
   }
   // A DELIBERATE backend refusal — `ConvexError({ code, message })` — is
@@ -215,6 +238,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   // The upstream server refused the credentials we presented. Mapped HERE
@@ -242,6 +266,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   // A revoked session (MJ-011). Inspector-only for the same reason as the
@@ -255,6 +280,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   return {
@@ -264,6 +290,7 @@ export function mapErrorToV1(
     headers: routeError.headers,
     origin: routeError.origin,
     slug: routeError.normalized?.slug,
+    captured: routeError.captured === true,
   };
 }
 
@@ -332,8 +359,17 @@ export function v1OnError(
     ) => Record<string, unknown> | undefined;
   },
 ) {
-  const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
-  const { headers, origin, slug } = mapped;
+  // The v1 agent (Slack, Discord, API keys) keeps Ask MCPJam's rule here: its
+  // handler has no catch, so every throw lands in this function, and without
+  // the rule the capture would carry no `surface`/`page_class` tags and match
+  // no Ask MCPJam alert, while `captured: true` kept the backstop off it too.
+  const mapped = mapErrorToV1(error, {
+    boundary: "mcpjam_internal",
+    ...(isAgentRequestPath(c.req.path)
+      ? { capture: agentRouteCapture("v1.agent") }
+      : {}),
+  });
+  const { headers, origin, slug, captured } = mapped;
   const code = override?.code ?? mapped.code;
   const message = override?.message ?? mapped.message;
   const details = override?.details
@@ -350,6 +386,7 @@ export function v1OnError(
     message,
     ...(origin ? { origin } : {}),
     ...(slug ? { slug } : {}),
+    ...(typeof captured === "boolean" ? { captured } : {}),
   });
   return v1Error(c, code, message, details, headers);
 }

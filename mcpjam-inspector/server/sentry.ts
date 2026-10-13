@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/node";
-import { buildServerSentryConfig } from "../shared/sentry-config.js";
+import {
+  buildServerSentryConfig,
+  scrubSentryCredentials,
+  scrubServerSentryBreadcrumb,
+  scrubServerSentryEvent,
+} from "../shared/sentry-config.js";
 import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
 
 /**
@@ -12,7 +17,12 @@ import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
  *
  * NOT called under Electron — the main-process `@sentry/electron` SDK already
  * owns the global carrier there, and a second init would fight it. Electron's
- * embedded server inherits that client.
+ * embedded server inherits that client ONLY while both resolve the same
+ * `@sentry/core`: the carrier is keyed by SDK version, so a server-side
+ * `@sentry/node` one patch apart from the one `@sentry/electron` pins captures
+ * into a carrier with no client and every desktop server error is dropped.
+ * `@sentry/node`/`@sentry/react` are pinned to `@sentry/electron`'s version
+ * for that reason; `__tests__/sentry-carrier-alignment.test.ts` holds it.
  */
 export function initServerSentry(): void {
   // The conventional opt-out for software that runs on the user's own
@@ -38,6 +48,19 @@ export function initServerSentry(): void {
     // Quota kill-knob. If a self-hosted noise pattern floods the project,
     // this can be dialed down by env var without a deploy.
     sampleRate: resolveErrorSampleRate(),
+    // What the SDK attaches by itself — the incoming request's body, query
+    // and headers; outgoing-request and console breadcrumbs — carries
+    // customer content regardless of `sendDefaultPii`. These keep its shape
+    // and drop its values. `logger.ts` scrubs the context it attaches.
+    //
+    // Then every credential out of the whole event: a share token in the
+    // request path (`/api/web/score/runs/<token>`), an OAuth code quoted in an
+    // exception, a callback URL in a breadcrumb (`shared/credential-urls.ts`).
+    // An event that cannot be shown clean is dropped.
+    beforeSend: (event) =>
+      scrubSentryCredentials(scrubServerSentryEvent(event)),
+    beforeSendTransaction: scrubSentryCredentials,
+    beforeBreadcrumb: scrubServerSentryBreadcrumb,
     integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that
       // deliberately swallows the MCP SDK's "Connection closed" rejections

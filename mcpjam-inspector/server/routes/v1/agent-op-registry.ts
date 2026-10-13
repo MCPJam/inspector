@@ -57,6 +57,7 @@ import {
   expandComposeModelChoices,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -416,12 +417,7 @@ function describeComposeEvalSuiteRun(
   // read `suite smoke (host_a)` after a successful `listHosts`.
   const host = named(compose, "hostLabel") ?? named(compose, "host");
   const hostNote = host ? ` (${host})` : "";
-  const choices = expandComposeModelChoices({
-    model: named(compose, "model"),
-    models: readStringList(compose, "models"),
-    includeClientDefault: compose.includeClientDefault === true,
-  });
-  const n = choices.length;
+  const n = composeChoiceCount(compose);
   // `saveTargets` is the only attach the caller opted into. A single cell
   // against a backend that cannot launch ephemerally still ATTACHES (the
   // SDK compat fallback in `composeLaunchPolicy`). This copy must not
@@ -806,6 +802,48 @@ function describeClientImpact(input: Record<string, unknown>): string {
 }
 
 /** Read a string array off validated input, dropping non-strings. */
+type ComposeModelSelections = NonNullable<
+  Parameters<typeof expandComposeModelChoices>[0]["modelSelections"]
+>;
+
+/** `modelSelections` (+ the singular alias) as sent; malformed entries skipped. */
+function readComposeModelSelections(
+  compose: Record<string, unknown>,
+): ComposeModelSelections {
+  const raw = [
+    ...(Array.isArray(compose.modelSelections) ? compose.modelSelections : []),
+    ...(compose.modelSelection !== undefined ? [compose.modelSelection] : []),
+  ];
+  return raw.filter(
+    (entry): entry is ComposeModelSelections[number] =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { modelId?: unknown }).modelId === "string",
+  );
+}
+
+/**
+ * How many cells a composed run launches — the same expansion the op runs,
+ * selections included, so two efforts of one model are counted as two runs.
+ * A selection set the op will refuse is described by its models alone; the
+ * refusal itself comes from the op.
+ */
+function composeChoiceCount(compose: Record<string, unknown>): number {
+  const base = {
+    model: named(compose, "model"),
+    models: readStringList(compose, "models"),
+    includeClientDefault: compose.includeClientDefault === true,
+  };
+  try {
+    return expandComposeModelChoices({
+      ...base,
+      modelSelections: readComposeModelSelections(compose),
+    }).length;
+  } catch {
+    return expandComposeModelChoices(base).length;
+  }
+}
+
 function readStringList(input: Record<string, unknown>, key: string): string[] {
   const value = input[key];
   return Array.isArray(value)
@@ -1492,6 +1530,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  {
+    operation: startMuseReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Meta's Muse connector guidelines`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // Free: Muse has no model pass at all.
+      confirmSeverity: () => "none",
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
     ],
   },
   { operation: getReadinessRunOperation, tier: "direct" },
@@ -2752,6 +2811,11 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
   uninstall_registry_server:
     "Agent proposes authoring, never destruction — same rule as delete_project_server.",
+  // Platform feedback ships to MCP, the CLI and the app first. The Slack and
+  // Discord headless turns follow once there is real volume to learn from: a
+  // bot relaying a channel's text to the MCPJam team needs its own disclosure.
+  send_feedback:
+    "v1 ships MCP/CLI/UI first; the Slack/Discord bot follows once volume is seen.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

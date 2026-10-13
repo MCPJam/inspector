@@ -142,9 +142,9 @@ export async function POST(request: Request) {
 
   const releaseWorkflow = ACTION_WORKFLOW[parsed.action];
   const runsMcp = parsed.deploy_mcp_production;
-  // Only release.yml has preflight gates to skip; prepare-release.yml opens a
-  // PR, which runs every check anyway.
-  const effectiveSkipVerify = parsed.action === "publish" && parsed.skip_verify;
+  // For "publish" this skips release.yml's gates now; for "start" it is ticked
+  // in the version PR, so the release starts on merge without waiting.
+  const effectiveSkipVerify = releaseWorkflow !== null && parsed.skip_verify;
   if (!releaseWorkflow && !runsMcp) {
     return NextResponse.json(
       {
@@ -201,16 +201,14 @@ export async function POST(request: Request) {
   const results: { workflow: string; ok: boolean; error?: string }[] = [];
 
   if (releaseWorkflow) {
-    // Workflow dispatch inputs go over the wire as strings. The deploy flags
-    // mean the same thing to both workflows: prepare-release.yml writes them
-    // into the version PR as checkboxes, release.yml acts on them directly.
+    // Workflow dispatch inputs go over the wire as strings. The flags mean the
+    // same thing to both workflows: prepare-release.yml writes them into the
+    // version PR as checkboxes, release.yml acts on them directly.
     const inputs: Record<string, string> = {
       deploy_backend_prod: String(parsed.deploy_backend_prod),
-      deploy_webapp: String(parsed.deploy_webapp)
+      deploy_webapp: String(parsed.deploy_webapp),
+      skip_verify: String(effectiveSkipVerify)
     };
-    if (parsed.action === "publish") {
-      inputs.skip_verify = String(effectiveSkipVerify);
-    }
     try {
       await dispatchWorkflow(
         "MCPJam",

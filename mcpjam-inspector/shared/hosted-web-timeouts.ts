@@ -30,3 +30,22 @@ export const WEB_CALL_TIMEOUT_MS = 30_000;
 
 /** Streaming turns, which hold a connection open across many model calls. */
 export const WEB_STREAM_TIMEOUT_MS = 120_000;
+
+/**
+ * Connect + list tools before a hosted chat turn streams. Nothing reaches the
+ * browser until this finishes, and Cloudflare drops a request that has sent no
+ * first byte after 100 s (a 524) — so a hung MCP server has to fail the turn
+ * with our own 424 well inside that, not after the per-request timeout above
+ * and its retries.
+ */
+export const WEB_CHAT_TOOL_LISTING_TIMEOUT_MS = 30_000;
+
+/**
+ * Hosted Connect (`/api/web/servers/validate`), counted from when the request
+ * reaches the server — the server-check queue wait included. The Connect
+ * button gives up 50 s after it sends the request (`validateHostedServer`),
+ * so the server has to answer inside that, with a few seconds left for the
+ * trip back. Without it the per-request timeout and its retries let a hung
+ * MCP server hold the check for minutes after the user was told it timed out.
+ */
+export const WEB_SERVER_CHECK_DEADLINE_MS = 45_000;

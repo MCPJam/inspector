@@ -1,3 +1,5 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
+import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
@@ -10,7 +12,9 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
+import { scrubCredentialUrl } from "../shared/credential-urls.js";
 import { logger as appLogger } from "./utils/logger";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -31,15 +35,9 @@ import { cacheEventLogger } from "./utils/cache-events";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
-import {
-  generateSessionToken,
-  getSessionToken,
-} from "./services/session-token";
+import { generateSessionToken, validateToken } from "./services/session-token";
 import { inspectorCommandBus } from "./services/inspector-command-bus";
-import {
-  mayServeSessionToken,
-  mayServeGuestBootstrap,
-} from "./utils/localhost-check";
+import { isAllowedHost, mayServeGuestBootstrap } from "./utils/localhost-check";
 import { getActiveTunnelDomains } from "./services/tunnel-registry";
 import {
   appendGuestSessionSetCookie,
@@ -63,12 +61,13 @@ import {
   stopRevokedSessionCache,
 } from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
-import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
+import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import {
@@ -187,6 +186,7 @@ import {
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
+import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -226,6 +226,7 @@ import {
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
+  LOCAL_HARNESS_ENABLED,
   SCORE_LANDING_HOSTS,
 } from "./config";
 import {
@@ -331,9 +332,11 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+if (!HOSTED_MODE) void startPluginFormFileJanitor();
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
+logGuestAuthorityOnce(appLogger);
 
 // Immediately after the env load and before anything that can throw: the init
 // reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
@@ -354,13 +357,16 @@ startHostedModelCatalogRefresh();
 // waits for it. A no-op without the service token. Mirror of server/app.ts.
 startRevokedSessionCache();
 
-startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
-// Reports whether a local-harness runtime pack is present. Deliberately
-// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-// kill switch and a consent grant is installed when the user asks, never
-// at startup and never during a session start.
-reportLocalHarnessRuntimeStatusInBackground();
+// Local runtime maintenance, after the janitor has reclaimed orphaned
+// sessions: this Inspector's liveness record, GC of packs no live
+// Inspector may select, and — only on a machine where somebody durably
+// authorized the harness, under the `auto` update policy — a background
+// prefetch of the desired pack. Never during a session start.
+if (!HOSTED_MODE) {
+  const janitor = startLocalHarnessJanitor();
+  if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+}
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -368,6 +374,10 @@ reportLocalHarnessRuntimeStatusInBackground();
 // `isComputersDataPlaneConfigured()`, which is only truthful once the
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
+// Which credential-backed capabilities this process has (names only), and the
+// hosted-mode refusal to run half-configured. Mirror of the call in
+// server/app.ts::createHonoApp.
+reportServiceCredentialAtBoot(HOSTED_MODE);
 const app = new Hono().onError((err, c) => {
   // Last-resort handler: an exception escaped every route and every router's
   // own `onError`. Declared `mcpjam_internal` — if our routers could not name
@@ -380,7 +390,7 @@ const app = new Hono().onError((err, c) => {
   const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
     source: "app.onError",
     hop: "mcpjam_internal",
-    context: { path: c.req.path, method: c.req.method },
+    context: { path: scrubCredentialUrl(c.req.path), method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -508,7 +518,9 @@ app.use("*", sessionAuthMiddleware);
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
 if (enableHttpLogs) {
-  // Use custom print function to scrub session tokens from logged URLs
+  // Custom print function: every credential the registry knows (session and
+  // link tokens in the query, share tokens in the path, OAuth codes) is
+  // scrubbed from the request line before it is logged.
   app.use(
     "*",
     logger((message) => {
@@ -532,6 +544,7 @@ app.use("*", cors(CORS_OPTIONS));
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
+app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
@@ -723,39 +736,27 @@ app.get("/health", (c) => {
   });
 });
 
-// Session token endpoint (for dev mode where HTML isn't served by this server)
-// Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
-// in BOTH hosted and self-hosted mode) to prevent leakage; tunnels always vetoed
+// Validate a credential delivered by the launcher. Never disclose one over HTTP.
 app.get("/api/session-token", (c) => {
-  if (HOSTED_MODE) {
-    return strictModeResponse(c, "/api/session-token");
-  }
-
-  const host = c.req.header("Host");
-  const forwardedHost = c.req.header("X-Forwarded-Host");
-
-  // SECURITY INVARIANT: tunnel hosts never receive the session token, even
-  // if a tunnel domain is ever allowlisted — see mayServeSessionToken.
+  c.header("Cache-Control", "no-store");
+  if (HOSTED_MODE) return strictModeResponse(c, "/api/session-token");
+  const authorization = c.req.header("X-MCP-Session-Auth");
   if (
-    !mayServeSessionToken({
-      host,
-      forwardedHost,
-      allowedHosts: ALLOWED_HOSTS,
-      activeTunnelDomains: getActiveTunnelDomains(),
-    })
+    authorization?.startsWith("Bearer ") &&
+    validateToken(authorization.slice(7))
   ) {
-    appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${
-        forwardedHost || host
-      }`,
-    );
-    return c.json(
-      { error: "Token only available via localhost or allowed hosts" },
-      403,
-    );
+    return c.json({ ok: true });
   }
-
-  return c.json({ token: getSessionToken() });
+  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS)) {
+    return c.json({ code: "HOST_NOT_ALLOWED" }, 403);
+  }
+  return c.json(
+    {
+      code: "ACCESS_LINK_REQUIRED",
+      hint: "Open the link printed in your terminal. If you use @mcpjam/cli, update it.",
+    },
+    401,
+  );
 });
 
 // Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
@@ -815,7 +816,7 @@ if (process.env.NODE_ENV === "production") {
     return clientStaticFiles(c, next);
   });
 
-  // SPA fallback - serve index.html with token injection for non-API routes
+  // SPA fallback - serve credential-free index.html for non-API routes
   app.get("*", async (c) => {
     const reqPath = c.req.path;
     // Don't intercept API routes
@@ -846,42 +847,11 @@ if (process.env.NODE_ENV === "production") {
         );
       }
 
-      // SECURITY: Only inject token for localhost or hosts in
-      // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
-      // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
-      // NEVER receive the token, even if a tunnel domain is ever
-      // allowlisted — see mayServeSessionToken.
       const host = c.req.header("Host");
       const forwardedHost = c.req.header("X-Forwarded-Host");
       // Every inline script written into the document carries this
       // response's nonce (see middleware/security-headers.ts).
       const scriptNonce = documentScriptNonce(c);
-
-      if (
-        mayServeSessionToken({
-          host,
-          forwardedHost,
-          allowedHosts: ALLOWED_HOSTS,
-          activeTunnelDomains: getActiveTunnelDomains(),
-        })
-      ) {
-        const token = getSessionToken();
-        const tokenScript = withScriptNonce(
-          `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`,
-          scriptNonce,
-        );
-        htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
-      } else {
-        // Non-allowed host access - no token (security measure)
-        appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
-        );
-        const warningScript = withScriptNonce(
-          `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`,
-          scriptNonce,
-        );
-        htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
-      }
 
       const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
       if (runtimeConfigScript) {
@@ -895,7 +865,9 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = withScriptNonce(
-          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`,
+          `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+            mcpConfig,
+          )};</script>`,
           scriptNonce,
         );
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
@@ -988,11 +960,20 @@ appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 await computersStartup;
 
 // Start the Hono server
-const server = serve({
-  fetch: app.fetch,
-  port: SERVER_PORT,
-  hostname,
-});
+const server = serve(
+  {
+    fetch: app.fetch,
+    port: SERVER_PORT,
+    hostname,
+  },
+  (info) => {
+    const cleanup = writeInspectorRuntime(info.port, {
+      hosted: HOSTED_MODE,
+      warn: (message) => appLogger.warn(message),
+    });
+    server.once("close", cleanup);
+  },
+);
 registerBrowserController(`http://127.0.0.1:${SERVER_PORT}`);
 // Count socket-level failures. These die before Node parses a request line,
 // so they emit no `http.request.*` event and are otherwise invisible — the
