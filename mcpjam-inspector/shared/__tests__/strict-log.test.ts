@@ -1,11 +1,63 @@
 import { describe, expect, it } from "vitest";
-import { buildStrictLogRow } from "../strict-log";
+import { buildLegacyLogRow, buildStrictLogRow } from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it("preserves finite harness health dimensions without legacy prose", () => {
+    const row = buildLegacyLogRow(
+      "[harness][timing] claim=1ms PRIVATE_SENTINEL",
+      {
+        harnessId: "codex",
+        harnessBakeExpected: "baked",
+        harnessBakeOnBox: "present",
+        harnessBootstrap: "installed",
+        origin: "mcpjam",
+        harnessRecipeIdentity: "PRIVATE_SENTINEL",
+      },
+    );
+    expect(row).toMatchObject({
+      event: "harness.timing",
+      harnessId: "codex",
+      harnessBakeExpected: "baked",
+      harnessBakeOnBox: "present",
+      harnessBootstrap: "installed",
+      origin: "mcpjam",
+    });
+    expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+    expect(
+      buildLegacyLogRow("[harness][timing][local] PRIVATE_SENTINEL", {}).event,
+    ).toBe("log.unknown");
+    expect(
+      buildLegacyLogRow("[harness][bootstrap] turn=failed PRIVATE_SENTINEL", {
+        harnessTurn: "failed",
+      }),
+    ).toMatchObject({ event: "harness.bootstrap", harnessTurn: "failed" });
+    expect(
+      buildLegacyLogRow(
+        "[harness] turn failed",
+        {},
+        new TypeError("PRIVATE_SENTINEL"),
+      ),
+    ).toMatchObject({ event: "harness.turn.failed", errorClass: "TypeError" });
+  });
   it("retains full mounted templates and rejects concrete customer paths", () => {
-    expect(buildStrictLogRow("http.request.failed", { method: "POST", route: "/api/web/chat-v2" }, { statusCode: 500 })).toMatchObject({ route: "/api/web/chat-v2", errorClass: "UnknownError", errorCode: "unknown" });
-    expect(buildStrictLogRow("http.request.failed", { method: "POST", route: "/api/web/private-customer-path" })).toMatchObject({ route: "unknown_route" });
+    expect(
+      buildStrictLogRow(
+        "http.request.failed",
+        { method: "POST", route: "/api/web/chat-v2" },
+        { statusCode: 500 },
+      ),
+    ).toMatchObject({
+      route: "/api/web/chat-v2",
+      errorClass: "UnknownError",
+      errorCode: "unknown",
+    });
+    expect(
+      buildStrictLogRow("http.request.failed", {
+        method: "POST",
+        route: "/api/web/private-customer-path",
+      }),
+    ).toMatchObject({ route: "unknown_route" });
   });
   it("preserves catalog diagnostics and rejects prose and payload context overrides", () => {
     const sentinel = "PRIVATE_SENTINEL";
