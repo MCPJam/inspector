@@ -1223,6 +1223,9 @@ describe("PlaygroundMain", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
       mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      // Cloud reads the host's capability as-is; a local Browser answers from
+      // its own setting instead.
+      localStorage.setItem("mcp-browser-engine:project-1", "cloud");
       try {
         render(<PlaygroundMain {...defaultProps} />);
         expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
@@ -4288,7 +4291,8 @@ describe("PlaygroundMain", () => {
     const RESTORED_SESSION_ID = "restored-target-session";
 
     const arriveAtRestoredConversation = (
-      resumeConfig: Record<string, unknown>
+      resumeConfig: Record<string, unknown>,
+      sessionFields: Record<string, unknown> = {}
     ) => {
       window.history.replaceState(
         {},
@@ -4312,6 +4316,7 @@ describe("PlaygroundMain", () => {
           isUnread: false,
           messagesBlobUrl: "https://storage.test/blob",
           resumeConfig,
+          ...sessionFields,
         },
         widgetSnapshots: [],
       });
@@ -4323,9 +4328,10 @@ describe("PlaygroundMain", () => {
      */
     const openRestoredConversation = async (
       resumeConfig: Record<string, unknown>,
-      extraProps: Record<string, unknown> = {}
+      extraProps: Record<string, unknown> = {},
+      sessionFields: Record<string, unknown> = {}
     ) => {
-      arriveAtRestoredConversation(resumeConfig);
+      arriveAtRestoredConversation(resumeConfig, sessionFields);
       const props = { ...defaultProps, ...extraProps };
       const { rerender: rerenderRaw } = render(
         <PlaygroundMain {...props} syncConversationToUrl />
@@ -4383,6 +4389,33 @@ describe("PlaygroundMain", () => {
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });
+
+    // The binding outranks every engine default, so a local conversation
+    // bound to Cloud keeps minting hosted tokens the backend refuses.
+    it.each([
+      ["local", "local"],
+      ["hosted", "cloud"],
+    ])(
+      "binds a reopened %s browser conversation to where its browser runs",
+      async (engine, location) => {
+        useActiveChatSessionStore.setState({ browserLocation: null });
+        await openRestoredConversation(
+          { executionTarget: { kind: "adhoc" } },
+          {},
+          {
+            projectId: "project-1",
+            browser: { browserSessionId: "logical", state: "active", engine },
+          }
+        );
+        await waitFor(() =>
+          expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+            projectId: "project-1",
+            sessionId: RESTORED_SESSION_ID,
+            engine: location,
+          })
+        );
+      }
+    );
 
     it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
       await openRestoredConversation({ executionTarget: { kind: "adhoc" } });

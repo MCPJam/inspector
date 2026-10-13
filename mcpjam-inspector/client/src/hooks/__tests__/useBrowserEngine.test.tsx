@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   member: true,
   granted: false,
   browserAvailable: true,
+  configLoaded: true,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: state.member ? { id: "member" } : null }),
@@ -33,16 +34,19 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useHostedBrowserEnabled: () => state.hostedFlag,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
-  useComputersDataPlaneConfig: () => ({
-    engines: {
-      local: {
-        available: false,
-        terminalAvailable: false,
-        browserAvailable: state.browserAvailable,
-      },
-      cloud: { available: true },
-    },
-  }),
+  useComputersDataPlaneConfig: () =>
+    state.configLoaded
+      ? {
+          engines: {
+            local: {
+              available: false,
+              terminalAvailable: false,
+              browserAvailable: state.browserAvailable,
+            },
+            cloud: { available: true },
+          },
+        }
+      : undefined,
 }));
 vi.mock("@/hooks/useLocalBrowserConsent", () => ({
   useLocalBrowserConsent: () => ({
@@ -65,6 +69,7 @@ beforeEach(() => {
   state.member = true;
   state.granted = false;
   state.browserAvailable = true;
+  state.configLoaded = true;
 });
 it("defaults to This machine without shell availability or Browser consent", () => {
   const { result } = renderHook(() => useBrowserEngine("p"));
@@ -121,11 +126,27 @@ it("the rollout flag does not misreport server availability", () => {
 
 it("defaults to Cloud outside the cohort but allows explicit local onboarding", () => {
   state.flag = false;
+  state.hostedFlag = true;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.engine).toBe("cloud");
   act(() => result.current.setEngine("local"));
   expect(result.current.engine).toBe("local");
   expect(result.current.localAvailable).toBe(true);
+});
+// A Cloud fallback outside the hosted-browser rollout can only mint a token
+// the backend refuses.
+it("never falls back to Cloud while the engine config is loading", () => {
+  state.configLoaded = false;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.resolved).toBe(false);
+  expect(result.current.cloudAvailable).toBe(false);
+  expect(result.current.selectedEngine).toBe("local");
+});
+it("never falls back to Cloud outside the hosted-browser rollout", () => {
+  state.flag = false;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.cloudAvailable).toBe(false);
+  expect(result.current.selectedEngine).toBe("local");
 });
 it("environment mode shows Cloud and does not overwrite the device preference", () => {
   saveBrowserEngine("p", "local");

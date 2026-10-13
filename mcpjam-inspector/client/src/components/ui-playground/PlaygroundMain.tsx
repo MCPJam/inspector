@@ -3702,7 +3702,7 @@ export function PlaygroundMain({
         useActiveChatSessionStore.getState().setBrowserLocation({
           projectId: detail.projectId,
           sessionId: detail.chatSessionId,
-          engine: "cloud",
+          engine: detail.browser.engine === "local" ? "local" : "cloud",
         });
       if (restoredModel) {
         setSelectedModel(restoredModel);

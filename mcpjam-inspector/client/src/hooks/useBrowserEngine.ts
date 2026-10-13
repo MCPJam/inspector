@@ -62,16 +62,18 @@ export function useBrowserEngine(
     !HOSTED_MODE &&
     !environmentMode &&
     config?.engines.local.browserAvailable === true;
+  const cloudAvailable =
+    Boolean(user) && hostedEnabled && config?.engines.cloud.available === true;
   // Only an explicit preference or a bound conversation survives loss of
-  // candidacy. An unseeded rollout continues using the existing Cloud path.
+  // candidacy. Cloud is the fallback only where it is available: before the
+  // config loads, or outside the hosted rollout, it would mint a token the
+  // backend can only refuse.
   const selectedEngine: BrowserEngineChoice =
     HOSTED_MODE || environmentMode
       ? "cloud"
       : (scope === "conversation" ? boundLocation : null) ??
         preference ??
-        (enabled && localAvailable ? "local" : "cloud");
-  const cloudAvailable =
-    Boolean(user) && hostedEnabled && config?.engines.cloud.available === true;
+        ((enabled && localAvailable) || !cloudAvailable ? "local" : "cloud");
   return {
     engine: selectedEngine,
     selectedEngine,
