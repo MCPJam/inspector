@@ -4731,7 +4731,7 @@ export default function App() {
   useLayoutEffect(() => {
     setTelemetryCaptureContext({
       projectIds: telemetryProjectIds,
-      organizationIds: telemetryOrganizationIds,
+      organizationIds: telemetryOrganizationIds, sharedLink: isScenarioChatRoute,
     });
   });
   // Names follow an affirmative answer for THIS actor only; an answer for

@@ -1,3 +1,7 @@
+import {
+  rebuildSentryEvent,
+  INSPECTOR_SENTRY_CATALOG,
+} from "../../../shared/strict-sentry";
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import {
@@ -16,7 +20,11 @@ import {
   filterSentryEventIdentity,
 } from "./sentry-identity";
 import { withRecordingFilter } from "./sentry-recording-filter";
-import { telemetryNamesAllowed } from "./telemetry-context";
+import {
+  telemetryNamesAllowed,
+  currentTelemetryActor,
+  currentTelemetryCaptureContext,
+} from "./telemetry-context";
 import {
   scrubHostname,
   scrubUrlsInText,
@@ -277,6 +285,19 @@ export function initSentry() {
       const filtered = config.beforeSend(event);
       if (filtered === null) return null;
       const processed = processQueryEvent(filtered, hint);
+      if (
+        processed &&
+        (currentTelemetryCaptureContext().policy.content === "strict" ||
+          maskedAtCapture.get(hint) !== false)
+      ) {
+        hint.attachments = [];
+        return rebuildSentryEvent(processed, {
+          ...INSPECTOR_SENTRY_CATALOG,
+          actorId: currentTelemetryActor() ?? undefined,
+          release: __APP_VERSION__,
+          environment: import.meta.env.PROD ? "production" : "dev",
+        });
+      }
       // `browserTracingIntegration` names the scope's transaction after the
       // raw path on every pageload and navigation, so an error event carries
       // it in `transaction` as well as in `request.url`. The credential walker

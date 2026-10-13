@@ -172,6 +172,7 @@ async function boot() {
   setTelemetryActor(HARNESS_ACTOR_ID);
   if (mode === "full") setTelemetryIdentity(HARNESS_ACTOR_ID, "full");
   setTelemetryCaptureContext({
+    sharedLink,
     projectIds: [],
     organizationIds: [
       mode === "full" ? HARNESS_PUBLIC_ORG : HARNESS_PRIVATE_ORG,

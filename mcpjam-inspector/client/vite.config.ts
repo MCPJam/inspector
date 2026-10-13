@@ -245,6 +245,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
+        "@mcpjam/sdk/internal/telemetry": path.resolve(rootDir, "../sdk/src/internal/telemetry.ts"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
         "@mcpjam/sdk/predicates": sdkPredicatesEntry,

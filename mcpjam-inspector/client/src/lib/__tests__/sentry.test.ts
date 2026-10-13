@@ -25,6 +25,16 @@ function stubReplay(recording: boolean) {
   return replay;
 }
 
+async function allowFullContext() {
+  const telemetry = await import("../telemetry-context");
+  telemetry.setTelemetryActor("user_01K00000000000000000000000");
+  telemetry.setTelemetryCaptureContext({
+    projectIds: ["project_test"],
+    organizationIds: [],
+  });
+  (await import("../session-privacy")).setSessionPrivacy("full");
+}
+
 describe("client sentry init", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
@@ -66,9 +76,6 @@ describe("client sentry init", () => {
     });
   });
   it("reports the build surface as dist so artifacts resolve per build", async () => {
-    // The release alone is the bare app version, which the web, npm and
-    // desktop builds all share. Without `dist` here, Sentry symbolicates this
-    // bundle's events against whichever of those uploaded last.
     const { resolveClientSentryConfig } = await import("../sentry");
 
     expect(resolveClientSentryConfig().dist).toBe("npm");
@@ -100,10 +107,6 @@ describe("client sentry init", () => {
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
     const { resolveClientSentryConfig } = await import("../sentry");
-    // Asserted against the literal the dev/test bundle must produce, NOT
-    // against `import.meta.env.PROD ? ... : ...` — mirroring the
-    // implementation expression would make this pass no matter what the
-    // implementation did.
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");
   });
@@ -555,10 +558,9 @@ describe("query event processor wiring", () => {
         ],
       },
     });
-    expect(config.beforeSend(makeEvent(), {}).tags).toMatchObject({
-      convex_backend: "test.convex.cloud",
-      request_id: "ab1234",
-    });
+    expect(JSON.stringify(config.beforeSend(makeEvent(), {}))).not.toMatch(
+      /test.convex.cloud|ab1234/,
+    );
     expect(config.beforeSend(makeEvent(), {})).toBeNull();
     expect(
       config.beforeSend(
@@ -575,7 +577,7 @@ describe("query event processor wiring", () => {
         },
         {},
       ).fingerprint,
-    ).toEqual(["dom-mutation-conflict", "prod"]);
+    ).toEqual(["UnknownError"]);
   });
 });
 
@@ -593,6 +595,7 @@ describe("identity at the outbound boundary", () => {
     });
     const { initSentry } = await import("../sentry");
     const telemetry = await import("../telemetry-context");
+    await allowFullContext();
     initSentry();
     const config = init.mock.calls[0][0];
     const run = (name: string, event: Record<string, any>, hint: object) => {
@@ -603,7 +606,7 @@ describe("identity at the outbound boundary", () => {
 
   const userEvent = () => ({
     user: {
-      id: "workos-1",
+      id: "user_01K00000000000000000000000",
       email: "zelda.quixote@acme-synthetic.example",
       username: "zelda.quixote@acme-synthetic.example",
       name: "Zelda",
@@ -617,8 +620,8 @@ describe("identity at the outbound boundary", () => {
 
   it("keeps names only when allowed at capture and still allowed at send", async () => {
     const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
+    telemetry.setTelemetryActor("user_01K00000000000000000000000");
+    telemetry.setTelemetryIdentity("user_01K00000000000000000000000", "full");
     const hint = {};
     const event = userEvent();
     run("preprocessEvent", event, hint);
@@ -631,52 +634,52 @@ describe("identity at the outbound boundary", () => {
 
   it("keeps an event captured while id-only id-only, even once names are allowed", async () => {
     const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
+    telemetry.setTelemetryActor("user_01K00000000000000000000000");
     const hint = {};
     const event = userEvent();
     run("preprocessEvent", event, hint);
-    telemetry.setTelemetryIdentity("workos-1", "full");
+    telemetry.setTelemetryIdentity("user_01K00000000000000000000000", "full");
     run("postprocessEvent", event, hint);
-    expect(event.user).toEqual({ id: "workos-1" });
+    expect(event.user).toEqual({ id: "user_01K00000000000000000000000" });
     expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
-      id: "workos-1",
+      id: "user_01K00000000000000000000000",
     });
     telemetry.setTelemetryActor(null);
   });
 
   it("strips names from an event whose grant went before it was sent", async () => {
     const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
+    telemetry.setTelemetryActor("user_01K00000000000000000000000");
+    telemetry.setTelemetryIdentity("user_01K00000000000000000000000", "full");
     const hint = {};
     run("preprocessEvent", userEvent(), hint);
-    telemetry.setTelemetryActor("workos-2");
+    telemetry.setTelemetryActor("user_01K00000000000000000000001");
     expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
-      id: "workos-1",
+      id: "user_01K00000000000000000000000",
     });
     expect(config.beforeSendTransaction(userEvent(), hint).user).toEqual({
-      id: "workos-1",
+      id: "user_01K00000000000000000000000",
     });
     telemetry.setTelemetryActor(null);
   });
 
   it("filters replay events, which never reach beforeSend", async () => {
     const { run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
+    telemetry.setTelemetryActor("user_01K00000000000000000000000");
     const hint = {};
     const replay = { type: "replay_event", urls: [], ...userEvent() };
     run("preprocessEvent", replay, hint);
     run("postprocessEvent", replay, hint);
-    expect(replay.user).toEqual({ id: "workos-1" });
+    expect(replay.user).toEqual({ id: "user_01K00000000000000000000000" });
     telemetry.setTelemetryActor(null);
   });
 
   it("treats an event with no capture-time record as id-only", async () => {
     const { config, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
+    telemetry.setTelemetryActor("user_01K00000000000000000000000");
+    telemetry.setTelemetryIdentity("user_01K00000000000000000000000", "full");
     expect(config.beforeSend(userEvent(), {})?.user).toEqual({
-      id: "workos-1",
+      id: "user_01K00000000000000000000000",
     });
     telemetry.setTelemetryActor(null);
   });
@@ -707,7 +710,7 @@ describe("content at the outbound boundary", () => {
       { request: { url: "https://app.mcpjam.com/servers/acme" } },
       hint,
     );
-    expect(event.request.url).toBe("https://app.mcpjam.com/servers/[name]");
+    expect(event.request).toBeUndefined();
 
     // Captured masked, sent after the level went full: still scrubbed.
     privacy.setSessionPrivacy("full");
@@ -715,8 +718,8 @@ describe("content at the outbound boundary", () => {
       config.beforeSend(
         { request: { url: "https://app.mcpjam.com/servers/acme" } },
         hint,
-      ).request.url,
-    ).toBe("https://app.mcpjam.com/servers/[name]");
+      ).request,
+    ).toBeUndefined();
 
     // The raw path in `transaction` (set by browserTracingIntegration on
     // every navigation) and the Referer header are scrubbed too.
@@ -733,15 +736,11 @@ describe("content at the outbound boundary", () => {
       },
       hint,
     );
-    expect(withPath.transaction).toBe(
-      "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/[name]",
-    );
-    expect(withPath.request.headers).toEqual({
-      Referer: "https://app.mcpjam.com/servers/[name]",
-      "User-Agent": "test",
-    });
+    expect(withPath.transaction).toBeUndefined();
+    expect(withPath.request).toBeUndefined();
 
-    // Captured and sent at full: untouched.
+    // Captured and sent in a resolved full context: untouched.
+    await allowFullContext();
     const fullHint = {};
     for (const fn of hooks.preprocessEvent ?? []) fn({}, fullHint);
     expect(
@@ -768,6 +767,7 @@ describe("content at the outbound boundary", () => {
 
     // At full the level filter keeps console breadcrumbs; the logged
     // payload still loses its value.
+    await allowFullContext();
     privacy.setSessionPrivacy("full");
     const crumb = config.beforeBreadcrumb({
       category: "console",
