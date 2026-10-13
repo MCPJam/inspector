@@ -125,7 +125,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
@@ -286,6 +286,8 @@ import {
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -695,7 +697,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -1375,7 +1377,7 @@ export function PlaygroundMain({
     traceViewsSupported,
     isStreaming,
     disableForAuthentication,
-    submitBlocked,
+    submitBlocked: baseSubmitBlocked,
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
@@ -1582,6 +1584,13 @@ export function PlaygroundMain({
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  const liveChatSessionIdRef = useRef(chatSessionId);
+  liveChatSessionIdRef.current = chatSessionId;
+  const [readyEvalChatHandoffId, setReadyEvalChatHandoffId] = useState<
+    string | null
+  >(null);
+  const isEvalChatHandoffPending =
+    !!evalChatHandoff && readyEvalChatHandoffId !== evalChatHandoff.id;
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
@@ -2747,6 +2756,13 @@ export function PlaygroundMain({
     multiModelEnabled &&
     !viewingHistoryReplay &&
     !isMultiHostMode;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const submitBlocked =
+    baseSubmitBlocked ||
+    (isMultiModelMode &&
+      modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
   // execution/state-pruning all branch on this — anything that used to
   // gate on `isMultiModelMode` and writes to (or reads from) the
@@ -3318,7 +3334,7 @@ export function PlaygroundMain({
       collapseCompareSelectionsTo(selectedModel);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const handoffHydration = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof handoffExec.systemPrompt === "string") {
@@ -3338,7 +3354,31 @@ export function PlaygroundMain({
     if (evalChatHandoff.messages.length > 0) {
       composer.setInput("");
     }
-    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+    // Session hydration resets the transcript asynchronously. Sending before
+    // it finishes can erase the recording prompt and leave an empty chat.
+    // Publish readiness through state so auto-run uses the hydrated session
+    // and the case settings from a fresh render.
+    const handoffId = evalChatHandoff.id;
+    void Promise.resolve(handoffHydration).then(
+      (hydratedSessionId) => {
+        if (
+          appliedEvalChatHandoffIdRef.current !== handoffId ||
+          hydratedSessionId !== liveChatSessionIdRef.current
+        ) {
+          return;
+        }
+        setReadyEvalChatHandoffId(handoffId);
+        onEvalChatHandoffConsumed?.(handoffId);
+      },
+      (error) => {
+        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+        appliedEvalChatHandoffIdRef.current = null;
+        console.error("[PlaygroundMain] Failed to load eval chat", error);
+        toast.error(
+          "Couldn't start the recording chat. Close it and try again.",
+        );
+      },
+    );
   }, [
     availableModels,
     collapseCompareSelectionsTo,
@@ -4171,9 +4211,7 @@ export function PlaygroundMain({
       isStreaming,
       projectId: convexProjectId,
       isMultiModelLayoutMode,
-      isEvalHandoffPending:
-        !!evalChatHandoff &&
-        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      isEvalHandoffPending: isEvalChatHandoffPending,
       activeHistorySessionId,
       restoreConversation: restoreConversationFromUrl,
     });
@@ -4881,9 +4919,6 @@ export function PlaygroundMain({
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldAutoRunPreview({
         autoRunInput,
@@ -4891,7 +4926,7 @@ export function PlaygroundMain({
         isSessionBootstrapComplete,
         isThreadEmpty,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -4919,6 +4954,7 @@ export function PlaygroundMain({
     autoRunInput,
     composer,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
@@ -5829,16 +5865,13 @@ export function PlaygroundMain({
   const lastRunPreviewRequestRef = useRef(0);
   const [quickRunPending, setQuickRunPending] = useState(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldRunPreview({
         runPreviewRequest,
         alreadyHandledRequest: lastRunPreviewRequestRef.current,
         isSessionBootstrapComplete,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -5849,6 +5882,7 @@ export function PlaygroundMain({
   }, [
     runPreviewRequest,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isStreaming,
     handleResetAllChats,
@@ -6365,6 +6399,7 @@ export function PlaygroundMain({
       : undefined,
     voiceInputAuthHeaders: authHeaders,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Check if widget should take over the full container

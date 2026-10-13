@@ -101,6 +101,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import { ownKeyTurnRefusal, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -2779,6 +2780,7 @@ chatV2.post("/", async (c) => {
         if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
+          admission: runtime.admission,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
@@ -2867,11 +2869,8 @@ chatV2.post("/", async (c) => {
     // still carries a client apiKey for a CLOUD provider is a personal-BYOK
     // attempt we don't support; reject it regardless of the caller's identity.
     //
-    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
-    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
-    // self-hosted, not a shared cloud account, and the org surface doesn't
-    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
-    // hook is the only enforcement on `npx`.
+    // Ollama and custom endpoints use the local path. Their organization
+    // policy is checked below and again before every provider attempt.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -2885,16 +2884,31 @@ chatV2.post("/", async (c) => {
         401,
       );
     }
+    // A key on this machine still answers to the organization's AI-key policy.
+    const ownKeyTurn: OwnKeyTurn = {
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      selection: routingSelection,
+      provider: modelDefinition.provider,
+      hasRequestKey: Boolean(apiKey),
+      auth: {
+        authHeader: requestAuthHeader,
+        scenarioId: bodyScenarioId,
+        accessVersion: bodyAccessVersion,
+        serverIds: hostConfigServerIds,
+      },
+    };
+    const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
+    if (ownKeyRefusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
+    }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      {
+    const llmModel = withOwnKeyTurnPolicy(
+      createLlmModel(modelDefinition, apiKey ?? "", {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
-      },
-      body.customProviders,
+      }, body.customProviders),
+      ownKeyTurn,
     );
 
     const modelMessages = await convertToMcpjamModelMessages(

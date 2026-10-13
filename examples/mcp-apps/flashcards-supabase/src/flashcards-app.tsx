@@ -1,6 +1,5 @@
-import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps";
+import type { AppToolResult, McpUiHostContext } from "@modelcontextprotocol/ext-apps";
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import styles from "./flashcards-app.module.css";
@@ -24,7 +23,7 @@ function isFlashcard(value: unknown): value is Flashcard {
   );
 }
 
-function extractFlashcards(result: CallToolResult | null): Flashcard[] {
+function extractFlashcards(result: AppToolResult | null): Flashcard[] {
   if (!result) {
     return [];
   }

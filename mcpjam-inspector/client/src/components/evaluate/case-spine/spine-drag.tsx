@@ -15,6 +15,7 @@ import {
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
+  type Announcements,
   type CollisionDetection,
   type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
@@ -59,6 +60,26 @@ const compatibleKeyboardCoordinates: KeyboardCoordinateGetter = (
     },
   });
 };
+/** The row's own name, from the label its drag handle was given. */
+const rowLabel = (
+  entry: { data: { current?: Record<string, unknown> } } | null,
+): string =>
+  (entry?.data.current?.getLabel as (() => string) | undefined)?.() || "row";
+
+// Keyboard sorting is announced by row name, not dnd-kit's internal id.
+const announcements: Announcements = {
+  onDragStart: ({ active }) => `Picked up ${rowLabel(active)}.`,
+  onDragOver: ({ active, over }) =>
+    over
+      ? `${rowLabel(active)} moved to ${rowLabel(over)}.`
+      : `${rowLabel(active)} is not over a valid spot.`,
+  onDragEnd: ({ active, over }) =>
+    over
+      ? `${rowLabel(active)} dropped at ${rowLabel(over)}.`
+      : `${rowLabel(active)} dropped.`,
+  onDragCancel: ({ active }) => `Moving ${rowLabel(active)} was cancelled.`,
+};
+
 export function SpineDragProvider({
   items,
   disabled,
@@ -95,6 +116,7 @@ export function SpineDragProvider({
       <DndContext
         sensors={sensors}
         collisionDetection={compatibleRows}
+        accessibility={{ announcements }}
         onDragStart={onDragStart}
         onDragEnd={(event) => {
           setPreview(null);

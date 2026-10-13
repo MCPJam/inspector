@@ -2382,10 +2382,17 @@ describe("PlaygroundMain", () => {
 
       // Not "no param at all": once the branch's transcript has content the sync
       // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on.
-      await waitFor(() => {
-        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
-      });
+      // original's, which is what the restore effect would act on. The URL
+      // updates after several effects settle, which can pass the default
+      // one-second wait on a loaded CI runner.
+      await waitFor(
+        () => {
+          expect(window.location.search).not.toContain(
+            ORIGINAL_CONVERSATION_ID
+          );
+        },
+        { timeout: 5000 }
+      );
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {

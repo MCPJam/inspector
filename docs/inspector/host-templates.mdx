@@ -231,7 +231,7 @@ A non-exhaustive reference for the fields most often gotten wrong:
   silently goes to zero if your `restrictTo.connectDomains` doesn't list
   `api.example.com`. Use `mode: "declared"` and trust the view's CSP. The only
   legitimate use of `restrictTo` is to express a *deny* intent via empty arrays
-  (see the Copilot preset's `frameDomains: []`).
+  (for example, `frameDomains: []` to deny iframe nesting at the host layer).
 </Warning>
 
 <Warning>
