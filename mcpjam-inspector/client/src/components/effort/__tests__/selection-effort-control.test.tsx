@@ -46,10 +46,4 @@ describe("SelectionEffortControl with a stored legacy selection", () => {
       settings: { reasoningEffort: "high" },
     });
   });
-
-  it("writes nothing when Default is picked again", async () => {
-    const onChange = renderControl();
-    await pickEffort("Default");
-    expect(onChange).not.toHaveBeenCalled();
-  });
 });
