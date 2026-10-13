@@ -27,15 +27,19 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     select({ themeMode: "light" }),
 }));
 
-const ENSURED = { hostId: "h1", created: true, comparison: null };
+const ENSURED = { hostId: "h1", created: true };
 
-function renderConnect(projectId = "p1") {
-  return render(
+function connect(projectId = "p1") {
+  return (
     <>
       <ClientSelectionSync projectId={projectId} />
       <ProjectClientInitNotice projectId={projectId} />
-    </>,
+    </>
   );
+}
+
+function renderConnect(projectId = "p1") {
+  return render(connect(projectId));
 }
 
 async function advance(ms: number) {
@@ -77,12 +81,28 @@ describe("ClientSelectionSync", () => {
     ]);
   });
 
-  it("does not repeat a request that is still in flight", () => {
-    mocks.ensure.mockReturnValue(new Promise(() => {}));
-    const { rerender } = render(<ClientSelectionSync projectId="p1" />);
-    rerender(<ClientSelectionSync projectId="p2" />);
-    rerender(<ClientSelectionSync projectId="p1" />);
+  it("does not repeat a request that is still in flight, and retries it", async () => {
+    let failFirst: (error: Error) => void = () => {};
+    mocks.ensure
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          failFirst = reject;
+        }),
+      )
+      .mockReturnValueOnce(new Promise(() => {}));
+    const { rerender } = renderConnect("p1");
+    rerender(connect("p2"));
+    rerender(connect("p1"));
     expect(mocks.ensure).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing a client");
+
+    await act(async () => failFirst(new Error("network")));
+    await advance(1_000);
+    expect(mocks.ensure).toHaveBeenCalledTimes(3);
+    expect(mocks.ensure).toHaveBeenLastCalledWith({
+      projectId: "p1",
+      themeMode: "light",
+    });
   });
 
   it("waits for the host list", () => {
@@ -106,7 +126,7 @@ describe("ClientSelectionSync", () => {
       .mockRejectedValueOnce(new Error("network"))
       .mockRejectedValueOnce(new Error("network"))
       .mockResolvedValue(ENSURED);
-    renderConnect();
+    const { rerender } = renderConnect();
     await advance(0);
     expect(mocks.ensure).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent("Preparing a client");
@@ -115,6 +135,15 @@ describe("ClientSelectionSync", () => {
     await advance(4_000);
     expect(mocks.ensure).toHaveBeenCalledTimes(3);
     expect(mocks.report).toHaveBeenCalledTimes(2);
+    // Done, but the list has not caught up yet.
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing a client");
+
+    mocks.list.mockReturnValue({
+      hosts: [{ hostId: "h1", name: "MCPJam" }],
+      isLoading: false,
+    });
+    rerender(connect());
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("offers Retry once retries run out, and Retry starts over", async () => {
@@ -125,7 +154,7 @@ describe("ClientSelectionSync", () => {
     await advance(60_000);
     expect(mocks.ensure).toHaveBeenCalledTimes(4);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Couldn’t prepare a client.",
+      "Could not prepare a client. Try again.",
     );
 
     mocks.ensure.mockResolvedValue(ENSURED);
@@ -135,16 +164,29 @@ describe("ClientSelectionSync", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("does not retry a refusal, and explains it", async () => {
-    mocks.ensure.mockRejectedValue(
-      new ConvexError({ kind: "forbidden", message: "Project not found" }),
-    );
+  it.each([
+    [
+      { kind: "forbidden", message: "Project not found" },
+      "You don't have access to set up clients in this project.",
+    ],
+    [
+      { code: "FORBIDDEN" },
+      "You don't have access to set up clients in this project.",
+    ],
+    [
+      { code: "VALIDATION", message: "This project is archived." },
+      "This project is archived.",
+    ],
+    [
+      { code: "VALIDATION" },
+      "Could not set up a client in this project. Contact support.",
+    ],
+  ])("does not retry a refusal %o, and explains it", async (data, copy) => {
+    mocks.ensure.mockRejectedValue(new ConvexError(data));
     renderConnect();
     await advance(30_000);
     expect(mocks.ensure).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "You don't have access to set up clients in this project.",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent(copy);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
@@ -185,15 +227,31 @@ describe("ClientSelectionSync", () => {
       hosts: [{ hostId: "h1", name: "MCPJam" }],
       isLoading: false,
     });
-    rerender(
-      <>
-        <ClientSelectionSync projectId="p1" />
-        <ProjectClientInitNotice projectId="p1" />
-      </>,
-    );
+    rerender(connect());
     await advance(30_000);
     expect(mocks.ensure).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("ensures again when the list empties after a success it had seen", async () => {
+    let succeed: (value: typeof ENSURED) => void = () => {};
+    mocks.ensure.mockReturnValueOnce(
+      new Promise((resolve) => {
+        succeed = resolve;
+      }),
+    );
+    const { rerender } = renderConnect();
+    mocks.list.mockReturnValue({
+      hosts: [{ hostId: "h1", name: "MCPJam" }],
+      isLoading: false,
+    });
+    rerender(connect());
+    await act(async () => succeed(ENSURED));
+
+    mocks.list.mockReturnValue({ hosts: [], isLoading: false });
+    rerender(connect());
+    await advance(0);
+    expect(mocks.ensure).toHaveBeenCalledTimes(2);
   });
 
   it("repairs a deleted selection using the default client", () => {

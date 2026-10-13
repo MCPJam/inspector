@@ -8,7 +8,7 @@ import {
 } from "react";
 import { ConvexError } from "convex/values";
 import { isAuthorizationRefusal } from "@/lib/authorization-refusal";
-import { convexErrMessage, isConvexQueryUnavailable } from "@/lib/convex-error";
+import { isConvexQueryUnavailable } from "@/lib/convex-error";
 import { reportCaught } from "@/lib/error-reporting";
 
 /** Waits before the 2nd, 3rd and 4th attempt; then the user gets a Retry. */
@@ -17,7 +17,7 @@ const RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 const NO_ACCESS_MESSAGE =
   "You don't have access to set up clients in this project.";
 
-export type ProjectClientInitIntent = "default" | "comparison";
+export type ProjectClientInitIntent = "default";
 
 export type ProjectClientInitState =
   | { status: "idle" }
@@ -48,7 +48,11 @@ function classifyFailure(error: unknown): Failure {
     error instanceof ConvexError &&
     typeof error.data === "object" &&
     error.data !== null
-      ? (error.data as { code?: unknown; retryAfterMs?: unknown })
+      ? (error.data as {
+          code?: unknown;
+          message?: unknown;
+          retryAfterMs?: unknown;
+        })
       : null;
   if (data?.code === "FORBIDDEN") {
     return { refused: true, message: NO_ACCESS_MESSAGE };
@@ -56,7 +60,11 @@ function classifyFailure(error: unknown): Failure {
   if (data?.code === "VALIDATION") {
     return {
       refused: true,
-      message: convexErrMessage(error, NO_ACCESS_MESSAGE),
+      // Without its own message, the payload's JSON is all the error says.
+      message:
+        typeof data.message === "string" && data.message.trim()
+          ? data.message
+          : "Could not set up a client in this project. Contact support.",
     };
   }
   if (data?.code === "rate_limited") {
@@ -103,7 +111,8 @@ function runAttempt(attempt: Attempt): Promise<void> {
   return attempt.run().then(
     () => {
       if (!attempt.isCurrent()) return;
-      attempt.settle(DONE);
+      // The list may have refreshed first; IDLE lets a later empty list ensure.
+      attempt.settle(attempt.isNeeded() ? DONE : IDLE);
       attempt.onDone();
     },
     (error: unknown) => {
@@ -194,10 +203,10 @@ export function useProjectClientInitStatus(
  * Runs one project-initialization request while `needed` holds, with bounded
  * retries, and exposes its state.
  *
- * Tracked per project and intent, so a finished default ensure never stands
- * in for a comparison request. A request is never started twice for the same
- * key while one is in flight. The backend is what makes concurrent callers in
- * other components, tabs or devices converge; this only avoids local repeats.
+ * Tracked per project and intent. A request is never started twice for the
+ * same key while one is in flight. The backend is what makes concurrent
+ * callers in other components, tabs or devices converge; this only avoids
+ * local repeats.
  *
  * Transient failures retry after 1s, 4s and 10s, or after the backend's
  * `retryAfterMs` when that is longer, then stop with a Retry. Refusals do not
@@ -242,7 +251,11 @@ export function useProjectClientInitialization({
 
   useEffect(() => {
     if (!key || !needed || state.status !== "idle") return;
-    if (inFlightRef.current.has(key)) return;
+    // Back on a key mid-request: PENDING so its retry timer's IDLE re-runs this.
+    if (inFlightRef.current.has(key)) {
+      resetTo(PENDING);
+      return;
+    }
     inFlightRef.current.add(key);
     resetTo(PENDING);
     const isCurrent = () => keyRef.current === key;
