@@ -1668,7 +1668,12 @@ async function runJourneyFanOut(
             } finally { await localResources?.cleanup(); }
           };
           const sessionResult = await runSession();
-          const { errorMessage, errorReason, errorRefusal } = sessionResult;
+          const {
+            errorMessage,
+            errorReason,
+            errorRefusal,
+            authorizationServerStatus,
+          } = sessionResult;
           // A busy reservation that ran out its retries is a wait however the
           // backend words it. The core folds a failure into `rate_limited` by
           // its words (`spend`, `cap`, ...), and the current sentence ("spending
@@ -1878,7 +1883,10 @@ async function runJourneyFanOut(
           // moves on to the next conversation and signs in again.
           const standingSignInFailure =
             terminal.status === "failed" &&
-            isStandingXaaFailure(terminal.errorCode, terminal.errorMessage);
+            isStandingXaaFailure(
+              terminal.errorCode,
+              authorizationServerStatus,
+            );
           if (sponsored) {
             const platform = sponsoredPlatformFailure({
               code: errorReason,

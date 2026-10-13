@@ -72,16 +72,37 @@ export function isRerunnableXaaFailure(
 }
 
 /**
+ * The authorization server's HTTP status a thrown connect failure carries
+ * (`details.authorizationServerStatus`, as `toXaaConnectFailure` writes it), or
+ * `undefined` when it never answered or the error is not one.
+ */
+export function xaaAuthorizationServerStatusOf(
+  error: unknown
+): number | undefined {
+  const details = (error as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== "object") return undefined;
+  const status = (details as { authorizationServerStatus?: unknown })
+    .authorizationServerStatus;
+  return typeof status === "number" && Number.isInteger(status)
+    ? status
+    : undefined;
+}
+
+/**
  * True for a sign-in failure that will fail the same way if tried again right
  * away, so a run should stop signing in to that server rather than repeat it:
  * a configuration the server cannot use, or an authorization server that
  * answered MCPJam with a 4xx (a refusal, or 429 for asking too often). An
- * unclassified handshake failure, a timeout or an unreachable authorization
- * server may clear on the next try, and an expired sign-in is re-run.
+ * unclassified handshake failure, a timeout, an unreachable authorization
+ * server or a 5xx may clear on the next try, as may 408 (request timeout) and
+ * 425 (too early); an expired sign-in is re-run.
+ *
+ * `authorizationServerStatus` is the structured status, never one read back
+ * out of the failure's sentence.
  */
 export function isStandingXaaFailure(
   reason: string | null | undefined,
-  message?: string | null
+  authorizationServerStatus?: number
 ): boolean {
   switch (reason) {
     case XaaConnectFailureReason.CONFIGURATION_INVALID:
@@ -89,7 +110,13 @@ export function isStandingXaaFailure(
     case XaaConnectFailureReason.AUTHORIZATION_SERVER_UNKNOWN:
       return true;
     case XaaConnectFailureReason.AUTHORIZATION_REJECTED:
-      return /\(HTTP 4\d\d\b/.test(message ?? "");
+      return (
+        authorizationServerStatus !== undefined &&
+        authorizationServerStatus >= 400 &&
+        authorizationServerStatus < 500 &&
+        authorizationServerStatus !== 408 &&
+        authorizationServerStatus !== 425
+      );
     default:
       return false;
   }

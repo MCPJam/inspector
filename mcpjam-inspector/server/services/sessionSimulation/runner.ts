@@ -51,7 +51,10 @@ import {
   sponsoredPlatformFailure,
 } from "../../../shared/swarm-sponsorship.js";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
-import { isXaaConnectFailureReason } from "../../../shared/xaa-connect-failure.js";
+import {
+  isXaaConnectFailureReason,
+  xaaAuthorizationServerStatusOf,
+} from "../../../shared/xaa-connect-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -287,6 +290,12 @@ interface SessionResult {
   outcome: SessionOutcome;
   errorMessage?: string;
   errorReason?: string;
+  /**
+   * The HTTP status a server's authorization server answered a refused
+   * sign-in (XAA) with. Structured for the same reason as `errorReason`: the
+   * swarm runner decides whether to stop signing in by it.
+   */
+  authorizationServerStatus?: number;
   errorRefusal?: SpendRefusal;
 }
 
@@ -1611,10 +1620,14 @@ export async function runSyntheticHostSession(
       status: "failed",
       errorMessage: message,
     });
+    const authorizationServerStatus = xaaAuthorizationServerStatusOf(error);
     return {
       outcome: "failed",
       errorMessage: message,
       ...(errorReason ? { errorReason } : {}),
+      ...(authorizationServerStatus !== undefined
+        ? { authorizationServerStatus }
+        : {}),
       errorRefusal,
     };
   } finally {

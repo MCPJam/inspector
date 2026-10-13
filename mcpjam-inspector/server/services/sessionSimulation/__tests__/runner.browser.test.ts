@@ -676,7 +676,10 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
     runAssistantTurnMock.mockRejectedValue(
       Object.assign(new Error(message), {
-        details: { reason: "xaa_authorization_rejected" },
+        details: {
+          reason: "xaa_authorization_rejected",
+          authorizationServerStatus: 429,
+        },
       }),
     );
 
@@ -685,6 +688,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(result).toMatchObject({
       outcome: "failed",
       errorReason: "xaa_authorization_rejected",
+      authorizationServerStatus: 429,
       errorMessage: message,
     });
   });

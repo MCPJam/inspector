@@ -235,7 +235,6 @@ export function describeSwarmAttemptFailure(
     xaaSignInFailure && described.slug === "provider/quota"
       ? {
           ...describeAsSlug("internal/unknown"),
-          title: "Server sign-in failed",
           likelyCauses: [
             "The server's authorization server refused or throttled MCPJam's sign-in.",
           ],
@@ -248,7 +247,6 @@ export function describeSwarmAttemptFailure(
       : described;
   if (
     base.slug === "provider/quota" &&
-    !xaaSignInFailure &&
     !isAccountLimit(info.message, errorCode ?? info.code)
   ) {
     return {

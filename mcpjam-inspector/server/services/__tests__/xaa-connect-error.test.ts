@@ -171,6 +171,7 @@ describe("toXaaConnectFailure", () => {
     expect(framed.message).toBe(
       'The authorization server for "Billing MCP" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.'
     );
+    expect(framed.details).toMatchObject({ authorizationServerStatus: 429 });
     expect(framed.message).not.toContain("—");
     expect(framed.message).not.toMatch(/client credentials|issuer/);
   });

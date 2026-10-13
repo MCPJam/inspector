@@ -17,6 +17,7 @@ import { runSwarmSetupTurn, SwarmSetupError } from "./swarm-setup-turn";
 import type { SponsoredPlatformFailure } from "../../../shared/swarm-sponsorship";
 import {
   isStandingXaaFailure,
+  xaaAuthorizationServerStatusOf,
   xaaConnectFailureReasonOf,
 } from "../../../shared/xaa-connect-failure";
 export async function prepareTargetGrounding(args: {
@@ -79,7 +80,7 @@ export async function prepareTargetGrounding(args: {
         !error.platformFailure &&
         !isStandingXaaFailure(
           xaaConnectFailureReasonOf(cause),
-          (cause as { message?: string } | undefined)?.message,
+          xaaAuthorizationServerStatusOf(cause),
         ) &&
         setup.writeCallsDispatched === 0
       ) {

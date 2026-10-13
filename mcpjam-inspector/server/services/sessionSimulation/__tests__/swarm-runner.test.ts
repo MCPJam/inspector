@@ -633,6 +633,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
           outcome: "failed",
           errorMessage: message,
           errorReason: "xaa_authorization_rejected",
+          authorizationServerStatus: 429,
         };
       }
       return { outcome: "succeeded" };
@@ -664,23 +665,51 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
   });
 
   it.each([
-    ["an unclassified handshake failure", "xaa_handshake_failed", "Couldn't complete the handshake."],
+    [
+      "an unclassified handshake failure",
+      "xaa_handshake_failed",
+      "Couldn't complete the handshake.",
+      undefined,
+    ],
     [
       "a timeout at the authorization server",
       "xaa_authorization_rejected",
       'The authorization server for "Asana" rejected MCPJam\'s access request. Check the server\'s auth settings.',
+      undefined,
     ],
     [
       "a 5xx from the authorization server",
       "xaa_authorization_rejected",
       'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 503). Check the server\'s auth settings.',
+      503,
+    ],
+    [
+      "a 408 from the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 408). Check the server\'s auth settings.',
+      408,
+    ],
+    // The decision is the structured status, never the sentence: a server
+    // whose NAME reads like a 4xx must not turn a 503 into a standing refusal.
+    [
+      "a 5xx for a server named like a 4xx",
+      "xaa_authorization_rejected",
+      'The authorization server for "A (HTTP 400)" rejected MCPJam\'s access request (HTTP 503). Check the server\'s auth settings.',
+      503,
     ],
   ])(
     "%s may clear on the next try, so it does not stop the host",
-    async (_name, errorReason, errorMessage) => {
+    async (_name, errorReason, errorMessage, authorizationServerStatus) => {
       runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
         adapter.chatSessionId === "synth_run-1_host-1_0"
-          ? { outcome: "failed", errorMessage, errorReason }
+          ? {
+              outcome: "failed",
+              errorMessage,
+              errorReason,
+              ...(authorizationServerStatus !== undefined
+                ? { authorizationServerStatus }
+                : {}),
+            }
           : { outcome: "succeeded" },
       );
 
@@ -698,6 +727,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
             errorMessage:
               'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.',
             errorReason: "xaa_authorization_rejected",
+            authorizationServerStatus: 429,
           }
         : { outcome: "succeeded" },
     );
@@ -2035,7 +2065,10 @@ describe("target setup before claims", () => {
         { ...record, status: "failed", readiness: "unavailable", reason: "transport_failed" },
         undefined,
         Object.assign(new Error(message), {
-          details: { reason: "xaa_authorization_rejected" },
+          details: {
+            reason: "xaa_authorization_rejected",
+            authorizationServerStatus: 429,
+          },
         }),
       );
     });

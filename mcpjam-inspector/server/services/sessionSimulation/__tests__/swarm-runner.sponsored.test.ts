@@ -445,6 +445,7 @@ describe("sponsored swarm conversations: a provider rate limit still stops the t
       outcome: "failed",
       errorMessage: message,
       errorReason: "xaa_authorization_rejected",
+      authorizationServerStatus: 429,
     });
 
     await startJourneyRun(
