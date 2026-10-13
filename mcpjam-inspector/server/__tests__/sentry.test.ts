@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { init, onUncaughtExceptionIntegration } = vi.hoisted(() => ({
+const { init, on, onUncaughtExceptionIntegration } = vi.hoisted(() => ({
   init: vi.fn(),
+  on: vi.fn(),
   onUncaughtExceptionIntegration: vi.fn((options: unknown) => ({
     name: "OnUncaughtException",
     options,
@@ -18,6 +19,8 @@ function lastConfig() {
 describe("initServerSentry", () => {
   beforeEach(() => {
     init.mockClear();
+    on.mockClear();
+    init.mockReturnValue({ on });
     // resolveEnvironment() reads these; pin them so the assertions don't
     // depend on the ambient CI shell.
     vi.stubEnv("ENVIRONMENT", "prod");
@@ -33,6 +36,17 @@ describe("initServerSentry", () => {
   it("initializes enabled by default", () => {
     initServerSentry();
     expect(lastConfig().enabled).toBe(true);
+  });
+
+  it("drops an envelope when DNT changes after initialization", () => {
+    initServerSentry();
+    const envelope = {
+      0: {},
+      1: [[{ type: "event" }, { message: "private" }]],
+    };
+    vi.stubEnv("DO_NOT_TRACK", "true");
+    on.mock.calls[0][1](envelope);
+    expect(envelope[1]).toEqual([]);
   });
 
   it("honors DO_NOT_TRACK=1", () => {
@@ -97,9 +111,7 @@ describe("initServerSentry", () => {
   it("filters out the default OnUnhandledRejection integration", () => {
     initServerSentry();
     const result = (
-      lastConfig().integrations as (
-        d: { name: string }[],
-      ) => { name: string }[]
+      lastConfig().integrations as (d: { name: string }[]) => { name: string }[]
     )([
       { name: "OnUncaughtException" },
       { name: "OnUnhandledRejection" },
@@ -120,18 +132,16 @@ describe("initServerSentry", () => {
     onUncaughtExceptionIntegration.mockClear();
     initServerSentry();
     const result = (
-      lastConfig().integrations as (
-        d: { name: string }[],
-      ) => { name: string }[]
+      lastConfig().integrations as (d: { name: string }[]) => { name: string }[]
     )([{ name: "OnUncaughtException" }, { name: "Http" }]);
 
     expect(onUncaughtExceptionIntegration).toHaveBeenCalledWith({
       exitEvenIfOtherHandlersAreRegistered: true,
     });
     // Exactly one, so the default is replaced rather than duplicated.
-    expect(
-      result.filter((i) => i.name === "OnUncaughtException"),
-    ).toHaveLength(1);
+    expect(result.filter((i) => i.name === "OnUncaughtException")).toHaveLength(
+      1,
+    );
   });
 
   it("reconstructs every diagnostic family and clears attachment hints", async () => {
@@ -139,12 +149,33 @@ describe("initServerSentry", () => {
     const config = lastConfig();
     const sentinel = "PRIVATE_SENTINEL";
     const hint = { attachments: [{ filename: sentinel, data: sentinel }] };
-    const event = await config.beforeSend({ exception: { values: [{ type: "TypeError", value: sentinel }] }, extra: { sentinel } }, hint);
-    expect(event.exception.values[0]).toEqual({ type: "TypeError", value: "TypeError" });
+    const event = await config.beforeSend(
+      {
+        exception: { values: [{ type: "TypeError", value: sentinel }] },
+        extra: { sentinel },
+      },
+      hint,
+    );
+    expect(event.exception.values[0]).toEqual({
+      type: "TypeError",
+      value: "TypeError",
+    });
     expect(hint.attachments).toEqual([]);
-    const transaction = await config.beforeSendTransaction({ type: "transaction", transaction: sentinel, spans: [{ description: sentinel, data: { sentinel } }] }, {});
-    const span = config.beforeSendSpan({ description: sentinel, data: { sentinel } });
-    expect(JSON.stringify({ event, transaction, span })).not.toContain(sentinel);
+    const transaction = await config.beforeSendTransaction(
+      {
+        type: "transaction",
+        transaction: sentinel,
+        spans: [{ description: sentinel, data: { sentinel } }],
+      },
+      {},
+    );
+    const span = config.beforeSendSpan({
+      description: sentinel,
+      data: { sentinel },
+    });
+    expect(JSON.stringify({ event, transaction, span })).not.toContain(
+      sentinel,
+    );
     expect(transaction.transaction).toBe("unknown_operation");
   });
 

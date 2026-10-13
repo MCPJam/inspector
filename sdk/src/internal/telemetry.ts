@@ -183,6 +183,8 @@ export function rebuildSentryEvent<T extends object>(
 ): T {
   const source = telemetryRecord(input);
   const chain = exceptions(source.exception, options);
+  const priorDropped =
+    bounded(telemetryRecord(source.extra).dropped_frames, 1000000) ?? 0;
   const message =
     member(source.message, options.messages ?? []) ?? "telemetry_event";
   const breadcrumbs = Array.isArray(source.breadcrumbs)
@@ -198,7 +200,12 @@ export function rebuildSentryEvent<T extends object>(
       ? { exception: { values: chain.values } }
       : { message }),
     fingerprint: [chain.values.at(-1)?.type ?? message],
-    extra: { dropped_frames: chain.dropped },
+    extra: {
+      dropped_frames: Math.min(
+        1000000,
+        Math.floor(priorDropped) + chain.dropped
+      ),
+    },
     ...(breadcrumbs.length ? { breadcrumbs } : {}),
   } as T;
 }
