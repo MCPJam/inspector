@@ -1024,8 +1024,8 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  // Match the global host picker / HostsTab / useAppState scope: prefer
-  // the shared project id (what `GlobalHostBar` and `HostsTab` write),
+  // Match the HostsTab / useAppState scope: prefer the shared project
+  // id (what Connect's `HostsTab` and `HostCanvasSelector` write),
   // falling back to `activeProjectId` for CLI / no-cloud-sync flows where
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
@@ -2230,8 +2230,8 @@ export function PlaygroundMain({
   // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
   // the lead.
   //
-  // This is the SINGLE source of truth for picker + grid. The
-  // `PlaygroundHostPicker` rendered below is a controlled component —
+  // This is the SINGLE source of truth for picker + grid. The chat-input
+  // `ClientSelector` (`clientSelector` below) is a controlled component —
   // it does NOT call `usePersistedHost` itself. Two sibling hooks
   // wouldn't stay in sync because `selected-host-storage.ts` doesn't
   // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
@@ -3403,8 +3403,8 @@ export function PlaygroundMain({
   // Chat history coordination (docked `chatHistory` pane bridge)
   //
   // Ported from ChatTabV2:466-996 with the following intentional differences:
-  // - Draft-discard uses `window.confirm` instead of the full DiscardDraftDialog
-  //   port (matches PlaygroundHeader's existing window.confirm style).
+  // - Draft-discard uses an inline `AlertDialog` (`discardDraftDialogOpen`)
+  //   instead of ChatTabV2's `DiscardDraftDialog` component.
   // - `widgetStateQueue` is not part of `hasUnsavedDraft` (Playground doesn't
   //   queue widget-state updates the way ChatTabV2 does).
   // - Multi-server restoration: Playground is single-server in v1; if a saved
@@ -5193,7 +5193,7 @@ export function PlaygroundMain({
       // Compare off" — that left the user having to manually
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
-      // `MultiHostPicker` pick up the live lead from `currentHostId`.
+      // `ClientSelector` pick up the live lead from `currentHostId`.
       // Checked against `selectedHostIds.length` directly, NOT
       // `isComparingHosts` (which also requires `canEnableMultiHost`, a
       // transient signal that lags behind the Convex host-list query) and
@@ -5218,11 +5218,11 @@ export function PlaygroundMain({
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
-  // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
-  // via `onMultiHostEnabledChange`. After the "lift state ownership"
-  // fix the picker no longer calls `usePersistedHost` itself — both
-  // the toggle value and its setter come from THIS component's single
-  // hook instance, so any flip propagates without storage events.
+  // `handleMultiModelEnabledChange`). Wired into the chat-input
+  // `ClientSelector` via `onMultiHostEnabledChange`. The selector does
+  // not call `usePersistedHost` itself — both the toggle value and its
+  // setter come from THIS component's single hook instance, so any flip
+  // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiHostEnabled(enabled);
@@ -7061,9 +7061,9 @@ export function PlaygroundMain({
                 />
               ) : null
             }
-            // The standalone "Compare" host picker moved into the chat-input
-            // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
-            // switching still lives in the global `GlobalHostBar`.
+            // Client switching and host comparison both live in the chat-input
+            // client chip (see `clientSelector` in `sharedChatInputProps`), so
+            // the header carries no host picker.
             trailing={
               effectiveHasMessages ? (
                 <Tooltip>
