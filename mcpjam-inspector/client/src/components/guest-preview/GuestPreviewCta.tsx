@@ -6,7 +6,9 @@
  * boolean that only means something here.
  *
  * The CTA is named for the thing the visitor came to make. The dialog handles
- * sign-up and sign-in, and both return into that creation flow.
+ * sign-up and sign-in. From the tab root or `/new` both return into that
+ * creation flow; on a shared swarm or study permalink they return to the
+ * permalink.
  */
 
 import { useState } from "react";
@@ -21,8 +23,6 @@ export function GuestPreviewCta({ feature }: { feature: GatedFeatureId }) {
   return (
     <>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {/* One CTA names the thing they came to make. The dialog handles
-            sign-up/sign-in and returns both into that creation flow. */}
         <Button type="button" onClick={() => setNudgeOpen(true)}>
           {copy.ctaLabel}
         </Button>

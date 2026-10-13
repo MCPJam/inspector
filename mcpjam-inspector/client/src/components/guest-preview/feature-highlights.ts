@@ -108,7 +108,10 @@ export interface GatedFeatureCopy {
   readonly navLabel: string;
   /** The single button on the preview that opens the nudge. */
   readonly ctaLabel: string;
-  /** Where sign-in/up returns to: the creation flow the visitor asked for. */
+  /**
+   * Where sign-in/up returns to from the tab root or `/new`. A guest on a
+   * shared permalink returns to that permalink instead.
+   */
   readonly createPath: string;
   /**
    * NO HEADLINE OR BODY LIVE HERE ANY MORE.
