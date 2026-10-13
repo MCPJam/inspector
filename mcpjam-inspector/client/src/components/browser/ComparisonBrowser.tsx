@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
-import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import {
+  useBrowserEngine,
+  type BrowserEngineState,
+} from "@/hooks/useBrowserEngine";
 import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { usePaneHolderId } from "@/lib/local-browser/pane-holder";
 import { createComparisonTransport } from "@/lib/browser-shell/comparison-transport";
@@ -14,6 +17,27 @@ import { LocalBrowserConsentGate } from "./LocalBrowserConsentGate";
 import { HOSTED_MODE } from "@/lib/config";
 
 type SessionView = { snapshot: BrowserStateSnapshot | null; stale: boolean };
+
+/**
+ * Local is the fallback while the engine config loads and wherever Cloud is
+ * unavailable, so neither case may claim this machine lacks Browser or offer
+ * a Cloud that is not there.
+ */
+export function LocalBrowserUnavailable({
+  engine,
+}: {
+  engine: Pick<BrowserEngineState, "resolved" | "cloudAvailable">;
+}) {
+  return (
+    <p role="status" className="p-4 text-sm text-muted-foreground">
+      {!engine.resolved
+        ? "Checking Browser…"
+        : engine.cloudAvailable
+          ? "Browser is unavailable on this machine. Check Browser settings or choose Cloud for a new chat."
+          : "Browser is unavailable on this machine. Check Browser settings."}
+    </p>
+  );
+}
 const tabKey = (sessionId: string, tabId: string) =>
   JSON.stringify([sessionId, tabId]);
 
@@ -279,10 +303,7 @@ export function ComparisonBrowser({
         ) : localClient?.engine === "local" &&
           !engine.localAvailable &&
           !localClient.started ? (
-          <p role="status" className="p-4 text-sm text-muted-foreground">
-            Browser is unavailable on this machine. Check Browser settings or
-            choose Cloud for a new chat.
-          </p>
+          <LocalBrowserUnavailable engine={engine} />
         ) : localClient?.engine === "local" ? (
           <LocalBrowserBody
             key={localClient.sessionId}

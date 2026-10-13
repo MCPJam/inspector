@@ -136,6 +136,7 @@ it("defaults to Cloud outside the cohort but allows explicit local onboarding", 
 // A Cloud fallback outside the hosted-browser rollout can only mint a token
 // the backend refuses.
 it("never falls back to Cloud while the engine config is loading", () => {
+  state.hostedFlag = true;
   state.configLoaded = false;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.resolved).toBe(false);

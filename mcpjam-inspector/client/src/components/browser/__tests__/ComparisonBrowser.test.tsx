@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   grant: vi.fn(async () => true),
   hosted: false,
   localAvailable: true,
+  resolved: true,
 }));
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -40,6 +41,8 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
     selectedEngine: "local",
     localAvailable: mocks.localAvailable,
+    resolved: mocks.resolved,
+    cloudAvailable: false,
     consent: { granted: mocks.granted, token: "consent", grant: mocks.grant },
   }),
 }));
@@ -121,6 +124,7 @@ beforeEach(() => {
   mocks.granted = true;
   mocks.hosted = false;
   mocks.localAvailable = true;
+  mocks.resolved = true;
   mocks.read.mockResolvedValue(snapshot());
   mocks.send.mockResolvedValue({ ok: true });
   store.setState({ clients: {}, selected: {} });
@@ -163,6 +167,19 @@ describe("one combined browser strip", () => {
     expect(
       screen.getByText(/Browser is unavailable on this machine/),
     ).toBeInTheDocument();
+  });
+
+  it("checks Browser instead of calling it unavailable while the engine config loads", () => {
+    mocks.localAvailable = false;
+    mocks.resolved = false;
+    register("a", 0);
+    store.setState((state) => ({
+      clients: { a: { ...state.clients.a, started: false } },
+      selected: {},
+    }));
+    mount();
+    expect(screen.getByText("Checking Browser…")).toBeInTheDocument();
+    expect(screen.queryByText(/Browser is unavailable/)).toBeNull();
   });
 
   it("keeps a started local client's browser when Local reads unavailable", () => {

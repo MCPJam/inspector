@@ -879,7 +879,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
-    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false, browserLocation: null });
     vi.clearAllMocks();
     mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
@@ -4398,7 +4398,6 @@ describe("PlaygroundMain", () => {
     ])(
       "binds a reopened %s browser conversation to where its browser runs",
       async (engine, location) => {
-        useActiveChatSessionStore.setState({ browserLocation: null });
         await openRestoredConversation(
           { executionTarget: { kind: "adhoc" } },
           {},
