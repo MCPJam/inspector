@@ -454,4 +454,60 @@ describe("SwarmsTab — new goal form", () => {
         .environmentIds,
     ).toEqual(["env-sibling"]);
   });
+  it("keeps an older goal's clients and group without extra UI", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old",
+        goal: "Existing",
+        hostIds: ["host-2", "host-1"],
+        serverAttachmentId: "att-legacy",
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    expect(
+      screen.queryByRole("button", { name: "Replace targets" }),
+    ).toBeNull();
+    await createGoal("same servers");
+    await waitFor(() =>
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostIds: ["host-2", "host-1"],
+          environmentIds: [],
+          serverAttachmentId: "att-legacy",
+        }),
+      ),
+    );
+    expect(swarmPreflight).toHaveBeenCalledWith(expect.anything(), {
+      projectId: "proj-1",
+      hostIds: ["host-2", "host-1"],
+      serverAttachmentId: "att-legacy",
+    });
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["ENV_NO_SERVERS", "ENV_SERVERS_UNRESOLVED"])(
+    "rejects an invalid older setup (%s) without defaulting",
+    async (code) => {
+      siblingGoals.value = [
+        {
+          _id: "old",
+          goal: "Existing",
+          hostIds: ["host-1"],
+          config: { sessionsPerTarget: 1, maxTurns: 6 },
+        },
+      ];
+      swarmPreflight.mockRejectedValue({
+        data: { code, message: "Invalid selection" },
+      });
+      await openGoalForm();
+      await createGoal("same servers");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /server setup is missing or invalid/i,
+      );
+      expect(createJourneyMutation).not.toHaveBeenCalled();
+      expect(ensureAdhocMock).not.toHaveBeenCalled();
+    },
+  );
+
 });

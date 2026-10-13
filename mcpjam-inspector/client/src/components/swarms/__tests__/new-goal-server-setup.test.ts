@@ -31,4 +31,12 @@ describe("new goal server setup errors", () => {
       "Could not save the goal",
     );
   });
+  it("reads the backend's structured legacy setup error", () => {
+    expect(
+      newGoalErrorMessage({
+        data: { code: "ENV_SERVERS_UNRESOLVED", message: "Unavailable" },
+      }),
+    ).toMatch(/server setup is missing or invalid/);
+  });
+
 });

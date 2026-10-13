@@ -7,6 +7,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex, useConvexAuth } from "convex/react";
+import { makeFunctionReference } from "convex/server";
+import type { GoalTarget } from "./inherited-goal-target";
 import {
   composerHasTarget,
   defaultComposerState,
@@ -35,6 +37,12 @@ import {
   resolveSwarmEnvironment,
 } from "./swarm-target-preflight";
 
+const legacySwarmQuery = makeFunctionReference<
+  "query",
+  { projectId: string; hostIds: string[]; serverAttachmentId?: string },
+  null
+>("journeys:validateLegacySwarmTargets");
+
 export type SwarmDefaultTarget = {
   state: EnvironmentComposerState;
   setState: React.Dispatch<React.SetStateAction<EnvironmentComposerState>>;
@@ -44,7 +52,7 @@ export type SwarmDefaultTarget = {
   noServers: { labels: string[] } | null;
   /** Mints or reuses the environments this target resolves to. */
   resolve: () => Promise<string[]>;
-  resolveExisting: (environmentIds: string[]) => Promise<string[]>;
+  resolveExisting: (target: GoalTarget) => Promise<GoalTarget>;
 };
 
 export function useSwarmDefaultTarget({
@@ -167,14 +175,24 @@ export function useSwarmDefaultTarget({
   const noServers = readiness.status === "no_servers" ? readiness : null;
 
   const resolveExisting = useCallback(
-    async (environmentIds: string[]) => {
+    async (target: GoalTarget) => {
+      if (target.environmentIds.length === 0) {
+        await convex.query(legacySwarmQuery, {
+          projectId,
+          hostIds: target.hostIds,
+          ...(target.serverAttachmentId
+            ? { serverAttachmentId: target.serverAttachmentId }
+            : {}),
+        });
+        return target;
+      }
       await preflightSwarmTargets({
-        environmentIds,
+        environmentIds: target.environmentIds,
         targets: usageRows ?? envList,
         hosts: [],
         resolve: (id) => resolveSwarmEnvironment(convex, projectId, id),
       });
-      return environmentIds;
+      return target;
     },
     [convex, envList, projectId, usageRows],
   );
@@ -188,7 +206,9 @@ export function useSwarmDefaultTarget({
     if (resolved.environmentIds.length === 0) {
       throw new Error("Could not resolve where this should run.");
     }
-    return resolveExisting(resolved.environmentIds);
+    const target = { hostIds: [], environmentIds: resolved.environmentIds };
+    await resolveExisting(target);
+    return target.environmentIds;
   }, [envList, resolveExisting, resolveTargets, state, usageRows]);
 
   return {

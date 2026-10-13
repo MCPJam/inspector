@@ -13,7 +13,10 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
-import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
+import {
+  inheritedGoalTarget,
+  type GoalWithTarget,
+} from "@/components/swarms/inherited-goal-target";
 import { newGoalErrorMessage } from "./new-goal-server-setup";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { SectionLabel } from "@/components/shared/section-label";
@@ -1865,12 +1868,13 @@ function NewJourneyButton({
   /** Project clients, for the default target. */
   hosts: ReadonlyArray<{ hostId: string }>;
   /** This persona's existing goals; the new one runs where they do. */
-  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
+  siblingGoals: GoalWithTarget[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
     /** Ordered fan-out; compat hostIds ride alongside. */
     environmentIds: string[];
+    serverAttachmentId?: string;
     config: { sessionsPerTarget: number; maxTurns: number };
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
@@ -1918,11 +1922,12 @@ function NewJourneyForm({
   projectId: string;
   environments: ProjectEnvironmentView[] | undefined;
   hosts: ReadonlyArray<{ hostId: string }>;
-  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
+  siblingGoals: GoalWithTarget[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
     environmentIds: string[];
+    serverAttachmentId?: string;
     config: { sessionsPerTarget: number; maxTurns: number };
   }) => Promise<void>;
   onOpenChange: (open: boolean) => void;
@@ -1996,10 +2001,9 @@ function NewJourneyForm({
             try {
               await onCreate({
                 goal,
-                hostIds: [],
-                environmentIds: inherited
+                ...(inherited
                   ? await target.resolveExisting(inherited)
-                  : await target.resolve(),
+                  : { hostIds: [], environmentIds: await target.resolve() }),
                 config: { sessionsPerTarget: 1, maxTurns: 6 },
               });
               setOpen(false);
