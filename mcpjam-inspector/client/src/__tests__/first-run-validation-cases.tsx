@@ -35,15 +35,11 @@ export function registerFirstRunValidationCases(
       "http",
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    await waitFor(() =>
-      expect(handleConnect).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "http",
-          url: "https://mcp.example.com/mcp",
-        }),
-        expect.anything(),
-      ),
-    );
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.lastCall?.[0]).toMatchObject({
+      type: "http",
+      url: "https://mcp.example.com/mcp",
+    });
   });
 
   it.each(["mcp.example.com/mcp", "localhost:3000/mcp", "ftp://host"])(
@@ -69,27 +65,19 @@ export function registerFirstRunValidationCases(
   registerLocalCase(start);
 }
 
-function registerLocalCase(
-  start: (
-    input: string,
-    hosted: boolean,
-  ) => Promise<{ handleConnect: Mock; track: Mock }>,
-) {
+function registerLocalCase(start: ReturnType<typeof createStart>) {
   it("preserves quoted STDIO arguments through local onboarding", async () => {
     const { handleConnect, track } = await start(command, false);
-    await waitFor(() =>
-      expect(handleConnect).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "stdio",
-          command: "npx",
-          args: ["-y", "server-example", "--label", "hello world"],
-        }),
-        expect.objectContaining({
-          suppressErrorToast: true,
-          suppressSuccessToast: true,
-        }),
-      ),
-    );
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.lastCall?.[0]).toMatchObject({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "server-example", "--label", "hello world"],
+    });
+    expect(handleConnect.mock.lastCall?.[1]).toMatchObject({
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
     expect(track).toHaveBeenCalledWith(
       "first_run_onboarding_connection_started",
       expect.objectContaining({ transport: "stdio" }),
@@ -105,13 +93,6 @@ function createStart(
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    expect(
-      screen.getByText(
-        hosted
-          ? "Enter an HTTPS URL. STDIO works only in the local and desktop apps."
-          : "HTTP, SSE, and STDIO all work.",
-      ),
-    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: input },
     });

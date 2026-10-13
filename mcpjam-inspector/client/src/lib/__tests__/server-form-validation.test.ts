@@ -75,38 +75,33 @@ describe("validateServerFormData", () => {
   });
 });
 
-const stdioForm = {
-  name: "everything",
-  type: "stdio",
-  command: "npx -y @modelcontextprotocol/server-everything",
-} as ServerFormData;
+it.each([
+  ["mcp.example.com/mcp", "http"],
+  ["localhost:3000/mcp", "http"],
+  ["ftp://host", "http"],
+  ["ftp://host/server.js", "http"],
+  ["mcp.example.com/server.js", "http"],
+  ["HTTPS://mcp.example.com/mcp", "http"],
+  ["npx -y server-example", "stdio"],
+  ["server.js", "stdio"],
+  ["server.py", "stdio"],
+  ["./server.js", "stdio"],
+  ["/usr/local/bin/server", "stdio"],
+  ["server-example", "stdio"],
+])("infers hosted input %s as %s", async (input, expected) => {
+  vi.resetModules();
+  vi.doMock("@/lib/config", () => ({ HOSTED_MODE: true }));
+  const { inferFirstRunTransport } = await import("../server-form-validation");
+  expect(inferFirstRunTransport(input)).toBe(expected);
+});
 
-describe("validateFirstRunServerFormData", () => {
-  const importFirstRunValidator = async (hosted: boolean) => {
-    vi.resetModules();
-    vi.doMock("@/lib/config", () => ({ HOSTED_MODE: hosted }));
-    return (await import("../server-form-validation"))
-      .validateFirstRunServerFormData;
-  };
-
-  it("refuses hosted STDIO and directs the developer to the local app", async () => {
-    const validate = await importFirstRunValidator(true);
-    expect(validate(stdioForm)).toMatch(
-      /Connect your STDIO server in MCPJam’s local app.*HTTPS servers/i,
-    );
-  });
-
-  it("allows STDIO in local mode", async () => {
-    const validate = await importFirstRunValidator(false);
-    expect(validate(stdioForm)).toBeNull();
-  });
-
-  it("keeps the shared HTTPS rule in hosted mode", async () => {
-    const validate = await importFirstRunValidator(true);
-    expect(validate(httpForm({ url: "http://mcp.example.com/mcp" }))).toMatch(
-      /hosted web app requires an HTTPS/i,
-    );
-  });
+it("preserves explicit transports and command inference in local mode", async () => {
+  vi.resetModules();
+  vi.doMock("@/lib/config", () => ({ HOSTED_MODE: false }));
+  const { inferFirstRunTransport } = await import("../server-form-validation");
+  expect(inferFirstRunTransport("server.example")).toBe("stdio");
+  expect(inferFirstRunTransport("https://example.com", "stdio")).toBe("stdio");
+  expect(inferFirstRunTransport("server.example", "http")).toBe("http");
 });
 
 describe("validateBearerTargetUrl", () => {

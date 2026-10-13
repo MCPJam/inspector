@@ -49,9 +49,6 @@ export function validateBearerTargetUrl(url: string): string | null {
   return "Bearer tokens require HTTPS for non-local server URLs.";
 }
 
-const RUN_LOCALLY =
-  "run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
-
 /**
  * Single source of truth for server-config validation, shared by the save
  * path (`use-server-state`) and every form that feeds it (XAAServerModal,
@@ -87,7 +84,7 @@ export function validateServerFormData(
     if (parsedUrl.protocol !== "http:") {
       return "Enter a complete HTTPS server URL, such as https://example.com/mcp.";
     }
-    return `MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, ${RUN_LOCALLY}`;
+    return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
   }
   return null;
 }
@@ -95,13 +92,7 @@ export function validateServerFormData(
 export const HOSTED_STDIO_ERROR =
   "Connect your STDIO server in MCPJam’s local app. The web app connects to HTTPS servers.";
 
-/**
- * First-run onboarding adds only a server the user typed, never a plugin
- * component, so hosted mode has no runtime that can start its STDIO command.
- * Refuse it here, where the user can still edit the input, instead of letting
- * the connect fail. The shared validator stays permissive because plugin
- * STDIO components do have a hosted runtime.
- */
+// Only plugin components have a hosted STDIO runtime; first-run input does not.
 export function validateFirstRunServerFormData(
   formData: ServerFormData,
 ): string | null {
@@ -118,7 +109,8 @@ export function inferFirstRunTransport(
   if (!HOSTED_MODE && current) return current;
   if (/^https?:\/\//i.test(input)) return "http";
   if (!HOSTED_MODE || /\s/.test(input)) return "stdio";
-  // Bare hosts need URL guidance; executable paths still belong to STDIO.
+  // Prefer local execution for common script filenames, which also resemble hosts.
+  if (/^[^/:]+\.(?:[cm]?js|tsx?|py|sh|rb|exe)$/i.test(input)) return "stdio";
   return /^[a-z][a-z\d+.-]*:\/\//i.test(input) ||
     /^(?:localhost|(?:[a-z\d-]+\.)+[a-z\d-]+)(?::\d+)?(?:[/?#]|$)/i.test(input)
     ? "http"

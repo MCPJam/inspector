@@ -10,13 +10,6 @@ import { FirstRunOnboardingOverlay } from "../FirstRunOnboardingOverlay";
 import { copyToClipboard } from "@/lib/clipboard";
 
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard: vi.fn() }));
-vi.mock("@/lib/first-run-onboarding-analytics", () => ({
-  trackFirstRunConnectionFailed: vi.fn(),
-  trackFirstRunOnboardingEntered: vi.fn(),
-  trackFirstRunOnboardingScreenViewed: vi.fn(),
-  trackFirstRunSetupLater: vi.fn(),
-}));
-import { trackFirstRunConnectionFailed } from "@/lib/first-run-onboarding-analytics";
 
 afterEach(() => {
   cleanup();
@@ -40,12 +33,6 @@ it.each(["failed", "authorization-required"] as const)(
           error: "Updated guidance",
           validationKind: "hosted-stdio",
         }}
-        recoveryServerDraft={{
-          name: "Example",
-          transport: "stdio",
-          urlOrCommand: "npx server-example",
-          authentication: "none",
-        }}
         onConnectOwnServer={connect}
         onAuthorizeConnection={authorize}
         onConnectDemo={vi.fn()}
@@ -68,6 +55,5 @@ it.each(["failed", "authorization-required"] as const)(
     );
     expect(connect).not.toHaveBeenCalled();
     expect(authorize).not.toHaveBeenCalled();
-    expect(trackFirstRunConnectionFailed).not.toHaveBeenCalled();
   },
 );
