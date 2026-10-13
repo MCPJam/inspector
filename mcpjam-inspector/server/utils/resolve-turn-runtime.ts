@@ -45,7 +45,7 @@ import { admitEachLocalOrgAttempt } from "./local-org-attempt-admission.js";
 import { postLocalUsage } from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
-import { getHarnessAdapter } from "./harness/registry.js";
+import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
 import { buildLocalExecutionRecord } from "./local-execution-record.js";
 import {
   backendModelSelection,
@@ -218,13 +218,11 @@ export async function resolveTurnRuntime(
     // A HARNESS host never runs on the direct engine. This branch drops
     // `harness` on the floor — the turn would run the emulated direct engine on
     // the org's local key and be reported under the harness's name. Refused
-    // with the pre-flight's own sentence (a BYOK model is not MCPJam-provided).
+    // using shared copy that makes no assumption about organization policy.
     if (args.harness) {
-      const name = getHarnessAdapter(args.harness).displayName;
       throw new Error(
         `This host runs the ${args.harness} harness, which isn't available: ` +
-          `the ${name} harness only runs MCPJam-provided models — pick one on ` +
-          "this host to run the real runtime.",
+          `${harnessOrgProviderUnsupportedReason(args.harness, null)}.`,
       );
     }
 

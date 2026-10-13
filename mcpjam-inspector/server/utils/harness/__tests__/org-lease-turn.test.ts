@@ -77,8 +77,12 @@ beforeEach(() => {
 });
 
 describe("OrgLeaseTurn on MCPJam's key", () => {
-  it("answers the hosted defaults", async () => {
-    const org = turn();
+  it.each([undefined, {
+    modelId: "anthropic/claude-sonnet-4.5", source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    settings: { reasoningEffort: "high" as const },
+  }])("keeps a hosted selection out of the org credential lease: %j", async (selection) => {
+    const org = turn(selection);
     expect(org.modelId("gpt-5-nano", "openai")).toBe("openai/gpt-5-nano");
     expect(org.brokeredEndpoint).toBe("platform");
     expect(org.fingerprint()).toEqual({});
