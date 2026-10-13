@@ -43,7 +43,9 @@ import {
 } from "@/components/guest-preview/feature-highlights";
 
 /**
- * The creation flow from the tab root or `/new`; anywhere deeper is a shared
+ * The creation flow from the tab root or `/new`, keeping any `?project=` so
+ * the new swarm or study lands in the project the guest was looking at.
+ * Anywhere deeper is a shared
  * swarm or study permalink, and the recipient should land back on it with its
  * `?project=` scope intact.
  */
@@ -51,7 +53,9 @@ function signInReturnPath(createPath: string): string {
   const { pathname, search, hash } = window.location;
   const path = pathname.replace(/\/+$/, "");
   const listPath = createPath.replace(/\/new$/, "");
-  if (path === listPath || path === createPath) return createPath;
+  if (path === listPath || path === createPath) {
+    return `${createPath}${search}${hash}`;
+  }
   return `${pathname}${search}${hash}`;
 }
 

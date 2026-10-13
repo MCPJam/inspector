@@ -157,8 +157,9 @@ describe("FeatureSignUpNudgeDialog", () => {
       (label) => {
         window.history.replaceState({}, "", `/${feature}`);
         const authenticate = label === "Sign in" ? signInMock : signUpMock;
+        let storedBeforeNavigation: string | null = null;
         authenticate.mockImplementation(() => {
-          expect(readAppSignInReturnPath()).toBe(destination);
+          storedBeforeNavigation = readAppSignInReturnPath();
         });
         render(
           <FeatureSignUpNudgeDialog
@@ -171,9 +172,52 @@ describe("FeatureSignUpNudgeDialog", () => {
         fireEvent.click(screen.getByRole("button", { name: label }));
 
         expect(authenticate).toHaveBeenCalledTimes(1);
+        expect(storedBeforeNavigation).toBe(destination);
         const options = authenticate.mock.calls[0][0];
         window.history.replaceState({}, "", "/callback");
         // main.tsx consumes this nonce before App's generic return handler.
+        expect(
+          takePermalinkSignInReturn(
+            options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          ),
+        ).toBe(destination);
+      },
+    );
+  });
+
+  describe.each([
+    ["swarms", "/swarms?project=p1", "/swarms/new?project=p1"],
+    ["swarms", "/swarms/new?project=p1", "/swarms/new?project=p1"],
+    [
+      "user-testing",
+      "/user-testing?project=p1",
+      "/user-testing/new?project=p1",
+    ],
+    [
+      "user-testing",
+      "/user-testing/new?project=p1",
+      "/user-testing/new?project=p1",
+    ],
+  ] as const)("%s from %s", (feature, start, destination) => {
+    it.each(["Create free account", "Sign in"])(
+      "%s keeps the project scope on the creation flow",
+      (label) => {
+        window.history.replaceState({}, "", start);
+        const authenticate = label === "Sign in" ? signInMock : signUpMock;
+        render(
+          <FeatureSignUpNudgeDialog
+            feature={feature}
+            isOpen
+            onClose={vi.fn()}
+          />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: label }));
+
+        expect(readAppSignInReturnPath()).toBe(destination);
+        const options = authenticate.mock.calls[0][0];
+        window.history.replaceState({}, "", "/callback");
         expect(
           takePermalinkSignInReturn(
             options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
