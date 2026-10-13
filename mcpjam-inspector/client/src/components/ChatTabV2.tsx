@@ -809,8 +809,7 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
           ? detail.modelSelection
@@ -834,13 +833,14 @@ export function ChatTabV2({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
       if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
-        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection });
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -2408,7 +2408,7 @@ export function ChatTabV2({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     // In compare mode the chip edits the lead card's effort (each card has
     // its own chip too); before the v2 migration ran, cards carry no effort,
     // so the chip is withheld rather than shown doing nothing.
@@ -2418,7 +2418,7 @@ export function ChatTabV2({
           reasoningEffortLevels,
           onReasoningEffortChange: hostedContext?.scenarioId
             ? undefined
-            : setReasoningEffort,
+            : (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
         }
       : leadCompareCard?.editableSelection
       ? {

@@ -23,6 +23,8 @@ export function chatRequestSelection(args: {
   allowLocal: boolean;
   /** Undefined preserves saved settings; null explicitly clears effort. */
   effort?: ModelReasoningEffort | null;
+  temperature?: number;
+  effortLevels?: readonly ModelReasoningEffort[];
 }): ChatRequestSelection {
   if (args.intent === "inherit") return { kind: "inherit" };
   // Only the compatibility/new-pick boundary may derive from a row.
@@ -49,10 +51,15 @@ export function chatRequestSelection(args: {
   }
   // Hosted synthesis is enabled after browser propagation is in place.
   if (!args.selection && selection.source === "hosted") return { kind: "compatibility" };
-  return {
-    kind: "picked",
-    selection: selection.source !== "legacy" && args.effort !== undefined
+  const picked = selection.source !== "legacy" && args.effort !== undefined
       ? withReasoningEffort(selection, args.effort ?? undefined)
-      : selection,
-  };
+      : selection;
+  if (picked.source === "legacy") return { kind: "picked", selection: picked };
+  const effort = picked.settings?.reasoningEffort;
+  if (effort && args.effortLevels && !args.effortLevels.includes(effort)) {
+    return blocked("The saved reasoning effort is unavailable for this model. Choose a supported effort or another model.");
+  }
+  return { kind: "picked", selection: args.temperature !== undefined && !effort
+    ? { ...picked, settings: { ...picked.settings, temperature: args.temperature } }
+    : picked };
 }

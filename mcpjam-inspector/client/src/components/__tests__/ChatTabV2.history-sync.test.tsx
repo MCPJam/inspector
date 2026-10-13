@@ -950,7 +950,7 @@ describe("ChatTabV2 history sync", () => {
 
       expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
         provider === "openrouter" ? openRouterSonnet : hostedSonnet,
-        { selection: undefined },
+        { selection: undefined, persist: false },
       );
     });
   });
@@ -977,7 +977,7 @@ describe("ChatTabV2 history sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
     expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
-      mockUseChatSession.selectedModel, { selection },
+      mockUseChatSession.selectedModel, { selection, persist: false },
     );
   });
 

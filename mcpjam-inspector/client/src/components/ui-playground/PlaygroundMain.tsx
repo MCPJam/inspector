@@ -3666,8 +3666,7 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
           ? detail.modelSelection
@@ -3691,6 +3690,7 @@ export function PlaygroundMain({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -3708,7 +3708,7 @@ export function PlaygroundMain({
           engine: "cloud",
         });
       if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
-        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection });
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -6251,7 +6251,7 @@ export function PlaygroundMain({
     ? {
         reasoningEffort,
         reasoningEffortLevels,
-        onReasoningEffortChange: setReasoningEffort,
+        onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
       }
     : leadCompareCard?.editableSelection
       ? {
@@ -6316,7 +6316,7 @@ export function PlaygroundMain({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     ...composerEffortProps,
     onResetChat: handleResetAllChats,
     submitDisabled:

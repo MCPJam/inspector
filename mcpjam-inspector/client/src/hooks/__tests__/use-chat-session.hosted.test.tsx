@@ -389,6 +389,72 @@ describe("useChatSession hosted mode", () => {
     hostedContext: { projectId: "project-1", selectedServerIds: [] },
   });
 
+  it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
+    const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.9, modelSelection: { ...savedOrgChoice, settings: { temperature: 0.9 } },
+    });
+    rerender({ hostId: "host-2" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    unmount();
+  });
+
+  it.each(["picked", "inherit"] as const)("refuses unsupported effort after a %s choice until cleared", async (intent) => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions({ ...savedOrgChoice, settings: { reasoningEffort: "high" } }),
+      selectionIntent: intent,
+      reasoningEffortEnabled: true,
+    }));
+    if (intent === "inherit") {
+      expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+      act(() => result.current.setReasoningEffort("high", true));
+    }
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(() => lastTransportOptions.body()).toThrow("saved reasoning effort is unavailable");
+    act(() => result.current.setReasoningEffort(undefined, true));
+    expect(result.current.submitBlocked).toBe(false);
+    expect(lastTransportOptions.body().modelSelection).not.toHaveProperty("settings.reasoningEffort");
+    unmount();
+  });
+
+  it("restores recorded selection settings ahead of legacy resume fields", async () => {
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await result.current.loadChatSession({
+      chatSessionId: "history-settings", messagesBlobUrl: null,
+      resumeConfig: { temperature: 0.8 },
+    }, { restoredModel: result.current.selectedModel, restoredSelection: savedOrgChoice });
+    await waitFor(() => expect(result.current.temperature).toBe(0.2));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.2, modelSelection: { settings: { temperature: 0.2 } },
+    });
+    unmount();
+  });
+
+  it("keeps an unavailable historical choice local without changing the saved lead or provider", async () => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(), executionConfig: undefined,
+    }));
+    const before = JSON.stringify(localStorage);
+    mockState.setSelectedModelId.mockClear();
+    act(() => result.current.setSelectedModel(result.current.selectedModel, {
+      selection: { ...savedOrgChoice, connectionRef: { kind: "orgProvider", id: "removed" } },
+      persist: false,
+    }));
+    expect(result.current.selectedModel.disabled).toBe(true);
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(mockState.setSelectedModelId).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).toBe(before);
+    unmount();
+  });
+
   it("carries the saved org connection, settings and fallback into the request", async () => {
     const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
     await waitFor(() => expect(result.current.selectedModel.id).toBe("gpt-4o-mini"));

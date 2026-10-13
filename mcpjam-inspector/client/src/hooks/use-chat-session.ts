@@ -656,6 +656,8 @@ export interface TokenUsage {
 }
 
 export interface SetSelectedModelOptions {
+  /** History choices stay local to this conversation. */
+  persist?: boolean;
   selection?: RequestedModelSelection | null;
   /**
    * True only when this came from the model menu. Restores — a history
@@ -799,7 +801,7 @@ export interface UseChatSessionReturn {
   systemPrompt: string;
   setSystemPrompt: (prompt: string) => void;
   temperature: number;
-  setTemperature: (temp: number) => void;
+  setTemperature: (temp: number, userInitiated?: boolean) => void;
   /**
    * The effort this chat's selected model runs at, or undefined. Always one
    * of `reasoningEffortLevels` (an effort the model does not support is never
@@ -809,7 +811,7 @@ export interface UseChatSessionReturn {
   /** Levels the selected model supports here; empty hides the control. */
   reasoningEffortLevels: ModelReasoningEffort[];
   /** User pick: applies to the selected model and is remembered for it. */
-  setReasoningEffort: (effort: ModelReasoningEffort | undefined) => void;
+  setReasoningEffort: (effort: ModelReasoningEffort | undefined, userInitiated?: boolean) => void;
   /**
    * Default the effort for `model` (a host's saved effort, a reopened chat's
    * pin). Not remembered: only an explicit pick is.
@@ -935,6 +937,7 @@ export interface UseChatSessionReturn {
        * reasoning effort is seeded for it (not for the pre-restore selection).
        */
       restoredModel?: ModelDefinition;
+      restoredSelection?: RequestedModelSelection | null;
     },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null, sessionId?: string) => void;
@@ -2086,6 +2089,9 @@ export function useChatSession(
   // silently receive a message composed for the previous one.
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
+  const [restoredChoice, setRestoredChoice] = useState<{
+    target: string; selection: RequestedModelSelection;
+  } | null>(null);
   const [pickedTarget, setPickedTarget] = useState<string | null>(null);
   const effectiveSelectionIntent = hostedScenarioId
     ? "inherit"
@@ -2158,7 +2164,7 @@ export function useChatSession(
   const setSystemPrompt = useCallback((prompt: string) => {
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
-  const [temperatureOverride, setTemperature] = useState<number | undefined>(undefined);
+  const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
    * null for every other surface.
@@ -3036,24 +3042,13 @@ export function useChatSession(
     [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
-  // Which provider the lead id was picked under. The id alone is ambiguous —
-  // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
-  // re-picking the SAME id under a different provider (OpenRouter's
-  // `anthropic/claude-sonnet-5`, then the hosted one) leaves `selectedModelId`
-  // unchanged, so only a state change can re-run resolution. Re-read when the
-  // id changes from elsewhere (another tab); a hint for a different id is
-  // ignored at resolution, so a stale one is harmless.
+  // Compatibility ids can name several providers; keep their hint in state so
+  // a same-id provider change still resolves the intended row.
   const [leadProviderHint, setLeadProviderHint] =
     useState<LeadModelProviderHint | null>(() => loadLeadModelProviderHint());
   useEffect(() => {
     const stored = loadLeadModelProviderHint();
-    // Storage is not the authority when it has nothing for this id. The save
-    // swallows failures (quota exceeded, storage blocked), so after a pick the
-    // in-memory hint can be the only record of it — and replacing it with
-    // storage's null, or with a hint for an older id, would put an OpenRouter
-    // pick straight back on the hosted row (#5472). So: storage wins when it
-    // names this id (another tab picked it), then the state hint when IT names
-    // this id, and storage otherwise.
+    // A failed storage write must not discard the in-memory hint for this id.
     setLeadProviderHint((current) =>
       stored?.modelId === selectedModelId
         ? stored
@@ -3066,7 +3061,9 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
-  const savedSelection = pickedModelSelection ?? (!initialModelId ? savedLeadSelection : undefined);
+  const savedSelection = (restoredChoice?.target === hostedTargetKeyValue
+    ? restoredChoice.selection : undefined) ?? pickedModelSelection ??
+    (!initialModelId ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
     if (savedSelection) {
       const candidates = initialModelId
@@ -3165,10 +3162,10 @@ export function useChatSession(
         ? []
         : reasoningEffortOptions(
             model,
-            reasoningEffortRouteForRow(model),
+            reasoningEffortRouteForRow(model, hostedOrgModelConfig),
             reasoningEffortHarness,
           ),
-    [reasoningEffortHarness, reasoningEffortEnabled],
+    [reasoningEffortHarness, reasoningEffortEnabled, hostedOrgModelConfig],
   );
   const reasoningEffortLevels = useMemo(
     () => reasoningEffortLevelsFor(selectedModel),
@@ -3186,7 +3183,7 @@ export function useChatSession(
         : savedSelection && savedSelection.source !== "legacy"
           ? savedSelection.settings?.reasoningEffort
           : rememberedEffort;
-  // Never report (so never send) a level the model does not offer here.
+  // The request boundary refuses unsupported saved efforts instead of dropping them.
   const reasoningEffort =
     reasoningEffortEnabled &&
     storedEffort &&
@@ -3194,12 +3191,21 @@ export function useChatSession(
       ? storedEffort
       : undefined;
   const setReasoningEffort = useCallback(
-    (effort: ModelReasoningEffort | undefined) => {
+    (effort: ModelReasoningEffort | undefined, userInitiated = false) => {
+      if (userInitiated) setPickedTarget(hostedTargetKeyValue);
       setEffortByModel((prev) => ({ ...prev, [effortKey]: effort }));
       saveRememberedReasoningEffort(effortKey, effort);
     },
-    [effortKey],
+    [effortKey, hostedTargetKeyValue],
   );
+  const setTemperature = useCallback((value: number, userInitiated = false) => {
+    setTemperatureOverride(value);
+    if (userInitiated) {
+      setPickedTarget(hostedTargetKeyValue);
+      setEffortByModel((prev) => ({ ...prev, [effortKey]: undefined }));
+      saveRememberedReasoningEffort(effortKey, undefined);
+    }
+  }, [effortKey, hostedTargetKeyValue]);
   const setReasoningEffortForModel = useCallback(
     (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
       const key = reasoningEffortMemoryKey(model);
@@ -3301,28 +3307,22 @@ export function useChatSession(
       if (initialModelId) {
         return;
       }
-      // Remember own-provider picks separately from the lead selection so the
-      // out-of-credits → "bring your own key" hand-off can restore the model
-      // the user actually wants instead of re-deriving one from list order.
-      // See `loadLastOwnProviderModelId` / BACK2-628.
-      //
-      // Only a pick from the menu counts. This setter is also how a history
-      // session and an eval hand-off restore *their* model, and letting those
-      // write would mean opening an old thread silently re-aims the next
-      // hand-off at whatever that thread happened to run on. Off by default so
-      // a new caller has to say it meant it.
+      // Only menu picks update the remembered own-provider hand-off.
       if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
         saveLastOwnProviderModelId(String(model.id));
       }
-      // Record the provider with the id, before the id, so resolution sees
-      // both together. Every caller here hands over a full definition — the
-      // picker, a history session, an eval hand-off — so each restores the
-      // exact row it means, not the first row that shares its id.
+      // Persist the full selection before its compatibility id/provider hint.
       const saved = loadSelectedModelSelections() ?? [];
       const existing = saved[0];
       const selection = options?.selection ??
         (existing && resolveCompareSelectionRow(existing, [model], hostedOrgModelConfig)
           ? existing : compareSelectionForRow(model, hostedOrgModelConfig));
+      if (selection && options?.persist === false) {
+        setRestoredChoice({ target: hostedTargetKeyValue, selection });
+        setPickedTarget(hostedTargetKeyValue);
+        return;
+      }
+      setRestoredChoice(null);
       if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
       if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
       const modelId = selection?.modelId ?? String(model.id);
@@ -3336,16 +3336,7 @@ export function useChatSession(
 
   const setSelectedModelIds = useCallback(
     (modelIds: string[]) => {
-      // A surface with a pinned model — a hosted scenario or share link,
-      // where `executionConfig.modelId` names the model the scenario owner
-      // chose — is not expressing *this* user's choice. `setSelectedModel`
-      // already no-ops for that reason; this setter has to as well, because
-      // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
-      // and so writes the same global lead key. Without the guard, opening a
-      // share link overwrote the model the user had selected in their own
-      // chats — the load-time clobber of BACK2-628, by a second route that
-      // `isSelectedModelResolved` cannot gate (it short-circuits to true
-      // whenever `initialModelId` is set).
+      // A pinned scenario owns its model and cannot update the global picker.
       if (initialModelId) {
         return;
       }
@@ -3460,10 +3451,14 @@ export function useChatSession(
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
     allowLocal: !shouldUseOrgAwareChatApi,
+    temperature: temperatureOverride,
+    effortLevels: reasoningEffortOptions(selectedModel,
+      reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
     effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
       effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
   }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
-    shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel]);
+    shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
+    temperatureOverride, reasoningEffortHarness]);
   const requestChoiceRef = useRef(requestChoice);
   requestChoiceRef.current = requestChoice;
   const requestEffort = requestChoice.kind === "picked" && requestChoice.selection.source !== "legacy"
@@ -5604,6 +5599,7 @@ export function useChatSession(
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
         restoredModel?: ModelDefinition;
+        restoredSelection?: RequestedModelSelection | null;
       },
     ) => {
       // The resume pointer is only a destination hint. Read the existing
@@ -5683,16 +5679,16 @@ export function useChatSession(
         if (session.resumeConfig?.systemPrompt !== undefined) {
           setSystemPrompt(session.resumeConfig.systemPrompt);
         }
-        if (session.resumeConfig?.temperature !== undefined) {
-          setTemperature(session.resumeConfig.temperature);
-        }
+        const selectionSettings = options?.restoredSelection?.source !== "legacy"
+          ? options?.restoredSelection?.settings : undefined;
+        setTemperatureOverride(selectionSettings?.temperature ?? session.resumeConfig?.temperature);
         {
           // The chat pinned its effort: a reopened chat keeps it (for the
           // model the session restores; a level it does not offer is not sent).
           // One that pinned none runs at the model's default, not at whatever
           // effort was last remembered for that model. Tracked so a new chat
           // does not inherit it (see `resetChat`).
-          const pinned = session.resumeConfig?.reasoningEffort;
+          const pinned = selectionSettings?.reasoningEffort ?? session.resumeConfig?.reasoningEffort;
           const restoredEffort =
             typeof pinned === "string" &&
             (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
@@ -5759,7 +5755,7 @@ export function useChatSession(
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setTemperature(executionTemperature);
+    setTemperatureOverride(executionTemperature);
   }, [isExecutionConfigControlled, executionTemperature]);
 
   useEffect(() => {

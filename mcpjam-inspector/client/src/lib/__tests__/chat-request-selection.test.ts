@@ -77,4 +77,15 @@ describe("chat request selection", () => {
     }).kind).toBe("blocked");
   });
 
+  it("refuses unsupported efforts without silently stripping the saved choice", () => {
+    expect(chatRequestSelection({ ...args, effortLevels: [] }).kind).toBe("blocked");
+    expect(chatRequestSelection({ ...args, effortLevels: ["high"] }))
+      .toEqual({ kind: "picked", selection });
+    expect(chatRequestSelection({ ...args, effortLevels: [], effort: null }).kind).toBe("picked");
+  });
+  it("writes an explicit temperature edit into the preserved full selection", () => {
+    expect(chatRequestSelection({ ...args, effort: null, temperature: 0.9 }))
+      .toMatchObject({ kind: "picked", selection: { ...selection, settings: { temperature: 0.9 } } });
+  });
+
 });
