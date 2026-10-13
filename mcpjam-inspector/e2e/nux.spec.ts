@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 // These tests cover the first-run NUX (new-user experience) redirect.
 // They run against the local non-hosted build only; hosted-mode deployments

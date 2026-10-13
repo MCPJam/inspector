@@ -18,6 +18,9 @@ export type AppFixture = {
   mutations?: Record<string, unknown>;
   signedIn?: boolean;
   statuses?: Record<string, number>;
+  convexOrigin?: string;
+  localAccessToken?: string;
+  seedOnboarding?: boolean;
 };
 
 function serveConvex(
@@ -186,7 +189,8 @@ export async function prepareApp(
     page.on("pageerror", (error) => failures.push(error.message)),
   );
   await context.addInitScript(
-    ({ theme, time }) => {
+    ({ theme, time, localAccessToken, seedOnboarding, origin }) => {
+      if (window.location.origin !== origin) return;
       localStorage.setItem("themeMode", theme);
       // Match a returning visitor; the promotional sprites animate independently
       // of the navigation and screens covered by these snapshots.
@@ -194,10 +198,8 @@ export async function prepareApp(
         "mcpjam:platform-launch-2026-09:status",
         "dismissed",
       );
-      localStorage.setItem(
-        "mcpjam.local-access",
-        "visual-local-access-credential",
-      );
+      localStorage.setItem("mcpjam.local-access", localAccessToken);
+      if (!seedOnboarding) return;
       for (const key of [
         "mcp-onboarding-state",
         "mcp-first-run-server-choice-state",
@@ -212,13 +214,23 @@ export async function prepareApp(
         );
       }
     },
-    { theme, time: FIXED_TIME },
+    {
+      theme,
+      origin,
+      time: FIXED_TIME,
+      localAccessToken:
+        fixture.localAccessToken ?? "visual-local-access-credential",
+      seedOnboarding: fixture.seedOnboarding ?? true,
+    },
   );
   await context.route("**/*", (route) =>
     serveHttp(route, failures, fixture, origin),
   );
   await context.routeWebSocket("**/*", (socket) => {
-    if (new URL(socket.url()).origin === "wss://visual.invalid")
+    if (
+      new URL(socket.url()).origin ===
+      (fixture.convexOrigin ?? "wss://visual.invalid")
+    )
       return serveConvex(socket, failures, fixture);
     failures.push(`WebSocket: ${socket.url()}`);
     socket.close();
