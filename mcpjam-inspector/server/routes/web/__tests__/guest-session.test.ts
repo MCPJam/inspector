@@ -300,6 +300,28 @@ describe("POST /guest-session", () => {
     expect(data.code).toBe("FORBIDDEN");
   });
 
+  it("does not call a 403 that refused this server a revoked guest", async () => {
+    // The backend's answer to a shared secret it does not accept. A browser
+    // with no guest cookie got "Guest session revoked." for it on staging and
+    // every PR preview, so the alert never named the misconfiguration.
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+      ) as typeof fetch;
+
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(503);
+    const data = await res.json();
+    expect(data.code).toBe("INTERNAL_ERROR");
+    expect(data.details).toEqual({
+      reason: "authority_refused",
+      upstreamStatus: 403,
+    });
+  });
+
   describe("HTTP method handling", () => {
     it("returns 404 for GET requests", async () => {
       const res = await app.request("/guest-session");

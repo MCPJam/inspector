@@ -21,6 +21,10 @@ export const GUEST_SESSION_FAILURE_REASONS = [
   // The guest authority could not be resolved from this install's
   // configuration (see `server/utils/guest-authority.ts`).
   "configuration",
+  // The authority answered 403 without naming a guest: it refused this
+  // SERVER (a shared secret it does not accept, guests disabled on that
+  // deployment, an edge block), not the guest's session.
+  "authority_refused",
 ] as const;
 
 export type GuestSessionFailureReason =
