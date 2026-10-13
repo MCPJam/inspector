@@ -535,6 +535,7 @@ function resolveSlug(error: unknown): {
       ? (error as { code?: unknown; data?: { code?: unknown } })
       : null;
   const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "GENERATION_FAILED") return { slug: "generation/invalid_output", rawCode: platformCode };
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
   // The organization AI-key policy's refusals, ahead of the status branches:

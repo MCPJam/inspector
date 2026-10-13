@@ -80,6 +80,7 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  * A slug missing from this table fails the catalog test.
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  "generation/invalid_output": "ambiguous",
   // --- The server answered, and the answer was the problem -----------------
   // This is a server-side error only when the wire evidence identifies the
   // server as the failing boundary. Keep protocol codes that can also be
@@ -985,6 +986,14 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
 
   // --- Organization AI-key policy (org-policy-catalog.ts) ---
   ...orgPolicyCatalogEntries(entry),
+
+  "generation/invalid_output": entry(
+    "generation/invalid_output", "Generation failed",
+    "Generation failed. Please try again.",
+    ["The generation response did not match the required format."],
+    ["Try generation again. If it keeps failing, contact support with the request ID."],
+    "generation-failed",
+  ),
 
   // --- Internal / unknown ---
   "internal/unknown": entry(

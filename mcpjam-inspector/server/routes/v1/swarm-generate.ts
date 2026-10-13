@@ -141,6 +141,7 @@ async function parseBody<T>(
 // `POST /projects/:projectId/personas`.
 swarmGenerateV1.post("/projects/:projectId/personas/generate", async (c) => {
   const projectId = c.req.param("projectId");
+  if (!projectId) throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Project ID is required.");
   const bearerToken = await getConvexBearerForRequest(c);
   const body = await parseBody(c, generatePersonasSchema);
   const convexHttpUrl = requireConvexHttpUrl();
@@ -159,6 +160,7 @@ swarmGenerateV1.post("/projects/:projectId/personas/generate", async (c) => {
     // The CALLER's abort reaches the model call. A generation that outlives
     // the request it was asked for is spend nobody is waiting for.
     signal: c.req.raw.signal,
+      inspectorRequestId: c.var.requestLogContext?.requestId,
   };
 
   try {
@@ -181,6 +183,7 @@ swarmGenerateV1.post("/projects/:projectId/personas/generate", async (c) => {
 // Registered before `/goals/:goalId` — see the header.
 async function generateGoals(c: Context): Promise<Response> {
   const projectId = c.req.param("projectId");
+  if (!projectId) throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Project ID is required.");
   const bearerToken = await getConvexBearerForRequest(c);
   const body = await parseBody(c, generateGoalsSchema);
   const convexHttpUrl = requireConvexHttpUrl();
@@ -198,6 +201,7 @@ async function generateGoals(c: Context): Promise<Response> {
       persona: body.persona,
       ...(body.description ? { description: body.description } : {}),
       signal: c.req.raw.signal,
+      inspectorRequestId: c.var.requestLogContext?.requestId,
     });
     return v1Resource(c, result);
   } catch (err) {

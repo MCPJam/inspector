@@ -29,6 +29,7 @@ import {
 } from "../../services/api-keys-relay.js";
 
 export const ErrorCode = {
+  GENERATION_FAILED: "GENERATION_FAILED",
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",

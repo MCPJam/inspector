@@ -129,7 +129,7 @@ const MASKED_UPSTREAM_MESSAGE =
  * nothing rather than putting an arbitrary upstream string into a log
  * dimension.
  */
-const UPSTREAM_ERROR_CODE_PATTERN = /^[a-z0-9_]{1,64}$/;
+const UPSTREAM_ERROR_CODE_PATTERN = /^[a-zA-Z0-9_]{1,64}$/;
 
 function upstreamErrorCode(bodyText: string): string | undefined {
   try {
@@ -196,6 +196,10 @@ export function rethrowAsRouteError(c: Context, err: unknown): never {
         errorCode: upstreamErrorCode(err.bodyText) ?? "upstream_server_error",
       }
     );
+    if (err.status === 502 && upstreamErrorCode(err.bodyText) === "GENERATION_FAILED") {
+      throw new WebRouteError(502, ErrorCode.GENERATION_FAILED,
+        "Generation failed. Please try again.", requestId ? { requestId } : undefined);
+    }
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
@@ -228,6 +232,7 @@ swarmGenerate.post("/generate/persona", async (c) =>
         ? { existingPersonas: body.existingPersonas }
         : {}),
       signal: c.req.raw.signal,
+      inspectorRequestId: c.var.requestLogContext?.requestId,
     };
     try {
       return body.personaCount === undefined
@@ -262,6 +267,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
         persona: body.persona,
         ...(body.description ? { description: body.description } : {}),
         signal: c.req.raw.signal,
+      inspectorRequestId: c.var.requestLogContext?.requestId,
       });
     } catch (err) {
       rethrowAsRouteError(c, err);
