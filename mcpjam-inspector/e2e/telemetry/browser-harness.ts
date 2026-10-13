@@ -332,10 +332,11 @@ export async function waitForFullReplay(
   page: Page,
   recorder: EgressRecorder,
   timeoutMs = 30_000,
+  since = 0,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (let step = 0; Date.now() < deadline; step++) {
-    const atFull = posthogEvents(scanAll(recorder.telemetry).decoded).some(
+    const atFull = posthogEvents(recorder.scanSince(since).decoded).some(
       (event) =>
         event.event === "$snapshot" &&
         (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })?.r ===
