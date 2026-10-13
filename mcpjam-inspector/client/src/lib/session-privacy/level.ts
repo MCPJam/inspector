@@ -127,10 +127,9 @@ export function resolveSessionPrivacy(
   // A share-link page shows an organization's content to a viewer who may
   // not belong to it. The backend answers for the viewer, not the page's
   // owner, whose replay might be off, so nothing records there at all.
-  if (inputs.surface === "off" || inputs.sharedLink) return "off";
+  if (inputs.surface !== "hosted" || inputs.sharedLink) return "off";
   if (inputs.recording === undefined) return "pending";
   if (inputs.recording === "off") return "off";
-  if (inputs.surface === "desktop") return "masked";
   return inputs.recording === "full" ? "full" : "masked";
 }
 
@@ -207,7 +206,5 @@ export function setSessionPrivacy(level: SessionPrivacy): void {
  * surfaces keep today's analytics.
  */
 export function shouldMaskAnalytics(): boolean {
-  const privacy = currentSessionPrivacy();
-  if (privacy === "full") return false;
-  return privacy !== "off" || recordingSurface() !== "off";
+  return currentSessionPrivacy() !== "full";
 }

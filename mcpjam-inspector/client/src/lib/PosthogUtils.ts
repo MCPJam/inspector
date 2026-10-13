@@ -376,7 +376,21 @@ export const options = {
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
   // on every platform, so it is not gated like replay/exceptions.
-  capture_dead_clicks: true,
+  get capture_dead_clicks() {
+    return !shouldMaskAnalytics();
+  },
+  get autocapture() {
+    return !shouldMaskAnalytics();
+  },
+  get rageclick() {
+    return !shouldMaskAnalytics();
+  },
+  get disable_surveys() {
+    return shouldMaskAnalytics();
+  },
+  get enable_heatmaps() {
+    return !shouldMaskAnalytics();
+  },
 
   // Getters, not eager calls. `options` is a module-scope literal, so calling
   // these at literal-creation time made merely IMPORTING this module read
@@ -388,7 +402,7 @@ export const options = {
   // feeds PostHog Error Tracking. Boundary-caught errors reach it through
   // lib/error-reporting.ts instead, so there is no double-count.
   get capture_exceptions() {
-    return isErrorCaptureSurface();
+    return isErrorCaptureSurface() && !shouldMaskAnalytics();
   },
   // Replay never starts at init, on any surface: `syncSessionRecording`
   // (lib/session-privacy.ts) starts it once the session's privacy level is
@@ -503,7 +517,11 @@ export const getPostHogOptions = (
         opt_out_capturing_by_default: true,
         // Nothing is sent from here by default, but anything that opts in
         // later still goes through the same scrubber.
-        before_send: [dropInjectedScriptException, scrubCaptureEvent],
+        before_send: [
+          dropInjectedScriptException,
+          stampPostHogEvent,
+          scrubCaptureEvent,
+        ],
         disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {

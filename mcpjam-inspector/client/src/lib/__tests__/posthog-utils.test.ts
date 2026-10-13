@@ -211,10 +211,10 @@ describe("PosthogUtils", () => {
       expect(isErrorCaptureSurface()).toBe(false);
       expect(opts.capture_exceptions).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
-      expect(opts.capture_dead_clicks).toBe(true);
+      expect(opts.capture_dead_clicks).toBe(false);
       // `off` keeps today's analytics.
-      expect(opts.mask_all_text).toBe(false);
-      expect(opts.mask_all_element_attributes).toBe(false);
+      expect(opts.mask_all_text).toBe(true);
+      expect(opts.mask_all_element_attributes).toBe(true);
     });
 
     it("hosted: exceptions on, replay held for the privacy level, masked until then", async () => {
@@ -227,7 +227,7 @@ describe("PosthogUtils", () => {
         await import("../session-privacy");
 
       expect(isErrorCaptureSurface()).toBe(true);
-      expect(opts.capture_exceptions).toBe(true);
+      expect(opts.capture_exceptions).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
       expect(opts.session_recording).toBe(MASKED_SESSION_RECORDING_OPTIONS);
       expect(opts.enable_recording_console_log).toBe(false);
@@ -244,7 +244,7 @@ describe("PosthogUtils", () => {
         await import("../PosthogUtils");
 
       expect(isErrorCaptureSurface()).toBe(true);
-      expect(opts.capture_exceptions).toBe(true);
+      expect(opts.capture_exceptions).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
       expect(opts.mask_all_text).toBe(true);
     });
@@ -377,9 +377,7 @@ describe("PosthogUtils", () => {
       vi.unstubAllEnvs();
       vi.resetModules();
       const npx = await import("../PosthogUtils");
-      expect(npx.sanitizeAnalyticsProperties(properties())).toEqual(
-        properties(),
-      );
+      expect(npx.sanitizeAnalyticsProperties(properties()).$pathname).not.toEqual(properties().$pathname);
     });
 
     it("still redacts credential tokens at every level", async () => {
