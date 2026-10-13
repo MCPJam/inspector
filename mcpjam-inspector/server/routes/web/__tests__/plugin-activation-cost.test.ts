@@ -516,9 +516,6 @@ describe("App call backend trips", () => {
   const AFTER_ANSWER = ["receipt.write:completed"];
   const backendTrips = (log: string[]) =>
     log.filter((entry) => !entry.startsWith("tools/")).length;
-  /** Before this change, for the report: 23 backend calls, 15 one after
-   * another, all before the answer (5 tools/list). */
-  const BEFORE = { backend: 23, sequential: 15, toolsList: 5 };
 
   it("an App tools/call makes its backend trips in this order, all through the Convex client", async () => {
     const instanceToken = await open("thread-trips");
