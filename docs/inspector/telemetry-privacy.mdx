@@ -51,7 +51,7 @@ Some MCPJam URLs are credentials. Anyone holding the link has access, so a copy 
 - **Share links**: score and benchmark results (`/results/…`, `/bench/results/…`), shared conformance and eval reports, and published study tester links.
 - **Handoff links** that pass a server connection from one device to another.
 - **Sign-in and authorization callbacks**: the MCP OAuth callback, the GitHub App install callback and the sign-in callback, which carry one-time codes.
-- **Secret parameters on any URL**: the query and fragment keys below, compared case-insensitively, plus a username and password embedded in a URL. The list is `SECRET_PARAM_KEYS` in `mcpjam-inspector/shared/credential-urls/registry.ts`, which is the source of truth.
+- **Secret parameters on any URL**: the query and fragment keys below, compared case-insensitively, plus a username and password embedded in a URL. The literal keys are in `SECRET_PARAM_KEYS` in `mcpjam-inspector/shared/credential-urls/registry.ts`; `isSecretParamKey` in that file also applies the prefix and suffix rules below.
   - OAuth and OIDC: `code`, `state`, `access_token`, `refresh_token`, `id_token`, `client_secret`, `code_verifier`, `assertion`, `client_assertion`
   - MCPJam session and link tokens: `token`, `_token`, `t`, `k`
   - API keys and passwords: `api_key`, `apikey`, `key`, `password`
