@@ -37,24 +37,26 @@ import { JamIllustration } from "@/components/billing/JamIllustration";
 import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { buildProjectPath, parseProjectPath } from "@/lib/project-route";
 import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
 } from "@/components/guest-preview/feature-highlights";
 
 /**
- * The creation flow from the tab root or `/new`, keeping any `?project=` so
- * the new swarm or study lands in the project the guest was looking at.
- * Anywhere deeper is a shared
- * swarm or study permalink, and the recipient should land back on it with its
- * `?project=` scope intact.
+ * The creation flow from the tab root or `/new`, in whichever project the
+ * guest was looking at: a `/p/<id>` prefix and any `?project=` both carry
+ * over. Anywhere deeper is a shared swarm or study permalink, and the
+ * recipient lands back on it as-is.
  */
 function signInReturnPath(createPath: string): string {
   const { pathname, search, hash } = window.location;
-  const path = pathname.replace(/\/+$/, "");
+  const scoped = parseProjectPath(pathname);
+  const path = (scoped?.relativePath ?? pathname).replace(/\/+$/, "");
   const listPath = createPath.replace(/\/new$/, "");
   if (path === listPath || path === createPath) {
-    return `${createPath}${search}${hash}`;
+    const target = `${createPath}${search}${hash}`;
+    return scoped ? buildProjectPath(scoped.projectId, target) : target;
   }
   return `${pathname}${search}${hash}`;
 }
