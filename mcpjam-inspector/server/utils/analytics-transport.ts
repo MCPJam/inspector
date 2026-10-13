@@ -25,50 +25,7 @@ export function analyticsTransport(
     }
     if (url === `${host}/batch/`) {
       if (disabled() || !Array.isArray(body.batch)) return dropped();
-      const batch = body.batch.flatMap((raw) => {
-        const event = telemetryRecord(raw);
-        const props = telemetryRecord(event.properties);
-        const rebuilt = rebuildServerAnalytics(
-          String(event.event),
-          event.distinct_id,
-          props,
-        );
-        if (!rebuilt) return [];
-        return [
-          {
-            event: rebuilt.event,
-            distinct_id: rebuilt.distinctId,
-            timestamp: new Date().toISOString(),
-            properties: {
-              ...rebuilt.properties,
-              $geoip_disable: true,
-              $insert_id:
-                typeof props.$insert_id === "string" &&
-                /^[0-9a-f-]{36}$/.test(props.$insert_id)
-                  ? props.$insert_id
-                  : randomUUID(),
-              source: "server",
-              platform: ["web", "npm", "electron"].includes(
-                String(props.platform),
-              )
-                ? props.platform
-                : "npm",
-              environment: [
-                "prod",
-                "dev",
-                "staging",
-                "preview",
-                "local",
-                "test",
-              ].includes(String(props.environment))
-                ? props.environment
-                : "dev",
-              deployment:
-                props.deployment === "hosted" ? "hosted" : "self_hosted",
-            },
-          },
-        ];
-      });
+      const batch = rebuildBatch(body.batch);
       if (!batch.length) return dropped();
       body = { api_key: token, batch };
     } else if (url === `${host}/flags/?v=2`) {
@@ -90,4 +47,48 @@ export function analyticsTransport(
       body: JSON.stringify(body),
     });
   };
+}
+
+function rebuildBatch(rawBatch: unknown[]) {
+  return rawBatch.flatMap((raw) => {
+    const event = telemetryRecord(raw);
+    const props = telemetryRecord(event.properties);
+    const rebuilt = rebuildServerAnalytics(
+      String(event.event),
+      event.distinct_id,
+      props,
+    );
+    if (!rebuilt) return [];
+    return [
+      {
+        event: rebuilt.event,
+        distinct_id: rebuilt.distinctId,
+        timestamp: new Date().toISOString(),
+        properties: {
+          ...rebuilt.properties,
+          $geoip_disable: true,
+          $insert_id:
+            typeof props.$insert_id === "string" &&
+            /^[0-9a-f-]{36}$/.test(props.$insert_id)
+              ? props.$insert_id
+              : randomUUID(),
+          source: "server",
+          platform: ["web", "npm", "electron"].includes(String(props.platform))
+            ? props.platform
+            : "npm",
+          environment: [
+            "prod",
+            "dev",
+            "staging",
+            "preview",
+            "local",
+            "test",
+          ].includes(String(props.environment))
+            ? props.environment
+            : "dev",
+          deployment: props.deployment === "hosted" ? "hosted" : "self_hosted",
+        },
+      },
+    ];
+  });
 }

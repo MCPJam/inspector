@@ -62,6 +62,39 @@ export function buildStrictLogRow(
 ): Fields {
   const event = approved(name, catalog.events) ?? "log.unknown";
   const row: Fields = { event, timestamp: new Date().toISOString() };
+  copySafeLogContext(row, context, payload);
+  const code = approved(payload.errorCode, [
+    ...V1_ERROR_CODES,
+    ...Object.keys(INTERNAL_TO_V1_CODE),
+    "abort",
+    "connection_closed",
+    "mcp_error",
+    "unhandled_exception",
+    "unknown",
+  ]);
+  if (code) row.errorCode = code;
+  if (error !== undefined || event.endsWith(".failed")) {
+    row.errorClass = strictLogError(error);
+    row.knownError = row.errorClass !== "UnknownError";
+    row.errorCode = code ?? "unknown";
+  }
+  row.fingerprint = [
+    event,
+    row.route,
+    row.statusCode ?? "none",
+    row.errorClass ?? "none",
+    code ?? "none",
+  ].join(":");
+  if (event === "telemetry_canary") {
+    row.route = "inspector";
+    row.slot = Math.floor(Date.parse(String(row.timestamp)) / 300000);
+    row.emittedAt = row.timestamp;
+    row.canaryId = sha256Hex(`inspector:${row.slot}`);
+  }
+  return row;
+}
+
+function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
   for (const [key, value] of Object.entries({ ...payload, ...context })) {
     const rule = rules[key];
     const values = ENUMS[key] ?? rule?.values;
@@ -116,33 +149,4 @@ export function buildStrictLogRow(
     /^(?:\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?|[0-9a-f]{7,40})$/.test(release)
   )
     row.release = release;
-  const code = approved(payload.errorCode, [
-    ...V1_ERROR_CODES,
-    ...Object.keys(INTERNAL_TO_V1_CODE),
-    "abort",
-    "connection_closed",
-    "mcp_error",
-    "unhandled_exception",
-    "unknown",
-  ]);
-  if (code) row.errorCode = code;
-  if (error !== undefined || event.endsWith(".failed")) {
-    row.errorClass = strictLogError(error);
-    row.knownError = row.errorClass !== "UnknownError";
-    row.errorCode = code ?? "unknown";
-  }
-  row.fingerprint = [
-    event,
-    row.route,
-    row.statusCode ?? "none",
-    row.errorClass ?? "none",
-    code ?? "none",
-  ].join(":");
-  if (event === "telemetry_canary") {
-    row.route = "inspector";
-    row.slot = Math.floor(Date.parse(String(row.timestamp)) / 300000);
-    row.emittedAt = row.timestamp;
-    row.canaryId = sha256Hex(`inspector:${row.slot}`);
-  }
-  return row;
 }
