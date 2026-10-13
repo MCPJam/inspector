@@ -111,6 +111,10 @@ A bare `-p 6274:6274` publishes the port on every host interface, IPv4 and IPv6.
 
 Open the printed Network link, or paste the terminal link into the access screen. Allowlisting a host accepts it as a request origin; it does not grant access without the link. Cross-tab continuation works only when both tabs use the same host and port.
 
+<Note>
+**Sign-in requires HTTPS or loopback.** When you open Inspector at an HTTP address that is not `localhost`, `127.0.0.1`, or `[::1]` — for example `http://192.168.1.50:6274` — sign-in and account creation are unavailable. A dialog will appear directing you to [app.mcpjam.com](https://app.mcpjam.com) to sign in there instead. Inspector still works without a signed-in account at these addresses; only features that require authentication are affected.
+</Note>
+
 For a remapped port, keep the link's `#token=…` part and change the address. Set `MCPJAM_INSPECTOR_FRONTEND_URL=http://devbox.local:8080` to print a fixed address. For IPv6, bracket the allowlist entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`. Comma-separate multiple hosts. Wildcards additionally require `MCPJAM_ALLOW_WILDCARD_ORIGINS=true` for request origins.
 
 A restart generates a new link. To keep one across restarts, set `MCPJAM_SESSION_TOKEN` to a strong random URL-safe secret of at least 24 characters. Update `@mcpjam/cli` alongside Inspector; local CLI attachment uses an owner-only runtime file.
