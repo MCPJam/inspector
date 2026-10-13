@@ -372,6 +372,11 @@ describe("harnessNoRunnableModelReason", () => {
 });
 
 describe("harnessOrgProviderUnsupportedReason", () => {
+  it("does not advertise platform funding when the organization policy is unknown", () => {
+    expect(harnessOrgProviderUnsupportedReason("codex", null)).toBe(
+      "the Codex harness requires a supported model and an eligible OpenAI connection",
+    );
+  });
   it("offers MCPJam models only while the key policy is off", () => {
     expect(harnessOrgProviderUnsupportedReason("codex")).toBe(
       "the Codex harness runs MCPJam-provided models or your organization's OpenAI key",

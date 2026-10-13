@@ -105,6 +105,7 @@ export interface OrgModelHandlerOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   modelId: string;
+  modelSelection?: ModelSelection & { source: "org" };
   /**
    * The provider-native id chosen explicitly for this model (the row's
    * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
@@ -1063,6 +1064,7 @@ export async function handleHostedOrgChatModel(
   return handleMCPJamFreeChatModel({
     messages: options.messages,
     modelId: options.modelId,
+    modelSelection: options.modelSelection,
     chatSessionId: options.chatSessionId,
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,

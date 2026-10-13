@@ -47,7 +47,7 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * One entry per artifact set, not per platform-as-metadata — two builds that
  * are separately compiled need separate names even when their sources match:
  *
- * - `web`          Docker/Railway image, `dist/client`
+ * - `web`          hosted Railway image, `dist/client`
  * - `npm`          published tarball, `dist/client`
  * - `desktop-mac`  mac installer's embedded-server UI, `dist/client`
  * - `desktop-win`  Windows installer's embedded-server UI, `dist/client`
@@ -61,8 +61,9 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * where the same two-platform collision applies.
  *
  * `local` is the default for a build that names no surface (a contributor
- * checkout, or a self-hosted user building from source). Those have no
- * uploaded artifacts, and saying so is better than borrowing another build's.
+ * checkout, or a self-hosted user building from source), and what the Docker
+ * Hub image passes. Those have no uploaded artifacts, and saying so is better
+ * than borrowing another build's.
  */
 export const SENTRY_BUILD_SURFACES = [
   "web",
