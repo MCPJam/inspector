@@ -10,6 +10,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { GuestPreviewCta } from "../GuestPreviewCta";
 
 describe("GuestPreviewCta", () => {
@@ -82,9 +83,7 @@ describe("GuestPreviewCta", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       expect(signInMock).not.toHaveBeenCalled();
       expect(signUpMock).not.toHaveBeenCalled();
-      expect(
-        sessionStorage.getItem("mcpjam_app_signin_return_path_v1"),
-      ).toBeNull();
+      expect(readAppSignInReturnPath()).toBeNull();
     },
   );
 });

@@ -184,6 +184,40 @@ describe("FeatureSignUpNudgeDialog", () => {
     );
   });
 
+  // A shared permalink is not a request to make something new: the recipient
+  // signs in to see the item they were sent, project scope and all.
+  describe.each([
+    ["swarms", "/swarms/swarm_42?project=p1"],
+    ["user-testing", "/user-testing/study_8k2?project=p1"],
+  ] as const)("%s permalink authentication return", (feature, permalink) => {
+    it.each(["Create free account", "Sign in"])(
+      "%s returns to the shared permalink, not the creation flow",
+      (label) => {
+        window.history.replaceState({}, "", permalink);
+        const authenticate = label === "Sign in" ? signInMock : signUpMock;
+        render(
+          <FeatureSignUpNudgeDialog
+            feature={feature}
+            isOpen
+            onClose={vi.fn()}
+          />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: label }));
+
+        expect(readAppSignInReturnPath()).toBe(permalink);
+        const options = authenticate.mock.calls[0][0];
+        window.history.replaceState({}, "", "/callback");
+        expect(
+          takePermalinkSignInReturn(
+            options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          ),
+        ).toBe(permalink);
+      },
+    );
+  });
+
   it("dismissing reports the dismissal and calls onClose", () => {
     const onClose = vi.fn();
     render(

@@ -6,24 +6,21 @@
  * generalisation of it. That one exists to reopen the invite dialog after the
  * WorkOS round trip, so it plants `markPendingInviteDialog()` and the sidebar
  * consumes the marker on return. A gated tab needs no marker: the return path
- * is the creation flow named by its CTA. Folding both into one component
+ * is the creation flow named by its CTA, or, on a shared swarm or study
+ * permalink, that permalink itself. Folding both into one component
  * would mean a "should I leave a marker" flag whose two settings have
  * nothing else in common.
  *
  * What it does share is the ordering that matters on every button:
- *   1. writeAppSignInReturnPath(copy.createPath) — remember the creation flow,
+ *   1. writeAppSignInReturnPath(returnPath) — remember where to come back to,
  *      in sessionStorage, before WorkOS navigates away;
- *   2. signUp/signIn(permalinkSignInOptions(copy.createPath)) — the navigation itself.
- * Get those backwards and the user lands on the app's front door instead of
- * the creation flow named by the CTA.
+ *   2. signUp/signIn(permalinkSignInOptions(returnPath)) — the navigation itself.
+ * Get those backwards and the user lands on the app's front door instead.
  *
  * "Create free account" is primary because the whole surface exists to convert
  * a visitor with no account; "Sign in" stays for someone signed in on another
  * device. Both return to the same place — the task they came for is the same
  * either way.
- *
- * Only guests see this. A plan-locked user already HAS an account, so their
- * preview gets the billing upsell instead and never opens this dialog.
  */
 
 import { useEffect, useRef } from "react";
@@ -44,6 +41,19 @@ import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
 } from "@/components/guest-preview/feature-highlights";
+
+/**
+ * The creation flow from the tab root or `/new`; anywhere deeper is a shared
+ * swarm or study permalink, and the recipient should land back on it with its
+ * `?project=` scope intact.
+ */
+function signInReturnPath(createPath: string): string {
+  const { pathname, search, hash } = window.location;
+  const path = pathname.replace(/\/+$/, "");
+  const listPath = createPath.replace(/\/new$/, "");
+  if (path === listPath || path === createPath) return createPath;
+  return `${pathname}${search}${hash}`;
+}
 
 export function FeatureSignUpNudgeDialog({
   feature,
@@ -79,14 +89,16 @@ export function FeatureSignUpNudgeDialog({
 
   const handleSignUp = () => {
     track("sign_up_button_clicked", { location });
-    writeAppSignInReturnPath(copy.createPath);
-    signUp(permalinkSignInOptions(copy.createPath));
+    const returnPath = signInReturnPath(copy.createPath);
+    writeAppSignInReturnPath(returnPath);
+    signUp(permalinkSignInOptions(returnPath));
   };
 
   const handleSignIn = () => {
     track("login_button_clicked", { location });
-    writeAppSignInReturnPath(copy.createPath);
-    signIn(permalinkSignInOptions(copy.createPath));
+    const returnPath = signInReturnPath(copy.createPath);
+    writeAppSignInReturnPath(returnPath);
+    signIn(permalinkSignInOptions(returnPath));
   };
 
   return (
