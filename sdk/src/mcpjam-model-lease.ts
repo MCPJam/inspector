@@ -1,3 +1,4 @@
+import { validateModelSelection, type ModelSelection } from './host-config/model-selection.js';
 import { aiRequestHeaders } from "./ai-request-headers.js";
 /**
  * MCPJam-hosted inference for evals that run OUTSIDE the platform.
@@ -14,14 +15,9 @@ import { aiRequestHeaders } from "./ai-request-headers.js";
  *   2. What the proxy needs instead of a provider key is a LEASE: short-lived,
  *      scoped to one org + project + model, presented in a header the AI SDK
  *      knows nothing about, and only obtainable by an authenticated call.
- *   3. The lease's URL is not knowable until it is minted (the proxy origin is
- *      deployment-specific), so the provider is pointed at a placeholder and
- *      this `fetch` rewrites it.
+ *   3. The fetch adapter rewrites a placeholder to the minted proxy URL.
  *
- * Which leaves one credential rule, enforced in `proxyFetch`: the `sk_` key is
- * used ONLY against MCPJam's own API to mint, and the placeholder key the
- * provider was constructed with is stripped before the request leaves. Neither
- * ever reaches the proxy.
+ * `proxyFetch` sends the API key only to the mint route and strips provider placeholders.
  */
 
 /** A minted lease and everything needed to spend it. */
@@ -300,6 +296,7 @@ export interface McpjamLeaseClientOptions {
   project: string;
   /** Canonical model id, e.g. `anthropic/claude-sonnet-4.5`. */
   model: string;
+  modelSelection?: ModelSelection;
   fetchImpl?: typeof fetch;
 }
 
@@ -485,18 +482,14 @@ export class McpjamLeaseClient {
   private readonly extraHeaders: Readonly<Record<string, string>>;
   private readonly project: string;
   private readonly model: string;
+  private readonly modelSelection: ModelSelection;
   private readonly fetchImpl: typeof fetch;
 
   private current: McpjamModelLease | null = null;
   private readonly held = new Map<string, McpjamModelLease>();
   private readonly inFlight = new Map<string, number>();
   private readonly revoking = new Map<string, Promise<void>>();
-  /**
-   * The in-flight mint, so concurrent iterations share ONE call. Without it a
-   * suite that runs 20 cases in parallel mints 20 leases on its first tick —
-   * every one of them counting against the active-lease cap and the API key's
-   * rate limit.
-   */
+  /** Share a mint across concurrent iterations to preserve the active-lease cap. */
   private minting: Promise<McpjamModelLease> | null = null;
 
   constructor(options: McpjamLeaseClientOptions) {
@@ -508,6 +501,9 @@ export class McpjamLeaseClient {
     this.extraHeaders = { ...(options.headers ?? {}) };
     this.project = options.project;
     this.model = options.model;
+    const parsed = validateModelSelection(options.modelSelection ?? {source: "hosted", modelId: options.model, fallback: {provider: "none", model: "none"}});
+    if (!parsed.ok || parsed.selection.modelId !== options.model || parsed.selection.source !== "hosted") throw new Error("A hosted lease selection must name the leased model.");
+    this.modelSelection = parsed.selection;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.proxyFetch = this.proxyFetch.bind(this);
   }
@@ -655,7 +651,7 @@ export class McpjamLeaseClient {
       this.fetchImpl(url, {
         method: "POST",
         headers: await this.platformHeaders(),
-        body: JSON.stringify({ model: this.model }),
+        body: JSON.stringify({ model: this.model, modelSelection: this.modelSelection, ...(this.modelSelection.settings?.reasoningEffort ? {reasoningEffort: this.modelSelection.settings.reasoningEffort} : {}) }),
         signal,
         ...this.credentialRedirectPolicy(),
       });
@@ -904,6 +900,7 @@ export class McpjamModelLeaseScope {
         options.baseUrl,
         options.project,
         options.model,
+        options.modelSelection,
         headersKey,
       ]);
       let client = byKey.get(key);
@@ -924,6 +921,7 @@ export class McpjamModelLeaseScope {
       options.baseUrl,
       options.project,
       options.model,
+      options.modelSelection,
       options.apiKey,
       ...(headersKey.length > 0 ? [headersKey] : []),
     ]);

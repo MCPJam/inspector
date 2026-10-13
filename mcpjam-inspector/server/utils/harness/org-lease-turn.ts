@@ -1,3 +1,4 @@
+import type { ModelSelection } from "@mcpjam/sdk";
 /**
  * A harness turn's lease wiring for the key it runs on, built once at the top
  * of `runHarnessTurn` from the turn's saved selection. The turn reserves its
@@ -56,6 +57,7 @@ export class OrgLeaseTurn {
   /** MCPJam's model proxy; on the org's key it serves a first-party provider. */
   readonly brokeredEndpoint: ModelEndpointOwnership;
   private readonly selection: OrgHarnessSelection | undefined;
+  private readonly requestedSelection: ModelSelection | undefined;
   /** The selection a reserve, start or local-prepare body carries. */
   private readonly selectionField: { modelSelection?: OrgHarnessSelection };
   private readonly profile: string | undefined;
@@ -79,6 +81,7 @@ export class OrgLeaseTurn {
     >,
   ) {
     this.selection = orgHarnessSelection(options.modelSelection);
+    this.requestedSelection = options.modelSelection?.source === "hosted" ? options.modelSelection : this.selection;
     this.profile = this.selection
       ? harnessOrgUpstream(options.harness ?? "")?.profile
       : undefined;
@@ -155,7 +158,7 @@ export class OrgLeaseTurn {
   ) {
     const broker = await startHarnessModelBroker({
       ...args,
-      ...this.selectionField,
+      ...(this.requestedSelection ? { modelSelection: this.requestedSelection } : {}),
       ...(this.selection && this.preparedRevision
         ? { expectedCredentialRevision: this.preparedRevision }
         : {}),
@@ -183,7 +186,7 @@ export class OrgLeaseTurn {
   ) {
     const preparation = await prepareLocalOnOrgKey({
       prepare: (sessionId) =>
-        prepareLocalHarnessTurn({ ...args, sessionId, ...this.selectionField }),
+        prepareLocalHarnessTurn({ ...args, sessionId, ...(this.requestedSelection ? { modelSelection: this.requestedSelection } : {}) }),
       sessionId: local.sessionId,
       onOrgKey: Boolean(this.selection),
       resumes: Boolean(local.eligibility?.resume),
