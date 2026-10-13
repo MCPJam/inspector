@@ -2914,6 +2914,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
+      { allowedNow: true },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(

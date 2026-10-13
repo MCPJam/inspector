@@ -114,25 +114,41 @@ export const OWN_KEY_POLICY_RECHECK_MS = 15_000;
  * Re-read the policy before a retry or tool-loop provider request, at most
  * once per `OWN_KEY_POLICY_RECHECK_MS`, so a policy change still reaches a
  * running turn within seconds.
+ *
+ * The trusted answer belongs to this wrapped model, which is one turn: each
+ * model of a compare turn, and each concurrent turn, keeps its own, while all
+ * of them share the user's per-minute budget. Pass `allowedNow` when the
+ * caller's own `ownKeyTurnRefusal` check has just let the turn run.
  */
-export function withOwnKeyTurnPolicy(model: LanguageModel, turn: OwnKeyTurn) {
+export function withOwnKeyTurnPolicy(
+  model: LanguageModel,
+  turn: OwnKeyTurn,
+  options: { allowedNow?: boolean } = {},
+) {
   if (typeof model === "string") {
     throw new Error("A local model must be an explicit provider model.");
   }
-  let allowedAt: number | undefined;
+  // `performance.now()`, not `Date.now()`: a wall-clock step back (NTP, a
+  // resumed VM) must not stretch how long an allowing answer is trusted.
+  let allowedAt = options.allowedNow ? performance.now() : undefined;
+  // Parallel requests that find no fresh answer wait on one read.
+  let reading: Promise<WebRouteError | undefined> | undefined;
   return wrapLanguageModel({
     model,
     middleware: {
       transformParams: async ({ params }) => {
         if (
           allowedAt !== undefined &&
-          Date.now() - allowedAt < OWN_KEY_POLICY_RECHECK_MS
+          performance.now() - allowedAt < OWN_KEY_POLICY_RECHECK_MS
         ) {
           return params;
         }
-        const refusal = await ownKeyTurnRefusal(turn);
+        reading ??= ownKeyTurnRefusal(turn).finally(() => {
+          reading = undefined;
+        });
+        const refusal = await reading;
         if (refusal) throw refusal;
-        allowedAt = Date.now();
+        allowedAt = performance.now();
         return params;
       },
     },
