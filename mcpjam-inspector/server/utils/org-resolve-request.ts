@@ -4,9 +4,8 @@
  * (`org-runtime-admission.ts`), kept apart so neither imports the other.
  */
 import dns from "node:dns/promises";
-import {
-  isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
-} from "@/shared/local-only-mcp";
+import { logger } from "./logger.js";
+import { isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral } from "@/shared/local-only-mcp";
 import type {
   ResolveOrgModelConfigAuth,
   ResolveOrgModelConfigTarget,
@@ -75,7 +74,9 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
  * performed for hostnames, accepting a small TOCTOU window that would require
  * an attacker to control both the DNS record and its TTL.
  */
-export async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
+export async function assertSafeHostedOutboundUrl(
+  rawUrl: string,
+): Promise<void> {
   if (isUnsafeHostedOutboundUrl(rawUrl)) {
     throw new Error(
       `Provider base URL is blocked: points to a private or internal address`,
@@ -88,8 +89,16 @@ export async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void>
   if (isIpLiteral) return;
 
   const resolvedIps: string[] = [];
-  try { resolvedIps.push(...await dns.resolve4(host)); } catch { /* NXDOMAIN etc */ }
-  try { resolvedIps.push(...await dns.resolve6(host)); } catch {}
+  for (const resolve of [dns.resolve4, dns.resolve6]) {
+    try {
+      resolvedIps.push(...(await resolve(host)));
+    } catch (error) {
+      // One address family may be absent; the empty-address guard fails closed.
+      logger.debug("Provider DNS lookup failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
   if (resolvedIps.length === 0) {
     throw new Error(
       `Provider base URL is blocked: hostname "${host}" could not be resolved`,
