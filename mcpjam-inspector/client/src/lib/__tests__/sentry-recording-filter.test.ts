@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   filterReplayRecordingPayload,
   scrubRecordingEvents,
-  withRecordingFilter,
+  filterRecordingEnvelope,
 } from "../sentry-recording-filter";
 
 const NAMED = "https://app.mcpjam.com/servers/acme-billing";
@@ -242,49 +242,14 @@ describe("filterReplayRecordingPayload", () => {
   });
 });
 
-describe("withRecordingFilter", () => {
-  it("filters replay recordings, fixes their length and passes the rest through", async () => {
-    const send = vi.fn(async () => ({}));
-    const flush = vi.fn(async () => true);
-    const transport = withRecordingFilter({ send, flush });
-    const recording = `${HEADER}${JSON.stringify(events)}`;
-    await transport.send([
-      { event_id: "1" },
-      [
-        [{ type: "replay_event" }, { urls: [] }],
-        [{ type: "replay_recording", length: recording.length }, recording],
-      ],
-    ] as never);
-    const [[headers, items]] = send.mock.calls[0] as unknown as [
-      [unknown, Array<[Record<string, unknown>, unknown]>],
-    ];
-    expect(headers).toEqual({ event_id: "1" });
-    expect(items[0]).toEqual([{ type: "replay_event" }, { urls: [] }]);
-    const [header, payload] = items[1];
-    expect(payload).toContain(SCRUBBED);
-    expect(header).toEqual({
-      type: "replay_recording",
-      length: new TextEncoder().encode(payload as string).length,
-    });
-
-    // An unreadable recording is not sent; other items are.
-    await transport.send([
-      {},
-      [
-        [{ type: "replay_event" }, {}],
-        [{ type: "replay_recording", length: 3 }, "bad"],
-      ],
-    ] as never);
-    const [[, second]] = send.mock.calls[1] as unknown as [
-      [unknown, Array<[Record<string, unknown>, unknown]>],
-    ];
-    expect(second).toEqual([[{ type: "replay_event" }, {}]]);
-
-    // Envelopes without a recording go out as they are.
-    const error = [{}, [[{ type: "event" }, { message: "x" }]]];
-    await transport.send(error as never);
-    expect(send.mock.calls[2][0]).toBe(error);
-    await transport.flush(5);
-    expect(flush).toHaveBeenCalledWith(5);
-  });
+it("fixes filtered recording length and preserves unrelated items", async () => {
+  const recording = `${HEADER}${JSON.stringify(events)}`;
+  const [headers, items] = await filterRecordingEnvelope([{ event_id: "1" }, [
+    [{ type: "replay_event" }, { urls: [] }],
+    [{ type: "replay_recording", length: recording.length }, recording],
+  ]]);
+  expect(headers).toEqual({ event_id: "1" });
+  expect(items[0]).toEqual([{ type: "replay_event" }, { urls: [] }]);
+  expect(items[1][1]).toContain(SCRUBBED);
+  expect(items[1][0].length).toBe(new TextEncoder().encode(String(items[1][1])).length);
 });

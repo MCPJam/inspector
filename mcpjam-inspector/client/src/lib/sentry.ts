@@ -1,3 +1,10 @@
+import { rebuildSentryFrameLocations } from "../../../shared/strict-sentry";
+import {
+  strictSentryRequired,
+  blockSentryReplay,
+  browserSentryOptions,
+  withStrictSentryTransport,
+} from "./strict-sentry-boundary";
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import {
@@ -15,28 +22,13 @@ import {
   desktopSentryFallback,
   filterSentryEventIdentity,
 } from "./sentry-identity";
-import { withRecordingFilter } from "./sentry-recording-filter";
-import { withInterimSentryPrivacy } from "./sentry-interim-transport";
-import {
-  stampSentryEvent,
-  stampSentryBreadcrumb,
-  stampSentrySpanStart,
-} from "./sentry-capture-policy";
-import { telemetryNamesAllowed } from "./telemetry-context";
-import {
-  scrubHostname,
-  scrubUrlsInText,
-} from "../../../shared/telemetry-privacy";
+import { stampSentryEvent, stampSentryBreadcrumb, stampSentrySpanStart, stampSentrySpanJson } from "./sentry-capture-policy";
 import {
   currentSessionPrivacy,
-  filterSentryBreadcrumb,
   isCredentialBearingPath,
   isErrorCaptureSurface,
   recordingSurface,
-  scrubNamesFromUrl,
   SENTRY_REPLAY_OPTIONS,
-  shouldMaskAnalytics,
-  stripSelectorAttributes,
 } from "./session-privacy";
 
 /**
@@ -106,157 +98,30 @@ function scrubSentryCredentialsInPlace(event: Record<string, unknown>): void {
   Object.assign(event, scrubbed);
 }
 
-/**
- * Whether names were allowed when an event was captured, keyed by the hint
- * object Sentry threads through every stage of one event — `preprocessEvent`,
- * `postprocessEvent` and `beforeSend` for errors and transactions, the first
- * two for replay events.
- */
-const namesAllowedAtCapture = new WeakMap<object, boolean>();
-/** Whether the session was short of `full` when an event was captured. */
-const maskedAtCapture = new WeakMap<object, boolean>();
+function fullSentrySerializer(
+  config: ReturnType<typeof resolveClientSentryConfig>,
+  processQueryEvent: ReturnType<typeof createConvexQueryEventProcessor>,
+) {
+  return (type: string, payload: Record<string, unknown>, names: boolean): object | null => {
+        const event = payload as Sentry.Event;
+        let clean: Sentry.Event | null = event;
+        if (type === "event") clean = config.beforeSend(event);
+        if (type === "event" && clean && clean.type === undefined) clean = processQueryEvent({ ...clean, type: undefined }, {}) as Sentry.Event | null;
+        if (!clean) return null;
+        filterSentryEventIdentity(clean, names);
+        if (type === "span") {
+          const span = scrubSentryCredentials(payload);
+          return span ? rebuildSentryFrameLocations(span, browserSentryOptions()) : null;
+        }
+        if (type === "replay_event") delete clean.breadcrumbs;
+        else if (clean.breadcrumbs) clean.breadcrumbs = clean.breadcrumbs
+          .map((crumb) => config.beforeBreadcrumb(crumb)).filter((crumb) => crumb !== null);
+        if (type === "transaction") clean = config.beforeSendTransaction(clean);
 
-/**
- * Names leave only if they were allowed when the event was captured AND are
- * allowed now. An event with no capture-time record is id-only.
- */
-function allowNamesFor(hint: unknown): boolean {
-  if (typeof hint !== "object" || hint === null) return false;
-  return namesAllowedAtCapture.get(hint) === true && telemetryNamesAllowed();
-}
-
-/**
- * Short of `full` at capture or now, the page URL an event reports, and the
- * `Referer` it sent, lose their names, as every other URL does
- * (`scrubNamesFromUrl`). Breadcrumbs were already filtered as they were
- * recorded (`filterSentryBreadcrumb`).
- */
-function filterSentryEventUrl<
-  T extends { request?: { url?: unknown; headers?: Record<string, string> } },
->(event: T, hint: unknown): T {
-  const masked =
-    shouldMaskAnalytics() ||
-    typeof hint !== "object" ||
-    hint === null ||
-    maskedAtCapture.get(hint) !== false;
-  if (!masked || !event.request) return event;
-  const request = { ...event.request };
-  if (typeof request.url === "string") {
-    request.url = scrubNamesFromUrl(request.url);
-  }
-  if (request.headers) {
-    request.headers = Object.fromEntries(
-      Object.entries(request.headers).map(([name, value]) => [
-        name,
-        name.toLowerCase() === "referer" && typeof value === "string"
-          ? scrubNamesFromUrl(value)
-          : value,
-      ]),
-    );
-  }
-  event.request = request;
-  return event;
-}
-
-const HOST_KEYS = new Set(["server.address", "net.peer.name", "http.host"]);
-// Web-vitals attributes that name the element they measured, as a CSS
-// selector whose attribute values are the page's text (`[title="…"]`).
-const SELECTOR_KEY = /^(?:lcp\.element|cls\.source\.\d+|inp\.target|ui\.)/;
-
-// A request span named after a relative URL: `GET /servers/acme`.
-const METHOD_AND_PATH = /^([A-Z]+) (\/\S*)$/;
-
-function scrubSpanValue(key: string, value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  if (HOST_KEYS.has(key)) return scrubHostname(value);
-  if (SELECTOR_KEY.test(key)) return stripSelectorAttributes(value);
-  // A request's query and fragment, recorded apart from its URL.
-  if (key === "http.query") {
-    const query = value.replace(/^\?/, "");
-    return query ? scrubNamesFromUrl(`/?${query}`).slice(1) : value;
-  }
-  if (key === "http.fragment") return "";
-  if (value.startsWith("/")) return scrubNamesFromUrl(value);
-  const request = METHOD_AND_PATH.exec(value);
-  if (request) return `${request[1]} ${scrubNamesFromUrl(request[2])}`;
-  return scrubUrlsInText(value);
-}
-
-function scrubSpanData(data: unknown): unknown {
-  if (typeof data !== "object" || data === null) return data;
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [
-      key,
-      scrubSpanValue(key, value),
-    ]),
-  );
-}
-
-interface SentrySpanLike {
-  description?: unknown;
-  data?: unknown;
-}
-
-/**
- * A transaction captured short of `full`: performance spans keep their
- * timing but lose the names they carry — resource and request URLs, peer
- * host names, and the attribute values inside web-vitals element selectors.
- */
-function filterSentryTransactionContent<
-  T extends {
-    spans?: SentrySpanLike[];
-    contexts?: { trace?: SentrySpanLike };
-    transaction?: unknown;
-  },
->(event: T, hint: unknown): T {
-  const masked =
-    shouldMaskAnalytics() ||
-    typeof hint !== "object" ||
-    hint === null ||
-    maskedAtCapture.get(hint) !== false;
-  if (!masked) return event;
-  const scrubSpan = <S extends SentrySpanLike>(span: S): S => ({
-    ...span,
-    ...(typeof span.description === "string"
-      ? { description: scrubSpanValue("description", span.description) }
-      : {}),
-    ...(span.data ? { data: scrubSpanData(span.data) } : {}),
-  });
-  if (Array.isArray(event.spans)) event.spans = event.spans.map(scrubSpan);
-  if (event.contexts?.trace) {
-    event.contexts = {
-      ...event.contexts,
-      trace: scrubSpan(event.contexts.trace),
-    };
-  }
-  if (typeof event.transaction === "string") {
-    event.transaction = scrubSpanValue("transaction", event.transaction);
-  }
-  return event;
-}
-
-/**
- * A span on its own way out: a transaction's child, or a standalone span
- * (web vitals such as INP), which passes through neither `beforeSend` nor
- * `beforeSendTransaction`. A standalone span carries the scope's
- * transaction name, the raw path, in `data.transaction`. Short of `full` its
- * names come out as a transaction's spans' do; its credentials always do,
- * and when the walker cannot finish, its description and data go.
- */
-export function filterSentrySpan<T extends SentrySpanLike>(span: T): T {
-  const named = shouldMaskAnalytics()
-    ? {
-        ...span,
-        ...(typeof span.description === "string"
-          ? { description: scrubSpanValue("description", span.description) }
-          : {}),
-        ...(span.data ? { data: scrubSpanData(span.data) } : {}),
-      }
-    : span;
-  const clean = scrubSentryCredentials(named);
-  if (clean) return clean;
-  const { description: _description, data: _data, ...rest } = named;
-  return { ...rest, data: {} } as T;
+        if (!clean) return null;
+        scrubSentryCredentialsInPlace(clean as Record<string, unknown>);
+        return rebuildSentryFrameLocations(clean, browserSentryOptions());
+      };
 }
 
 /**
@@ -279,49 +144,15 @@ export function initSentry() {
       ...fallback,
       tags: { ...config.initialScope.tags, ...fallback?.tags },
     },
-    beforeSend: (event, hint) => {
-      const filtered = config.beforeSend(event);
-      if (filtered === null) return null;
-      const processed = processQueryEvent(filtered, hint);
-      return processed === null
-        ? null
-        : scrubSentryCredentials(
-            filterSentryTransactionContent(
-              filterSentryEventUrl(
-                filterSentryEventIdentity(processed, allowNamesFor(hint)),
-                hint,
-              ),
-              hint,
-            ),
-          );
-    },
-    // Spans carry request URLs (`GET /api/web/score/runs/<token>`), so the
-    // config's credential pass runs last here too.
-    beforeSendSpan: (span) => filterSentrySpan(span),
-    beforeSendTransaction: (event, hint) =>
-      config.beforeSendTransaction(
-        filterSentryTransactionContent(
-          filterSentryEventUrl(
-            filterSentryEventIdentity(event, allowNamesFor(hint)),
-            hint,
-          ),
-          hint,
-        ),
-      ),
-    // The config's content scrub first (`shared/sentry-config.ts`: console
-    // arguments and request URLs keep their shape, not their values), then
-    // the privacy level's filter.
-    beforeBreadcrumb: (breadcrumb) => {
-      stampSentryBreadcrumb(breadcrumb);
-      const scrubbed = config.beforeBreadcrumb(breadcrumb);
-      return scrubbed === null ? null : filterSentryBreadcrumb(scrubbed);
-    },
-    // Replay recordings' rrweb events cannot be edited as they are recorded;
-    // the page URL in their Meta events is scrubbed on the way out.
-    transport: (options) =>
-      withRecordingFilter(
-        withInterimSentryPrivacy(Sentry.makeFetchTransport(options)),
-      ),
+    beforeSend: undefined,
+    beforeSendTransaction: undefined,
+    beforeBreadcrumb: undefined,
+    beforeSendSpan: stampSentrySpanJson,
+    transport: (options) => withStrictSentryTransport(
+      Sentry.makeFetchTransport(options),
+      fullSentrySerializer(config, processQueryEvent),
+      () => !config.enabled || ["1", "true"].includes(navigator.doNotTrack ?? ""),
+    ),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
     // at the first moment the privacy level allows recording — never while
     // `pending`, never on `/results/<token>`. Starting it at init and stopping
@@ -340,42 +171,10 @@ export function initSentry() {
       }),
     ],
   });
-  // Capture policy precedes asynchronous SDK work; the transport rechecks it.
+  Sentry.getClient()?.on?.("preprocessEvent", stampSentryEvent);
   Sentry.getClient()?.on?.("spanStart", stampSentrySpanStart);
-  Sentry.getClient()?.on?.("preprocessEvent", (event, hint) => {
-    stampSentryEvent(event, hint);
-    if (!hint) return;
-    namesAllowedAtCapture.set(hint, telemetryNamesAllowed());
-    maskedAtCapture.set(hint, shouldMaskAnalytics());
-  });
-  Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
-    filterSentryEventIdentity(event, allowNamesFor(hint));
-  });
-  // The replay event lists every URL the replay visited. They lose their
-  // credentials at every level, and short of `full` their names too, like
-  // everywhere else.
-  Sentry.getClient()?.on?.("preprocessEvent", (event) => {
-    if (event.type !== "replay_event") return;
-    const scrubUrl = shouldMaskAnalytics()
-      ? scrubNamesFromUrl
-      : scrubCredentialUrl;
-    const replayEvent = event as { urls?: unknown };
-    if (Array.isArray(replayEvent.urls)) {
-      replayEvent.urls = replayEvent.urls.map((url: unknown) =>
-        typeof url === "string" ? scrubUrl(url) : url,
-      );
-    }
-  });
-  // The scope adds the page URL and transaction name to the replay event
-  // after that; replay events never reach `beforeSend`, so they are scrubbed
-  // here, on the same terms as an error event's, credentials last. A segment
-  // the guard's `stop()` flushes can leave after the address bar has moved
-  // onto a credential page.
-  Sentry.getClient()?.on?.("postprocessEvent", (event, hint) => {
-    if (event.type !== "replay_event") return;
-    filterSentryTransactionContent(filterSentryEventUrl(event, hint), hint);
-    scrubSentryCredentialsInPlace(event as Record<string, unknown>);
-  });
+  Sentry.getClient()?.on?.("beforeAddBreadcrumb", stampSentryBreadcrumb);
+
 }
 
 /**
@@ -385,9 +184,7 @@ export function initSentry() {
  *
  * Sentry Replay records DOM and text exactly like rrweb, so gating only
  * PostHog would still leave a credential page, or a `pending` session, in a
- * Sentry replay. It records at `full` and `masked` (its options are the same
- * at both, `SENTRY_REPLAY_OPTIONS`; the masked-only extras are applied frame
- * by frame and in its transport), and is held off:
+ * Sentry replay. It records only at `full`, with `SENTRY_REPLAY_OPTIONS`, and is held off:
  *
  *  - while `pending` and at `off`;
  *  - on a credential location (`isCredentialBearingPath`: path, query or
@@ -418,7 +215,11 @@ export function syncSentryReplay(location: string | LocationLike): void {
   try {
     if (!isErrorCaptureSurface()) return;
     const privacy = currentSessionPrivacy();
-    const blocked = privacy !== "full" || isCredentialBearingPath(location);
+    const blocked =
+      privacy !== "full" ||
+      strictSentryRequired() ||
+      recordingSurface() !== "hosted" ||
+      isCredentialBearingPath(location);
     lastSyncBlocked = blocked;
     const client = Sentry.getClient();
     const replay = client?.getIntegrationByName?.<ReplayControls>("Replay");
@@ -438,6 +239,7 @@ export function syncSentryReplay(location: string | LocationLike): void {
       // the replay id, so navigating `/results/a` → `/results/b` would
       // otherwise forget that this guard is what stopped the recording, and
       // the eventual exit would never resume it.
+      blockSentryReplay(replay.getReplayId?.());
       if (replay.getReplayId?.()) {
         sentryReplayStoppedByGuard = true;
         sentryReplayResumeMode =
