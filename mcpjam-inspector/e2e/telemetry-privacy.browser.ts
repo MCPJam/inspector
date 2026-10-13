@@ -315,7 +315,7 @@ test.describe("telemetry privacy in the browser", () => {
     expect(events.length).toBeGreaterThan(0);
     for (const event of events) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
-        v: 1,
+        v: 2,
         o: [HARNESS_PRIVATE_ORG],
         r: "masked",
         i: "id_only",

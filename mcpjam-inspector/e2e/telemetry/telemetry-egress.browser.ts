@@ -7,7 +7,7 @@
  * `popstate`, and the app's own pages and boot paths instead of a stand-in
  * page.
  *
- * The visitor is a signed-out hosted guest the backend answers `full` for
+ * The visitor is an authenticated member the backend answers `full` for
  * (the Convex stand-in answers `telemetryPrivacy:getContext`), so both
  * recorders run at the level where the most reaches the vendors
  * (`resolveSessionPrivacy`). The `masked` and `off` levels are covered in
@@ -82,8 +82,8 @@ const SHARE_LINK_ROUTES = new Set<string>(["tester-link"]);
 const SHARE_LINK_RETURN_MS = 4_500;
 
 /** A public page every signed-out visitor can open: the score landing. */
-const NORMAL_PAGE = "/embed/score";
-const NORMAL_PAGE_TEXT = "Know where your MCP server stands";
+const NORMAL_PAGE = "/";
+const NORMAL_PAGE_TEXT = "Telemetry";
 
 test.beforeAll(() => {
   assertTelemetryBuild();
@@ -123,7 +123,7 @@ async function openNormalPage(
   recorder: EgressRecorder,
 ): Promise<void> {
   await page.goto(`${ORIGIN}${NORMAL_PAGE}`);
-  await expect(page.getByText(NORMAL_PAGE_TEXT)).toBeVisible({
+  await expect(page.getByText(NORMAL_PAGE_TEXT).first()).toBeVisible({
     timeout: 30_000,
   });
   await interact(page);
@@ -200,7 +200,7 @@ test("share links on a normal page at full: text, href and iframe src", async ({
   });
   // A guest, at `full`: the guest session was minted and the replay shows
   // the page's words, unmasked.
-  expect(recorder.api).toContain("POST /api/web/guest-session");
+  expect(recorder.api).toContain("POST /user_management/authenticate");
   expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
     NORMAL_PAGE_TEXT,
   );
