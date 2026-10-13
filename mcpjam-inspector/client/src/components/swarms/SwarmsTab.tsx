@@ -1,4 +1,39 @@
-/** Project-scoped swarm authoring and run history. */
+/**
+ * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
+ *
+ * Replaces the old host-anchored `ScenariosTab product="swarm"`. Personas and
+ * journeys live at the project level; a journey targets one-or-more hosts and,
+ * when run, fans out one single-host session per (host × sessionsPerTarget).
+ *
+ * Top-level views (ViewModeSelector) on `/swarms`. Overview is the landing tab;
+ * a deep link naming a session or a run overrides it, because those name a place:
+ *   - Overview — Swarm Runs list; row click opens `/swarms/:swarmId`
+ *   - Personas — persona sidebar, journey cards, run matrix / live stream
+ *   - Sessions — flat chatSessions browser with top-bar persona filter
+ *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
+ *
+ * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Insights / Sessions
+ * scoped to that wave) instead of the list header. Per-wave Insights owns the
+ * session-flow Sankey; there is no project-wide Insights tab.
+ *
+
+ * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
+ *
+ * ## Agent bridge (v1 scope)
+ *
+ * This is the surface component that calls `useSurfaceAgentBridge` for the
+ * `swarms` tool group (create persona, open journey form, launch run). Two
+ * scoping decisions, both grounded in the actual UI:
+ *
+ * - **Promote-to-eval is OUT of v1.** The promotable session is lazily
+ *   paginated inside `RunSessionsView` (per expanded run) and there is no
+ *   top-level "selected session"; an agent tool couldn't resolve one without a
+ *   large lift of run/session state that would diverge the snapshot from the
+ *   multi-card view. The human uses the in-view "Promote to test case" button.
+ * - **Host CRUD is OUT of v1.** Journeys attach existing project hosts; create
+ *   / edit / delete hosts live on Connect. The snapshot still surfaces host
+ *   TARGETS (names) via the journey→hosts mapping.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { Loader2, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
