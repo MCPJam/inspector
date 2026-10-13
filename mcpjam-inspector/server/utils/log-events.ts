@@ -509,6 +509,7 @@ export type RequestEventMap = {
 };
 
 export type SystemEventMap = {
+  telemetry_canary: Record<string, never>;
   /**
    * A chunk the backend streamed that the browser's AI SDK would reject, so
    * the stream handler dropped it instead of forwarding it. Forwarded, one

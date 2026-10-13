@@ -1,4 +1,5 @@
-import { V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
+import { sha256Hex } from "@mcpjam/sdk/contract";
+import { INTERNAL_TO_V1_CODE, V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
 import catalog from "./telemetry-catalog.generated.json";
 
 type Fields = Record<string, unknown>;
@@ -16,7 +17,7 @@ const ERROR_CLASSES = [
 const ENUMS: Record<string, readonly string[]> = {
   environment: ["prod", "staging", "preview", "dev", "local", "test"],
   authType: ["signedIn", "guest", "system", "unknown"],
-  origin: ["mcpjam", "customer", "dependency", "external", "unknown"],
+  origin: ["mcpjam", "user_server", "user_config", "ambiguous"],
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   level: ["debug", "info", "warn", "error"],
 };
@@ -69,6 +70,19 @@ export function buildStrictLogRow(
     )
   )
     row.requestId = context.requestId;
+  const ua = context.userAgent;
+  row.userAgentFamily =
+    typeof ua !== "string"
+      ? "other"
+      : ua.startsWith("mcpjam-mcp-worker")
+        ? "mcpjam-mcp-worker"
+        : ua.startsWith("mcpjam-sdk")
+          ? "sdk"
+          : ua.startsWith("curl/")
+            ? "curl"
+            : ua.startsWith("Mozilla/")
+              ? "browser"
+              : "other";
   row.route = approved(context.route, catalog.routes) ?? "unknown_route";
   const release = context.release;
   if (
@@ -76,7 +90,15 @@ export function buildStrictLogRow(
     /^(?:\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?|[0-9a-f]{7,40})$/.test(release)
   )
     row.release = release;
-  const code = approved(payload.errorCode, V1_ERROR_CODES);
+  const code = approved(payload.errorCode, [
+    ...V1_ERROR_CODES,
+    ...Object.keys(INTERNAL_TO_V1_CODE),
+    "abort",
+    "connection_closed",
+    "mcp_error",
+    "unhandled_exception",
+    "unknown",
+  ]);
   if (code) row.errorCode = code;
   if (error !== undefined) {
     row.errorClass = strictLogError(error);
@@ -88,5 +110,11 @@ export function buildStrictLogRow(
     row.errorClass ?? "none",
     code ?? "none",
   ].join(":");
+  if (event === "telemetry_canary") {
+    row.route = "inspector";
+    row.slot = Math.floor(Date.parse(String(row.timestamp)) / 300000);
+    row.emittedAt = row.timestamp;
+    row.canaryId = sha256Hex(`inspector:${row.slot}`);
+  }
   return row;
 }
