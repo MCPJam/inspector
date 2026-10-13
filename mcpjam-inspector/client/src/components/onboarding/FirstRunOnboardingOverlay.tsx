@@ -28,6 +28,7 @@ import {
   validateOAuthClientId,
   validateOAuthClientSecret,
 } from "@/lib/server-form-validation";
+import { FirstRunValidationNotice } from "./FirstRunValidationNotice";
 import { SERVER_INPUT_TRANSPORT_HINT } from "@/lib/hosted-ui";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import type {
@@ -1359,7 +1360,7 @@ function ConnectionFailureNotice({
   isValidationError?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const detailsId = "first-run-connection-error-details";
+  if (isValidationError) return <FirstRunValidationNotice error={error} />;
 
   return (
     <div
@@ -1375,33 +1376,31 @@ function ConnectionFailureNotice({
         </span>
         <div className="min-w-0 flex-1 pt-0.5">
           <p className="text-[12px] leading-4 font-semibold text-card-foreground">
-            {isValidationError ? error : "Failed to connect to MCP server"}
+            Failed to connect to MCP server
           </p>
-          {isValidationError ? null : (
-            <Button
-              type="button"
-              variant="ghost"
-              className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
-              aria-expanded={isExpanded}
-              aria-controls={detailsId}
-              onClick={() => setIsExpanded((current) => !current)}
-            >
-              {isExpanded ? "Hide technical details" : "View technical details"}
-              <ChevronDown
-                className={cn(
-                  "size-3 transition-transform",
-                  isExpanded && "rotate-180",
-                )}
-                aria-hidden
-              />
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="ghost"
+            className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
+            aria-expanded={isExpanded}
+            aria-controls="first-run-connection-error-details"
+            onClick={() => setIsExpanded((current) => !current)}
+          >
+            {isExpanded ? "Hide technical details" : "View technical details"}
+            <ChevronDown
+              className={cn(
+                "size-3 transition-transform",
+                isExpanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </Button>
         </div>
       </div>
       {isExpanded ? (
         <div className="mt-3 border-t border-destructive/15 pt-3">
           <p
-            id={detailsId}
+            id="first-run-connection-error-details"
             className="break-words font-mono text-[10.5px] leading-[1.5] text-muted-foreground"
           >
             {error}
