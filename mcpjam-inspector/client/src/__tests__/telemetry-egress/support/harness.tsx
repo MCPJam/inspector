@@ -1,7 +1,8 @@
 /**
  * The app's telemetry, booted for real inside jsdom: the same SDKs, the same
  * options, the same order as `app-bootstrap.tsx`, the same hooks — with the
- * network replaced by a recorder (`jsdom-network.ts`).
+ * network replaced by a recorder (`jsdom-network.ts`). PostHog ingress runs
+ * through the real relay before vendor bytes are decoded and scanned.
  *
  * What is real here, and why each piece matters to the proof:
  *
@@ -10,7 +11,7 @@
  *    app), and `preloadPosthogBundledExtensions()` before posthog-js inits,
  *    which is what puts the replay recorder in this process at all.
  *  - `<PostHogProvider apiKey options>` with `getPostHogOptions()`, so the
- *    `before_send` chain, `disable_capture_url_hashes` and the masked init
+ *    capture stamp, `disable_capture_url_hashes` and the conservative init
  *    profile are the shipped ones.
  *  - `useSessionPrivacy` and `useSessionRecordingPathGuard`, the two hooks
  *    that start, switch and resume both recorders, under a real react-router
@@ -48,6 +49,7 @@ import {
   useLocation,
 } from "react-router";
 import { vi } from "vitest";
+import { vendorRecorder, RELAY_PROJECT_ID, TELEMETRY_ACTOR_ID } from "./vendor-recorder";
 import {
   posthogRemoteConfigScript,
   scanAll,
@@ -214,7 +216,7 @@ export interface TelemetryHarness {
   unload(): Promise<void>;
   /** Decode and scan every request recorded since `mark`. */
   scanSince(mark: number): ReturnType<typeof scanAll>;
-  /** Where the request log stands now, for `scanSince`. */
+  /** Where the vendor request log stands now, for `scanSince`. */
   mark(): number;
 }
 
@@ -237,7 +239,13 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
   pinRandom();
 
   // Before ANY SDK module loads: both capture their transports at load.
-  const network = installNetworkStub(respond);
+  const vendor = vendorRecorder();
+  const network = installNetworkStub(async (request) => {
+    await vendor.receive(request);
+    return respond(request);
+  });
+
+  await import("@/lib/install-telemetry-transport");
 
   // app-bootstrap.tsx order: Sentry, then the guard, then the bundled
   // extensions, then the provider.
@@ -285,7 +293,10 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
 
   // The provider's options must be one object across renders: it compares
   // them by value and a change would `set_config` the SDK again.
-  const posthogOptions = getPostHogOptions();
+  const posthogOptions = {
+    ...getPostHogOptions(),
+    request_headers: { Authorization: "Bearer telemetry-fixture-member" },
+  };
   const tree = (level: SessionPrivacy) => (
     <PostHogProvider apiKey={getPostHogKey()} options={posthogOptions}>
       <LevelContext.Provider value={level}>
@@ -325,10 +336,17 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
     posthog,
     Sentry,
     async setLevel(level) {
+      const telemetry = await import("@/lib/telemetry-context");
+      telemetry.setTelemetryActor(TELEMETRY_ACTOR_ID);
+      telemetry.setTelemetryIdentity(TELEMETRY_ACTOR_ID, "id_only");
+      telemetry.setTelemetryCaptureContext({
+        projectIds: [RELAY_PROJECT_ID],
+        organizationIds: [],
+      });
       await act(async () => {
         root.render(tree(level));
       });
-      await idle();
+      await idle(level === "full" ? 3_100 : 0);
     },
     async showShareLinks(urls) {
       await act(async () => {
@@ -382,10 +400,10 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
     },
     unload,
     scanSince(mark) {
-      return scanAll(network.since(mark));
+      return scanAll(vendor.requests.slice(mark));
     },
     mark() {
-      return network.requests.length;
+      return vendor.requests.length;
     },
   };
 }
