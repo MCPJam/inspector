@@ -1,6 +1,7 @@
 /** Framework-free, reconstructive boundary for first-party telemetry clients. */
 export interface TelemetryCatalog {
   frames?: Readonly<Record<string, readonly string[]>>;
+  frameAliases?: Readonly<Record<string, string>>;
   routes?: readonly string[];
   errors?: readonly string[];
   messages?: readonly string[];
@@ -19,11 +20,21 @@ const CLASSES = [
 const LEVELS = ["fatal", "error", "warning", "info", "debug", "log"];
 const TAGS: Record<string, readonly string[]> = {
   deployment: ["hosted", "self_hosted"],
-  actor_kind: ["user", "guest", "installation", "unknown"],
+  actor_kind: ["user", "signedIn", "guest", "installation", "unknown"],
   platform: ["web", "npm", "electron", "darwin", "win32", "linux"],
   origin: ["mcpjam", "dependency", "external", "unknown"],
   kind: ["bug", "expected", "dependency", "unknown"],
   severity: ["error", "warning", "info"],
+  error_origin: ["user_server", "user_config", "mcpjam", "ambiguous"],
+  page_class: ["incident", "routine"],
+  surface: ["mcpjam_agent", "action", "api", "desktop", "sdk"],
+  entrypoint: [
+    "uploadEvalArtifact",
+    "evalRunReporter.flush",
+    "evalRunReporter.finalize",
+    "reportEvalResults",
+  ],
+  http_status: Array.from({ length: 500 }, (_, index) => String(index + 100)),
 };
 
 export function telemetryRecord(value: unknown): Fields {
@@ -54,7 +65,7 @@ function token(value: unknown, pattern: RegExp): string | undefined {
 export function telemetryActorId(value: unknown): string | undefined {
   return token(
     value,
-    /^(?:user_[0-9A-Z]{26}|guest_[0-9a-f-]{36}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{16})$/
+    /^(?:user_[0-9A-HJKMNP-TV-Z]{26}|(?:(?:installation:|local-runtime-)?)[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{16})$/
   );
 }
 
@@ -93,7 +104,9 @@ function frames(
   const kept: Fields[] = [];
   for (const raw of values.slice(-100)) {
     const frame = telemetryRecord(raw);
-    const filename = typeof frame.filename === "string" ? frame.filename : "";
+    const rawFilename =
+      typeof frame.filename === "string" ? frame.filename : "";
+    const filename = catalog.frameAliases?.[rawFilename] ?? rawFilename;
     const names = catalog.frames?.[filename];
     const name = names && member(frame.function, names);
     if (!name) continue;
@@ -245,4 +258,29 @@ export function rebuildSentryTransaction<T extends object>(
       (value) => rebuildSentrySpan(telemetryRecord(value), options)
     ),
   } as T;
+}
+
+/** Rebuild again at transport time; unrelated envelope families cannot leave. */
+export function restrictSentryEnvelope(
+  envelope: { 0: unknown; 1: unknown[] },
+  options: SentryBoundaryOptions = {}
+): void {
+  envelope[0] = {};
+  const items = envelope[1].flatMap((item) => {
+    if (!Array.isArray(item)) return [];
+    const type = telemetryRecord(item[0]).type;
+    if (type !== "event" && type !== "transaction") return [];
+    if (
+      typeof item[1] !== "object" ||
+      item[1] === null ||
+      Array.isArray(item[1])
+    )
+      return [];
+    const value =
+      type === "event"
+        ? rebuildSentryEvent(item[1], options)
+        : rebuildSentryTransaction(item[1], options);
+    return [[{ type }, value]];
+  });
+  envelope[1].splice(0, envelope[1].length, ...items);
 }
