@@ -325,10 +325,16 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
     posthog,
     Sentry,
     async setLevel(level) {
+      const telemetry = await import("@/lib/telemetry-context");
+      telemetry.setTelemetryActor("user_01K00000000000000000000000");
+      telemetry.setTelemetryCaptureContext({
+        projectIds: ["project_test"],
+        organizationIds: [],
+      });
       await act(async () => {
         root.render(tree(level));
       });
-      await idle();
+      await idle(level === "full" ? 3_100 : 0);
     },
     async showShareLinks(urls) {
       await act(async () => {
