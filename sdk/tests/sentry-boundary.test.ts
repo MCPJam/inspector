@@ -2,9 +2,19 @@ import { NodeClient, Scope, defaultStackParser } from "@sentry/node";
 import { fileURLToPath } from "node:url";
 import { sdkDiagnosticBoundary } from "../src/internal/sentry-boundary";
 
-afterEach(() => {
+const original = {
+  DO_NOT_TRACK: process.env.DO_NOT_TRACK,
+  MCPJAM_TELEMETRY_DISABLED: process.env.MCPJAM_TELEMETRY_DISABLED,
+};
+beforeEach(() => {
   delete process.env.DO_NOT_TRACK;
   delete process.env.MCPJAM_TELEMETRY_DISABLED;
+});
+afterEach(() => {
+  for (const [key, value] of Object.entries(original)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 it("reconstructs actual SDK errors at the final transport and keeps safe frames", async () => {
