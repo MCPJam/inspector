@@ -23,7 +23,7 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -245,7 +245,7 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =

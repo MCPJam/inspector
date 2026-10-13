@@ -22,7 +22,7 @@ import {
 } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -359,7 +359,7 @@ function PendingSeatPaymentNotice({
 // the settings danger zone, so removal rules and error handling stay in sync.
 function useLeaveOrganization(organization: Organization) {
   const appNavigate = useAppNavigate();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const { removeMember } = useOrganizationMutations();
   const currentUserEmail = user?.email;
 
@@ -509,7 +509,7 @@ export function OrganizationsTab({
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
   const appNavigate = useAppNavigate();
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
@@ -658,7 +658,7 @@ function OrganizationPage({
 }: OrganizationPageProps) {
   const appNavigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
