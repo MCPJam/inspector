@@ -1,5 +1,7 @@
 import { version } from "../package.json";
 
+export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
+
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
 type Rule = readonly string[] | "count" | "boolean";
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {

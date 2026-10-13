@@ -1,3 +1,4 @@
+import { TELEMETRY_POLICY_HEADER } from "../../shared/strict-posthog.js";
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
@@ -16,6 +17,7 @@ import { getSystemLogger } from "../utils/request-logger.js";
 import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js";
 import {
   applyEventPolicy,
+  restrictPoliciesAtSend,
   decideEventPolicies,
   isRestricted,
   type PolicyDecision,
@@ -1435,8 +1437,6 @@ async function admitted<T>(
   }
 }
 
-// Each event's policy, asked of the backend as the request's bearer. Only a
-// request with a bearer asks, so only one waits on the budget above.
 async function waitForPolicies(
   events: readonly unknown[],
   token: string | null,
@@ -1548,6 +1548,7 @@ async function processCapture(
   method: string,
   body: ArrayBuffer | undefined,
   token: string | null,
+  livePolicy: string | undefined,
 ): Promise<CaptureOutcome> {
   const tokens = queryTokens(subpath, url);
   const payloadTokens: unknown[] = [];
@@ -1600,9 +1601,8 @@ async function processCapture(
   const decision = await waitForPolicies(read.events, token, textBytes);
   if (decision === BUSY) return { kind: "busy" };
 
-  const outcome = await admitted(large, () =>
-    rewriteCapture(url, method, read, decision),
-  );
+  const policy = restrictPoliciesAtSend(decision, livePolicy);
+  const outcome = await admitted(large, () => rewriteCapture(url, method, read, policy));
   return outcome === BUSY ? { kind: "busy" } : outcome;
 }
 
@@ -1743,6 +1743,7 @@ relayRoutes.all("*", async (c) => {
         method,
         body as ArrayBuffer | undefined,
         token,
+        c.req.header(TELEMETRY_POLICY_HEADER),
       );
       if (capture.kind === "busy") {
         stats.busyRejects++;
@@ -1893,7 +1894,6 @@ relayRoutes.all("*", async (c) => {
   stats.latenciesMs.push(Date.now() - startedAt);
   recordResponseStatus(upstream.status);
 
-  // Stream the upstream body through (recorder.js is ~300KB).
   return new Response(upstream.body, {
     status: upstream.status,
     headers: responseHeaders,

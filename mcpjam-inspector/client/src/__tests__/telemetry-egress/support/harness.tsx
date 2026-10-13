@@ -239,6 +239,8 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
   // Before ANY SDK module loads: both capture their transports at load.
   const network = installNetworkStub(respond);
 
+  await import("@/lib/install-telemetry-transport");
+
   // app-bootstrap.tsx order: Sentry, then the guard, then the bundled
   // extensions, then the provider.
   const sentry = await import("@/lib/sentry");

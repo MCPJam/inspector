@@ -14,6 +14,7 @@
  * share-link page. `__harness.tighten()` moves a running page to a private
  * context, as a navigation would.
  */
+import "@/lib/install-telemetry-transport";
 import { StrictMode, useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import posthog from "posthog-js";

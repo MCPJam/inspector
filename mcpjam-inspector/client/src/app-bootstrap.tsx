@@ -1,5 +1,6 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import "./lib/install-telemetry-transport";
 import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
@@ -84,7 +85,6 @@ import {
   WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
-// Initialize Sentry before React mounts
 initSentry();
 
 // After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own
