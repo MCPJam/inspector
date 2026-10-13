@@ -55,6 +55,10 @@ import {
   toObservationPayload,
 } from "./browser-artifact-serialization.js";
 
+// Per-call caps of `recordBrowserArtifacts`; a call over either is refused.
+const MAX_OBSERVATIONS_PER_WRITE = 20;
+const MAX_STEPS_PER_WRITE = 120;
+
 /** Drained-but-not-yet-uploaded artifacts, screenshots still base64. */
 type RawBucket = {
   promptIndex: number;
@@ -68,6 +72,9 @@ type WireBatch = {
   observations: WidgetRenderObservationPayload[];
   steps: BrowserInteractionStepPayload[];
 };
+
+const hasRows = (batch: WireBatch): boolean =>
+  batch.observations.length > 0 || batch.steps.length > 0;
 
 export interface BrowserArtifactOutbox {
   /**
@@ -120,8 +127,13 @@ export function createBrowserArtifactOutbox(args: {
   /** Log prefix so each surface stays greppable. */
   logScope: string;
 }): BrowserArtifactOutbox {
-  const { chatSessionId, convexAuthToken, scenarioId, accessVersion, logScope } =
-    args;
+  const {
+    chatSessionId,
+    convexAuthToken,
+    scenarioId,
+    accessVersion,
+    logScope,
+  } = args;
   // Screenshots and the replay upload as the session's own identity, scoped
   // to this chat and, for a hosted scenario, its grant (MJ-006).
   const uploadTarget: SnapshotUploadTarget = {
@@ -289,9 +301,9 @@ export function createBrowserArtifactOutbox(args: {
     take(browser, fallbackPromptIndex) {
       const { observations, steps } = browser.drainNewArtifacts();
       for (const obs of observations) {
-        rawBucket(bucketOf(obs.promptIndex, fallbackPromptIndex)).observations.push(
-          obs,
-        );
+        rawBucket(
+          bucketOf(obs.promptIndex, fallbackPromptIndex),
+        ).observations.push(obs);
       }
       for (const step of steps) {
         rawBucket(bucketOf(step.promptIndex, fallbackPromptIndex)).steps.push(
@@ -359,74 +371,90 @@ export function createBrowserArtifactOutbox(args: {
       );
 
       for (const batch of ordered) {
-        if (batch.observations.length === 0 && batch.steps.length === 0) {
+        if (!hasRows(batch)) {
           wire.delete(batch.promptIndex);
           continue;
         }
-        // Ride the staged video along on the first write of this flush — one
-        // fewer round trip, and the attach is first-write-wins server-side.
-        const carriesVideo = !videoAttached && stagedVideoBlobId !== undefined;
-        // ONE attempt per flush, through the shared acknowledgement primitive:
-        // the retry cadence here is "the next flush", not a loop inside this
-        // one, so a stalled backend never holds a terminal path open. What is
-        // shared with the evidence client is the RULE, not the schedule —
-        // state is released only on a confirmed acknowledgement.
-        const attempt = await writeUntilAcknowledged(
-          async () => {
-            const result = await convexClient.mutation(
-              "chatSessions:recordBrowserArtifacts" as any,
-              {
-                ...auth,
-                promptIndex: batch.promptIndex,
-                ...(batch.observations.length
-                  ? { widgetRenderObservations: batch.observations }
-                  : {}),
-                ...(batch.steps.length
-                  ? { browserInteractionSteps: batch.steps }
-                  : {}),
-                ...(carriesVideo
-                  ? {
-                      videoBlobId: stagedVideoBlobId,
-                      ...(stagedVideoMeta
-                        ? { videoMeta: stagedVideoMeta }
-                        : {}),
-                    }
-                  : {}),
-              },
-            );
-            // The session row hasn't landed yet (`/ingest-chat` race) — a
-            // legitimate `null`, not a failure, and the write is idempotent so
-            // the next flush retries it.
-            return result == null
-              ? { status: "retryable" as const, reason: "session row not ready" }
-              : { status: "acknowledged" as const, value: result };
-          },
-          { maxAttempts: 1 },
-        );
+        // Cap-sized chunks: an over-cap call is refused and would be retried
+        // as-is forever. Landed rows are released so a failure retries the rest.
+        while (hasRows(batch)) {
+          const observations = batch.observations.slice(
+            0,
+            MAX_OBSERVATIONS_PER_WRITE,
+          );
+          const steps = batch.steps.slice(0, MAX_STEPS_PER_WRITE);
+          // Ride the staged video along on the first write of this flush — one
+          // fewer round trip, and the attach is first-write-wins server-side.
+          const carriesVideo =
+            !videoAttached && stagedVideoBlobId !== undefined;
+          // ONE attempt per chunk per flush, through the shared acknowledgement
+          // primitive: the retry cadence here is "the next flush", not a loop
+          // inside this one, so a stalled backend never holds a terminal path
+          // open. What is shared with the evidence client is the RULE, not the
+          // schedule — state is released only on a confirmed acknowledgement.
+          const attempt = await writeUntilAcknowledged(
+            async () => {
+              const result = await convexClient.mutation(
+                "chatSessions:recordBrowserArtifacts" as any,
+                {
+                  ...auth,
+                  promptIndex: batch.promptIndex,
+                  ...(observations.length
+                    ? { widgetRenderObservations: observations }
+                    : {}),
+                  ...(steps.length ? { browserInteractionSteps: steps } : {}),
+                  ...(carriesVideo
+                    ? {
+                        videoBlobId: stagedVideoBlobId,
+                        ...(stagedVideoMeta
+                          ? { videoMeta: stagedVideoMeta }
+                          : {}),
+                      }
+                    : {}),
+                },
+              );
+              // The session row hasn't landed yet (`/ingest-chat` race) — a
+              // legitimate `null`, not a failure, and the write is idempotent
+              // so the next flush retries it.
+              return result == null
+                ? {
+                    status: "retryable" as const,
+                    reason: "session row not ready",
+                  }
+                : { status: "acknowledged" as const, value: result };
+            },
+            { maxAttempts: 1 },
+          );
 
-        if (!attempt.acknowledged) {
-          if (attempt.reason !== "session row not ready") {
-            logger.warn(
-              `[${logScope}] browser artifact write failed; retrying`,
-              {
-                chatSessionId,
-                promptIndex: batch.promptIndex,
-                observations: batch.observations.length,
-                steps: batch.steps.length,
-                error: attempt.reason,
-              },
-            );
+          if (!attempt.acknowledged) {
+            if (attempt.reason !== "session row not ready") {
+              logger.warn(
+                `[${logScope}] browser artifact write failed; retrying`,
+                {
+                  chatSessionId,
+                  promptIndex: batch.promptIndex,
+                  observations: observations.length,
+                  steps: steps.length,
+                  error: attempt.reason,
+                },
+              );
+            }
+            break;
           }
-          continue;
+
+          batch.observations.splice(0, observations.length);
+          batch.steps.splice(0, steps.length);
+          if (carriesVideo) {
+            videoAttached = true;
+            stagedVideoBlobId = undefined;
+            stagedVideoMeta = undefined;
+          }
         }
 
+        // Anything left is a chunk that did not land; the batch stays held.
+        if (hasRows(batch)) continue;
         wire.delete(batch.promptIndex);
         written += 1;
-        if (carriesVideo) {
-          videoAttached = true;
-          stagedVideoBlobId = undefined;
-          stagedVideoMeta = undefined;
-        }
       }
 
       // A video with no artifacts left to ride on — the common terminal case,

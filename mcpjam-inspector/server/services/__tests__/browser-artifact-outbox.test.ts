@@ -113,7 +113,10 @@ afterEach(() => {
 describe("createBrowserArtifactOutbox", () => {
   it("writes a taken batch without a scenario (the swarm auth branch)", async () => {
     const outbox = makeOutbox();
-    outbox.take(fakeBrowser([{ observations: [observation()], steps: [step()] }]), 0);
+    outbox.take(
+      fakeBrowser([{ observations: [observation()], steps: [step()] }]),
+      0,
+    );
 
     const result = await outbox.flush();
 
@@ -178,6 +181,65 @@ describe("createBrowserArtifactOutbox", () => {
     mutationMock.mockResolvedValueOnce({ observations: 1, steps: 0 });
     expect(await outbox.flush()).toMatchObject({ written: 1, pending: 0 });
     expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("splits a batch over the backend's per-call cap into writes it accepts", async () => {
+    const outbox = makeOutbox();
+    // One turn, 21 widget renders: `recordBrowserArtifacts` refuses more than
+    // 20 observations in a call, and a refused batch would otherwise be
+    // retried as-is on every flush, forever.
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+
+    const result = await outbox.flush();
+
+    expect(result).toMatchObject({ written: 1, pending: 0 });
+    expect(mutationMock).toHaveBeenCalledTimes(2);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    expect(calls[0].widgetRenderObservations).toHaveLength(20);
+    expect(calls[1].widgetRenderObservations).toHaveLength(1);
+    expect(calls[1].widgetRenderObservations[0].toolCallId).toBe("tc-20");
+    // Every chunk is stamped with the batch's own promptIndex.
+    expect(calls.map((c) => c.promptIndex)).toEqual([0, 0]);
+  });
+
+  it("splits a run of interaction steps the same way", async () => {
+    const outbox = makeOutbox();
+    const steps = Array.from({ length: 121 }, (_, i) => step({ stepIndex: i }));
+    outbox.enqueueSteps(steps as never, 0);
+
+    const result = await outbox.flush();
+
+    expect(result).toMatchObject({ written: 1, pending: 0 });
+    expect(mutationMock).toHaveBeenCalledTimes(2);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    expect(calls[0].browserInteractionSteps).toHaveLength(120);
+    expect(calls[1].browserInteractionSteps).toHaveLength(1);
+    expect(calls[1].browserInteractionSteps[0].stepIndex).toBe(120);
+  });
+
+  it("retries only the chunk that failed, not the rows that already landed", async () => {
+    const outbox = makeOutbox();
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+
+    mutationMock
+      .mockResolvedValueOnce({ observations: 20, steps: 0 })
+      .mockRejectedValueOnce(new Error("boom"));
+    expect(await outbox.flush()).toMatchObject({ written: 0, pending: 1 });
+
+    mutationMock.mockResolvedValueOnce({ observations: 1, steps: 0 });
+    expect(await outbox.flush()).toMatchObject({ written: 1, pending: 0 });
+
+    expect(mutationMock).toHaveBeenCalledTimes(3);
+    const retried = mutationMock.mock.calls[2]![1] as any;
+    expect(retried.widgetRenderObservations).toHaveLength(1);
+    expect(retried.widgetRenderObservations[0].toolCallId).toBe("tc-20");
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(21);
   });
 
   it("groups by each artifact's own promptIndex, not the draining turn", async () => {
@@ -336,7 +398,11 @@ describe("createBrowserArtifactOutbox", () => {
     const result = await outbox.flush();
 
     // Screenshots are the fallback the Replay UI renders when there is no video.
-    expect(result).toMatchObject({ written: 1, pending: 0, videoAttached: false });
+    expect(result).toMatchObject({
+      written: 1,
+      pending: 0,
+      videoAttached: false,
+    });
   });
 
   it("keeps every row when one screenshot upload fails, just without its blob", async () => {
@@ -395,10 +461,12 @@ describe("createBrowserArtifactOutbox", () => {
     // the throw is already on the wire and the one after is still queued;
     // dropping the whole bucket here was the P1 this replaced.
     const real = serializeBrowserStepsMock.getMockImplementation()!;
-    serializeBrowserStepsMock.mockImplementation(async (steps: any, client: any) => {
-      if (steps?.[0]?.stepIndex === 1) throw new Error("systemic");
-      return real(steps, client);
-    });
+    serializeBrowserStepsMock.mockImplementation(
+      async (steps: any, client: any) => {
+        if (steps?.[0]?.stepIndex === 1) throw new Error("systemic");
+        return real(steps, client);
+      },
+    );
 
     await outbox.flush();
 
