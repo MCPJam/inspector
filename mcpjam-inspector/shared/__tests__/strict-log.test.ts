@@ -3,6 +3,20 @@ import { buildLegacyLogRow, buildStrictLogRow } from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it("marks an internally minted Inspector canary route", () => {
+    expect(
+      buildStrictLogRow(
+        "telemetry_canary",
+        {},
+        { canaryRoute: "private", canaryId: "private" },
+      ),
+    ).toMatchObject({
+      event: "telemetry_canary",
+      canaryRoute: "inspector",
+      route: "inspector",
+      canaryId: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+  });
   it("preserves finite harness health dimensions without legacy prose", () => {
     const row = buildLegacyLogRow(
       "[harness][timing] claim=1ms PRIVATE_SENTINEL",

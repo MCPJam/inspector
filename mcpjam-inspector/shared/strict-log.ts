@@ -87,6 +87,7 @@ export function buildStrictLogRow(
   ].join(":");
   if (event === "telemetry_canary") {
     row.route = "inspector";
+    row.canaryRoute = "inspector";
     row.slot = Math.floor(Date.parse(String(row.timestamp)) / 300000);
     row.emittedAt = row.timestamp;
     row.canaryId = sha256Hex(`inspector:${row.slot}`);
