@@ -63,6 +63,7 @@ export function GuestSignInButton({
   const { signIn } = useInspectorAuth();
 
   const handleSignIn = () => {
+    // track() adds standard event props; the ratchet forbids raw PostHog calls.
     track("login_button_clicked", {
       location: location ?? "guest_signin_message",
     });

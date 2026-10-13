@@ -136,6 +136,75 @@ it("prevents retries if the workspace actor becomes a guest", () => {
   expect(started).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["ready", undefined],
+  ["ready", false],
+  ["error", undefined],
+  ["error", false],
+] as const)(
+  "does not auto-start again after %s generation and actor %s resolves",
+  (status, member) => {
+    const unregister = registerEvalSuite(target, {
+      read: () => ({}),
+      save: vi.fn(),
+    });
+    const workspace = () => (
+      <StrictMode>
+        <EvalGenerationWorkspace {...target} />
+      </StrictMode>
+    );
+    const view = renderWithProviders(workspace());
+    expect(started).toHaveBeenCalledOnce();
+    act(() =>
+      seed(
+        status,
+        ["Retained draft"],
+        status === "error" ? "Generation failed" : undefined,
+      ),
+    );
+    auth.member = member;
+    view.rerender(workspace());
+    expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+    auth.member = true;
+    view.rerender(workspace());
+    expect(started).toHaveBeenCalledOnce();
+    expect(screen.getByText("Retained draft")).toBeVisible();
+    expect(useEvalGeneration.getState().suites[key]).toMatchObject({
+      status,
+      drafts: [expect.objectContaining({ id: "Retained draft" })],
+    });
+    if (status === "error") {
+      fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
+      expect(started).toHaveBeenCalledTimes(2);
+    }
+    unregister();
+  },
+);
+
+it("allows a new generation when the workspace is deliberately reopened", () => {
+  const unregister = registerEvalSuite(target, {
+    read: () => ({}),
+    save: vi.fn(),
+  });
+  const view = renderWithProviders(<EvalGenerationWorkspace {...target} />);
+  expect(started).toHaveBeenCalledOnce();
+  act(() => seed("ready", []));
+  view.unmount();
+  renderWithProviders(<EvalGenerationWorkspace {...target} />);
+  expect(started).toHaveBeenCalledTimes(2);
+  unregister();
+});
+
+it("keeps Back to suite available while the actor is unresolved", () => {
+  auth.member = undefined;
+  const onDone = vi.fn();
+  renderWithProviders(<EvalGenerationWorkspace {...target} onDone={onDone} />);
+  fireEvent.click(screen.getByRole("button", { name: "Back to suite" }));
+  expect(onDone).toHaveBeenCalledOnce();
+  expect(started).not.toHaveBeenCalled();
+});
+
 it("starts generation directly once and closes the chat even in Strict Mode", () => {
   const unregister = registerEvalSuite(target, {
     read: () => ({}),

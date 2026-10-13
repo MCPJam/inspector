@@ -107,7 +107,6 @@ export function GenerateCasesDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (member !== true) return;
             if (needsEnvironment && !environmentId) return;
             const config: GenerateCasesConfig = {
               ...generationPreset(testSet, coverage),

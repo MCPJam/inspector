@@ -113,13 +113,13 @@ it("stops offering generation when the actor becomes a guest", () => {
   view.rerender(
     <GenerateCasesDialog suiteId="s" onGenerate={onGenerate} onClose={vi.fn()} />,
   );
-  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+  expect(screen.getByRole("dialog").querySelector("form")).toBeNull();
   expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Generate cases" })).toBeNull();
   expect(onGenerate).not.toHaveBeenCalled();
 });
 
-it("gates a project-backed guest before authoring while keeping manual case creation available", async () => {
+it.each(["empty", "populated"] as const)("gates a guest from the %s suite and allows manual cases", async (entry) => {
   auth.member = false;
   const started = vi.mocked(authoringRequest);
   started.mockClear();
@@ -129,7 +129,20 @@ it("gates a project-backed guest before authoring while keeping manual case crea
     <SuiteDetailOverview
       projectId="project-1"
       suite={suite}
-      cases={[]}
+      cases={
+        entry === "empty"
+          ? []
+          : [{
+              _id: "case-1",
+              testSuiteId: suite._id,
+              createdBy: "u1",
+              title: "Manual case",
+              query: "Check the connected tools",
+              models: [],
+              runs: 1,
+              expectedToolCalls: [],
+            }]
+      }
       runs={[]}
       runsLoading={false}
       metricsByRun={metricsByRunFromIterations([])}
@@ -146,7 +159,12 @@ it("gates a project-backed guest before authoring while keeping manual case crea
     />,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByTestId("suite-empty-action-generate"));
+  if (entry === "empty") {
+    await user.click(screen.getByTestId("suite-empty-action-generate"));
+  } else {
+    await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Generate" }));
+  }
   expect(screen.getByText(/Sign in to generate test cases\./)).toBeVisible();
   expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Generate cases" })).toBeNull();
@@ -154,7 +172,12 @@ it("gates a project-backed guest before authoring while keeping manual case crea
   expect(started).not.toHaveBeenCalled();
   expect(onGenerateTestCases).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  await user.click(screen.getByTestId("suite-empty-action-describe"));
+  if (entry === "empty") {
+    await user.click(screen.getByTestId("suite-empty-action-describe"));
+  } else {
+    await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
+  }
   expect(onEditCases).toHaveBeenCalledOnce();
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import {
@@ -20,10 +20,13 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 export function EvalGenerationWorkspace(
-  props: Parameters<typeof MemberEvalGenerationWorkspace>[0],
+  props: Omit<Parameters<typeof MemberEvalGenerationWorkspace>[0], "started">,
 ) {
   const member = useIsMemberActor();
-  if (member === true) return <MemberEvalGenerationWorkspace {...props} />;
+  // Auth changes must not reset the once-per-entry generation attempt.
+  const started = useRef(false);
+  if (member === true)
+    return <MemberEvalGenerationWorkspace {...props} started={started} />;
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-4">
       {member === undefined ? (
@@ -53,6 +56,7 @@ function MemberEvalGenerationWorkspace({
   environmentId,
   onChangeSettings,
   onDone,
+  started,
 }: {
   projectId: string;
   suiteId: string;
@@ -65,11 +69,11 @@ function MemberEvalGenerationWorkspace({
   onChangeSettings?: () => void;
   /** Back to the suite, once there is nothing left to do here. */
   onDone?: () => void;
+  started: RefObject<boolean>;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
   );
-  const started = useRef(false);
   const initialIds = useRef(
     new Set(generation?.drafts.map((draft) => draft.id)),
   );
