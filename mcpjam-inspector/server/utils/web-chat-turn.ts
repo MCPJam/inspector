@@ -1282,7 +1282,7 @@ export async function streamWebChatTurn(
       `This host runs the ${persist.harness} harness, which isn't available: ` +
         `${
           refusal?.reason ??
-          "the harness only runs MCPJam-provided models — pick one on this host to run the real runtime"
+          "choose a supported model and an eligible connection for this harness"
         }.`,
     );
   }
