@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ORG_AI_CONFIG_QUERY } from "@/hooks/useOrgAiConfig";
 import {
+  OrgAiCardBoundary,
   OrgAiConfigBoundary,
   isOrgAiConfigUnavailable,
 } from "../OrgAiConfigBoundary";
@@ -88,5 +89,52 @@ describe("OrgAiConfigBoundary", () => {
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OrgAiCardBoundary", () => {
+  it("keeps its sibling when the card throws, and reports once", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    reportBoundaryError.mockClear();
+    render(
+      <OrgAiConfigBoundary name="outer">
+        <p>AI keys switch</p>
+        <OrgAiCardBoundary name="card" title="the default AI model">
+          <Throws error={new TypeError("Cannot read properties of null")} />
+        </OrgAiCardBoundary>
+      </OrgAiConfigBoundary>,
+    );
+
+    expect(screen.getByText("AI keys switch")).toBeInTheDocument();
+    expect(screen.getByTestId("card-error")).toHaveTextContent(
+      "Couldn't show the default AI model",
+    );
+    expect(screen.queryByTestId("org-ai-config-error")).toBeNull();
+    expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a redacted failure", PROD_REDACTED],
+    ["a missing query", DEV_MISSING],
+  ])("propagates %s even with a healthy sibling", (_label, message) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    reportBoundaryError.mockClear();
+    const { container } = render(
+      <OrgAiConfigBoundary name="outer">
+        <p>Healthy policy card</p>
+        <OrgAiCardBoundary name="card" title="the default AI model">
+          <Throws error={new Error(message)} />
+        </OrgAiCardBoundary>
+      </OrgAiConfigBoundary>,
+    );
+    if (message === DEV_MISSING) {
+      expect(container).toBeEmptyDOMElement();
+      expect(reportBoundaryError).not.toHaveBeenCalled();
+    } else {
+      expect(screen.getByTestId("org-ai-config-error")).toBeVisible();
+      expect(screen.queryByTestId("card-error")).not.toBeInTheDocument();
+      expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+    }
   });
 });

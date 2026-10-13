@@ -59,8 +59,7 @@ import {
   type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
-import { OrgAiConfigBoundary } from "./OrgAiConfigBoundary";
-import { OrganizationOrgKeysPolicyCard } from "./OrganizationOrgKeysPolicyCard";
+import { OrganizationAiCards } from "./OrganizationAiCards";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
@@ -358,18 +357,11 @@ function OrganizationProviderSettings({
           </SettingsPageDescription>
         </CardHeader>
 
-        {/* Keyed by the org: a boundary that has caught stays in its
-            fallback for the life of the element. It renders nothing on a
-            backend that does not serve the AI config yet. */}
-        <OrgAiConfigBoundary
-          key={`org-ai-keys:${organizationId}`}
-          name="org-ai-keys-policy"
-        >
-          <OrganizationOrgKeysPolicyCard
-            organizationId={organizationId}
-            isAdmin={isAdmin}
-          />
-        </OrgAiConfigBoundary>
+        <OrganizationAiCards
+          organizationId={organizationId}
+          isAdmin={isAdmin}
+          providers={providers}
+        />
 
         <CardContent className="space-y-1 p-0">
           <h2 className="pb-2 text-sm font-medium text-muted-foreground">

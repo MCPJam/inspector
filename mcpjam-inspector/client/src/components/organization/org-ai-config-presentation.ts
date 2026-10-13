@@ -11,18 +11,29 @@
  *   names the one way to run it now: an admin turning the setting off;
  * - harness runtimes run on the organization's own key for their vendor
  *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
- *   vendor and what doesn't count.
+ *   vendor and what doesn't count;
+ * - a feature waiting on the organization's default model says so, and the
+ *   fix is choosing that model, not adding a provider.
  */
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  validateModelSelection,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   AiFeatureGroupId,
   AiFeatureGroupReadiness,
   AiOperationId,
+  AiOperationReadiness,
   AiReadinessStatus,
   OrgAiModelCheck,
   OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import {
+  canonicalPrefix,
+  canonicalSelectionModelId,
+} from "@/components/chat-v2/shared/model-selection";
+import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
 // Feature coverage
@@ -152,6 +163,58 @@ export const EVALS_JUDGE_GUIDANCE =
   "Choose a judge model from an organization provider for each suite. A suite without one can't run.";
 
 /**
+ * The organization AI model an operation waits on, when choosing (or
+ * re-choosing) that model is the fix: the operation runs on an organization
+ * model nobody picks, and it is unconfigured.
+ *
+ * Read from the backend's readiness, never from a list of features. The
+ * operation names its model (`modelKind`); an older backend that does not
+ * name it still reports `org_model_unconfigured`, which means "no model set"
+ * whenever an eligible provider exists (with none, the fix is a provider).
+ * `unset` is a model nobody chose; `unusable` is a saved one that can't run
+ * (its connection was removed, or it can't do the work).
+ */
+export function operationModelFix(
+  operation: AiOperationReadiness | undefined,
+  eligibleConnectionIds?: readonly string[],
+): { kind: OrgAiModelKind; reason: "unset" | "unusable" } | null {
+  if (!operation || operation.status !== "unconfigured") return null;
+  const unset = operation.code === "org_model_unconfigured";
+  if (operation.modelKind) {
+    return { kind: operation.modelKind, reason: unset ? "unset" : "unusable" };
+  }
+  if (unset && (eligibleConnectionIds?.length ?? 0) > 0) {
+    return {
+      kind: modelKindForOperation(operation.operation),
+      reason: "unset",
+    };
+  }
+  return null;
+}
+
+/** The model an operation runs on when the backend does not name it. */
+function modelKindForOperation(operation: AiOperationId): OrgAiModelKind {
+  if (operation === "embedding") return "embedding";
+  if (operation === "speech_transcription") return "transcription";
+  return "default";
+}
+
+/** The first model fix among a feature's blockers, if any. */
+function featureModelFix(
+  feature: AiFeatureGroupReadiness,
+  operations: readonly AiOperationReadiness[] | undefined,
+  eligibleConnectionIds: readonly string[] | undefined,
+): ReturnType<typeof operationModelFix> {
+  if (!operations?.length) return null;
+  const byId = new Map(operations.map((op) => [op.operation, op]));
+  for (const blocker of feature.blockedBy ?? []) {
+    const fix = operationModelFix(byId.get(blocker), eligibleConnectionIds);
+    if (fix) return fix;
+  }
+  return null;
+}
+
+/**
  * What to do about a feature, in the reader's terms: the actual fix, or
  * nothing when there is none to make. Admins are told what to change below;
  * members are pointed at an admin.
@@ -161,6 +224,8 @@ export function featureGuidance(
   context: {
     /** The backend's eligible connections; absent on an older backend. */
     eligibleConnectionIds?: readonly string[];
+    /** The backend's per-operation readiness, to tell a missing model apart. */
+    operations?: readonly AiOperationReadiness[];
     canManage: boolean;
   },
 ): string | null {
@@ -177,6 +242,14 @@ export function featureGuidance(
     case "unconfigured": {
       const noEligibleProvider =
         (context.eligibleConnectionIds?.length ?? 0) === 0;
+      const modelFix = featureModelFix(
+        feature,
+        context.operations,
+        context.eligibleConnectionIds,
+      );
+      if (modelFix && !noEligibleProvider) {
+        return orgAiModelGuidance(modelFix, canManage);
+      }
       const fix = noEligibleProvider
         ? canManage
           ? "Add a direct cloud provider below."
@@ -184,6 +257,9 @@ export function featureGuidance(
         : canManage
           ? "None of the organization's providers can serve this feature. Add a direct cloud provider that can."
           : "None of the organization's providers can serve this feature. Ask an organization admin to add one that can.";
+      if (modelFix) {
+        return `${fix} Then choose the organization's ${orgAiModelNoun(modelFix.kind)}.`;
+      }
       return feature.id === "evals"
         ? `${fix} Then choose a judge model from it for each suite.`
         : fix;
@@ -267,15 +343,24 @@ export function blockedBySentence(
  * operation so the sentence names what is lost: insights lose the session
  * map without embeddings, never their text analysis. An operation that
  * can't run on organization providers yet says "not supported yet" rather
- * than "unavailable", which would read as something to configure.
+ * than "unavailable", which would read as something to configure, and one
+ * waiting on an organization model nobody chose says which model.
  */
 export function degradationSentence(
   feature: AiFeatureGroupId,
   operation: AiOperationId,
   status?: AiReadinessStatus,
+  /** The organization model the operation waits on ({@link operationModelFix}). */
+  waitsOn?: OrgAiModelKind,
 ): string {
+  const state =
+    status === "unsupported"
+      ? "not supported yet"
+      : waitsOn
+        ? `unavailable until the organization's ${orgAiModelNoun(waitsOn)} is set`
+        : "unavailable";
   const lost = (what: string, stillRuns: string) =>
-    `${what} ${status === "unsupported" ? "not supported yet" : "unavailable"}; ${stillRuns}`;
+    `${what} ${state}; ${stillRuns}`;
   if (operation === "embedding") {
     return feature === "insights"
       ? lost("Session map", "text insights still run")
@@ -329,6 +414,44 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
+/** "default AI model", "embedding model", "transcription model". */
+export function orgAiModelNoun(kind: OrgAiModelKind): string {
+  return ORG_AI_MODEL_PRESENTATION[kind]?.noun ?? `${kind} model`;
+}
+
+/** The fix for {@link operationModelFix}, by audience. */
+export function orgAiModelGuidance(
+  fix: { kind: OrgAiModelKind; reason: "unset" | "unusable" },
+  canManage: boolean,
+): string {
+  const noun = orgAiModelNoun(fix.kind);
+  if (fix.reason === "unusable") {
+    return canManage
+      ? `The organization's ${noun} can't run. Choose another below.`
+      : `The organization's ${noun} can't run. Ask an organization admin to choose another.`;
+  }
+  return canManage
+    ? `The organization's ${noun} isn't set. Choose it below.`
+    : `The organization's ${noun} isn't set. Ask an organization admin to choose it.`;
+}
+
+/**
+ * Whether a model id a connection lists fits a kind, by its name. Only
+ * filters the editor's suggestions; any model can still be typed, and the
+ * backend decides.
+ */
+export function listedModelFitsKind(
+  modelId: string,
+  kind: OrgAiModelKind,
+): boolean {
+  const id = modelId.toLowerCase();
+  const embedding = id.includes("embed");
+  const speech = /transcri|whisper/.test(id);
+  if (kind === "embedding") return embedding;
+  if (kind === "transcription") return speech;
+  return !embedding && !speech;
+}
+
 /** How the last test of a saved model reads. */
 export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
   label: string;
@@ -378,6 +501,84 @@ export function orgProviderLabel(provider: OrgModelProvider): string {
     return provider.providerKey.slice("custom:".length);
   }
   return provider.providerKey;
+}
+
+/** Model ids an admin listed on the connection, for the editor's suggestions. */
+export function listedModelIds(provider: OrgModelProvider): string[] {
+  const seen = new Set<string>();
+  for (const raw of [
+    ...(provider.modelIds ?? []),
+    ...(provider.selectedModels ?? []),
+  ]) {
+    const id = raw.trim();
+    if (id) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * The canonical `provider/model` id and the provider's own id for a model an
+ * admin typed against a connection. A pasted `provider/` prefix is dropped
+ * from the native id, which is what the provider API is called with (for
+ * Azure: the deployment name).
+ *
+ * The canonical id is the one a model picker saves for this connection's row
+ * of the model (`canonicalSelectionModelId`), so this card and every picker
+ * save the same id for the same connection. A model the pickers can't place
+ * (one newer than the catalog, an Azure deployment name) keeps the
+ * provider's canonical prefix, spelled as the pickers spell it.
+ */
+export function orgModelIds(
+  providerKey: string,
+  typed: string,
+): { modelId: string; nativeModelId: string } | null {
+  const raw = typed.trim();
+  if (!raw) return null;
+  const key = providerKey.trim().toLowerCase();
+  if (!key) return null;
+  const prefix = canonicalPrefix(key);
+
+  let native = raw;
+  for (const candidate of new Set([prefix, key])) {
+    if (native.toLowerCase().startsWith(`${candidate}/`)) {
+      native = native.slice(candidate.length + 1);
+      break;
+    }
+  }
+  if (!native) return null;
+
+  const row: ModelDefinition = {
+    id: native.includes("/") ? `${prefix}/${native}` : native,
+    name: native,
+    provider: key,
+    hosted: false,
+  };
+  const modelId = canonicalSelectionModelId(row) ?? `${prefix}/${native}`;
+  return { modelId, nativeModelId: native };
+}
+
+/**
+ * The selection to save for an organization AI model: always `source:
+ * "org"`, always naming the connection and the provider's native id, never
+ * falling back to another model. `null` when the typed model cannot form a
+ * valid selection.
+ */
+export function buildOrgModelSelection(
+  provider: Pick<OrgModelProvider, "id" | "providerKey">,
+  typedModel: string,
+): ModelSelection | null {
+  const connectionId = provider.id?.trim();
+  if (!connectionId) return null;
+  const ids = orgModelIds(provider.providerKey, typedModel);
+  if (!ids) return null;
+  const result = validateModelSelection({
+    modelId: ids.modelId,
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: connectionId },
+    nativeModelId: ids.nativeModelId,
+    fallback: { provider: "none", model: "none" },
+  });
+  return result.ok ? result.selection : null;
 }
 
 /** The model a saved selection runs, as the admin would recognise it. */

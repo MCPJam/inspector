@@ -1,9 +1,6 @@
 import type { RefObject } from "react";
-import {
-  useHostMutations,
-  type EnsureProjectClientResult,
-  type HostListItem,
-} from "@/hooks/useClients";
+import { useHostMutations, type HostListItem } from "@/hooks/useClients";
+import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { useProjectClientInitialization } from "@/hooks/use-project-client-initialization";
 import {

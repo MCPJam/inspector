@@ -47,7 +47,7 @@ describe("agentPageClass", () => {
       { source: "s", httpStatus: 422, code: "org_runtime_unsupported" },
     ],
     [
-      "an org with no model for the role",
+      "an org with no default model set",
       { source: "s", httpStatus: 422, code: "org_model_unconfigured" },
     ],
     [

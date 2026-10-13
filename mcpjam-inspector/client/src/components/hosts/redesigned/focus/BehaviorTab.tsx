@@ -229,16 +229,16 @@ export function BehaviorTab({
       ),
     [catalogModels, draft.harness, requireOrgKeys],
   );
-  // With a saved selection, the row it names (an org OpenRouter row and the
-  // hosted row of the same id are different rows); else the legacy id.
+  // The row a saved selection names (under the policy, only that exact row).
   const resolvedModelRow = useMemo(
     () =>
       findModelForStoredChoice(
         { modelId: draft.modelId, selection: draft.modelSelection },
         availableModels,
         undefined,
+        { exactSelection: requireOrgKeys },
       ),
-    [availableModels, draft.modelId, draft.modelSelection],
+    [availableModels, draft.modelId, draft.modelSelection, requireOrgKeys],
   );
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = resolvedModelRow;

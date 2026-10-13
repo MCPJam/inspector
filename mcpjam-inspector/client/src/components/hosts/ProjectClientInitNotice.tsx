@@ -31,7 +31,9 @@ export function ProjectClientInitNotice({ projectId }: { projectId: string }) {
   }
   return (
     <div role="alert" className="flex h-8 items-center gap-2 px-1 text-xs">
-      <span className="text-muted-foreground">Couldn’t prepare a client.</span>
+      <span className="text-muted-foreground">
+        Could not prepare a client. Try again.
+      </span>
       <Button
         type="button"
         variant="outline"

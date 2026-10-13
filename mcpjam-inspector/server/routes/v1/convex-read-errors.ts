@@ -169,6 +169,21 @@ function hasConvexErrorData(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Does this failure mean the backend has no such Convex function?
+ *
+ * Narrow ON PURPOSE: only a genuinely absent function is deploy skew. Reading
+ * anything wider that way would swallow authorization refusals and ordinary
+ * backend failures into a fallback that answers a different question.
+ */
+export function isMissingConvexFunction(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /could not find (public )?function/i.test(message) ||
+    /function not found/i.test(message)
+  );
+}
+
 export type ConvexReadFailure =
   | { kind: "membership" }
   | { kind: "authentication" }

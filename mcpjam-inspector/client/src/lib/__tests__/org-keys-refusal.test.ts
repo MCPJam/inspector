@@ -118,6 +118,9 @@ describe("org-keys refusal helpers", () => {
     expect(notAnalyzedReason("credential_missing", "member")).toMatch(
       /Ask an organization admin to add one\.$/,
     );
+    expect(notAnalyzedReason("org_model_unavailable", "admin")).toMatch(
+      /An organization admin needs to choose one in Organization → AI providers\.$/,
+    );
     // Unsupported analysis never suggests a provider or model change can fix it.
     for (const code of ["org_runtime_unsupported"]) {
       for (const audience of ["admin", "member"] as const) {
@@ -179,7 +182,7 @@ describe("orgKeysRefusalSentence", () => {
 });
 
 describe("notAnalyzedLine", () => {
-  it("is the colon form for refusals and the findings skip, else undefined", () => {
+  it("is the Not analyzed line for refusals and the findings skip, else undefined", () => {
     expect(notAnalyzedLine("org_model_unavailable")).toBe(
       "Not analyzed because this organization requires its own provider keys and has no compatible default AI model. An organization admin needs to choose one in Organization → AI providers.",
     );

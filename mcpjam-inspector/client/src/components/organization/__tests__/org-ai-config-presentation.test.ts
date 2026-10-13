@@ -1,19 +1,27 @@
 import { describe, expect, it } from "vitest";
-import type { AiFeatureGroupReadiness } from "@/hooks/useOrgAiConfig";
+import type {
+  AiFeatureGroupReadiness,
+  AiOperationReadiness,
+} from "@/hooks/useOrgAiConfig";
 import {
   EVALS_JUDGE_GUIDANCE,
   HARNESS_NOT_SUPPORTED_GUIDANCE,
   HARNESS_ORG_KEYS_GUIDANCE,
   NOT_SUPPORTED_YET_GUIDANCE,
   blockedBySentence,
+  buildOrgModelSelection,
   degradationSentence,
   featureGuidance,
   listedBlockers,
+  listedModelFitsKind,
+  operationModelFix,
   orderedFeatures,
   orgAiModelCheckPresentation,
+  orgModelIds,
   orgProviderLabel,
   selectionModelLabel,
 } from "../org-ai-config-presentation";
+import { modelSelectionFromDefinition } from "@/components/chat-v2/shared/model-selection";
 
 function feature(
   overrides: Partial<AiFeatureGroupReadiness> &
@@ -152,6 +160,78 @@ describe("featureGuidance", () => {
     );
   });
 
+  describe("a feature waiting on the organization's default AI model", () => {
+    const insights = feature({ id: "insights", blockedBy: ["text_analysis"] });
+    const unset: AiOperationReadiness = {
+      operation: "text_analysis",
+      status: "unconfigured",
+      code: "org_model_unconfigured",
+      modelKind: "default",
+    };
+
+    it("asks for the default model, not a provider", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [unset],
+          canManage: true,
+        }),
+      ).toBe("The organization's default AI model isn't set. Choose it below.");
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [unset],
+          canManage: false,
+        }),
+      ).toBe(
+        "The organization's default AI model isn't set. Ask an organization admin to choose it.",
+      );
+    });
+
+    it("reads an older backend's code the same way when a provider exists", () => {
+      const { modelKind: _omitted, ...withoutKind } = unset;
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [withoutKind],
+          canManage: true,
+        }),
+      ).toBe("The organization's default AI model isn't set. Choose it below.");
+      // With no provider at all, the same code means "add a provider".
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: [],
+          operations: [withoutKind],
+          canManage: true,
+        }),
+      ).toBe("Add a direct cloud provider below.");
+    });
+
+    it("asks for a provider first, then the model", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: [],
+          operations: [unset],
+          canManage: true,
+        }),
+      ).toBe(
+        "Add a direct cloud provider below. Then choose the organization's default AI model.",
+      );
+    });
+
+    it("says a saved model can't run", () => {
+      expect(
+        featureGuidance(insights, {
+          eligibleConnectionIds: ["conn_1"],
+          operations: [{ ...unset, code: "credential_missing" }],
+          canManage: true,
+        }),
+      ).toBe(
+        "The organization's default AI model can't run. Choose another below.",
+      );
+    });
+  });
+
   it("says nothing for a ready feature other than evals", () => {
     expect(
       featureGuidance(feature({ id: "chat", status: "ready" }), {
@@ -241,7 +321,211 @@ describe("degradationSentence", () => {
   });
 });
 
+describe("operationModelFix", () => {
+  it("names the model an operation waits on", () => {
+    expect(
+      operationModelFix({
+        operation: "embedding",
+        status: "unconfigured",
+        code: "org_model_unconfigured",
+        modelKind: "embedding",
+      }),
+    ).toEqual({ kind: "embedding", reason: "unset" });
+    expect(
+      operationModelFix(
+        {
+          operation: "speech_transcription",
+          status: "unconfigured",
+          code: "org_model_unconfigured",
+        },
+        ["conn_1"],
+      ),
+    ).toEqual({ kind: "transcription", reason: "unset" });
+  });
+
+  it("is null for anything that is not a missing or unusable model", () => {
+    expect(operationModelFix(undefined)).toBeNull();
+    expect(
+      operationModelFix({ operation: "chat", status: "ready" }, ["conn_1"]),
+    ).toBeNull();
+    expect(
+      operationModelFix(
+        {
+          operation: "text_analysis",
+          status: "unsupported",
+          code: "org_runtime_unsupported",
+        },
+        ["conn_1"],
+      ),
+    ).toBeNull();
+    // A picked model's operation with no capable provider.
+    expect(
+      operationModelFix(
+        {
+          operation: "chat",
+          status: "unconfigured",
+          code: "credential_missing",
+        },
+        ["conn_1"],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("degradationSentence and the default model", () => {
+  it("says what waits for the default model", () => {
+    expect(
+      degradationSentence("evals", "text_analysis", "unconfigured", "default"),
+    ).toBe(
+      "Automatic findings unavailable until the organization's default AI model is set; runs and grading still complete",
+    );
+    expect(
+      degradationSentence(
+        "insights",
+        "typed_decision",
+        "unconfigured",
+        "default",
+      ),
+    ).toBe(
+      "Automatic titles and classification unavailable until the organization's default AI model is set; everything else still runs",
+    );
+  });
+});
+
+describe("orgModelIds", () => {
+  it("prefixes the provider and keeps the provider's own id as native", () => {
+    expect(orgModelIds("openai", "gpt-5-mini")).toEqual({
+      modelId: "openai/gpt-5-mini",
+      nativeModelId: "gpt-5-mini",
+    });
+  });
+
+  it("spells Anthropic's dashed versions the catalog way", () => {
+    expect(orgModelIds("anthropic", "claude-haiku-4-5")).toEqual({
+      modelId: "anthropic/claude-haiku-4.5",
+      nativeModelId: "claude-haiku-4-5",
+    });
+    // Dated ids are not version-shaped and pass through.
+    expect(orgModelIds("anthropic", "claude-3-5-sonnet-20241022")).toEqual({
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
+      nativeModelId: "claude-3-5-sonnet-20241022",
+    });
+  });
+
+  it("uses canonical vendor prefixes", () => {
+    expect(orgModelIds("xai", "grok-4")?.modelId).toBe("x-ai/grok-4");
+    expect(orgModelIds("mistral", "mistral-large-latest")?.modelId).toBe(
+      "mistralai/mistral-large-latest",
+    );
+    expect(orgModelIds("z-ai", "glm-4.6")?.modelId).toBe("z-ai/glm-4.6");
+  });
+
+  it("keeps an Azure deployment name as the native id", () => {
+    expect(orgModelIds("azure", "prod-gpt51")).toEqual({
+      modelId: "azure/prod-gpt51",
+      nativeModelId: "prod-gpt51",
+    });
+  });
+
+  it("drops a pasted provider prefix from the native id", () => {
+    expect(orgModelIds("openai", "openai/gpt-5")).toEqual({
+      modelId: "openai/gpt-5",
+      nativeModelId: "gpt-5",
+    });
+    expect(orgModelIds("xai", "x-ai/grok-4")).toEqual({
+      modelId: "x-ai/grok-4",
+      nativeModelId: "grok-4",
+    });
+  });
+
+  it("returns null for an empty model", () => {
+    expect(orgModelIds("openai", "   ")).toBeNull();
+  });
+
+  it("saves the id a model picker saves for the same connection's row", () => {
+    for (const [providerKey, typed] of [
+      ["openai", "gpt-5"],
+      ["anthropic", "claude-sonnet-4-5"],
+      ["meta", "llama-4-scout"],
+    ] as const) {
+      // The row a picker lists for this model on the org connection.
+      const picked = modelSelectionFromDefinition(
+        {
+          id: typed,
+          name: typed,
+          provider: providerKey,
+          hosted: false,
+          orgProvider: { providerKey, id: "conn_1" },
+        },
+        undefined,
+        "analysis",
+      );
+      expect(picked).not.toBeNull();
+      expect(
+        buildOrgModelSelection({ id: "conn_1", providerKey }, typed)?.modelId,
+      ).toBe(picked!.modelId);
+    }
+    // A second prefix table used to save these as `meta/…` and `alibaba/…`.
+    expect(orgModelIds("meta", "llama-4-scout")?.modelId).toBe(
+      "meta-llama/llama-4-scout",
+    );
+    expect(orgModelIds("alibaba", "qwen-3-32b")?.modelId).toBe(
+      "qwen/qwen-3-32b",
+    );
+  });
+});
+
+describe("buildOrgModelSelection", () => {
+  it("builds an org selection that never falls back", () => {
+    expect(
+      buildOrgModelSelection(
+        { id: "conn_1", providerKey: "openai" },
+        " gpt-5-mini ",
+      ),
+    ).toEqual({
+      modelId: "openai/gpt-5-mini",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "conn_1" },
+      nativeModelId: "gpt-5-mini",
+      fallback: { provider: "none", model: "none" },
+    });
+  });
+
+  it.each([
+    ["google", "models/gemini-2.5-flash"],
+    ["openai", "meta-llama/Llama-4"],
+    ["bedrock", "arn:aws:bedrock:region:account:inference-profile/model"],
+  ])("keeps %s's namespace around a native path", (providerKey, nativeModelId) => {
+    expect(orgModelIds(providerKey, nativeModelId)).toEqual({
+      modelId: `${providerKey}/${nativeModelId}`,
+      nativeModelId,
+    });
+  });
+
+  it("refuses a connection without an id or a model that is not an id", () => {
+    expect(
+      buildOrgModelSelection({ providerKey: "openai" }, "gpt-5"),
+    ).toBeNull();
+    expect(
+      buildOrgModelSelection({ id: "conn_1", providerKey: "openai" }, "gpt 5"),
+    ).toBeNull();
+  });
+});
+
 describe("the default model editor's helpers", () => {
+  it("suggests listed models that fit the kind", () => {
+    expect(listedModelFitsKind("gpt-5-mini", "default")).toBe(true);
+    expect(listedModelFitsKind("text-embedding-3-small", "default")).toBe(
+      false,
+    );
+    expect(listedModelFitsKind("text-embedding-3-small", "embedding")).toBe(
+      true,
+    );
+    expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
+      true,
+    );
+  });
+
   it("reads a test's result", () => {
     expect(orgAiModelCheckPresentation({ ok: true, checkedAt: 1 })).toEqual({
       label: "Passed",
