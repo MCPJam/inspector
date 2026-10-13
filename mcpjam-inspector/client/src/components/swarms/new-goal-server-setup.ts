@@ -19,5 +19,7 @@ export function newGoalErrorMessage(error: unknown): string {
   if (typeof code === "string" && invalidServerSetupCodes.has(code)) {
     return "This goal’s server setup is missing or invalid. Make sure its servers still exist and are explicitly selected.";
   }
-  return error instanceof Error ? error.message : "Could not create the goal";
+  return error instanceof Error
+    ? error.message
+    : "The goal could not be saved. Try again.";
 }
