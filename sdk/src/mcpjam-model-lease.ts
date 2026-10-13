@@ -1,11 +1,10 @@
+import { aiRequestHeaders } from "./ai-request-headers.js";
 /**
  * MCPJam-hosted inference for evals that run OUTSIDE the platform.
- *
  * The problem this solves: an eval in your CI needs a model, and until now that
  * meant an OpenAI or Anthropic key in your repository secrets. With a
  * `mcpjam/…` model id the only secret is `MCPJAM_API_KEY` — MCPJam calls the
  * provider and bills your organization's credits.
- *
  * How it works, and why it is a `fetch` rather than a new provider:
  *
  *   1. MCPJam's model proxy is VENDOR-COMPATIBLE — it speaks Anthropic's
@@ -532,7 +531,7 @@ export class McpjamLeaseClient {
    * credential failure, reported as one.
    */
   private async platformHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = aiRequestHeaders("sdk-harness");
     for (const [name, value] of Object.entries(this.extraHeaders)) {
       if (CLIENT_OWNED_HEADERS.has(name.toLowerCase())) continue;
       headers[name] = value;

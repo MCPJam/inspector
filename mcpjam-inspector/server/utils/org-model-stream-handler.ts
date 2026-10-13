@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 /**
  * Org BYOK Stream Handler
  *
@@ -17,9 +18,7 @@
  *   Engine consolidation route 3 collapse: this handler used to own its
  *   own inline `streamText({...})` block (~390 LOC) that duplicated the
  *   driver in `runDirectChatTurn`. The collapse keeps the route-specific
- *   pieces here (the unsupported-approval-gate guard, the local-runtime
- *   config validation, the `postLocalUsage` writeback) and delegates
- *   streaming + trace + persistence to the shared engine.
+ *   pieces here (the unsupported-approval-gate guard, the local-runtime   config validation, the `postLocalUsage` writeback) and delegates   streaming + trace + persistence to the shared engine.
  */
 
 import {
@@ -1002,6 +1001,7 @@ export async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...inspectorAiRequestHeaders("local-usage"),
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({

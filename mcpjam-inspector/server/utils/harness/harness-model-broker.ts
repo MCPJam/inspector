@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "../ai-request-headers.js";
 /**
  * Header-broker start/revoke client — the ONLY harness credential delivery
  * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
@@ -215,6 +216,7 @@ export async function startHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -348,6 +350,7 @@ export async function registerLocalInstance(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -428,6 +431,7 @@ export async function startLoopbackModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -552,6 +556,7 @@ export async function revokeHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -633,6 +638,7 @@ export async function reserveHarnessBox(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -706,6 +712,7 @@ export async function renewHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -765,6 +772,7 @@ export async function releaseHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
