@@ -50,9 +50,21 @@ import {
 
 const ORIGINAL_FETCH = global.fetch;
 const TOKEN = "relay-bearer-token";
-const FULL: TelemetryPolicy = { recording: "full", identity: "full" };
-const MASKED: TelemetryPolicy = { recording: "masked", identity: "id_only" };
-const OFF: TelemetryPolicy = { recording: "off", identity: "id_only" };
+const FULL: TelemetryPolicy = {
+  recording: "full",
+  identity: "full",
+  content: "full",
+};
+const MASKED: TelemetryPolicy = {
+  recording: "masked",
+  identity: "id_only",
+  content: "strict",
+};
+const OFF: TelemetryPolicy = {
+  recording: "off",
+  identity: "id_only",
+  content: "strict",
+};
 
 const PUBLIC_ORG = "org_public_00000000000000001";
 const PRIVATE_ORG = "org_private_0000000000000001";
@@ -643,7 +655,9 @@ describe("relay privacy gate", () => {
       properties: { $current_url: string };
     }>;
     expect(sent).toHaveLength(CREDENTIAL_PATH_PREFIXES.length);
-    const placeholder = scrubSensitiveUrl("/results/x").slice("/results/".length);
+    const placeholder = scrubSensitiveUrl("/results/x").slice(
+      "/results/".length,
+    );
     sent.forEach((event) => {
       expect(event.properties.$current_url).not.toContain(
         "kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
