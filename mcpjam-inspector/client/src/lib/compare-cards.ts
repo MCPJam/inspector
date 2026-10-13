@@ -19,9 +19,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import {
-  type OrgVisibleConfig,
-} from "@/components/chat-v2/shared/model-helpers";
+import { type OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
   isHostedRow,
