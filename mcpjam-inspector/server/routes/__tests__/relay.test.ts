@@ -14,6 +14,8 @@ import relayRoutes, {
 } from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { TELEMETRY_CONTEXT_PROPERTY } from "../../../shared/telemetry-privacy.js";
+import { rebuildStrictPostHogEvent } from "../../../shared/strict-posthog.js";
+import { setTelemetryPolicyQueryForTests } from "../../services/telemetry-privacy-policy.js";
 import { securityHeadersMiddleware } from "../../middleware/security-headers.js";
 import { originValidationMiddleware } from "../../middleware/origin-validation.js";
 import { sessionAuthMiddleware } from "../../middleware/session-auth.js";
@@ -38,16 +40,15 @@ const ORIGINAL_FETCH = global.fetch;
 
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
 
-// The stamp a current client puts on a replay it recorded masked
-// (client/src/lib/telemetry-context.ts). Without a bearer the relay forwards
-// replay only when it says so; relay-privacy.test.ts covers the rules.
-const MASKED_REPLAY = {
+// Parsing and admission tests use an authenticated open context for replay.
+const CAPTURED_FULL = {
   [TELEMETRY_CONTEXT_PROPERTY]: {
-    v: 1,
-    p: [],
+    v: 2,
+    p: ["project_test"],
     o: [],
-    r: "masked",
-    i: "id_only",
+    r: "full",
+    i: "full",
+    c: "full",
   },
 };
 
@@ -110,7 +111,7 @@ function largeReplayBatch(snapshotBytes: number): string {
     {
       event: "$snapshot",
       properties: {
-        ...MASKED_REPLAY,
+        ...CAPTURED_FULL,
         token: POSTHOG_PROJECT_KEY,
         $snapshot_data: [
           fullSnapshot(randomBytes(snapshotBytes).toString("base64")),
@@ -134,23 +135,18 @@ function forwardedJson(callIndex = 0): unknown {
   );
 }
 
-// Events as the relay forwards them without a bearer: the conservative
-// policy marks each one GeoIP-disabled and drops any client IP.
-function restricted<T extends { properties?: Record<string, unknown> }>(
-  event: T,
-): T {
-  return {
-    ...event,
-    properties: { ...event.properties, $geoip_disable: true },
-  };
-}
+// Unstamped product events use the closed schema even in an open context.
+const restricted = rebuildStrictPostHogEvent;
 
-// Mount on BOTH prefixes exactly like both production entries so the tests
-// exercise the mounted-path behavior: inside the sub-app c.req.path still
-// includes the mount prefix (/relay or its edge-safe alias /tlm), and the
-// route must strip whichever one it was reached through before forwarding.
+// The real router strips both public prefixes. Authenticated fixtures keep
+// replay forwarding eligible; privacy denial has separate boundary tests.
 function createTestApp() {
   const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("Authorization", "Bearer fixture-token");
+    c.req.raw.headers.set("x-mcpjam-telemetry-policy", "full");
+    await next();
+  });
   app.use("/relay/*", relayBodyLimit());
   app.route("/relay", relayRoutes);
   app.use("/tlm/*", relayBodyLimit());
@@ -179,10 +175,14 @@ function mockedFetchInit(callIndex = 0): RequestInit {
 describe("posthog relay proxy", () => {
   beforeEach(() => {
     global.fetch = vi.fn();
+    setTelemetryPolicyQueryForTests(async () => ({
+      recording: "full", identity: "full", content: "full",
+    }));
   });
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    setTelemetryPolicyQueryForTests(null);
     zlibControl.hold = false;
     for (const run of zlibControl.held.splice(0)) run();
   });
@@ -205,14 +205,14 @@ describe("posthog relay proxy", () => {
     // The payload is re-encoded as the JSON the relay checked, gzip-compressed
     // the way posthog-js sends it.
     expect(mockedFetchUrl()).toBe(
-      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js&ip=1&ver=1.2.3",
+      "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
     );
     const init = mockedFetchInit();
     expect(init.method).toBe("POST");
     const sent = JSON.parse(payload);
     expect(forwardedJson()).toEqual({
-      ...sent,
-      batch: sent.batch.map(restricted),
+      api_key: POSTHOG_PROJECT_KEY,
+      batch: sent.batch.map((event: unknown) => restricted(event)),
     });
     expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
   });
@@ -482,7 +482,7 @@ describe("posthog relay proxy", () => {
         {
           event: "$snapshot",
           properties: {
-            ...MASKED_REPLAY,
+            ...CAPTURED_FULL,
             token: POSTHOG_PROJECT_KEY,
             $snapshot_data: [fullSnapshot(threeMb)],
           },
@@ -946,8 +946,8 @@ describe("posthog relay proxy", () => {
       expect(response.status).toBe(200);
       const sent = JSON.parse(bytes.toString("utf8"));
       expect(forwardedJson()).toEqual({
-        ...sent,
-        batch: sent.batch.map(restricted),
+        api_key: POSTHOG_PROJECT_KEY,
+        batch: sent.batch.map((event: unknown) => restricted(event)),
       });
     });
   });
@@ -1006,7 +1006,7 @@ describe("posthog relay proxy", () => {
           pad([
             {
               event: "$snapshot",
-              properties: { ...MASKED_REPLAY, token: ours },
+              properties: { ...CAPTURED_FULL, token: ours },
             },
           ]),
         200,
@@ -1108,7 +1108,7 @@ describe("posthog relay proxy", () => {
       const events = Array.from({ length: 80 }, () => ({
         event: "$snapshot",
         properties: {
-          ...MASKED_REPLAY,
+          ...CAPTURED_FULL,
           token: POSTHOG_PROJECT_KEY,
           $snapshot_data: [
             fullSnapshot(randomBytes(30 * 1024).toString("base64")),

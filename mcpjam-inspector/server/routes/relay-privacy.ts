@@ -19,36 +19,14 @@ import {
 import type { TelemetryPolicyResolution } from "../services/telemetry-privacy-policy.js";
 
 /**
- * The relay's privacy gate: what an event may carry to PostHog, decided per
- * event from the context it was captured under.
+ * The relay intersects each event's capture policy with the current backend
+ * answer and send-time browser policy. A missing or unsupported stamp, missing
+ * bearer, unresolved context or missing live header is conservative.
  *
- * Every capture event carries a stamp (`TELEMETRY_CONTEXT_PROPERTY`, written
- * by the client's `before_send`) naming the projects and organizations in view
- * when it was captured, and the policy the client applied. The relay asks the
- * backend for the policy of those contexts as the request's bearer, takes the
- * stricter of that and the client's label, and removes the stamp. A label can
- * only tighten: it never authorizes full capture. An event with no stamp, a
- * request with no bearer, or a backend that does not answer gets the
- * conservative policy — masked replay, id-only identity.
- *
- * A restricted event is forwarded only after:
- *   - its person properties lose every field that names a human;
- *   - every property, `$set` and `$set_once` included, loses the names in its
- *     URLs, paths and hosts, and every property named for a name is masked;
- *     its autocapture elements lose their text and attributes, and its IP
- *     and GeoIP enrichment go.
- *
- * Replay (`$snapshot`) is masked in the browser, as it is recorded, and the
- * relay does not rebuild it. It decides only whether a replay event may pass:
- *   - recording `off`: never;
- *   - recording `masked`: only when the client's own stamp declares it
- *     `masked`. A missing, malformed or laxer stamp — an old client, a
- *     client that did not know the policy — is dropped;
- *   - recording `full`: yes.
- * The stamp is a declaration, not proof: this catches a client recording
- * under the wrong policy, while the masking itself is the client's, covered
- * by tests on the payloads it actually sends. Every replay that passes loses
- * the relay bearer from its `$posthog_config` event.
+ * Strict events are reconstructed from the closed product-event schema;
+ * automatic capture and replay are discarded. Replay can pass only with an
+ * eligible full-content policy, and loses relay credentials before forwarding.
+ * Masked legacy policies retain their stricter recording/identity dimensions.
  */
 
 type Json = Record<string, unknown>;
@@ -92,8 +70,8 @@ export interface PolicyDecision {
 /**
  * The effective policy of each event: the backend's answer for the context it
  * was captured under, tightened by the client's own label. Each distinct
- * context is asked once per request, in parallel (`resolve` keeps an answer
- * for a few seconds; see services/telemetry-privacy-policy.ts).
+ * context is asked once per request, in parallel. Only restrictive backend
+ * answers may be reused between requests.
  */
 export async function decideEventPolicies(
   events: readonly unknown[],

@@ -51,7 +51,7 @@ import {
 const ORIGINAL_FETCH = global.fetch;
 const KEY = POSTHOG_PROJECT_KEY;
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
-const BEARER = { Authorization: "Bearer relay-test-bearer" };
+const BEARER = { Authorization: "Bearer relay-test-bearer", "x-mcpjam-telemetry-policy": "full" };
 const FULL = { recording: "full", identity: "full", content: "full" } as const;
 const FULL_STAMP = encodeCaptureContext({
   projectIds: [],
@@ -233,12 +233,12 @@ describe("event payloads lose their credentials at full", () => {
   it("scrubs the query parameters it forwards beside ?data=", async () => {
     const clean = JSON.stringify({
       event: "$pageview",
-      properties: { token: KEY },
+      properties: { token: KEY, [TELEMETRY_CONTEXT_PROPERTY]: FULL_STAMP },
     });
     const response = await createTestApp().request(
       `/tlm/e/?data=${encodeURIComponent(clean)}&ver=1&redirect_uri=${encodeURIComponent(
         "https://user:SENTINEL_pw@example.com/x",
-      )}&code=SENTINEL_code&api_key=${KEY}`,
+      )}&code=SENTINEL_code&api_key=${KEY}`, { headers: BEARER },
     );
     expect(response.status).toBe(200);
     const { url } = forwardedCall();
