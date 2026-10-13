@@ -3,6 +3,11 @@ import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
 import {
+  rebuildServerAnalytics,
+  rolloutActorId,
+  rolloutPersonProperties,
+} from "../../shared/strict-server-analytics.js";
+import {
   CLIENT_FEATURE_FLAG_KEYS,
   pickClientFeatureFlags,
   type ClientFeatureFlagValues,
@@ -135,16 +140,13 @@ export function captureServerEventForActor(
   try {
     const posthog = getClient();
     if (!posthog) return;
-    if (!actor.distinctId) return;
+    const rebuilt = rebuildServerAnalytics(event, actor.distinctId, properties);
+    if (!rebuilt) return;
 
     posthog.capture({
-      distinctId: actor.distinctId,
-      event,
+      ...rebuilt,
       properties: {
-        // Caller props spread FIRST so the generated dedupe key, source
-        // marker, platform/environment, and request-context attribution below
-        // always win — a caller can't override them by passing the same keys.
-        ...properties,
+        ...rebuilt.properties,
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -155,10 +157,6 @@ export function captureServerEventForActor(
         // (npm installs, the Electron-embedded local server, Docker), not
         // just the hosted Railway deployment.
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-        ...(actor.organizationId
-          ? { organization_id: actor.organizationId }
-          : {}),
-        ...(actor.projectId ? { project_id: actor.projectId } : {}),
       },
     });
   } catch {
@@ -175,7 +173,7 @@ export async function evaluateBrowserRollout(
   key: "local-browser-enabled" | "hosted-browser-enabled",
   distinctId: string,
 ): Promise<boolean> {
-  if (!distinctId) return false;
+  if (!rolloutActorId(distinctId)) return false;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
@@ -206,16 +204,20 @@ export type LocalHarnessRolloutFlag =
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(
   distinctId: string,
-  email?: string,
+  _email?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
-  if (!distinctId || !email) return false;
+  if (!rolloutActorId(distinctId)) return false;
   try {
-    return (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
-      sendFeatureFlagEvents: false,
-      personProperties: { email, deployment: "self_hosted" },
-    })) === true;
-  } catch { return false; }
+    return (
+      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+        sendFeatureFlagEvents: false,
+        personProperties: { deployment: "self_hosted" },
+      })) === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -228,11 +230,11 @@ export async function evaluateClientFeatureFlags(
   distinctId: string,
   personProperties: Record<string, string>,
 ): Promise<ClientFeatureFlagValues> {
-  if (!distinctId) return {};
+  if (!rolloutActorId(distinctId)) return {};
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
-      personProperties,
+      personProperties: rolloutPersonProperties(personProperties),
     });
     return pickClientFeatureFlags(values);
   } catch {

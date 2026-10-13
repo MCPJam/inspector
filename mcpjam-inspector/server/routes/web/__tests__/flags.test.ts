@@ -149,7 +149,7 @@ describe("GET /api/web/flags", () => {
   it("evaluates the verified guest, not a distinct_id the request names", async () => {
     mocks.validateGuestToken.mockResolvedValueOnce({
       valid: true,
-      guestId: "guest-7",
+      guestId: "a1234567-1234-4234-8234-123456789abc",
     });
 
     await getFlags("?distinct_id=user_someone_else", {
@@ -157,24 +157,24 @@ describe("GET /api/web/flags", () => {
     });
 
     expect(mocks.validateGuestToken).toHaveBeenCalledWith("guest-token");
-    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("guest-7");
+    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("a1234567-1234-4234-8234-123456789abc");
   });
 
   it("evaluates the verified signed-in user", async () => {
-    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_1" });
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_01H00000000000000000000000" });
 
     await getFlags("?distinct_id=user_someone_else", {
       Authorization: "Bearer access-token",
     });
 
     expect(mocks.verifyAuthKitToken).toHaveBeenCalledWith("access-token");
-    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_1");
+    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_01H00000000000000000000000");
   });
 
   it("answers a failed local account check as that flag off, not a failed response", async () => {
     // With a published runtime pack the local check is reached for a member;
     // a backend hiccup there must not take every other flag down with it.
-    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_1" });
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_01H00000000000000000000000" });
     mocks.getAllFlags.mockResolvedValueOnce({ "some-other-flag": true });
     mocks.localHarnessAccountEnabled.mockRejectedValue(new Error("backend down"));
 
