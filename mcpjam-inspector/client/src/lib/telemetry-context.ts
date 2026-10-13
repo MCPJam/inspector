@@ -152,6 +152,7 @@ export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
     organizationIds: [...contextIds.organizationIds],
     policy: {
       recording,
+      content: recording === "full" ? "full" : "strict",
       identity: telemetryNamesAllowed() ? "full" : "id_only",
     },
   };

@@ -138,6 +138,7 @@ async function ask(
                 policy: {
                   recording: value.recording,
                   identity: value.identity,
+                  content: value.content,
                 },
                 resolved: true,
               }

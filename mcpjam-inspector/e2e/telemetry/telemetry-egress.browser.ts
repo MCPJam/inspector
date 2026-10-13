@@ -7,10 +7,10 @@
  * `popstate`, and the app's own pages and boot paths instead of a stand-in
  * page.
  *
- * The visitor is a signed-out hosted guest the backend answers `full` for
+ * The visitor is an authenticated member the backend answers `full` for
  * (the Convex stand-in answers `telemetryPrivacy:getContext`), so both
  * recorders run at the level where the most reaches the vendors
- * (`resolveSessionPrivacy`). The `masked` and `off` levels are covered in
+ * (`resolveSessionPrivacy`). The strict and unresolved contexts are covered in
  * jsdom (`session-egress.test.tsx`) and by the telemetry privacy browser test.
  *
  * Every test reads every PostHog and Sentry request its page made, decoded
@@ -73,7 +73,7 @@ const ROUND_TRIP_DWELLS_MS: ReadonlyArray<{ away: number; back: number }> = [
 const SENTRY_LATENCY_MS = 800;
 
 /**
- * Credential pages that are share links. A share link is recorded `masked`,
+ * Credential pages that are share links. A share link records no replay,
  * and the way back to `full` waits `MASKED_TO_FULL_SETTLE_MS` (3s,
  * hooks/useSessionPrivacy.ts) — Sentry Replay, which records only at `full`,
  * is held off until then. A return from one lasts past that.
@@ -198,9 +198,10 @@ test("share links on a normal page at full: text, href and iframe src", async ({
     sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
-  // A guest, at `full`: the guest session was minted and the replay shows
+  // A member, at `full`: AuthKit resolved and the replay shows
   // the page's words, unmasked.
-  expect(recorder.api).toContain("POST /api/web/guest-session");
+  expect(recorder.api).toContain("POST /user_management/authenticate");
+
   expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
     NORMAL_PAGE_TEXT,
   );
