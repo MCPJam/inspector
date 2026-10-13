@@ -25,7 +25,11 @@
  *
  * Pure apart from the warm hosted-catalog cache the no-selection branch reads.
  */
-import type { ModelSelection, RequestedModelSelection } from "@mcpjam/sdk";
+import {
+  assertModelSelection,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import {
@@ -33,6 +37,8 @@ import {
   readSelectionOrigin,
   readStoredLegacySelection,
   type ModelSelectionOrigin,
+  backendModelSelection,
+  wireModelIdForSelection,
 } from "./model-resolution-local.js";
 import {
   orgHarnessSelection,
@@ -63,25 +69,102 @@ export type RailModel = {
   id: string | { toString(): string };
   provider?: string;
   hosted?: boolean;
+  nativeModelId?: string;
+  orgProvider?: { id?: string; providerKey: string };
 };
 
 /**
  * The selection, only if it is for the model this turn runs. A saved
  * selection belongs to ONE model; a turn on a different model takes today's
- * path for that model instead. Matched on the raw id or its canonical form
- * (a bare hosted id `gpt-5-nano` + `openai` is `openai/gpt-5-nano`).
+ * path for that model instead. Match raw, canonical or explicit native ids;
+ * a native alias must also agree with the row's provider and connection.
  */
 export function routingSelectionForModel(
   selection: RequestedModelSelection | undefined,
-  model: { id: string | { toString(): string }; provider?: string },
+  model: RailModel,
 ): RequestedModelSelection | undefined {
   if (!selection) return undefined;
   const id = String(model.id).trim();
   if (!id) return undefined;
-  if (selection.modelId === id) return selection;
-  return selection.modelId === getCanonicalModelId(id, model.provider)
-    ? selection
-    : undefined;
+  const connection =
+    selection.source === "legacy" ? undefined : selection.connectionRef;
+  if (
+    connection?.kind === "localProvider" && model.provider &&
+    connection.providerKey !== model.provider
+  ) return undefined;
+  if (
+    connection?.kind === "orgProvider" && model.orgProvider?.id &&
+    connection.id !== model.orgProvider.id
+  ) return undefined;
+  if (
+    selection.source !== "legacy" && selection.nativeModelId && model.nativeModelId &&
+    selection.nativeModelId !== model.nativeModelId
+  ) return undefined;
+  const canonical = getCanonicalModelId(id, model.provider);
+  if (selection.modelId === id || selection.modelId === canonical) return selection;
+  if (
+    selection.source === "legacy" || selection.source === "hosted" ||
+    selection.nativeModelId !== id
+  ) return undefined;
+  // A native id cannot override a known canonical identity or provider.
+  if (
+    canonical !== id || id.startsWith(`${model.provider}/`) || (model.provider &&
+      !selection.modelId.startsWith(`${model.provider}/`) &&
+      connection?.kind !== "localProvider" && !model.orgProvider?.id)
+  ) return undefined;
+  return selection;
+}
+
+/** Strict HTTP boundary; tolerant stored reads must never erase an explicit ask. */
+export function resolveChatSelection(args: {
+  raw: unknown;
+  inherited?: RequestedModelSelection;
+  model: RailModel;
+  hostWins: boolean;
+  allowLocal: boolean;
+}):
+  | { ok: true; selection?: RequestedModelSelection; requestSelection?: RequestedModelSelection }
+  | { ok: false; error: string } {
+  if (args.hostWins || args.raw === undefined || args.raw === null) {
+    return {
+      ok: true,
+      selection: routingSelectionForModel(args.inherited, args.model),
+    };
+  }
+  const selection = readRoutingSelection(args.raw);
+  if (!selection) return { ok: false, error: "Invalid modelSelection" };
+  if (!args.allowLocal && (selection.source === "local" || selection.source === "legacy")) {
+    return { ok: false, error: "This modelSelection requires local credentials; choose a model available in this workspace." };
+  }
+  if (!routingSelectionForModel(selection, args.model)) {
+    return { ok: false, error: "modelSelection does not match the requested model or connection" };
+  }
+  return { ok: true, selection, requestSelection: selection };
+}
+
+/** Authoritative fields shared by every hosted tool-loop request. */
+export function streamSelectionFields(
+  raw: unknown,
+  model: RailModel,
+  endpointPath: string,
+) {
+  if (raw === undefined || raw === null) return {};
+  const selection = backendModelSelection(assertModelSelection(raw));
+  if (
+    !selection ||
+    selection.source !== (endpointPath === "/stream/org" ? "org" : "hosted") ||
+    !routingSelectionForModel(selection, model)
+  ) {
+    throw new Error("modelSelection does not match the stream model or source");
+  }
+  return {
+    model: selection.source === "org"
+      ? wireModelIdForSelection(selection)
+      : selection.modelId,
+    modelSelection: selection,
+    // The selection is the sole deployment authority, including when absent.
+    nativeModelId: undefined,
+  };
 }
 
 /**

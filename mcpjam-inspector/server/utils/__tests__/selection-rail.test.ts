@@ -33,6 +33,8 @@ import {
   readSelectionOrigin,
   readStoredLegacySelection,
   routingSelectionForModel,
+  resolveChatSelection,
+  streamSelectionFields,
   todayTurnRail,
   withSelectionRouting,
 } from "../selection-rail.js";
@@ -359,5 +361,75 @@ describe("harnessTurnRail — one decision for both chat routes", () => {
       usesFreePath: true,
       modelSource: "mcpjam",
     });
+  });
+});
+
+
+describe("explicit chat selections", () => {
+  const model = { id: "openai/gpt-5-mini", provider: "openai" };
+  const inherited = selections(model.id).org;
+  const resolve = (raw: unknown, overrides = {}) => resolveChatSelection({
+    raw, inherited, model, hostWins: false, allowLocal: true, ...overrides,
+  });
+  it.each([undefined, null])("preserves absent-selection compatibility: %s", (raw) => {
+    expect(resolve(raw)).toEqual({ ok: true, selection: inherited });
+  });
+  it.each([{}, false, "openai/gpt-5-mini", { ...inherited, apiKey: "forbidden" },
+    { ...inherited, modelId: "other/model" }])("refuses explicit invalid/mismatched input: %j", (raw) => {
+    expect(resolve(raw).ok).toBe(false);
+  });
+  it("a scenario ignores even malformed visitor input", () => {
+    expect(resolve({}, { hostWins: true })).toEqual({ ok: true, selection: inherited });
+  });
+  it.each(["local", "legacy"] as const)("web refuses explicit %s, MCP retains it", (source) => {
+    const raw = source === "local"
+      ? { ...selections(model.id).local, connectionRef: { kind: "localProvider", providerKey: "openai" } }
+      : selections(model.id).legacy;
+    expect(resolve(raw, { allowLocal: false }).ok).toBe(false);
+    expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });
+  });
+  it("the explicit object overrides the host without rebinding its connection", () => {
+    const raw = { ...inherited, connectionRef: { kind: "orgProvider", id: "other" } };
+    expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });
+  });
+});
+
+describe("native selection identity and stream fields", () => {
+  const org = (modelId: string, nativeModelId?: string): RequestedModelSelection => ({
+    modelId, source: "org", connectionRef: { kind: "orgProvider", id: "conn-1" },
+    ...(nativeModelId ? { nativeModelId } : {}), fallback: none,
+  });
+  it.each([
+    ["anthropic/claude-sonnet-4.5", "claude-sonnet-4-5", "anthropic"],
+    ["ollama/llama3", "llama3", "ollama"],
+    ["custom/my-model", "deployment", "custom"],
+    ["azure/my-deployment", "my-deployment", "azure"],
+  ])("matches %s by its native id and preserves the canonical selection", (canonical, native, provider) => {
+    const selection = org(canonical, native);
+    expect(routingSelectionForModel(selection, { id: native, provider })).toBe(selection);
+    expect(streamSelectionFields(selection, { id: native, provider }, "/stream/org")).toEqual({
+      model: native, modelSelection: selection, nativeModelId: undefined,
+    });
+  });
+  it("refuses contradictory provider, native id and connection evidence", () => {
+    const selection = org("anthropic/claude-sonnet-4.5", "claude-sonnet-4-5");
+    for (const model of [
+      { id: "claude-sonnet-4-5", provider: "openai" },
+      { id: selection.modelId, nativeModelId: "other" },
+      { id: selection.modelId, orgProvider: { providerKey: "anthropic", id: "other" } },
+    ]) expect(routingSelectionForModel(selection, model)).toBeUndefined();
+  });
+  it("does not use a native alias to replace another canonical row", () => {
+    const selection = org("anthropic/selected", "anthropic/other");
+    expect(routingSelectionForModel(selection, { id: "anthropic/other", provider: "anthropic" })).toBeUndefined();
+  });
+  it("normalizes a hosted alias and keeps no-fallback, refusing a source mismatch", () => {
+    const selection = selections("openai/gpt-5-mini").hosted;
+    expect(streamSelectionFields(selection, { id: "gpt-5-mini", provider: "openai" }, "/stream")).toEqual({
+      model: selection.modelId, modelSelection: selection, nativeModelId: undefined,
+    });
+    expect(() => streamSelectionFields(selection, { id: selection.modelId }, "/stream/org")).toThrow();
+    expect(() => streamSelectionFields(selection, { id: "other/model" }, "/stream")).toThrow();
+    expect(() => streamSelectionFields(selections(selection.modelId).local, { id: selection.modelId }, "/stream")).toThrow();
   });
 });
