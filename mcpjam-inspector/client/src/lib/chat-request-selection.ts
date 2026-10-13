@@ -11,7 +11,7 @@ import { withReasoningEffort } from "./reasoning-effort-selection";
 
 type ChatRequestSelection =
   | { kind: "picked"; selection: RequestedModelSelection }
-  | { kind: "inherit" | "compatibility" }
+  | { kind: "inherit" }
   | { kind: "blocked"; reason: string };
 
 /** Resolve request intent without replacing a saved connection or fallback. */
@@ -49,8 +49,6 @@ export function chatRequestSelection(args: {
       selection.nativeModelId !== (rowSelection?.nativeModelId ?? rowSelection?.modelId))) {
     return blocked("The saved model or connection is unavailable. Choose a model again.");
   }
-  // Hosted synthesis is enabled after browser propagation is in place.
-  if (!args.selection && selection.source === "hosted") return { kind: "compatibility" };
   const picked = selection.source !== "legacy" && args.effort !== undefined
       ? withReasoningEffort(selection, args.effort ?? undefined)
       : selection;
