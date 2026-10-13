@@ -24,7 +24,7 @@ afterEach(() => {
 describe("FirstRunValidationNotice", () => {
   it("copies the launch command from a section outside the validation alert", async () => {
     vi.mocked(copyToClipboard).mockResolvedValue(true);
-    render(<FirstRunValidationNotice error={HOSTED_STDIO_ERROR} />);
+    render(<FirstRunValidationNotice error={HOSTED_STDIO_ERROR} kind="hosted-stdio" />);
 
     expect(screen.getByRole("alert")).not.toHaveTextContent("npx");
     expect(
@@ -43,7 +43,7 @@ describe("FirstRunValidationNotice", () => {
 
   it("reports clipboard failure without claiming the command was copied", async () => {
     vi.mocked(copyToClipboard).mockResolvedValue(false);
-    render(<FirstRunValidationNotice error={HOSTED_STDIO_ERROR} />);
+    render(<FirstRunValidationNotice error={HOSTED_STDIO_ERROR} kind="hosted-stdio" />);
 
     fireEvent.click(
       screen.getByRole("button", { name: "Copy MCPJam command" }),

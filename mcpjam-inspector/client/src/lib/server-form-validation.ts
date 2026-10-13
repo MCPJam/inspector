@@ -49,6 +49,9 @@ export function validateBearerTargetUrl(url: string): string | null {
   return "Bearer tokens require HTTPS for non-local server URLs.";
 }
 
+const RUN_LOCALLY =
+  "run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
+
 /**
  * Single source of truth for server-config validation, shared by the save
  * path (`use-server-state`) and every form that feeds it (XAAServerModal,
@@ -62,9 +65,6 @@ export function validateBearerTargetUrl(url: string): string | null {
  * would close, and the save would fail downstream — silently discarding
  * everything they typed. Both sides calling this means that can't happen.
  */
-const RUN_LOCALLY =
-  "run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
-
 export function validateServerFormData(
   formData: ServerFormData,
 ): string | null {
@@ -84,6 +84,9 @@ export function validateServerFormData(
     return "Enter a complete server URL, such as https://example.com/mcp.";
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
+    if (parsedUrl.protocol !== "http:") {
+      return "Enter a complete HTTPS server URL, such as https://example.com/mcp.";
+    }
     return `MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, ${RUN_LOCALLY}`;
   }
   return null;
@@ -104,4 +107,20 @@ export function validateFirstRunServerFormData(
 ): string | null {
   if (HOSTED_MODE && formData.type === "stdio") return HOSTED_STDIO_ERROR;
   return validateServerFormData(formData);
+}
+
+export type FirstRunValidationKind = "input" | "hosted-stdio";
+
+export function inferFirstRunTransport(
+  input: string,
+  current?: "http" | "stdio",
+): "http" | "stdio" {
+  if (!HOSTED_MODE && current) return current;
+  if (/^https?:\/\//i.test(input)) return "http";
+  if (!HOSTED_MODE || /\s/.test(input)) return "stdio";
+  // Bare hosts need URL guidance; executable paths still belong to STDIO.
+  return /^[a-z][a-z\d+.-]*:\/\//i.test(input) ||
+    /^(?:localhost|(?:[a-z\d-]+\.)+[a-z\d-]+)(?::\d+)?(?:[/?#]|$)/i.test(input)
+    ? "http"
+    : "stdio";
 }

@@ -1,3 +1,4 @@
+import { registerFirstRunValidationCases } from "./first-run-validation-cases";
 import * as memberActor from "../hooks/use-is-member-actor";
 import { projectTransitionRecovery } from "../lib/auth/project-transition-recovery";
 import { type ReactNode, useLayoutEffect, useState } from "react";
@@ -364,8 +365,10 @@ vi.mock("../hooks/usePostHogOrgContext", () => ({
   usePostHogOrgContext: vi.fn(),
 }));
 
+vi.mock("../hooks/use-inspector-command-bus", () => ({ useInspectorCommandBus: vi.fn() }));
+const onboardingRuntime = vi.hoisted(() => ({ hosted: true }));
 vi.mock("../lib/config", () => ({
-  HOSTED_MODE: true,
+  get HOSTED_MODE() { return onboardingRuntime.hosted; },
 }));
 
 vi.mock("../lib/theme-utils", () => ({
@@ -576,6 +579,7 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    onboardingRuntime.hosted = true;
     projectTransitionRecovery.clear();
     projectTransitionRecovery.observeActor("guest:reset", "/");
     mockServersById.clear();
@@ -4371,7 +4375,8 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
-  it("refuses a STDIO command in hosted onboarding before it connects", async () => {
+  registerFirstRunValidationCases((hosted) => {
+    onboardingRuntime.hosted = hosted;
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -4382,49 +4387,7 @@ describe("App hosted OAuth callback handling", () => {
     mockFreshGuestUser();
     const appState = createAppStateMock();
     mockUseAppState.mockReturnValue(appState);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
-      ).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    expect(
-      screen.getByText(
-        "Enter an HTTPS URL. STDIO works only in the local and desktop apps.",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: "npx -y @modelcontextprotocol/server-everything" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Set up your server" }),
-      ).toBeInTheDocument();
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Connect your STDIO server in MCPJam’s local app",
-      );
-    });
-    expect(
-      screen.queryByRole("button", { name: "View technical details" }),
-    ).not.toBeInTheDocument();
-    expect(appState.handleConnect).not.toHaveBeenCalled();
-    expect(mockTrack).not.toHaveBeenCalledWith(
-      "first_run_onboarding_connection_started",
-      expect.anything(),
-    );
-    expect(mockTrack).toHaveBeenCalledWith(
-      "first_run_onboarding_connection_failed",
-      expect.objectContaining({
-        transport: "stdio",
-        failure_stage: "validation",
-      }),
-    );
+    return { handleConnect: appState.handleConnect, track: mockTrack };
   });
 
   it("asks for OAuth authorization inside onboarding and resumes on approval", async () => {

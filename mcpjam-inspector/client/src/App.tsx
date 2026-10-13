@@ -3923,7 +3923,7 @@ export default function App() {
           serverName: formData.name,
           serverKind: "personal",
           error: validationError,
-          isValidationError: true,
+          validationKind: HOSTED_MODE && formData.type === "stdio" ? "hosted-stdio" : "input",
         });
         return;
       }

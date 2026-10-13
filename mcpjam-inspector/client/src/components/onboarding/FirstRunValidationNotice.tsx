@@ -1,8 +1,14 @@
 import { TriangleAlert } from "lucide-react";
 import { CopyableCodeBlock } from "@/components/evals/copyable-code-block";
-import { HOSTED_STDIO_ERROR } from "@/lib/server-form-validation";
+import type { FirstRunValidationKind } from "@/lib/server-form-validation";
 
-export function FirstRunValidationNotice({ error }: { error: string }) {
+export function FirstRunValidationNotice({
+  error,
+  kind = "input",
+}: {
+  error: string;
+  kind?: FirstRunValidationKind;
+}) {
   return (
     <>
       <div
@@ -17,10 +23,11 @@ export function FirstRunValidationNotice({ error }: { error: string }) {
           {error}
         </p>
       </div>
-      {error === HOSTED_STDIO_ERROR ? (
+      {kind === "hosted-stdio" ? (
         <section className="mt-3 space-y-2" aria-label="Run MCPJam locally">
           <p className="text-[12px] leading-5 text-foreground">
-            Run this command to open MCPJam on your computer, then add your server.
+            Run this command to open MCPJam on your computer, then add your
+            server.
           </p>
           <CopyableCodeBlock
             code="npx @mcpjam/inspector@latest"
