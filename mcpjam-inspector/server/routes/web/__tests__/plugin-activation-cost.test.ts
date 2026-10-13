@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { Hono } from "hono";
 import {
   afterAll,
@@ -460,6 +461,7 @@ describe("App call backend trips", () => {
   const settled = () =>
     vi.waitFor(() => expect(f.log).toContain("receipt.write:completed"));
   beforeEach(async () => {
+    await import("../plugin-instances");
     const { resetPluginFastStoreDetection } =
       await import("../../../services/plugin-host/service-store");
     const { resetPluginCombinedClaimDetection } =
@@ -727,11 +729,26 @@ describe("App call backend trips", () => {
     return Math.round((performance.now() - started) * SCALE);
   };
 
+  const driveSimulatedTime = async (scenario: Promise<void>) => {
+    let done = false;
+    // Handle rejection while driving; awaiting scenario below reports it.
+    const markSettled = () => {
+      done = true;
+    };
+    const settledScenario = scenario.then(markSettled, markSettled);
+    for (let elapsed = 0; !done && elapsed < 5_000; elapsed++) {
+      await vi.advanceTimersByTimeAsync(1);
+      await setImmediate();
+    }
+    expect(done, "Scenario exceeded 5000 ms of simulated time").toBe(true);
+    await settledScenario;
+    await scenario;
+  };
+
   it("an App call and an activation each answer in about 600 ms at realistic latencies, racing or not", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const scenario = (async () => {
       realistic();
-      // Each step settles (its completion record lands) before the next.
       const measure = async (run: () => Promise<Response>) => {
         reset();
         const ms = await timed(run);
@@ -765,13 +782,7 @@ describe("App call backend trips", () => {
       for (const ms of [threadExecute, globalExecute, steady, race[0]])
         expect(ms).toBeLessThan(750);
     })();
-    // waitFor advances fake timers while the route's asynchronous work runs.
-    const finished = scenario.then(
-      () => true,
-      () => true,
-    );
-    await vi.waitFor(() => finished, { interval: 5, timeout: 5_000 });
-    await scenario;
+    await driveSimulatedTime(scenario);
   });
 
   it("re-authorizes an App's connection ahead of its window, so a call past 60 s stays fast", async () => {
@@ -798,12 +809,6 @@ describe("App call backend trips", () => {
       expect(refreshing).toBeLessThan(750);
       expect(pastWindow).toBeLessThan(750);
     })();
-    // waitFor advances fake timers while the route's asynchronous work runs.
-    const finished = scenario.then(
-      () => true,
-      () => true,
-    );
-    await vi.waitFor(() => finished, { interval: 5, timeout: 5_000 });
-    await scenario;
+    await driveSimulatedTime(scenario);
   });
 });
