@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { useHostMutations, type HostListItem } from "@/hooks/useClients";
 import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
@@ -93,6 +93,12 @@ export function usePlaygroundClientInitialization({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const ready =
     isAuthenticated && !!projectId && !hostListLoading && !restoringAdhoc;
+  // A settled lineup stays settled; flips of `ready` must not ask again.
+  const [settledComparison, setSettledComparison] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const comparisonSettled =
+    projectId !== null && settledComparison.has(projectId);
 
   const withSelection =
     (initializeComparison: boolean) =>
@@ -137,10 +143,18 @@ export function usePlaygroundClientInitialization({
   const comparisonInit = useProjectClientInitialization({
     projectId,
     intent: "comparison",
-    needed: ready && hostList.length > 0 && !roleLoading && canManage,
+    needed:
+      ready &&
+      hostList.length > 0 &&
+      !roleLoading &&
+      canManage &&
+      !comparisonSettled,
     run: withSelection(true),
     onSuccess: ({ projectId: pid, before, result }) => {
       const comparison = result.comparison;
+      if (comparison && comparison.state !== "pending") {
+        setSettledComparison((settled) => new Set(settled).add(pid));
+      }
       if (!comparison?.created || comparison.hostIds.length === 0) return;
       applySelection(
         pid,
