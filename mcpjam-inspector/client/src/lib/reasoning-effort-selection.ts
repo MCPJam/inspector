@@ -18,6 +18,7 @@ import {
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
 import {
+  isHostedRow,
   modelSelectionFromDefinition,
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
@@ -140,6 +141,10 @@ export function setEffortForRow(args: {
 }): { modelId: string; selection: ModelSelection | undefined } | null {
   const { row, effort, purpose, bareIds = "keep-id" } = args;
   const selection = nonLegacySelection(args.selection);
+  // A stored legacy selection means "own key only": whatever row the caller
+  // resolved, an effort may never mint a hosted selection for it and move the
+  // model onto MCPJam credits.
+  if (args.selection && !selection && isHostedRow(row)) return null;
   // A stored legacy selection carries no effort, so clearing one is nothing
   // to write; minting a selection for it here would change its connection
   // without a pick.

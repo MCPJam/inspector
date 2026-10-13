@@ -123,7 +123,8 @@ function canonicalIdForBareId(provider: string, raw: string): string | null {
     : null;
 }
 
-function isHostedRow(model: ModelDefinition): boolean {
+/** A row MCPJam's own credentials serve (the hosted catalog). */
+export function isHostedRow(model: ModelDefinition): boolean {
   return model.hosted === true || isMCPJamProvidedModelMenuItem(model);
 }
 
@@ -318,7 +319,10 @@ export function storedModelChoice(
  * rows with its id, never a hosted one, narrowed by the provider hint when it
  * has one. A locked row (an org connection out of credits beside a personal
  * key) cannot run the model, so enabled rows win when there are any. The
- * caller decides what more than one candidate means.
+ * caller decides what more than one candidate means: the hosts page takes
+ * none (an effort pick mints a selection from the row, so it must be the
+ * right one), a compare card takes the first (its picker stores twins
+ * identically, so a pick must still render).
  */
 export function ownKeyRowsForLegacySelection(
   selection: LegacyModelSelection,

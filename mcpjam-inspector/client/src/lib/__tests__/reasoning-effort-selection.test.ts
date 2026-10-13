@@ -186,6 +186,23 @@ describe("setEffortForRow", () => {
     ).toBe(byokGpt5);
   });
 
+  it("refuses to mint a hosted selection for a stored legacy one", () => {
+    // Whatever row a caller resolved: "own key only" never lands on MCPJam
+    // credits through an effort pick.
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    for (const bareIds of ["canonicalize", "keep-id"] as const) {
+      expect(
+        setEffortForRow({
+          purpose: "chat",
+          row: gpt5,
+          selection: legacy,
+          effort: "high",
+          bareIds,
+        }),
+      ).toBeNull();
+    }
+  });
+
   it("clears nothing on a stored legacy selection instead of minting one", () => {
     // A row whose id is already canonical would otherwise yield a full `local`
     // selection from a no-op clear, changing the host's connection.

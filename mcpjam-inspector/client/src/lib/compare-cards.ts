@@ -20,11 +20,11 @@ import {
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
 import {
-  isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
+  isHostedRow,
   ownKeyRowsForLegacySelection,
   modelRowKey,
   modelSelectionFromDefinition,
@@ -60,10 +60,6 @@ export type CompareCard = {
   /** Header title: model name plus distinguishers ("Sonnet 5 · High"). */
   label: string;
 };
-
-function isHostedRow(model: ModelDefinition): boolean {
-  return isMCPJamProvidedModelMenuItem(model);
-}
 
 /**
  * The selection a picked row is stored as: its own selection, or — for an
