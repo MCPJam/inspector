@@ -343,6 +343,10 @@ test.describe("telemetry privacy in the browser", () => {
       sentryItems(captured, "event")[0].payload.toString("utf8"),
     );
     expect(error.user).toEqual({ id: HARNESS_ACTOR_ID });
+    expect(error.exception.values[0]).toMatchObject({
+      type: "Error",
+      value: "Error",
+    });
   });
 
   test("an organization with replay off records nothing, while analytics and errors still arrive", async ({
