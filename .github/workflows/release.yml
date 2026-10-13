@@ -713,7 +713,7 @@ jobs:
       # Left in place so behavior matches what shipped before.
       - name: Inject SDK sourcemap debug ids
         if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npx @sentry/cli sourcemaps inject ./sdk/dist
+        run: npm run sentry:inject -w @mcpjam/sdk
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
