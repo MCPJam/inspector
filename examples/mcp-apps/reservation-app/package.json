@@ -30,6 +30,8 @@
   },
   "overrides": {
     "source-map-js": "^1.2.2",
-    "micromatch": "npm:picomatch@^4.0.3"
+    "vite-plugin-singlefile": {
+      "micromatch": "npm:picomatch@^4.0.3"
+    }
   }
 }
