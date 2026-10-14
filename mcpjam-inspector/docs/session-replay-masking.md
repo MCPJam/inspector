@@ -314,9 +314,9 @@ Identity starts **id-only** and follows an explicit grant
   and memberships, so switching projects does not unname and rename anyone.
 
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
-the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
-clear values sent earlier: once per actor, and again whenever the actor turns
-id-only after a `full` answer. The `before_send` stamp records capture policy. The relay removes naming
+the grant. The backend answers `id_only` only together with strict content,
+and strict content withholds identify, so an id-only actor is never
+identified. The `before_send` stamp records capture policy. The relay removes naming
 person properties according to that policy and its current backend answer.
 
 **Sentry.** The initial scope carries at most the desktop installation id.

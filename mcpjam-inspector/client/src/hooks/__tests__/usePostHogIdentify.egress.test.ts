@@ -38,15 +38,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const FULL_ANSWER = {
+  recording: "full",
+  identity: "full",
+  content: "full",
+  telemetryActorId: TELEMETRY_ACTOR_ID,
+};
+/** The backend's only other answer: replay off, id only, strict content. */
+const RESTRICTIVE_ANSWER = {
+  recording: "off",
+  identity: "id_only",
+  content: "strict",
+};
+
 async function setupIdentityFixture() {
   vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
   vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-  const vendor = vendorRecorder(() => ({
-    recording: "full",
-    identity: "full",
-    content: "full",
-    telemetryActorId: TELEMETRY_ACTOR_ID,
-  }));
+  let answer: typeof FULL_ANSWER | typeof RESTRICTIVE_ANSWER = FULL_ANSWER;
+  const vendor = vendorRecorder(() => answer);
   const network = installNetworkStub(async (request) => {
     await vendor.receive(request);
     return { body: '{"status":1,"featureFlags":{}}' };
@@ -87,6 +96,9 @@ async function setupIdentityFixture() {
     vendor,
     setSessionPrivacy,
     usePostHogIdentify,
+    restrictBackend: () => {
+      answer = RESTRICTIVE_ANSWER;
+    },
   };
 }
 
@@ -129,7 +141,40 @@ async function proveUnload(
   ).toBe(false);
 }
 
-it("identifies once after content resolves and preserves unload policy with the installed SDK", async () => {
+async function proveRestrictiveAnswer(
+  fixture: Awaited<ReturnType<typeof setupIdentityFixture>>,
+  rerender: () => void,
+) {
+  const { client, telemetry, network, vendor } = fixture;
+  fixture.restrictBackend();
+  await act(async () => {
+    telemetry.setTelemetryIdentity(TELEMETRY_ACTOR_ID, "id_only");
+    telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "strict");
+    rerender();
+  });
+  const mark = vendor.requests.length;
+  client.setPersonProperties({ email: "member@example.test" });
+  client.capture("$pageview", {
+    $set: { email: "member@example.test", name: "Member Fixture" },
+  });
+  window.dispatchEvent(
+    new PageTransitionEvent("pagehide", { persisted: true }),
+  );
+  const sent = async () => {
+    await network.settle();
+    return scanAll(vendor.requests.slice(mark)).decoded;
+  };
+  await expect
+    .poll(async () => posthogEvents(await sent()).map((row) => row.event))
+    .toContain("$pageview");
+  const bytes = JSON.stringify(
+    (await sent()).map((row) => row.posthog?.inflated),
+  );
+  expect(bytes).not.toContain("member@example.test");
+  expect(bytes).not.toContain("Member Fixture");
+}
+
+it("identifies once after content resolves, keeps unload policy, and names no one after a restrictive answer", async () => {
   const fixture = await setupIdentityFixture();
   const {
     client,
@@ -181,6 +226,7 @@ it("identifies once after content resolves and preserves unload policy with the 
       ),
     ).toHaveLength(1);
     await proveUnload(fixture);
+    await proveRestrictiveAnswer(fixture, hook.rerender);
   } finally {
     hook.unmount();
     client.stopSessionRecording();

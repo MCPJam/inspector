@@ -112,6 +112,13 @@ describe("client sentry init", () => {
     expect(resolveClientSentryConfig().environment).toBe("dev");
   });
 
+  it("reports an optimized preview build as preview, like its rebuilt events", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", "preview");
+    vi.stubEnv("PROD", true);
+    const { resolveClientSentryConfig } = await import("../sentry");
+    expect(resolveClientSentryConfig().environment).toBe("preview");
+  });
+
   it("does not record replays on a self-hosted web build", async () => {
     // Sentry Replay records DOM+text like rrweb. Same boundary as PostHog:
     // hosted + packaged desktop only.

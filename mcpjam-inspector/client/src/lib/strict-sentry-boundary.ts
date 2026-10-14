@@ -22,6 +22,31 @@ export function strictSentryRequired(): boolean {
   return window.isElectron === true || currentTelemetryCaptureContext().policy.content === "strict";
 }
 
+/**
+ * The deployment this bundle was built for, spelled as the server's
+ * `resolveEnvironment` spells it so a deployment's browser and server events
+ * share one environment. `VITE_ENVIRONMENT` names the deployment:
+ * `.env.production` sets `production` for optimized builds and the staging
+ * and preview services override it, so an optimized build alone is not
+ * production. The build surface is `dist`, a separate axis. With no known
+ * label (the dev server, a build that reads no `.env` file) the build mode
+ * decides, as in Electron's main process; other values are ignored, not
+ * forwarded. Read from `import.meta.env` because the renderer has no
+ * `process` and the packaged desktop app never sets NODE_ENV.
+ */
+export function browserSentryEnvironment() {
+  switch (import.meta.env.VITE_ENVIRONMENT) {
+    case "production":
+      return "prod";
+    case "staging":
+      return "staging";
+    case "preview":
+      return "preview";
+    default:
+      return import.meta.env.PROD ? "prod" : "dev";
+  }
+}
+
 export function browserSentryOptions(): SentryBoundaryOptions {
   const emitted =
     (
@@ -41,7 +66,7 @@ export function browserSentryOptions(): SentryBoundaryOptions {
     frameDebugIds: Object.fromEntries(emitted.flatMap((name) => debugIds[name] ? [[`app:///${name}`, debugIds[name]]] : [])),
     actorId: currentTelemetryActor() ?? undefined,
     release: __APP_VERSION__,
-    environment: import.meta.env.PROD ? "prod" : "dev",
+    environment: browserSentryEnvironment(),
     platform: "javascript",
     dist: __BUILD_SURFACE__,
   };

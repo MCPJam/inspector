@@ -20,6 +20,7 @@ function sender() {
   return { send, full, deliver, transport };
 }
 afterEach(() => { policy.strict = true; policy.names = true; policy.actor = "user_01K00000000000000000000000"; vi.unstubAllGlobals(); });
+afterEach(() => vi.unstubAllEnvs());
 
 it("rebuilds unknown errors, transactions and spans and denies other envelope families", async () => {
   const { transport, send } = sender();
@@ -115,6 +116,36 @@ it("accepts exact emitted asset URLs but rejects customer origins sharing their 
   expect(options.frameAliases?.[`${window.location.origin}/assets/app-abc.js`]).toBe("assets/app-abc.js");
   expect(options.frameAliases?.["https://customer.example/assets/app-abc.js"]).toBeUndefined();
   expect(options.files).toContain("assets/app-abc.js");
+});
+
+it.each([
+  ["preview", true, "preview"],
+  ["staging", true, "staging"],
+  ["production", true, "prod"],
+  [undefined, true, "prod"],
+  [undefined, false, "dev"],
+  ["qa", false, "dev"],
+] as const)(
+  "reports VITE_ENVIRONMENT=%s with PROD=%s as %s",
+  (label, prod, environment) => {
+    if (label) vi.stubEnv("VITE_ENVIRONMENT", label);
+    vi.stubEnv("PROD", prod);
+    expect(browserSentryOptions().environment).toBe(environment);
+  },
+);
+
+it("sends a rebuilt event under the build's deployment, not the event's own environment", async () => {
+  vi.stubEnv("VITE_ENVIRONMENT", "staging");
+  vi.stubEnv("PROD", true);
+  const { deliver, send } = sender();
+  await deliver("event", {
+    event_id: eventId(),
+    environment: "production",
+    message: "x",
+  });
+  expect(send.mock.calls[0][0][1][0][1]).toMatchObject({
+    environment: "staging",
+  });
 });
 
 it("does not miss a strict child beyond the first hundred full spans", async () => {
