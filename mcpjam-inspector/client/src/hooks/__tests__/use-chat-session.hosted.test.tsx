@@ -3,13 +3,24 @@ import { useState } from "react";
 import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { generateId } from "ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
-import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
+import {
+  buildAvailableModels,
+  buildAvailableModelsFromOrgConfig,
+} from "@/components/chat-v2/shared/model-helpers";
 import { toast } from "sonner";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 const mockState = vi.hoisted(() => ({
   appState: null as any,
@@ -50,6 +61,7 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+  selectedModelSelection: undefined as ModelSelection | undefined,
   persistedModelInitialized: undefined as boolean | undefined,
 }));
 vi.mock("@/state/app-state-context", async (importOriginal) => ({
@@ -127,6 +139,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
     String(model.id).includes("/"),
   ),
+  compactModelLabel: vi.fn((label: string) => label),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -149,6 +162,7 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: mockState.selectedModelId,
+    selectedModelSelection: mockState.selectedModelSelection,
     setSelectedModelId: mockState.setSelectedModelId,
     selectedModelIds: [mockState.selectedModelId],
     setSelectedModelIds: vi.fn(),
@@ -349,12 +363,176 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    mockState.selectedModelSelection = undefined;
     mockState.latestOnData = undefined;
     mockState.latestOnToolCall = undefined;
     mockState.addToolOutput.mockReset();
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  const savedOrgChoice: ModelSelection = {
+    modelId: "openai/gpt-4o-mini", nativeModelId: "gpt-4o-mini", source: "org",
+    connectionRef: { kind: "orgProvider", id: "connection-a" },
+    fallback: { provider: "none", model: "none" },
+    settings: { temperature: 0.2 },
+  };
+  const selectionOptions = (selection = savedOrgChoice) => ({
+    selectedServers: [],
+    pickedModelSelection: selection,
+    executionConfig: { modelId: "gpt-4o-mini" },
+    hostedOrgModelConfig: {
+      providers: [{ id: selection.connectionRef?.kind === "orgProvider" ? selection.connectionRef.id : "connection-a",
+        providerKey: "openai", enabled: true, hasSecret: true }],
+    },
+    hostedContext: { projectId: "project-1", selectedServerIds: [] },
+  });
+
+  it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
+    const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.9, modelSelection: { ...savedOrgChoice, settings: { temperature: 0.9 } },
+    });
+    rerender({ hostId: "host-2" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    expect(lastTransportOptions.body()).not.toHaveProperty("temperature");
+    unmount();
+  });
+
+  it.each(["picked", "inherit"] as const)("refuses unsupported effort after a %s choice until cleared", async (intent) => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions({ ...savedOrgChoice, settings: { reasoningEffort: "high" } }),
+      selectionIntent: intent,
+      reasoningEffortEnabled: true,
+    }));
+    if (intent === "inherit") {
+      expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+      act(() => result.current.setReasoningEffort("high", true));
+    }
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(() => lastTransportOptions.body()).toThrow("saved reasoning effort is unavailable");
+    act(() => result.current.setReasoningEffort(undefined, true));
+    expect(result.current.submitBlocked).toBe(false);
+    expect(lastTransportOptions.body().modelSelection).not.toHaveProperty("settings.reasoningEffort");
+    unmount();
+  });
+
+  it("restores recorded selection settings ahead of legacy resume fields", async () => {
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await result.current.loadChatSession({
+      chatSessionId: "history-settings", messagesBlobUrl: null,
+      resumeConfig: { temperature: 0.8 },
+    }, { restoredModel: result.current.selectedModel, restoredSelection: savedOrgChoice });
+    await waitFor(() => expect(result.current.temperature).toBe(0.2));
+    expect(lastTransportOptions.body()).toMatchObject({
+      temperature: 0.2, modelSelection: { settings: { temperature: 0.2 } },
+    });
+    unmount();
+  });
+
+  it("keeps an unavailable historical choice local without changing the saved lead or provider", async () => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(), executionConfig: undefined,
+    }));
+    const before = JSON.stringify(localStorage);
+    mockState.setSelectedModelId.mockClear();
+    act(() => result.current.setSelectedModel(result.current.selectedModel, {
+      selection: { ...savedOrgChoice, connectionRef: { kind: "orgProvider", id: "removed" } },
+      persist: false,
+    }));
+    expect(result.current.selectedModel.disabled).toBe(true);
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(mockState.setSelectedModelId).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).toBe(before);
+    unmount();
+  });
+
+  it("carries the saved org connection, settings and fallback into the request", async () => {
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await waitFor(() => expect(result.current.selectedModel.id).toBe("gpt-4o-mini"));
+    expect(lastTransportOptions.body()).toMatchObject({ modelSelection: savedOrgChoice, temperature: 0.2 });
+    unmount();
+  });
+
+  it("resolves the lead from its persisted selection and blocks a changed org connection", () => {
+    mockState.selectedModelId = savedOrgChoice.modelId;
+    mockState.selectedModelSelection = savedOrgChoice;
+    const options = { ...selectionOptions(), pickedModelSelection: undefined, executionConfig: undefined };
+    const { result, rerender, unmount } = renderHook(({ options }) => useChatSession(options), { initialProps: { options } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body().modelSelection).toEqual(savedOrgChoice);
+    rerender({ options: { ...options, hostedOrgModelConfig: { providers: [{ id: "replacement", providerKey: "openai", enabled: true, hasSecret: true }] } } });
+    expect(result.current.submitBlocked).toBe(true);
+    unmount();
+  });
+
+  it("a deliberate picker override wins only for its current host target", () => {
+    mockState.selectedModelId = savedOrgChoice.modelId;
+    mockState.selectedModelSelection = savedOrgChoice;
+    const options = { ...selectionOptions(), executionConfig: undefined, selectionIntent: "inherit" as const };
+    const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setSelectedModel(result.current.selectedModel, { userInitiated: true }));
+    expect(lastTransportOptions.body().modelSelection).toEqual(savedOrgChoice);
+    rerender({ hostId: "host-2" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    unmount();
+  });
+
+  it("refreshes the connection on the next send without changing the model id", () => {
+    const { rerender, unmount } = renderHook(({ selection }) => useChatSession(selectionOptions(selection)), {
+      initialProps: { selection: savedOrgChoice },
+    });
+    const next: ModelSelection = { ...savedOrgChoice, connectionRef: { kind: "orgProvider", id: "connection-b" } };
+    rerender({ selection: next });
+    expect(lastTransportOptions.body().modelSelection).toEqual(next);
+    unmount();
+  });
+
+  it("clears saved effort without recovering a host or remembered effort", () => {
+    const { unmount } = renderHook(() => useChatSession({
+      ...selectionOptions({ ...savedOrgChoice, settings: { reasoningEffort: "high" } }),
+      fixedReasoningEffort: null,
+    }));
+    const body = lastTransportOptions.body();
+    expect(body.modelSelection).not.toHaveProperty("settings.reasoningEffort");
+    expect(body).not.toHaveProperty("reasoningEffort");
+    expect(body.temperature).toBe(0.7);
+    unmount();
+  });
+
+  it("blocks stale saved connections instead of sending on a replacement", async () => {
+    const { result, unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(),
+      hostedOrgModelConfig: { providers: [{ id: "replacement", providerKey: "openai", enabled: true, hasSecret: true }] },
+    }));
+    expect(result.current.submitBlocked).toBe(true);
+    expect(await result.current.sendMessage({ text: "hello" })).toBe(false);
+    expect(() => lastTransportOptions.body()).toThrow("saved model or connection is unavailable");
+    unmount();
+  });
+
+  it.each(["inherit", "scenario"])("omits picked selections and settings for %s authority", (authority) => {
+    const { unmount } = renderHook(() => useChatSession({
+      ...selectionOptions(), selectionIntent: "inherit",
+      ...(authority === "scenario" ? { selectionIntent: "picked" as const,
+        hostedContext: { projectId: "project-1", selectedServerIds: [], scenarioId: "scenario-1", accessVersion: 1 } } : {}),
+    }));
+    const body = lastTransportOptions.body();
+    expect(body).not.toHaveProperty("modelSelection");
+    expect(body).not.toHaveProperty("reasoningEffort");
+    expect(body).not.toHaveProperty("temperature");
+    unmount();
   });
 
   it("waits for browser control before dispatching the next user message", async () => {
@@ -753,6 +931,30 @@ describe("useChatSession hosted mode", () => {
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
   });
 
+  it.each(["anthropic/claude-haiku-4.5", ""])(
+    "keeps the saved selection unresolved while policy loads (%s)",
+    async (savedId) => {
+      mockState.selectedModelId = savedId;
+      const { result, rerender, unmount } = renderHook(
+        ({ pending }) =>
+          useChatSession({
+            selectedServers: ["server-1"],
+            hostedOrgModelConfig: { providers: [], pending },
+          }),
+        { initialProps: { pending: true } },
+      );
+      await waitFor(() => {
+        expect(result.current.availableModels.length).toBeGreaterThan(0);
+      });
+      expect(result.current.availableModels.every((row) => row.disabled)).toBe(true);
+      expect(result.current.isSelectedModelResolved).toBe(false);
+      expect(mockState.setSelectedModelId).not.toHaveBeenCalled();
+      rerender({ pending: false });
+      expect(result.current.isSelectedModelResolved).toBe(true);
+      unmount();
+    },
+  );
+
   it("uses organization provider config to expose BYOK hosted models", async () => {
     mockState.selectedModelId = "gpt-4o-mini";
 
@@ -783,6 +985,164 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
     expect(result.current.isMcpJamModel).toBe(false);
     expect(result.current.traceViewsSupported).toBe(true);
+    unmount();
+  });
+
+  /**
+   * A chat whose saved model is hosted Claude Haiku, in an organization that
+   * now requires its own keys and offers only its OpenAI connection.
+   */
+  async function renderStrictOrgChatOnSavedHostedModel() {
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    // The real builder drops hosted rows under the policy; this mock stands
+    // in for it (the unrestricted lookup still sees the hosted rows).
+    const original = vi
+      .mocked(buildAvailableModelsFromOrgConfig)
+      .getMockImplementation();
+    vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+      (config?: { aiKeyPolicy?: { requireOrgKeys: boolean } }) =>
+        config?.aiKeyPolicy?.requireOrgKeys
+          ? [{ ...orgOpenAiModel, hosted: false }]
+          : [orgOpenAiModel, allowedHostedModel, allowedOpenAiModel, guestModel],
+    );
+    onTestFinished(() => {
+      vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+        original!,
+      );
+    });
+
+    const rendered = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              id: "conn_openai",
+              providerKey: "openai",
+              enabled: true,
+              hasSecret: true,
+              policyEligibility: { eligible: true },
+            },
+          ],
+          aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(String(rendered.result.current.selectedModel.id)).toBe(
+        "anthropic/claude-haiku-4.5",
+      );
+    });
+    return rendered;
+  }
+
+  it("keeps a saved hosted model selected, locked, once the org requires its own keys", async () => {
+    const { result, unmount } = await renderStrictOrgChatOnSavedHostedModel();
+    expect(result.current.selectedModel).toMatchObject({
+      disabled: true,
+      disabledReason: "Choose a model from an organization provider.",
+    });
+    expect(
+      result.current.availableModels.some(
+        (model) => model.hosted === true && !model.disabled,
+      ),
+    ).toBe(false);
+    // It never sends: a personal key in local mode has no server-side check.
+    expect(result.current.submitBlocked).toBe(true);
+    unmount();
+  });
+
+  it("refuses to send on a disallowed saved model outside the composer too", async () => {
+    const { result, unmount } = await renderStrictOrgChatOnSavedHostedModel();
+    const toastError = vi
+      .spyOn(toast, "error")
+      .mockImplementation(() => "toast-id");
+    onTestFinished(() => toastError.mockRestore());
+    mockState.authFetch.mockClear();
+
+    // Retry, the eval handoff and widget follow-ups call `sendMessage`
+    // directly, never through `submitBlocked`. The refusal is synchronous, so
+    // nothing here waits on the hook's own async work.
+    let sent!: Promise<boolean>;
+    act(() => {
+      sent = result.current.sendMessage({ text: "try again" });
+    });
+
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "isn't allowed here. Choose an organization model.",
+      ),
+    );
+    await expect(sent).resolves.toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("blocks sending with no organization model at all instead of crashing", async () => {
+    mockState.selectedModelId = "";
+    const original = vi
+      .mocked(buildAvailableModelsFromOrgConfig)
+      .getMockImplementation();
+    vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(() => []);
+    onTestFinished(() => {
+      vi.mocked(buildAvailableModelsFromOrgConfig).mockImplementation(
+        original!,
+      );
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [],
+          aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels).toEqual([]);
+    });
+    expect(result.current.selectedModel).toMatchObject({
+      name: "No model available",
+      disabled: true,
+    });
+    expect(result.current.submitBlocked).toBe(true);
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it("locks every row and blocks sending while the org's AI settings load", async () => {
+    mockState.selectedModelId = "";
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: { providers: [], pending: true },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.length).toBeGreaterThan(0);
+    });
+    expect(result.current.availableModels.every((model) => model.disabled)).toBe(
+      true,
+    );
+    expect(result.current.submitBlocked).toBe(true);
+    expect(result.current.isSelectedModelResolved).toBe(false);
     unmount();
   });
 
