@@ -3,6 +3,7 @@ import {
   currentTelemetryCaptureContext,
   resetTelemetryIdentity,
   setTelemetryActor,
+  setTelemetryContentPolicy,
   setTelemetryCaptureContext,
   setTelemetryIdentity,
   stampPostHogEvent,
@@ -24,6 +25,8 @@ describe("the identity grant", () => {
   beforeEach(() => {
     setTelemetryActor("user_A");
     setSessionPrivacy("full");
+    setTelemetryCaptureContext({ projectIds: ["project_identity"], organizationIds: [] });
+    setTelemetryContentPolicy("user_A", "full");
   });
 
   it("is withheld until the backend answers full for the current actor", () => {
@@ -66,6 +69,7 @@ describe("stampPostHogEvent", () => {
       projectIds: ["proj_1", null],
       organizationIds: ["org_1", undefined, "org_1"],
     });
+    setTelemetryContentPolicy("user_A", "full");
     const event = stampPostHogEvent({
       event: "$pageview",
       properties: { token: "t" },
@@ -141,6 +145,7 @@ describe("stampPostHogEvent", () => {
       projectIds: ["project_1"],
       organizationIds: [],
     });
+    setTelemetryContentPolicy("user_A", "full");
     const event = stampPostHogEvent({
       event: "$snapshot",
       properties: {
@@ -223,6 +228,7 @@ describe("stampPostHogEvent", () => {
       projectIds: ["project_1"],
       organizationIds: [],
     });
+    setTelemetryContentPolicy("user_A", "full");
     expect(currentTelemetryCaptureContext().policy.content).toBe("full");
     setTelemetryCaptureContext({
       projectIds: ["project_1"],

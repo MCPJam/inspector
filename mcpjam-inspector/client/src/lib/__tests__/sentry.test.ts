@@ -32,6 +32,7 @@ async function allowFullContext() {
     projectIds: ["project_test"],
     organizationIds: [],
   });
+  telemetry.setTelemetryContentPolicy("user_01K00000000000000000000000", "full");
   (await import("../session-privacy")).setSessionPrivacy("full");
 }
 

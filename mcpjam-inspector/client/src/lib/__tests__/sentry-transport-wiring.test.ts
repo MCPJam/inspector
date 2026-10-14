@@ -13,6 +13,7 @@ async function setup() {
   context.setTelemetryActor(actor);
   context.setTelemetryIdentity(actor, "full");
   context.setTelemetryCaptureContext({ projectIds: ["project_test"], organizationIds: [] });
+  context.setTelemetryContentPolicy(actor, "full");
   privacy.setSessionPrivacy("full");
   const identity = await import("../sentry-identity");
   identity.setSentryActor({ id: actor, kind: "signedIn", email: "account@example.test", name: "Account" });

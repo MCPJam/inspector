@@ -6,6 +6,7 @@ import {
   type SessionPrivacy,
 } from "@/lib/session-privacy";
 import { syncSentryReplay } from "@/lib/sentry";
+import { subscribeTelemetryPolicy } from "@/lib/telemetry-context";
 
 /**
  * How long `masked` → `full` waits. Switching away from an organization with
@@ -27,6 +28,13 @@ export function useSessionPrivacy(
 
   const effective: SessionPrivacy =
     resolved === "full" && !contextReady ? "pending" : resolved;
+
+  useLayoutEffect(() => {
+    const sync = () => {
+      if (posthog) syncSessionRecording(posthog, window.location);
+    };
+    return subscribeTelemetryPolicy(sync);
+  }, [posthog]);
 
   useLayoutEffect(() => {
     const apply = (level: SessionPrivacy) => {

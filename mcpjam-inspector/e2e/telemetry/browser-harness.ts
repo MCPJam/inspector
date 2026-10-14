@@ -311,11 +311,10 @@ function decodeURIComponentSafe(value: string): string {
 /**
  * Run the page's unload flush while the page is still alive: dispatch the
  * `pagehide` posthog-js listens for, so its request queue and replay buffer
- * leave by `sendBeacon` exactly as on a real unload — but from a live
- * document, where `page.route` sees (and contains) the beacon. A beacon sent
- * by a document that is already going away can leave outside the page's
- * request interception (CI's Chromium recorded none from a real unload), and
- * an unobserved request proves nothing.
+ * leave by keepalive fetch as on a real unload, with authentication and live
+ * policy headers. A live document lets `page.route` see and contain the bytes;
+ * a request from a closing document can escape page interception, and an
+ * unobserved request proves nothing.
  */
 export async function fireUnloadFlush(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -389,6 +388,6 @@ export async function drain(
   const before = recorder.telemetry.length;
   await page.goto("about:blank");
   await page.waitForTimeout(1_000);
-  // Beacons are fire-and-forget; give the route a moment to see them.
+  // Give requests from the closing document time to reach the route.
   if (recorder.telemetry.length === before) await page.waitForTimeout(1_000);
 }

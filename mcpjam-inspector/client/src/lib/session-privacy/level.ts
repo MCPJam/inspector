@@ -9,6 +9,7 @@ import {
 } from "../../../../shared/credential-urls";
 import type { TelemetryRecording } from "../../../../shared/telemetry-privacy";
 import { HOSTED_MODE } from "../config";
+import { liveTelemetryContentPolicy } from "../telemetry-transport-policy";
 
 export type PrivacyLevel = "off" | "masked" | "full";
 
@@ -107,16 +108,13 @@ export interface SessionPrivacyInputs {
 /**
  * The level for this session. Pure: the caller supplies the facts.
  *
- * - npx/Docker and dev builds: `off`.
+ * - npx/Docker, desktop and dev builds: `off`.
  * - Share links: `off`. The page shows an organization the viewer may not
  *   belong to; the backend answers for the viewer, not the page's owner,
  *   whose replay might be off.
  * - Everywhere else, `pending` until the backend answers, and `off` when it
  *   answers `off`: no replay for an organization with session replay off, on
  *   any surface.
- * - Packaged desktop: otherwise `masked` for everyone. It records people
- *   debugging their own MCP servers on their own machines, which is the npx
- *   reasoning with replay kept for crash debugging.
  * - Hosted otherwise: the backend's answer. Only a verified non-private
  *   context gets `full`; visitors with no session, and pages with nothing in
  *   view, are `masked`.
@@ -201,10 +199,8 @@ export function setSessionPrivacy(level: SessionPrivacy): void {
 }
 
 /**
- * Whether analytics must keep names out right now: on a recording surface,
- * anything short of a resolved `full` — replay `off` included. `off`
- * surfaces keep today's analytics.
+ * Product capture follows content permission, independently of replay startup.
  */
 export function shouldMaskAnalytics(): boolean {
-  return currentSessionPrivacy() !== "full";
+  return liveTelemetryContentPolicy() !== "full";
 }

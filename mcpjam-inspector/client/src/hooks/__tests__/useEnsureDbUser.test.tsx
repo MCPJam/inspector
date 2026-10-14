@@ -5,6 +5,7 @@ import { useEnsureDbUser } from "../useEnsureDbUser";
 import {
   setTelemetryActor,
   setTelemetryCaptureContext,
+  setTelemetryContentPolicy,
   setTelemetryIdentity,
 } from "@/lib/telemetry-context";
 import { setSessionPrivacy } from "@/lib/session-privacy";
@@ -73,6 +74,7 @@ function grantNames(actorId: string) {
   setSessionPrivacy("full");
   setTelemetryCaptureContext({ projectIds: [], organizationIds: ["org-1"] });
   setTelemetryActor(actorId);
+  setTelemetryContentPolicy(actorId, "full");
   setTelemetryIdentity(actorId, "full");
 }
 
