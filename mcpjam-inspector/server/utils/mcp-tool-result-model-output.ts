@@ -21,6 +21,7 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { UI_CONTEXT_PART_TYPE, renderUiContextText } from "@/shared/ui-context";
 import { provenanceMarksOf } from "./history-provenance.js";
+import { dropEmptyModelText } from "./drop-empty-model-text.js";
 
 export type McpToolResultModelOutputOptions =
   McpModelVisibleToolResultPolicy & {
@@ -454,7 +455,7 @@ export async function convertToMcpjamModelMessages(
   messages: Parameters<typeof convertToModelMessages>[0],
   options: McpToolResultModelOutputOptions = {},
 ): Promise<ModelMessage[]> {
-  return mapMcpImageToolOutputs(
+  const mapped = await mapMcpImageToolOutputs(
     wireSafeFileData(
       (await convertToModelMessages(messages, {
         convertDataPart: convertMcpjamDataPart as never,
@@ -462,4 +463,5 @@ export async function convertToMcpjamModelMessages(
     ),
     options,
   );
+  return dropEmptyModelText(mapped);
 }

@@ -1,4 +1,5 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { dropEmptyModelText } from "./drop-empty-model-text.js";
 
 /**
  * Build the `{ type, value }` envelope `modelMessageSchema` requires on a
@@ -135,37 +136,27 @@ export function normalizeModelMessagesForConvex(
     return part;
   };
 
-  return messages.flatMap((msg): ModelMessage[] => {
+  return dropEmptyModelText(messages).map((msg): ModelMessage => {
     if (msg.role === "assistant") {
       const m = msg as { content?: unknown };
-      if (!Array.isArray(m.content)) return [msg];
-      return [
-        {
-          ...msg,
-          content: m.content.map((part) => normalizePart(part, "assistant")),
-        } as ModelMessage,
-      ];
+      if (!Array.isArray(m.content)) return msg;
+      return {
+        ...msg,
+        content: m.content.map((part) => normalizePart(part, "assistant")),
+      } as ModelMessage;
     }
     if (msg.role === "tool") {
       const m = msg as { content?: unknown };
-      if (!Array.isArray(m.content)) return [msg];
-      return [
-        {
-          ...msg,
-          content: m.content.map((part) => normalizePart(part, "tool")),
-        } as ModelMessage,
-      ];
+      if (!Array.isArray(m.content)) return msg;
+      return {
+        ...msg,
+        content: m.content.map((part) => normalizePart(part, "tool")),
+      } as ModelMessage;
     }
     if (msg.role === "user") {
       const m = msg as { content?: unknown };
-      // Anthropic rejects an empty text block ("text content blocks must be
-      // non-empty"). Sending an MCP prompt or skill with an empty composer
-      // adds one. The AI SDK drops empty text parts from array content but
-      // not an empty string, so drop them here, before the string collapse.
-      if (m.content === "") return [];
-      if (!Array.isArray(m.content)) return [msg];
-      const c = m.content.filter((part) => !isEmptyTextPart(part));
-      if (c.length === 0) return [];
+      if (!Array.isArray(m.content)) return msg;
+      const c = m.content;
       if (
         c.length === 1 &&
         c[0] &&
@@ -173,26 +164,13 @@ export function normalizeModelMessagesForConvex(
         (c[0] as { type?: string }).type === "text" &&
         typeof (c[0] as { text?: string }).text === "string"
       ) {
-        return [
-          {
-            ...msg,
-            content: (c[0] as { text: string }).text,
-          } as ModelMessage,
-        ];
+        return {
+          ...msg,
+          content: (c[0] as { text: string }).text,
+        } as ModelMessage;
       }
-      return c.length === m.content.length
-        ? [msg]
-        : [{ ...msg, content: c } as ModelMessage];
+      return msg;
     }
-    return [msg];
+    return msg;
   });
-}
-
-function isEmptyTextPart(part: unknown): boolean {
-  return (
-    !!part &&
-    typeof part === "object" &&
-    (part as { type?: string }).type === "text" &&
-    (part as { text?: unknown }).text === ""
-  );
 }
