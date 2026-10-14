@@ -184,6 +184,8 @@ export async function invokePluginRequest(
         revision: live.revision,
         enabled: true,
         tool: live.tool,
+        serverCapabilities: live.serverCapabilities,
+        transport: live.transport,
         allowedOrigins: [origin],
         requiresApproval: live.requiresApproval,
       };
