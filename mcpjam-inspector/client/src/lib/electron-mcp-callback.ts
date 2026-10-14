@@ -1,10 +1,15 @@
+import { readOAuthCallbackParams } from "./oauth-callback-inbox";
+
 export function buildElectronMcpCallbackUrl(): string | null {
   if (window.isElectron || window.location.pathname !== "/oauth/callback") {
     return null;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  if (!params.get("code") && !params.get("error")) {
+  // From the inbox, not `window.location.search`: `main.tsx` has already moved
+  // the answer out of the address bar (see `oauth-callback-inbox.ts`), and the
+  // desktop app still needs every parameter of it.
+  const params = readOAuthCallbackParams();
+  if (!params || (!params.get("code") && !params.get("error"))) {
     return null;
   }
 

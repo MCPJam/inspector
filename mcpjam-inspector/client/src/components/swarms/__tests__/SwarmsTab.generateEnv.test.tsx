@@ -105,7 +105,10 @@ const {
 
 let personaList: Array<Record<string, unknown>> = [];
 
+const swarmPreflight = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: swarmPreflight }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {
@@ -181,6 +184,7 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  swarmPreflight.mockResolvedValue({});
   personaList = [persona];
   createPersonaMutation.mockImplementation(async (args: any) => {
     const row = { ...args, _id: "persona-new", personaId: "pnew" };
@@ -212,7 +216,7 @@ const ADHOC = {
 describe("GenerateSwarmDialog — composed target", () => {
   beforeEach(() => {
     environmentsEnabled.value = false;
-    attachments.value = { serverAttachments: [], isLoading: false };
+    attachments.value = { serverAttachments: [GROUP], isLoading: false };
     hostRows.value = [host, hostTwo];
     envRows.value = environments;
     authed.value = true;
@@ -230,6 +234,9 @@ describe("GenerateSwarmDialog — composed target", () => {
         screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
+    expect(
+      screen.queryByRole("button", { name: "Clear server selection" }),
+    ).toBeNull();
   });
 
   it("mints the environment from the client before spending a generation", async () => {
@@ -246,7 +253,7 @@ describe("GenerateSwarmDialog — composed target", () => {
     expect(ensureAdhocMock).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj-1",
-        stacks: [{ hostId: "host-1" }],
+        stacks: [{ hostId: "host-1", serverAttachmentId: "att-1" }],
       }),
     );
     await waitFor(() => {
@@ -380,6 +387,7 @@ describe("GenerateSwarmDialog — composed target", () => {
   it("blocks when the client has no servers to read tools from", async () => {
     // What the resolver rejects as ENV_NO_SERVERS, caught before the round-trip.
     hostRows.value = [{ ...host, serverCount: 0 }];
+    attachments.value = { serverAttachments: [], isLoading: false };
     openGeneratePersona();
 
     await waitFor(() => {
@@ -408,6 +416,7 @@ describe("GenerateSwarmDialog — composed target", () => {
 
   it("sends the user to Servers, closing the dialog behind it", async () => {
     hostRows.value = [{ ...host, serverCount: 0 }];
+    attachments.value = { serverAttachments: [], isLoading: false };
     openGeneratePersona();
 
     fireEvent.click(await screen.findByRole("button", { name: "Servers tab" }));
@@ -491,7 +500,7 @@ describe("GenerateSwarmDialog — composed target", () => {
     // on it would leave the dialog permanently unsubmittable.
     authed.value = false;
     envRows.value = undefined;
-    attachments.value = { serverAttachments: [], isLoading: false };
+    attachments.value = { serverAttachments: [GROUP], isLoading: false };
     openGeneratePersona();
 
     await waitFor(() => {
