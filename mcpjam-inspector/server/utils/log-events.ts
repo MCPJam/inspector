@@ -587,7 +587,8 @@ export type SystemEventMap = {
     tokenizerPeakChars: number;
     tokenizerOversizeSkips: number;
     openFdCount: number | null;
-    openFdError: string | null;
+    openFdError:
+      "ENOENT" | "EMFILE" | "ENFILE" | "EACCES" | "EPERM" | "unknown" | null;
   };
   /**
    * Aggregated socket-level failure counters, one line per flush interval

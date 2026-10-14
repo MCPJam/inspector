@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildStrictLogRow } from "../../../shared/strict-log.js";
 
 const setContext = vi.fn();
 const setExtra = vi.fn();
@@ -250,5 +251,16 @@ describe("process vitals sampler", () => {
     expect(payload.openFdCount).toBeNull();
     expect(payload.openFdError).toBe("ENFILE");
     expect(payload.heapUsedBytes).toBe(500 * MB);
+  });
+
+  // Axiom rows pass the strict catalog generated from log-events.ts, which
+  // drops any field it has no type for: an untyped errno would never arrive.
+  it("keeps both fd fields in the strict Axiom row", () => {
+    const row = buildStrictLogRow(
+      "process.vitals",
+      {},
+      { openFdCount: 43, openFdError: "ENFILE" },
+    );
+    expect(row).toMatchObject({ openFdCount: 43, openFdError: "ENFILE" });
   });
 });

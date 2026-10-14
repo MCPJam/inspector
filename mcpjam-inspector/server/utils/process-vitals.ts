@@ -66,7 +66,7 @@ export type ProcessVitals = {
   tokenizerPeakChars: number;
   tokenizerOversizeSkips: number;
   openFdCount: number | null;
-  openFdError: string | null;
+  openFdError: (typeof FD_ERRNOS)[number] | "unknown" | null;
 };
 
 let peakHeapUsedBytes = 0;
@@ -98,12 +98,19 @@ function oldSpace(): { used: number; size: number } {
  * file table, while holding 15 fds of its own. Whether the main process was
  * the one draining that table went unrecorded. This answers it next time.
  */
+// A closed list because the Axiom row keeps only the values log-events.ts
+// spells out; any other errno arrives as "unknown".
+const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
+
 function openFds(): Pick<ProcessVitals, "openFdCount" | "openFdError"> {
   try {
     return { openFdCount: fs.readdirSync("/dev/fd").length, openFdError: null };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
-    return { openFdCount: null, openFdError: code ?? "unknown" };
+    return {
+      openFdCount: null,
+      openFdError: FD_ERRNOS.find((errno) => errno === code) ?? "unknown",
+    };
   }
 }
 
