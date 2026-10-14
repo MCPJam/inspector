@@ -139,7 +139,7 @@ export function usePersistedHost(
 
   // Load array + toggle from localStorage when projectId changes;
   // subscribe to outside-seam writes (host-snapshot apply,
-  // MultiHostPicker promote) so the picker stays in sync. Re-running on
+  // ClientSelector promote) so the picker stays in sync. Re-running on
   // `projectId` is what makes switching projects re-read from the new
   // project's scoped keys — without it, project B would inherit the
   // last-loaded array from project A.
