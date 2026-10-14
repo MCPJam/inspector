@@ -119,6 +119,11 @@ Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
 `investigate-production`. `REVIEW.md` lists
 what reviewers check.
 
+Before a release or any production deploy, read the deploy playbook in the
+backend repo:
+[`docs/deploy-playbook.md`](https://github.com/MCPJam/mcpjam-backend/blob/main/docs/deploy-playbook.md).
+It covers which path to use, deploy order across the two repos, and rollback.
+
 ## Design
 
 **Read [`DESIGN.md`](./DESIGN.md) before any UI or styling work.** It describes the

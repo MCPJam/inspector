@@ -1085,3 +1085,84 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           draft: false
+
+  # Tells #engineering a release is going out and how it ended, so an alert
+  # during or after it has context. The backend Deploy Production run this
+  # dispatches stays quiet, so a release posts once at each end. Only a run
+  # that publishes something posts, and a Slack problem never fails it.
+  announce-start:
+    needs: preflight
+    if: needs.preflight.outputs.publish_any == 'true'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      started_at: ${{ steps.post.outputs.started_at }}
+    steps:
+      - name: Announce the release in Slack
+        id: post
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
+          NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
+          BACKEND: ${{ inputs.deploy_backend_prod }}
+          WEBAPP: ${{ inputs.deploy_webapp }}
+          DESKTOP: ${{ needs.preflight.outputs.build_inspector_artifacts }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          echo "started_at=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::warning::SLACK_DEPLOYS_WEBHOOK_URL is not set, so this release was not announced."
+            exit 0
+          fi
+          parts="npm"
+          [ "$DESKTOP" = true ] && parts="$parts + desktop"
+          [ "$WEBAPP" = true ] && parts="webapp + $parts"
+          [ "$BACKEND" = true ] && parts="backend + $parts"
+          who="by $GITHUB_TRIGGERING_ACTOR"
+          case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
+          prev="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" || prev=""
+          count=""
+          if [ -n "$prev" ]; then
+            count="$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_SHA" --jq .total_commits)" || count=""
+          fi
+          changes=""
+          if [ -n "$count" ]; then
+            changes=" · <$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev...${GITHUB_SHA:0:9}|$count commits since $prev>"
+          fi
+          text="🚀 Release $NAME started $who · $parts$changes · <$RUN_URL|run>"
+          # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"
+
+  announce-finish:
+    needs: [preflight, announce-start, finalize]
+    if: always() && needs.announce-start.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Announce the result in Slack
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
+          NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
+          STARTED_AT: ${{ needs.announce-start.outputs.started_at }}
+          FINALIZE: ${{ needs.finalize.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          [ -n "${SLACK_WEBHOOK_URL:-}" ] || exit 0
+          mins=$(( ( $(date -u +%s) - ${STARTED_AT:-$(date -u +%s)} ) / 60 ))
+          failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')" || failed=""
+          if [ -n "$failed" ]; then
+            text="❌ Release $NAME failed (${mins}m) at $failed · <$RUN_URL|run>"
+          elif [ "$FINALIZE" = success ]; then
+            text="✅ Release $NAME done (${mins}m) · <$RUN_URL|run>"
+          else
+            text="⚪ Release $NAME stopped (${mins}m) · <$RUN_URL|run>"
+          fi
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"

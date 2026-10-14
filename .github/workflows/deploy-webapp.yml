@@ -95,6 +95,7 @@ jobs:
         run: |
           SHA="$(git rev-parse HEAD)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Deploying $SHA (ref: ${{ inputs.ref || github.sha }})"
 
       - name: Require green staging run for the deployed SHA
@@ -188,6 +189,7 @@ jobs:
       # `--detach` uploads and returns immediately. See railway-wait-deploy.sh
       # for why `--ci`'s build-log stream is not a usable success signal.
       - name: Deploy inspector to Railway production
+        id: railway_up
         run: |
           .github/scripts/railway-retry.sh railway up \
             --detach \
@@ -218,6 +220,33 @@ jobs:
             echo "- Target: \`$APP_URL\`"
             echo "- Previous Railway deployment: \`${PREVIOUS_DEPLOY_ID:-<none>}\` (roll back by re-running this workflow with that deployment's SHA)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The deploy window as an Axiom annotation, drawn on every chart over
+      # these datasets, so an error or latency spike right after a deploy lines
+      # up with a marker. Releases and rollbacks both come through here. The
+      # token needs only "create annotations"; without it nothing is marked.
+      - name: Mark the deploy window in Axiom
+        if: always() && steps.railway_up.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          AXIOM_TOKEN: ${{ secrets.AXIOM_ANNOTATIONS_TOKEN }}
+          DATASETS: ${{ vars.AXIOM_DEPLOY_DATASETS || 'inspector-logs,inspector-clean-v1' }}
+          STARTED_AT: ${{ steps.resolved.outputs.started_at }}
+          DEPLOY_SHA: ${{ steps.resolved.outputs.sha }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${AXIOM_TOKEN:-}" ]; then
+            echo "::warning::AXIOM_ANNOTATIONS_TOKEN is not set, so this deploy is not marked in Axiom."
+            exit 0
+          fi
+          jq -n --arg datasets "$DATASETS" --arg time "$STARTED_AT" --arg end "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg description "${DEPLOY_SHA:0:9} by $GITHUB_TRIGGERING_ACTOR, $STATUS" --arg url "$RUN_URL" \
+            '{datasets: ($datasets | split(",")), type: "deploy", title: "Webapp prod deploy",
+              time: $time, endTime: $end, description: $description, url: $url}' \
+            | curl -fsS --max-time 20 --retry 2 -o /dev/null -X POST https://api.axiom.co/v2/annotations \
+                -H "Authorization: Bearer $AXIOM_TOKEN" -H 'Content-Type: application/json' -d @-
 
   smoke:
     needs: deploy
