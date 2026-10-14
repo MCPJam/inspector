@@ -148,10 +148,11 @@ export function withOwnKeyTurnPolicy(
     model,
     middleware: {
       transformParams: async ({ params }) => {
-        if (
-          allowedAt !== undefined &&
-          performance.now() - allowedAt < OWN_KEY_POLICY_RECHECK_MS
-        ) {
+        // A negative age means `allowedAt` came from another timebase (a
+        // `Date.now()` passed by mistake); treat it as stale, never as fresh.
+        const age =
+          allowedAt === undefined ? undefined : performance.now() - allowedAt;
+        if (age !== undefined && age >= 0 && age < OWN_KEY_POLICY_RECHECK_MS) {
           return params;
         }
         if (!reading) {
