@@ -29,7 +29,7 @@ jobs:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           script: |
             // One marker so the job edits its own comment instead of adding a
@@ -37,25 +37,46 @@ jobs:
             const MARKER = '<!-- pr-links-advisory -->';
             const FIELDS = ['Kestral task', 'Spec', 'Plan'];
             const body = context.payload.pull_request.body || '';
+            const lines = body.split(/\r?\n/);
 
-            // A line counts as filled when something survives stripping the
-            // template's own HTML comment. "None: <reason>" counts; a bare
-            // "None" does not, because the reason is the point.
+            const labelRe = (name) =>
+              new RegExp(`^[-*]\\s*\\*\\*${name}:\\*\\*(.*)$`, 'i');
+            // Any of the three labels, so one field's value stops at the next.
+            const anyLabelRe = new RegExp(
+              `^[-*]\\s*\\*\\*(?:${FIELDS.join('|')}):\\*\\*`,
+              'i',
+            );
+
+            // A value may continue onto the lines below its label — the
+            // template asks for the plan as "3 to 6 bullets", and bullets go on
+            // their own lines. Read until the next field or the next heading,
+            // then strip the template's own HTML comment.
+            function valueOf(name) {
+              const re = labelRe(name);
+              const i = lines.findIndex((l) => re.test(l));
+              if (i === -1) return null;
+              const parts = [lines[i].match(re)[1]];
+              for (let j = i + 1; j < lines.length; j++) {
+                if (anyLabelRe.test(lines[j]) || /^#{1,6}\s/.test(lines[j])) {
+                  break;
+                }
+                parts.push(lines[j]);
+              }
+              return parts
+                .join('\n')
+                .replace(/<!--[\s\S]*?-->/g, '')
+                .trim();
+            }
+
             const missing = [];
             for (const name of FIELDS) {
-              const re = new RegExp(
-                `^[-*]\\s*\\*\\*${name}:\\*\\*(.*)$`,
-                'mi',
-              );
-              const m = body.match(re);
-              if (!m) {
+              const value = valueOf(name);
+              if (value === null) {
                 missing.push(`\`${name}\` — line is not in the description`);
-                continue;
-              }
-              const value = m[1].replace(/<!--[\s\S]*?-->/g, '').trim();
-              if (!value) {
+              } else if (!value) {
                 missing.push(`\`${name}\` — empty, or still the placeholder`);
               } else if (/^none$/i.test(value)) {
+                // "None" on its own is not an answer; the reason is the point.
                 missing.push(`\`${name}\` — says "None" with no reason after it`);
               }
             }
