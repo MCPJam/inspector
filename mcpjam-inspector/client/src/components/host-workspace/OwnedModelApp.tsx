@@ -68,6 +68,8 @@ export interface OwnedModelAppPorts {
     token: string,
     attachments: ContextAttachment[] | null,
     owner: Pick<ModelAppWorkspaceScope, "projectId" | "hostId" | "workspaceId">,
+    /** Shown in the composer but kept out of turns (see `useAppContext`). */
+    options?: { detached?: boolean },
   ) => void;
   sendMessage: (
     intent: PluginMessageIntent,
@@ -115,9 +117,10 @@ export function useOwnedModelAppWorkspace(
   const [state, setState] = useState<{
     epoch: number;
     contexts: Record<string, ContextAttachment[]>;
-  }>({ epoch, contexts: {} });
+    detached: ReadonlySet<string>;
+  }>({ epoch, contexts: {}, detached: new Set() });
   const publishContext = useCallback<OwnedModelAppPorts["publishContext"]>(
-    (token, attachments, owner) => {
+    (token, attachments, owner, options) => {
       if (
         !scope ||
         current.current.epoch !== epoch ||
@@ -128,15 +131,23 @@ export function useOwnedModelAppWorkspace(
         return;
       setState((previous) => {
         if (current.current.epoch !== epoch) return previous;
-        const contexts = previous.epoch === epoch ? previous.contexts : {};
+        const same = previous.epoch === epoch;
+        const contexts = same ? previous.contexts : {};
+        const held = same ? previous.detached : new Set<string>();
+        const detached = attachments !== null && !!options?.detached;
         if (attachments === null) {
           if (!(token in contexts)) return previous;
           const next = { ...contexts };
           delete next[token];
-          return { epoch, contexts: next };
+          return { epoch, contexts: next, detached: without(held, token) };
         }
-        if (contexts[token] === attachments) return previous;
-        return { epoch, contexts: { ...contexts, [token]: attachments } };
+        if (contexts[token] === attachments && held.has(token) === detached)
+          return previous;
+        return {
+          epoch,
+          contexts: { ...contexts, [token]: attachments },
+          detached: detached ? new Set([...held, token]) : without(held, token),
+        };
       });
     },
     [identity, epoch],
@@ -217,8 +228,18 @@ export function useOwnedModelAppWorkspace(
     value,
     prepareMessage,
     attachments: Object.values(contexts).flat(),
-    references: Object.keys(contexts),
+    // A detached App's context is shown, never sent.
+    references: Object.keys(contexts).filter(
+      (token) => !state.detached.has(token),
+    ),
   };
+}
+
+function without(tokens: ReadonlySet<string>, token: string) {
+  if (!tokens.has(token)) return tokens;
+  const next = new Set(tokens);
+  next.delete(token);
+  return next;
 }
 
 /** The marker is only a handle. Its server endpoint rechecks every saved binding. */
@@ -348,9 +369,16 @@ function ModelApp({
       marker.instanceToken,
       hasContext ? context.attachments : null,
       marker,
+      { detached: context.detached },
     );
     return () => ports?.publishContext(marker.instanceToken, null, marker);
-  }, [ports, marker.instanceToken, context.attachments, hasContext]);
+  }, [
+    ports,
+    marker.instanceToken,
+    context.attachments,
+    hasContext,
+    context.detached,
+  ]);
   // Keep the lease while the App is on screen, as retained Apps do: an
   // expired model App refuses its calls, context and messages.
   useEffect(() => {
