@@ -10,9 +10,15 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
+import { matchCredentialPath } from "@/shared/credential-urls";
+import {
+  captureOAuthCallbackFromUrl,
+  resetOAuthCallbackInboxForTests,
+} from "../oauth-callback-inbox";
 import {
   callbackMatchesPending,
   clearPendingAuthorization,
+  handoffRefusedPath,
   handoffRequestPath,
   isTerminalHandoffStatus,
   isWaitingHandoffStatus,
@@ -336,5 +342,76 @@ describe("handoff sign-in return", () => {
       JSON.stringify({ path: PATH, nonce: "n", expiresAt: "soon" })
     );
     expect(takeHandoffSignInReturn("n", ORIGIN)).toBeNull();
+  });
+});
+
+describe("agreement with the credential registry", () => {
+  // The matchers are built from `credentialRoute("server-connection-claim")`,
+  // so the page and every telemetry scrubber agree on which segment is the
+  // secret. These pin that they still agree, path by path.
+  it("claims exactly the paths the registry scrubs as a handoff token", () => {
+    const match = matchCredentialPath("/connect/server/abc-123_XYZ");
+    expect(match?.route.id).toBe("server-connection-claim");
+    expect(match?.segment).toBe("abc-123_XYZ");
+    expect(matchHandoffRoute("/connect/server/abc-123_XYZ")?.kind).toBe(
+      "claim",
+    );
+  });
+
+  it("treats the request page as secret-free, as the registry does", () => {
+    const path = handoffRequestPath("scr_abc");
+    expect(path).toBe("/connect/server/request/scr_abc");
+    expect(matchCredentialPath(path)).toBeNull();
+  });
+});
+
+describe("handoffRefusedPath", () => {
+  it("is a real path that carries no token and claims nothing on reload", () => {
+    const path = handoffRefusedPath();
+    expect(path).toBe("/connect/server");
+    expect(matchHandoffRoute(path)).toBeNull();
+    expect(matchCredentialPath(path)).toBeNull();
+  });
+});
+
+describe("readCallbackParams with the OAuth callback inbox", () => {
+  afterEach(() => {
+    resetOAuthCallbackInboxForTests();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("reads a URLSearchParams answer directly", () => {
+    expect(
+      readCallbackParams(new URLSearchParams("code=c&state=st-abc")),
+    ).toEqual({
+      state: "st-abc",
+      code: "c",
+      error: undefined,
+      iss: undefined,
+      errorDescription: undefined,
+    });
+  });
+
+  it("resolves the scrubbed callback's marker to the inbox's answer", () => {
+    // `app-bootstrap` still passes `window.location.search`; after main.tsx
+    // scrubbed the URL that is only the marker, and the handoff page must
+    // still be recognised.
+    window.history.replaceState(
+      null,
+      "",
+      "/oauth/callback?code=c&state=st-abc&iss=https%3A%2F%2Fauth",
+    );
+    captureOAuthCallbackFromUrl();
+    expect(window.location.search).toBe("?oauth_pending=1");
+    expect(readCallbackParams(window.location.search)).toMatchObject({
+      state: "st-abc",
+      code: "c",
+      iss: "https://auth",
+    });
+  });
+
+  it("declines the marker when the inbox holds nothing", () => {
+    window.history.replaceState(null, "", "/oauth/callback?oauth_pending=1");
+    expect(readCallbackParams(window.location.search)).toBeNull();
   });
 });

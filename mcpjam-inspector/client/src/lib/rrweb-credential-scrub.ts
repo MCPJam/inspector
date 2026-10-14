@@ -1,7 +1,7 @@
 /**
- * Credentials out of recorded rrweb events, for both recorders: PostHog's
- * `before_send` (`scrubCaptureEvent` in PosthogUtils.ts) and Sentry
- * Replay's transport (`sentry-recording-filter.ts`).
+ * Credentials out of recorded rrweb events at both final serializers:
+ * the PostHog relay and Sentry Replay's transport
+ * (`sentry-recording-filter.ts`).
  */
 import {
   scrubCredentialsInText,

@@ -193,6 +193,7 @@ jobs:
           fi
 
       - name: Open or refresh the version PR
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
           DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
@@ -220,6 +221,8 @@ jobs:
           git commit -m "$title"
 
           existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          # Why #prs gets pinged below: empty when a refresh changed nothing.
+          ping=""
           # This PR now pins the packs users download, and the rulesets keep
           # approvals across pushes. An approval covers the bytes it saw: when
           # a regenerated PR's tree differs, dismiss them BEFORE the push, so
@@ -230,6 +233,7 @@ jobs:
               previous_tree="$(git rev-parse 'FETCH_HEAD^{tree}')"
             fi
             if [ "$previous_tree" != "$(git rev-parse 'HEAD^{tree}')" ]; then
+              ping=regenerated
               # Assigned first: a failed listing must stop the push (fail
               # closed), and `for x in $(…)` would swallow that failure.
               approvals="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$existing/reviews" --paginate --jq '.[] | select(.state == "APPROVED") | .id')"
@@ -246,5 +250,39 @@ jobs:
             url="$(gh pr view "$existing" --json url --jq .url)"
           else
             url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body")"
+            ping=opened
           fi
           echo "Version PR: $url" >> "$GITHUB_STEP_SUMMARY"
+          { echo "url=$url"; echo "title=$title"; echo "ping=$ping"; } >> "$GITHUB_OUTPUT"
+
+      # The GitHub app's post in #prs notifies only the requested reviewers,
+      # and the PR's author (the release token's owner) cannot approve it. So
+      # the whole channel hears that a release is waiting, and again when a
+      # regenerated PR needs a fresh review. The PR is already open by now, so
+      # a Slack problem never fails the run.
+      - name: Ping #prs
+        if: steps.pr.outputs.ping != ''
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PRS_WEBHOOK_URL }}
+          PING: ${{ steps.pr.outputs.ping }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+        run: |
+          set -uo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::warning::SLACK_PRS_WEBHOOK_URL is not set, so #prs was not pinged about $PR_URL."
+            exit 0
+          fi
+          if [ "$PING" = "opened" ]; then
+            headline="A release is ready for review"
+          else
+            headline="The release PR was regenerated with new contents and needs a fresh review"
+          fi
+          versions="$(jq -r '.releases[] | select(.type != "none") | "• `\(.name)` \(.oldVersion) → *\(.newVersion)*"' "$RUNNER_TEMP/status.json")"
+          text="$(printf '<!channel> %s: <%s|#%s %s>\n%s\nMerging it is the release.' \
+            "$headline" "$PR_URL" "${PR_URL##*/}" "$PR_TITLE" "$versions")"
+          # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"

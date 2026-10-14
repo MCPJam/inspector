@@ -54,6 +54,10 @@ function lifecycleStatus(events: WidgetLifecycleEvent[] | undefined): {
   tone: "live" | "muted";
   text: string;
 } {
+  const closed = lastEvent(events, "view-channel-closed");
+  const mounted = lastEvent(events, "view-mounted");
+  if (closed && (!mounted || closed.timestamp >= mounted.timestamp))
+    return { tone: "muted", text: "channel closed" };
   if (lastEvent(events, "app-initialized"))
     return { tone: "live", text: "initialized" };
   if (lastEvent(events, "bridge-connect-ready"))
