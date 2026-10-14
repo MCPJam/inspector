@@ -25,8 +25,8 @@ const baseRequestContext: RequestLogContext = {
   environment: "test",
   release: null,
   component: "http",
-  requestId: "req-abc",
-  route: "/api/web/test",
+  requestId: "ab5fb35f-4604-4d5b-8724-fd2e69539cbe",
+  route: "/api/web/*",
   method: "GET",
   authType: "unknown",
 };
@@ -57,7 +57,7 @@ describe("logger", () => {
   describe("axiom ingestion", () => {
     it("initializes the Axiom client on first ingest, not at import", async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
-      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("AXIOM_CLEAN_DATASET", "test-dataset");
       vi.stubEnv("NODE_ENV", "production");
 
       const { Axiom } = await import("@axiomhq/js");
@@ -74,7 +74,7 @@ describe("logger", () => {
 
     it("does not initialize Axiom client when AXIOM_TOKEN is missing", async () => {
       vi.stubEnv("AXIOM_TOKEN", "");
-      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("AXIOM_CLEAN_DATASET", "test-dataset");
 
       const { Axiom } = await import("@axiomhq/js");
       (Axiom as ReturnType<typeof vi.fn>).mockClear();
@@ -84,9 +84,9 @@ describe("logger", () => {
       expect(Axiom).not.toHaveBeenCalled();
     });
 
-    it("does not initialize Axiom client when AXIOM_DATASET is missing", async () => {
+    it("does not initialize Axiom client when AXIOM_CLEAN_DATASET is missing", async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
-      delete process.env.AXIOM_DATASET;
+      vi.stubEnv("AXIOM_CLEAN_DATASET", "");
 
       const { Axiom } = await import("@axiomhq/js");
       (Axiom as ReturnType<typeof vi.fn>).mockClear();
@@ -101,7 +101,7 @@ describe("logger", () => {
 
       beforeEach(async () => {
         vi.stubEnv("AXIOM_TOKEN", "test-token");
-        vi.stubEnv("AXIOM_DATASET", "test-dataset");
+        vi.stubEnv("AXIOM_CLEAN_DATASET", "test-dataset");
         vi.stubEnv("NODE_ENV", "production");
 
         const mod = await import("../logger.js");
@@ -113,13 +113,7 @@ describe("logger", () => {
         logger.error("fail", error, { requestId: "abc" });
 
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-          {
-            level: "error",
-            message: "fail",
-            environment: "prod",
-            requestId: "abc",
-            error: "something broke",
-          },
+          expect.objectContaining({ level: "error", event: "log.unknown", errorClass: "Error", environment: "prod" }),
         ]);
       });
 
@@ -129,8 +123,8 @@ describe("logger", () => {
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
           expect.objectContaining({
             level: "error",
-            message: "fail",
-            error: "string-error",
+            event: "log.unknown",
+            errorClass: "UnknownError",
           }),
         ]);
       });
@@ -139,12 +133,7 @@ describe("logger", () => {
         logger.warn("watch out", { userId: "123" });
 
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-          {
-            level: "warn",
-            message: "watch out",
-            environment: "prod",
-            userId: "123",
-          },
+          expect.objectContaining({ level: "warn", event: "log.unknown", environment: "prod" }),
         ]);
       });
 
@@ -207,8 +196,8 @@ describe("logger", () => {
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
           expect.objectContaining({
             level: "error",
-            message: "connect failed",
-            error: "their server refused the connection",
+            event: "log.unknown",
+            errorClass: "Error",
           }),
         ]);
       });
@@ -235,12 +224,7 @@ describe("logger", () => {
         logger.info("started", { port: 3000 });
 
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-          {
-            level: "info",
-            message: "started",
-            environment: "prod",
-            port: 3000,
-          },
+          expect.objectContaining({ level: "info", event: "log.unknown", environment: "prod" }),
         ]);
       });
 
@@ -250,12 +234,7 @@ describe("logger", () => {
         logger.debug("trace", "arg1", { city: "Lisbon", nights: 3 });
 
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-          {
-            level: "debug",
-            message: "trace",
-            environment: "prod",
-            args: "array(2)<string(4)>",
-          },
+          expect.objectContaining({ level: "debug", event: "log.unknown", environment: "prod" }),
         ]);
       });
 
@@ -273,19 +252,16 @@ describe("logger", () => {
         const [, [row]] = mockIngest.mock.calls.at(-1)!;
         expect(row).toMatchObject({
           level: "warn",
-          serverId: "srv_1",
-          serverName: "string(13)",
-          resource: "https://mcp.acme.com/…",
-          toolArgs: "{invoiceId: string(6)}",
         });
         const serialized = JSON.stringify(row);
         expect(serialized).not.toContain("Acme");
         expect(serialized).not.toContain("jane@acme.com");
         expect(serialized).not.toContain("INV-99");
-        expect((row as { stderr: string }).stderr.length).toBeLessThan(600);
+        expect(row).not.toHaveProperty("stderr");
+        expect(row).not.toHaveProperty("serverId");
       });
 
-      it("scrubs the context and message logger.error sends to Sentry", async () => {
+      it("leaves Sentry content to its final transport", async () => {
         const Sentry = await import("@sentry/node");
         logger.error(
           "connect failed for https://mcp.acme.com/tenants/42",
@@ -297,15 +273,15 @@ describe("logger", () => {
           expect.any(Error),
           expect.objectContaining({
             extra: {
-              message: "connect failed for https://mcp.acme.com/…",
-              serverName: "string(13)",
-              serverUrl: "https://mcp.acme.com/…",
+              message: "connect failed for https://mcp.acme.com/tenants/42",
+              serverName: "Acme Prod CRM",
+              serverUrl: "https://mcp.acme.com/x",
             },
           }),
         );
       });
 
-      it("scrubs the extra an origin capture sends to Sentry", async () => {
+      it("passes origin content to the final Sentry transport", async () => {
         const Sentry = await import("@sentry/node");
         const { captureOriginErrorToSentry } = await import("../logger.js");
         const error = new Error("upstream refused");
@@ -325,8 +301,8 @@ describe("logger", () => {
             tags: { error_origin: "mcpjam" },
             extra: {
               source: "routes.web.tools",
-              rawMessage: "refused for [redacted-email]",
-              body: "{arguments: {amount: number}}",
+              rawMessage: "refused for bob@acme.com",
+              body: { arguments: { amount: 4200 } },
             },
           }),
         );
@@ -346,7 +322,7 @@ describe("logger", () => {
 
     beforeEach(async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
-      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("AXIOM_CLEAN_DATASET", "test-dataset");
       vi.stubEnv("NODE_ENV", "production");
 
       const mod = await import("../logger.js");
@@ -368,10 +344,9 @@ describe("logger", () => {
           expect.objectContaining({
             event: "http.request.completed",
             environment: "test",
-            requestId: "req-abc",
-            route: "/api/web/test",
+            requestId: "ab5fb35f-4604-4d5b-8724-fd2e69539cbe",
+            route: "/api/web/*",
             method: "GET",
-            component: "http",
             authType: "unknown",
             statusCode: 200,
           }),
@@ -393,10 +368,7 @@ describe("logger", () => {
         expect.objectContaining({
           event: "http.request.failed",
           statusCode: 502,
-          error: expect.objectContaining({
-            name: "Error",
-            message: "read ECONNRESET",
-          }),
+          errorClass: "Error",
         }),
       ]);
     });
@@ -410,7 +382,7 @@ describe("logger", () => {
       );
 
       expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-        expect.objectContaining({ error: "42" }),
+        expect.objectContaining({ errorClass: "UnknownError" }),
       ]);
     });
 
@@ -426,7 +398,7 @@ describe("logger", () => {
       );
 
       expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-        expect.objectContaining({ error: "[unserializable error]" }),
+        expect.objectContaining({ errorClass: "UnknownError" }),
       ]);
     });
 
@@ -441,9 +413,8 @@ describe("logger", () => {
       );
 
       const [, [ingested]] = mockIngest.mock.calls.at(-1)!;
-      const errorField = (ingested as any).error;
-      expect(errorField.message.length).toBeLessThanOrEqual(2000);
-      expect(errorField.stack.length).toBeLessThanOrEqual(4000);
+      expect(ingested).toMatchObject({ errorClass: "Error" });
+      expect(ingested).not.toHaveProperty("error");
     });
 
     it("calls Sentry.captureException only when sentry: true is opted in with an Error", () => {
@@ -501,7 +472,7 @@ describe("logger", () => {
 
     beforeEach(async () => {
       vi.stubEnv("AXIOM_TOKEN", "test-token");
-      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("AXIOM_CLEAN_DATASET", "test-dataset");
       vi.stubEnv("NODE_ENV", "production");
 
       const mod = await import("../logger.js");
@@ -521,11 +492,8 @@ describe("logger", () => {
         [
           expect.objectContaining({
             event: "mcp.connection.closed_with_pending_requests",
-            requestId: null,
-            route: null,
-            method: null,
+            route: "unknown_route",
             authType: "system",
-            errorCode: "connection_closed",
           }),
         ],
       );

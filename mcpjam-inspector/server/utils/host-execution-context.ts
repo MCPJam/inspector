@@ -1,3 +1,4 @@
+import { readRuntimeModelChoice } from "./runtime-model-choice.js";
 /**
  * Shared resolver: hostConfig record + per-call overrides → resolved execution fields.
  *
@@ -48,7 +49,6 @@ import {
   type TasksPolicy,
 } from "@mcpjam/sdk";
 import {
-  readRoutingSelection,
   readStoredModelSelection,
 } from "./model-resolution-local.js";
 
@@ -146,6 +146,7 @@ export interface ResolvedExecutionContext {
    * ONE MODEL like `modelSelection`: narrow it with `routingSelectionForModel`.
    */
   routingSelection: RequestedModelSelection | undefined;
+  modelSelectionOrigin?: "backfill";
   /**
    * MCPJam's Tasks product policy, read HOST-ONLY — exactly like `harness`,
    * and for a stronger reason.
@@ -320,7 +321,7 @@ function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
 function readModelSelection(
   hostConfig: Record<string, unknown>,
 ): ModelSelection | undefined {
-  return readStoredModelSelection(hostConfig.modelSelection);
+  return readStoredModelSelection(readRuntimeModelChoice(hostConfig).selection);
 }
 
 export function resolveExecutionContext(args: {
@@ -514,7 +515,7 @@ export function resolveExecutionContext(args: {
     modelId: modelId.value,
     harness: readHarness(hostConfig),
     modelSelection: readModelSelection(hostConfig),
-    routingSelection: readRoutingSelection(hostConfig.modelSelection),
+    routingSelection: readRuntimeModelChoice(hostConfig).selection, modelSelectionOrigin: readRuntimeModelChoice(hostConfig).origin,
     tasksPolicy: readTasksPolicy(
       hostConfig as Parameters<typeof readTasksPolicy>[0],
     ),

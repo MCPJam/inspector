@@ -235,7 +235,7 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
   }
 
   it("joining an organization with replay off stops recording until the new answer", async () => {
-    server.answer = { recording: "full", identity: "full" };
+    server.answer = { recording: "full", identity: "full", content: "full" };
     const { privacy, posthog, hook } = await setupComposed();
     expect(posthog.log.at(-1)).toBe("start");
     posthog.log.length = 0;
@@ -254,7 +254,11 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
     expect(posthog.log).toEqual(["stop", "masked"]);
 
     // When it does come, it is off: still nothing records.
-    server.answer = { recording: "off", identity: "id_only" };
+    server.answer = {
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
+    };
     await act(async () => {
       hook.rerender({ membershipKey: "org_off:member:0,org_plain:owner:0" });
     });

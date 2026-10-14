@@ -102,7 +102,7 @@ describe("minting", () => {
     expect(
       (calls[0]!.init.headers as Record<string, string>).authorization
     ).toBe("Bearer sk_test_key");
-    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ model: MODEL });
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ model: MODEL, modelSelection: {source: "hosted", modelId: MODEL, fallback: {provider: "none", model: "none"}} });
 
     // 2. The generation — rewritten onto the live proxy, carrying the lease.
     expect(calls[1]!.url).toBe(`${PROXY}/v1/messages`);

@@ -76,6 +76,14 @@ function v1App() {
   return app;
 }
 
+function mintedRequestId(response: Response): string {
+  const requestId = response.headers.get("x-request-id");
+  expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(requestId).not.toBe(REQUEST_ID);
+  if (!requestId) throw new Error("Missing request ID");
+  return requestId;
+}
+
 function get(app: Hono, path: string) {
   return app.request(path, { headers: { "x-request-id": REQUEST_ID } });
 }
@@ -106,7 +114,7 @@ describe("hosted 500 INTERNAL_ERROR on /api/web", () => {
       const response = await get(webApp(), path);
 
       expect(response.status).toBe(500);
-      expect(response.headers.get("x-request-id")).toBe(REQUEST_ID);
+      const requestId = mintedRequestId(response);
       const text = await response.text();
       expect(text).not.toContain("UNEXPECTED_MARKER");
       expect(text).not.toContain("Request ID: 4f2a");
@@ -114,9 +122,9 @@ describe("hosted 500 INTERNAL_ERROR on /api/web", () => {
 
       const body = JSON.parse(text);
       expect(body.code).toBe("INTERNAL_ERROR");
-      expect(body.message).toContain(REQUEST_ID);
-      expect(body.details).toEqual({ requestId: REQUEST_ID });
-      expect(body.normalized.requestId).toBe(REQUEST_ID);
+      expect(body.message).toContain(requestId);
+      expect(body.details).toEqual({ requestId });
+      expect(body.normalized.requestId).toBe(requestId);
       expect(body.normalized.rawMessage).toBe(body.message);
       expect(body.normalized.oneLine).toBe(body.message);
       expect(body.normalized.cause).toBeUndefined();
@@ -124,7 +132,8 @@ describe("hosted 500 INTERNAL_ERROR on /api/web", () => {
   );
 
   it("keeps the original message in the request log, under the same id", async () => {
-    await get(webApp(), "/api/web/handled");
+    const response = await get(webApp(), "/api/web/handled");
+    const requestId = mintedRequestId(response);
 
     const [row] = failedRows(eventSpy);
     expect(row).toMatchObject({ statusCode: 500, errorCode: "INTERNAL_ERROR" });
@@ -132,7 +141,7 @@ describe("hosted 500 INTERNAL_ERROR on /api/web", () => {
     const [, base] = eventSpy.mock.calls.find(
       ([name]) => name === "http.request.failed",
     )!;
-    expect((base as { requestId?: string }).requestId).toBe(REQUEST_ID);
+    expect((base as { requestId?: string }).requestId).toBe(requestId);
   });
 
   it("mints a request id, sets the header and logs the message when no request log runs", async () => {
@@ -198,10 +207,11 @@ describe("hosted INTERNAL_ERROR on /api/v1", () => {
     expect(text).not.toContain("UNEXPECTED_MARKER");
     expect(text).not.toContain("convex/internal.ts");
     const body = JSON.parse(text);
+    const requestId = mintedRequestId(response);
     expect(body).toEqual({
       code: "INTERNAL_ERROR",
-      message: expect.stringContaining(REQUEST_ID),
-      details: { requestId: REQUEST_ID },
+      message: expect.stringContaining(requestId),
+      details: { requestId },
     });
 
     const [row] = failedRows(eventSpy);
@@ -214,9 +224,10 @@ describe("hosted INTERNAL_ERROR on /api/v1", () => {
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body.message).not.toContain("UNEXPECTED_MARKER");
+    const requestId = mintedRequestId(response);
     expect(body.details).toEqual({
       createdResources: [{ kind: "server", id: "srv-1" }],
-      requestId: REQUEST_ID,
+      requestId,
     });
   });
 
