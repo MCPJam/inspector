@@ -6,7 +6,6 @@ import {
 } from "../../shared/strict-sentry.js";
 import { sentryIdentityMetadata } from "./sentry-request-identity.js";
 import { resolveAppVersion, resolveEnvironment } from "./log-events.js";
-
 import { sentryBuildMetadata } from "../../shared/sentry-build-metadata.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -16,7 +15,6 @@ const frameAliases = Object.fromEntries(
     [pathToFileURL(resolve(root, name)).href, name],
   ]),
 );
-
 const metadata = sentryBuildMetadata(root, ["dist/server/index.js"]);
 
 export function strictServerSentryOptions(): SentryBoundaryOptions {
