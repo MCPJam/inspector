@@ -6,7 +6,7 @@
  * (e2e/telemetry-privacy.browser.ts) intercepts both transports and decodes
  * what would have left the browser.
  *
- * `?privacy=masked` is a member viewing an organization with enterprise
+ * `?privacy=strict` is a member viewing an organization with enterprise
  * privacy; `?privacy=off` is one viewing an organization with session replay
  * off; `?privacy=pending` is a first visit whose policy never arrives;
  * `?privacy=full` is a verified non-private context, the positive control
@@ -14,6 +14,7 @@
  * share-link page. `__harness.tighten()` moves a running page to a private
  * context, as a navigation would.
  */
+import "@/lib/install-telemetry-transport";
 import { StrictMode, useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import posthog from "posthog-js";
@@ -31,6 +32,7 @@ import {
   setTelemetryActor,
   setTelemetryCaptureContext,
   setTelemetryIdentity,
+  setTelemetryContentPolicy,
 } from "@/lib/telemetry-context";
 import { useSessionPrivacy } from "@/hooks/useSessionPrivacy";
 import { SYNTHETIC_PII } from "@/shared/__tests__/fixtures/telemetry-pii";
@@ -46,18 +48,18 @@ const params = new URLSearchParams(window.location.search);
 const requested = params.get("privacy");
 // `&shared=1`: a share-link page (a published study's tester chat).
 const sharedLink = params.get("shared") === "1";
-const mode: "full" | "masked" | "off" | "pending" =
+const mode: "full" | "strict" | "off" | "pending" =
   requested === "full" || requested === "off" || requested === "pending"
     ? requested
-    : "masked";
+    : "strict";
 
-type HarnessRecording = "full" | "masked" | "off" | undefined;
+type HarnessRecording = "full" | "off" | undefined;
 let setRecordingFromSpec: (next: HarnessRecording) => void = () => undefined;
 
 function Harness() {
   // The backend's answer as the app would hold it; `undefined` = none yet.
   const [recording, setRecording] = useState<HarnessRecording>(
-    mode === "pending" ? undefined : mode,
+    mode === "pending" ? undefined : mode === "full" ? "full" : "off",
   );
   // Set by the button: an attribute that changes after the first snapshot.
   const [customer, setCustomer] = useState<string>();
@@ -71,6 +73,14 @@ function Harness() {
       recording,
     }),
   );
+  useEffect(() => {
+    setSentryActor({
+      kind: "signedIn",
+      id: HARNESS_ACTOR_ID,
+      email: SYNTHETIC_PII.email,
+      name: SYNTHETIC_PII.name,
+    });
+  }, [recording]);
   return (
     <main className="harness-shell">
       <header className="harness-header">
@@ -163,18 +173,15 @@ async function boot() {
 
   setTelemetryActor(HARNESS_ACTOR_ID);
   if (mode === "full") setTelemetryIdentity(HARNESS_ACTOR_ID, "full");
-  setSentryActor({
-    kind: "signedIn",
-    id: HARNESS_ACTOR_ID,
-    email: SYNTHETIC_PII.email,
-    name: SYNTHETIC_PII.name,
-  });
   setTelemetryCaptureContext({
+    sharedLink,
     projectIds: [],
     organizationIds: [
       mode === "full" ? HARNESS_PUBLIC_ORG : HARNESS_PRIVATE_ORG,
     ],
   });
+
+  setTelemetryContentPolicy(HARNESS_ACTOR_ID, mode === "full" ? "full" : "strict");
 
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
@@ -204,17 +211,21 @@ async function boot() {
         email: SYNTHETIC_PII.email,
         name: SYNTHETIC_PII.name,
       }),
-    capture: () => posthog.capture("harness_event", { step: "capture" }),
-    fail: () => {
+    capture: () =>
+      posthog.capture("send_message", {
+        location: "chat_tab",
+        multi_model_count: 2,
+      }),
+    fail: (message = "telemetry harness failure") => {
       setTimeout(() => {
-        throw new Error("telemetry harness failure");
+        throw new Error(message);
       });
     },
     goTo: (path: string) => {
       window.history.pushState({}, "", path);
       syncSessionRecording(posthog, path);
       syncSentryReplay(path);
-      posthog.capture("harness_navigated", { step: "navigated" });
+      posthog.capture("edit_message", { location: "chat_tab" });
     },
     // Unmasked text recorded into the buffer that is still unflushed when
     // the page tightens.
@@ -229,7 +240,7 @@ async function boot() {
         projectIds: [],
         organizationIds: [HARNESS_PRIVATE_ORG],
       });
-      setRecordingFromSpec("masked");
+      setRecordingFromSpec("off");
     },
   };
   (window as unknown as { __harness: typeof harness }).__harness = harness;

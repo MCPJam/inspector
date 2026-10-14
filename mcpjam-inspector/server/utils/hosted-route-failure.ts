@@ -88,8 +88,7 @@ export function projectHostedAuthoredFailureMessage(
         : undefined;
     return (
       `The authorization server for ${serverName} rejected MCPJam's access request` +
-      `${status !== undefined ? ` (HTTP ${status})` : ""} — check the server's XAA client` +
-      ` credentials and issuer in its auth settings.`
+      `${status !== undefined ? ` (HTTP ${status})` : ""}. Check the server's auth settings.`
     );
   }
   return error.message;

@@ -1,7 +1,6 @@
 services:
   inspector:
-    build:
-      context: .
+    image: mcpjam/mcp-inspector
     ports:
       - "127.0.0.1:6274:6274"
     environment:
