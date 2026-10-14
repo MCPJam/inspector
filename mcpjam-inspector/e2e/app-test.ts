@@ -20,9 +20,10 @@ export const test = base.extend<{ workspace: void }>({
         new URL(baseURL!).origin,
       );
       await use();
-      expect(failures, "all workspace operations have explicit fixtures").toEqual(
-        [],
-      );
+      expect(
+        failures,
+        "all workspace operations have explicit fixtures",
+      ).toEqual([]);
     },
     { auto: true },
   ],
