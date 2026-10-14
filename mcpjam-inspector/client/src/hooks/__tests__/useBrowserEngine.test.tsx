@@ -14,9 +14,13 @@ const state = vi.hoisted(() => ({
   granted: false,
   browserAvailable: true,
   configLoaded: true,
+  authLoading: false,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: state.member ? { id: "member" } : null }),
+  useAuth: () => ({
+    user: state.member ? { id: "member" } : null,
+    isLoading: state.authLoading,
+  }),
 }));
 vi.mock("@/hooks/use-previewed-environment-id", () => ({
   usePreviewedEnvironmentId: () => [state.environment ? "env-1" : null],
@@ -70,6 +74,7 @@ beforeEach(() => {
   state.granted = false;
   state.browserAvailable = true;
   state.configLoaded = true;
+  state.authLoading = false;
 });
 it("defaults to This machine without shell availability or Browser consent", () => {
   const { result } = renderHook(() => useBrowserEngine("p"));
@@ -142,6 +147,13 @@ it("never falls back to Cloud while the engine config is loading", () => {
   expect(result.current.resolved).toBe(false);
   expect(result.current.cloudAvailable).toBe(false);
   expect(result.current.selectedEngine).toBe("local");
+});
+it("keeps checking while sign-in loads instead of ruling Cloud out", () => {
+  state.hostedFlag = true;
+  state.member = false;
+  state.authLoading = true;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.resolved).toBe(false);
 });
 it("never falls back to Cloud outside the hosted-browser rollout", () => {
   state.flag = false;

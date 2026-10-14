@@ -22,7 +22,7 @@ export function useBrowserEngine(
   projectId: string | null,
   scope: "conversation" | "preference" = "conversation",
 ) {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
   const enabled = useLocalBrowserEnabled();
@@ -78,7 +78,8 @@ export function useBrowserEngine(
     engine: selectedEngine,
     selectedEngine,
     setEngine,
-    resolved: config !== undefined,
+    // Sign-in still loading reads as "no Cloud" above, so it is unresolved too.
+    resolved: config !== undefined && !authLoading,
     localAvailable,
     cloudAvailable,
     // Same rule as the Computer tab: a location picker only exists when
