@@ -314,9 +314,9 @@ Identity starts **id-only** and follows an explicit grant
   and memberships, so switching projects does not unname and rename anyone.
 
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
-the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
-clear values sent earlier: once per actor, and again whenever the actor turns
-id-only after a `full` answer. The `before_send` stamp records capture policy. The relay removes naming
+the grant. The backend answers `id_only` only together with strict content,
+and strict content withholds identify, so no identify call is made while
+that answer holds. The `before_send` stamp records capture policy. The relay removes naming
 person properties according to that policy and its current backend answer.
 
 **Sentry.** The initial scope carries at most the desktop installation id.
@@ -640,6 +640,9 @@ transport and the real relay vendor fetch rather than raw first-party ingress.
   are scrubbed at every level.
 - **Edge request logs.** The hosting provider's edge and CDN keep their own
   request logs. Nothing here runs before them.
+- **Names already on a PostHog person.** The client does not remove names
+  sent under an earlier full answer when the answer later turns `id_only`;
+  that needs a vendor-side person update.
 - **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
 ## Access and acceptance
