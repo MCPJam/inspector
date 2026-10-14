@@ -15,7 +15,7 @@ Every browser session runs at one of three privacy levels. The level decides wha
 | Level    | Session replay                                                                                                                  | Product analytics                                                                 |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `off`    | None. No recorder runs.                                                                                                          | Usage events, scrubbed as described below. On the hosted service, also masked as at `masked`. |
-| `masked` | Layout and interaction only, in both PostHog and Sentry Replay. Every text node and input is masked, media and links are blocked, and there are no console logs or network headers or bodies. | Element text and attributes masked. Names in URLs are replaced, ids and route words stay. |
+| `masked` | PostHog replay only: layout and interaction, with every text node and input masked, media and links blocked, and no console logs or network headers or bodies. Sentry Replay does not run at `masked`. | Element text and attributes masked. Names in URLs are replaced, ids and route words stay. |
 | `full`   | The page, with every input and every surface that shows a secret (tokens, API keys) masked.                                     | Usage events, scrubbed as described below                                          |
 
 | Session                                                                                          | Level    |
