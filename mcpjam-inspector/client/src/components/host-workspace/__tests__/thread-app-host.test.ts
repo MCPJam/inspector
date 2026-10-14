@@ -106,6 +106,27 @@ describe("who decides an owned App's display mode", () => {
     const owned = createThreadAppHost(host, handle, "server", "model");
     expect(owned.surface.fixedDisplayMode).toBeUndefined();
   });
+  it("applies OpenAI's display-mode rules only when the Display modes toggle is on", () => {
+    for (const kind of ["model", "global", "thread"] as const) {
+      expect(
+        createThreadAppHost(host, handle, "server", kind).surface
+          .openAIDisplayModes,
+      ).toBeUndefined();
+      expect(
+        createThreadAppHost(host, handle, "server", kind, {
+          openAIDisplayModes: true,
+        }).surface.openAIDisplayModes,
+      ).toBe(true);
+    }
+  });
+  it("lets the rules pick a model App's starting mode instead of forcing inline", () => {
+    const ruled = createThreadAppHost(host, handle, "server", "model", {
+      openAIDisplayModes: true,
+    });
+    expect(ruled.environment.draftHostContext?.displayMode).toBe("pip");
+    const plain = createThreadAppHost(host, handle, "server", "model");
+    expect(plain.environment.draftHostContext?.displayMode).toBe("inline");
+  });
 });
 
 describe("a model App in the chat", () => {

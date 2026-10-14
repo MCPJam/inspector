@@ -19,8 +19,12 @@ import {
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
-import type { PluginMessageIntent } from "@/shared/plugin-message";
+import {
+  PLUGIN_MESSAGE_PREPARATION_MS,
+  type PluginMessageIntent,
+} from "@/shared/plugin-message";
 import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
@@ -315,6 +319,7 @@ import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-cl
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
+  getAppDraftInteractivity,
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
@@ -2051,6 +2056,7 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
+    pluginExtensions.capabilities.displayModes,
   );
   usePublishPluginIcons(pluginIconsById);
   const composerMentions = useComposerMentions(
@@ -3418,7 +3424,17 @@ export function PlaygroundMain({
   //   completed turns is a follow-up.
   // ------------------------------------------------------------------------
 
+  const appMessageDraft = useAppMessageDraft(
+    JSON.stringify([
+      currentUserForSender?._id,
+      convexProjectId,
+      previewedHostId,
+      chatSessionId,
+    ]),
+    { setInput: composer.setInput, setFileAttachments },
+  );
   const hasUnsavedDraft =
+    appMessageDraft.items.length > 0 ||
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
@@ -3443,6 +3459,7 @@ export function PlaygroundMain({
     null,
   );
   const discardDraftSettledRef = useRef(false);
+  const discardDraftReleaseRef = useRef<(() => void) | null>(null);
 
   const settleDiscardDraft = useCallback((confirmed: boolean) => {
     if (discardDraftSettledRef.current) {
@@ -3452,6 +3469,10 @@ export function PlaygroundMain({
     const resolve = discardDraftResolveRef.current;
     discardDraftResolveRef.current = null;
     resolve?.(confirmed);
+    // Released after `resolve`: its caller clears the composer in a
+    // microtask, before any App message can arrive.
+    discardDraftReleaseRef.current?.();
+    discardDraftReleaseRef.current = null;
     setDiscardDraftDialogOpen(false);
   }, []);
 
@@ -3459,12 +3480,17 @@ export function PlaygroundMain({
     if (!hasUnsavedDraftRef.current) {
       return Promise.resolve(true);
     }
+    // One question at a time: a second caller would orphan the first answer.
+    if (discardDraftResolveRef.current) return Promise.resolve(false);
     return new Promise((resolve) => {
       discardDraftSettledRef.current = false;
       discardDraftResolveRef.current = resolve;
+      // "Discard" clears the composer, so an App draft is refused while the
+      // person decides rather than acknowledged and then cleared.
+      discardDraftReleaseRef.current = appMessageDraft.hold();
       setDiscardDraftDialogOpen(true);
     });
-  }, []);
+  }, [appMessageDraft.hold]);
 
   const clearComposerDraft = useCallback(() => {
     composer.setInput("");
@@ -3473,7 +3499,8 @@ export function PlaygroundMain({
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
     setModelContextQueue([]);
-  }, [composer, fileAttachments]);
+    appMessageDraft.clear();
+  }, [composer, fileAttachments, appMessageDraft.clear]);
 
   const cancelPendingHistorySelection = useCallback(() => {
     historySelectionRequestIdRef.current += 1;
@@ -4252,9 +4279,12 @@ export function PlaygroundMain({
   }, [clearMultiModelUiState]);
 
   const handleNewChat = useCallback(
-    async (options?: { shared?: boolean }) => {
+    async (options?: { shared?: boolean; isCurrent?: () => boolean }) => {
       if (isStreaming) return false;
       if (!(await ensureDiscardDraftConfirmed())) return false;
+      // An App's new-chat action can lapse while the person decides; a reset
+      // for it then would discard their draft for nothing.
+      if (options?.isCurrent && !options.isCurrent()) return false;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
@@ -4295,8 +4325,22 @@ export function PlaygroundMain({
       convexProjectId,
       previewedHostId,
     ]),
-    begin: handleNewChat,
+    begin: (isCurrent) => handleNewChat({ isCurrent }),
   });
+
+  // Archive-all clears the composer only once its archive request returns,
+  // so App drafts wait for it as they wait for the discard dialog.
+  const archiveAllReleaseRef = useRef<(() => void) | null>(null);
+  const confirmArchiveAllReset = useCallback(async () => {
+    if (!(await ensureDiscardDraftConfirmed())) return false;
+    archiveAllReleaseRef.current?.();
+    archiveAllReleaseRef.current = appMessageDraft.hold();
+    return true;
+  }, [ensureDiscardDraftConfirmed, appMessageDraft.hold]);
+  const settleArchiveAll = useCallback(() => {
+    archiveAllReleaseRef.current?.();
+    archiveAllReleaseRef.current = null;
+  }, []);
 
   const handleArchiveAllComplete = useCallback(
     (hadActiveHistorySelection: boolean) => {
@@ -4408,15 +4452,17 @@ export function PlaygroundMain({
       onNewChat: handleNewChat,
       // Without this the rail's "Archive all" path would call resetChat
       // through onArchiveAllComplete and blow away the user's unsaved draft.
-      beforeResetChatAfterArchiveAll: ensureDiscardDraftConfirmed,
+      beforeResetChatAfterArchiveAll: confirmArchiveAllReset,
       onArchiveAllComplete: handleArchiveAllComplete,
+      onArchiveAllSettled: settleArchiveAll,
       onSessionAction: handleHistorySessionAction,
     });
     return () => setBridge(null);
   }, [
     activeHistorySessionId,
     convexProjectId,
-    ensureDiscardDraftConfirmed,
+    confirmArchiveAllReset,
+    settleArchiveAll,
     handleArchiveAllComplete,
     handleHistorySessionAction,
     handleNewChat,
@@ -4841,6 +4887,21 @@ export function PlaygroundMain({
       pluginActionInteractivity.composerDisabled ||
       pluginActionInteractivity.sendBlocked ||
       isStreaming,
+    ...getAppDraftInteractivity({
+      readOnly:
+        !extensionScope ||
+        isCompareMode ||
+        apiSessionViewOnly ||
+        disableChatInput ||
+        !pluginExtensions.capabilities.messages,
+      transitioning:
+        isEnvironmentTargetPending ||
+        loadingHistorySessionId !== null ||
+        restoringTarget !== null,
+      sendInFlight: isPreparingServerForSend,
+      isStreamingActive,
+    }),
+    draft: appMessageDraft.place,
     gates: [
       async () => !conversationSendBlockedRef.current,
       ensureSelectedServerReadyForChat,
@@ -4855,6 +4916,9 @@ export function PlaygroundMain({
     prepareNew: async (intent, isCurrent) =>
       (await ownedModelWorkspace.prepareMessage(intent, isCurrent)) ??
       threadApps.prepareMessage(intent, isCurrent),
+    // Leaves the new chat time to publish and send before the server's
+    // preparation lapses.
+    preparedForMs: PLUGIN_MESSAGE_PREPARATION_MS - 15_000,
     send: (intent, isCurrent) =>
       sendMessage({
         text: "",
@@ -5460,6 +5524,7 @@ export function PlaygroundMain({
   // composer that visibly holds an attached skill.
   const composerHasContent =
     composerMentions.selections.length > 0 ||
+    appMessageDraft.items.length > 0 ||
     threadApps.contextAttachments.length > 0 ||
     ownedModelWorkspace.attachments.length > 0 ||
     composer.input.trim().length > 0 ||
@@ -5469,8 +5534,18 @@ export function PlaygroundMain({
 
   // Submit handler — shared by the composer form and eval Quick Run.
 
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+  const submitComposer = useCallback(async (): Promise<boolean> => {
     if (!composerHasContent || sendBlocked) {
+      return false;
+    }
+    // Read once: what this send carries is all it may clear.
+    const draftItems = appMessageDraft.snapshot();
+    // A compare grid has no place for an App's draft items; leaving compare
+    // mode sends them with this chat. Checked before any gate or upload runs.
+    if (isCompareMode && draftItems.length > 0) {
+      toast.error(
+        "Items an App added can't go to a comparison. Remove them or leave compare mode.",
+      );
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
@@ -5588,9 +5663,11 @@ export function PlaygroundMain({
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
+        extraParts: draftItems.map((item) => item.part),
       });
       if (!sent) return false;
       composerMentions.clear();
+      appMessageDraft.discard(draftItems);
       setModelContextQueue([]);
     }
 
@@ -5606,6 +5683,8 @@ export function PlaygroundMain({
     composerHasContent,
     composerMentions.selections,
     composerMentions.clear,
+    appMessageDraft.snapshot,
+    appMessageDraft.discard,
     mcpPromptResults,
     skillResults,
     fileAttachments,
@@ -5626,6 +5705,16 @@ export function PlaygroundMain({
     computerAttachmentsActive,
     computerAttachmentUpload,
   ]);
+  // An App draft is refused for the whole submit, which captures the composer
+  // first and clears it last.
+  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+    const release = appMessageDraft.hold();
+    try {
+      return await submitComposer();
+    } finally {
+      release();
+    }
+  }, [submitComposer, appMessageDraft.hold]);
 
   sendPluginOnboardingRef.current = async (
     spec,
@@ -6275,6 +6364,7 @@ export function PlaygroundMain({
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
     contextAttachments: [
       ...composerMentions.contextAttachments,
+      ...appMessageDraft.contextAttachments,
       ...threadApps.contextAttachments,
       ...ownedModelWorkspace.attachments,
     ],
@@ -7605,12 +7695,7 @@ export function PlaygroundMain({
         open={discardDraftDialogOpen}
         onOpenChange={(open) => {
           setDiscardDraftDialogOpen(open);
-          if (!open && !discardDraftSettledRef.current) {
-            discardDraftSettledRef.current = true;
-            const resolve = discardDraftResolveRef.current;
-            discardDraftResolveRef.current = null;
-            resolve?.(false);
-          }
+          if (!open) settleDiscardDraft(false);
         }}
       >
         <AlertDialogContent>

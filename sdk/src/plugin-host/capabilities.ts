@@ -1,5 +1,5 @@
 /**
- * OpenAI extension keys are pinned to mcp-extensions 93a30a92 / 0.1.0.
+ * OpenAI extension keys follow @openai/mcp-extensions 0.2.0.
  * This module owns advertisement AND dispatch admission. It is browser-safe;
  * official schema adapters and existing authorization services are injected.
  */
@@ -65,14 +65,11 @@ export interface PluginCapabilityProfile {
   transport: "legacy" | "mrtr";
   mode?: "live" | "replay";
   disabledFeatures?: readonly PluginFeature[];
-  /** Explicit prototype opt-in; a passed fixture never changes its authority. */
-  allowAssumedMrtrForms?: boolean;
 }
 export interface PluginCapabilityDecision {
   feature: string;
   status: PluginCapabilityStatus;
   allowed: boolean;
-  authority: "specified" | "assumed";
   reason?: string;
 }
 
@@ -235,8 +232,6 @@ export function createPluginCapabilityRegistry(input: {
   const decision = (feature: string): PluginCapabilityDecision => {
     const known = PLUGIN_FEATURES.includes(feature as PluginFeature);
     const id = feature as PluginFeature;
-    const authority =
-      id === "forms" && profile.transport === "mrtr" ? "assumed" : "specified";
     const result = (
       status: PluginCapabilityStatus,
       reason?: string
@@ -244,7 +239,6 @@ export function createPluginCapabilityRegistry(input: {
       feature,
       status,
       allowed: status === "supported",
-      authority,
       ...(reason ? { reason } : {}),
     });
     if (!known) return result("unsupported", "UNKNOWN_PLUGIN_FEATURE");
@@ -264,8 +258,6 @@ export function createPluginCapabilityRegistry(input: {
       return result("blocked", "SERVICE_UNAVAILABLE");
     if (ENGINE_DEPENDENT.has(id) && engineCoverage[id] !== "complete")
       return result("degraded", "ENGINE_FIDELITY_INCOMPLETE");
-    if (authority === "assumed" && profile.allowAssumedMrtrForms !== true)
-      return result("degraded", "MRTR_EXTENSION_MAPPING_ASSUMED");
     return result("supported");
   };
   const snapshot = () =>

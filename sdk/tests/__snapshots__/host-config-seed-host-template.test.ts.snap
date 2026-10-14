@@ -2237,6 +2237,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "sameOriginAppIframe": true,
         },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "chatgpt",
+            "version": "26.928.20710",
+          },
+        },
       },
       "initialize": {
         "clientInfo": {
@@ -2441,6 +2447,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "chatgpt",
+            "version": "26.928.20710",
+          },
         },
       },
       "initialize": {
