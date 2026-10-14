@@ -57,3 +57,27 @@ export default async function smokeGuestSetup(config: FullConfig) {
     if (!saved) await rm(storageState, { force: true });
   }
 }
+
+/** API-driven smoke tests use the same guest identity as browser contexts. */
+export async function smokeGuestBearer(baseURL: string, origin: string) {
+  const client = await request.newContext({
+    baseURL,
+    storageState: process.env.MCPJAM_E2E_GUEST_STATE_FILE || undefined,
+  });
+  try {
+    const response = await client.post("/api/web/guest-session", {
+      headers: { Origin: origin },
+      data: {},
+    });
+    if (!response.ok()) return undefined;
+    const body: unknown = await response.json();
+    return body &&
+      typeof body === "object" &&
+      "token" in body &&
+      typeof body.token === "string"
+      ? body.token
+      : undefined;
+  } finally {
+    await client.dispose();
+  }
+}

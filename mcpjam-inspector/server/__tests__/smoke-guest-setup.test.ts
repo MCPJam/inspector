@@ -3,6 +3,7 @@ import type { FullConfig } from "@playwright/test";
 import { chmod, rm } from "node:fs/promises";
 import smokeGuestSetup, {
   smokeGuestStorageFile,
+  smokeGuestBearer,
 } from "../../e2e/smoke-guest-setup";
 
 const client = vi.hoisted(() => ({
@@ -93,4 +94,20 @@ it("inherits the same private file path in workers with different process IDs", 
   expect(parent).toContain("mcpjam-smoke-guest-123.json");
   expect(smokeGuestStorageFile(456)).toBe(parent);
   expect(process.env.MCPJAM_E2E_GUEST_STATE_FILE).toBe(parent);
+});
+
+it("reuses the saved cookie for API-driven frame tests without minting a new identity", async () => {
+  vi.stubEnv("MCPJAM_E2E_GUEST_STATE_FILE", "/tmp/private-state.json");
+  client.post.mockResolvedValue({
+    ok: () => true,
+    json: async () => ({ token: "guest-token" }),
+  });
+  await expect(
+    smokeGuestBearer("http://localhost:6274", "http://localhost:6274"),
+  ).resolves.toBe("guest-token");
+  expect(newContext).toHaveBeenCalledExactlyOnceWith({
+    baseURL: "http://localhost:6274",
+    storageState: "/tmp/private-state.json",
+  });
+  expect(client.dispose).toHaveBeenCalledOnce();
 });

@@ -389,12 +389,11 @@ jobs:
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
         run: npm run build -w @mcpjam/inspector
 
-      # The secret goes on these two steps only, so `npm ci`'s lifecycle
-      # scripts never see it.
       - name: Install Chromium and system dependencies
         working-directory: mcpjam-inspector
         run: npx playwright install --with-deps chromium
 
+      # The secret goes on these two steps only, so install scripts never see it.
       - name: Run Playwright smoke
         env:
           MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
