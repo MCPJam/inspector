@@ -1213,22 +1213,14 @@ function captureShapeOf(payload: unknown): CapturePayload {
   };
 }
 
-// Capture body wrappers: gzip, a form-encoded data field, or bare JSON.
-interface BodyEncoding {
-  gzip: boolean;
-  form: "json" | "base64" | null;
-}
-
 // posthog-js sends gzip (detected by its magic bytes — the SDK drops the
 // `compression` query param for gzip), a form-encoded `data=` body, or JSON.
-// Returns the payload's JSON bytes, leading whitespace skipped, and how it
-// was wrapped.
-async function decodeBody(
+// Returns the payload's JSON bytes, leading whitespace skipped.
+async function decodeCaptureBody(
   bytes: Uint8Array,
   textBytes: number,
-): Promise<{ json: Buffer; encoding: BodyEncoding }> {
-  const gzip = isGzip(bytes);
-  const text = gzip
+): Promise<Buffer> {
+  const text = isGzip(bytes)
     ? await gunzipAsync(bytes, { maxOutputLength: Math.max(1, textBytes) })
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const lookahead = Math.min(text.length, SCAN_SLICE_BYTES);
@@ -1239,20 +1231,12 @@ async function decodeBody(
     (start === lookahead && start < text.length)
   ) {
     // JSON, or a run of leading whitespace the JSON reader works through.
-    return { json: text.subarray(start), encoding: { gzip, form: null } };
+    return text.subarray(start);
   }
   const data = await formDataParam(text);
   if (data === null) throw new Error("no capture payload");
   const value = data.toString("utf8");
-  const form = /^\s*[{[]/.test(value) ? "json" : "base64";
-  return { json: dataParamBytes(value), encoding: { gzip, form } };
-}
-
-async function decodeCaptureBody(
-  bytes: Uint8Array,
-  textBytes: number,
-): Promise<Buffer> {
-  return (await decodeBody(bytes, textBytes)).json;
+  return dataParamBytes(value);
 }
 
 // Parses a large payload from the event ranges its scan recorded.

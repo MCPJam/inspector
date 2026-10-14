@@ -3,14 +3,17 @@ import { TELEMETRY_POLICY_HEADER } from "../../../shared/strict-posthog";
 
 let restore: (() => void) | undefined;
 
-
 /** Install before SDK imports: they retain fetch and XHR references. */
 export function installTelemetryTransport(): () => void {
   if (restore) return restore;
   const matches = (input: string | URL) => {
     let url: URL;
-    try { url = new URL(input, window.location.href); }
-    catch { return false; } // Leave invalid app URLs to the browser implementation.
+    try {
+      url = new URL(input, window.location.href);
+    } catch {
+      // Leave invalid app URLs to the browser implementation.
+      return false;
+    }
     return (
       url.origin === window.location.origin &&
       /^\/(tlm|relay)(\/|$)/.test(url.pathname)

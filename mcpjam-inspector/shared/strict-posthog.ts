@@ -1,4 +1,5 @@
 import { version } from "../package.json";
+import { POSTHOG_PROJECT_KEY } from "./posthog-project";
 
 export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
@@ -25,7 +26,6 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   $pageview: {},
   $pageleave: {},
 };
-const TOKEN = "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 
 export function telemetryRouteTemplate(value: unknown): string {
   if (typeof value !== "string") return "/:path";
@@ -52,7 +52,7 @@ export function rebuildStrictPostHogEvent(
       ? (event.properties as Record<string, unknown>)
       : {};
   const properties: Record<string, unknown> = {
-    token: TOKEN,
+    token: POSTHOG_PROJECT_KEY,
     app_version: version,
     // The relay cannot authenticate a supplied actor id. Keep aggregate counts
     // without treating arbitrary client text as an app-owned identity.
