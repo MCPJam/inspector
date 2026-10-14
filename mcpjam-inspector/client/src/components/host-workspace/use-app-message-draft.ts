@@ -1,6 +1,7 @@
 import {
   useCallback,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -76,8 +77,22 @@ export function useAppMessageDraft(
     [key],
   );
   const clear = useCallback(() => setState({ key, items: NO_ITEMS }), [key]);
+  // A composer submit reads the draft when it starts and clears the composer
+  // when it ends. A draft placed in between would be acknowledged to its App
+  // and then cleared unsent, so placement is refused for the whole submit.
+  // A ref, not state: it must hold before React re-renders.
+  const submits = useRef(0);
+  const holdForSubmit = useCallback(() => {
+    submits.current += 1;
+    let held = true;
+    return () => {
+      if (held) submits.current -= 1;
+      held = false;
+    };
+  }, []);
   /** Places the whole draft or nothing. Nothing executes. */
   const place = async (intent: PluginMessageIntent) => {
+    if (submits.current > 0) return false;
     const draft = pluginMessageDraft(intent.params);
     const images = draftImageAttachments(draft.images);
     if (!images || items.length + draft.items.length > DRAFT_ITEMS_MAX)
@@ -104,5 +119,5 @@ export function useAppMessageDraft(
       })),
     [items, remove],
   );
-  return { items, parts, contextAttachments, place, clear };
+  return { items, parts, contextAttachments, place, clear, holdForSubmit };
 }

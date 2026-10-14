@@ -5498,7 +5498,7 @@ export function PlaygroundMain({
 
   // Submit handler — shared by the composer form and eval Quick Run.
 
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+  const submitComposer = useCallback(async (): Promise<boolean> => {
     if (!composerHasContent || sendBlocked) {
       return false;
     }
@@ -5668,6 +5668,16 @@ export function PlaygroundMain({
     computerAttachmentsActive,
     computerAttachmentUpload,
   ]);
+  // An App draft is refused for the whole submit, which captures the composer
+  // first and clears it last.
+  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+    const release = appMessageDraft.holdForSubmit();
+    try {
+      return await submitComposer();
+    } finally {
+      release();
+    }
+  }, [submitComposer, appMessageDraft.holdForSubmit]);
 
   sendPluginOnboardingRef.current = async (
     spec,

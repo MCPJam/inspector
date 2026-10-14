@@ -58,7 +58,7 @@ export function withAppMessages(
                   code: "app-draft-refused",
                   level: "warning",
                   message:
-                    "An App's draft wasn't added to the composer. The chat is read-only, switching, or busy, or the composer already holds as many App items as one message can.",
+                    "An App's draft wasn't added to the composer. The chat is read-only, switching, or sending a message, or the composer already holds as many App items as one message can.",
                   dedupeKey: "app-draft-refused",
                 });
                 throw new Error("The draft could not be added to the composer");
