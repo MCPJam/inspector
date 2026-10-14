@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { createStackParser, nodeStackLineParser } from "@sentry/core";
@@ -54,7 +54,7 @@ async function buildServer(name: string, banner: string): Promise<string> {
   for (const [file, text] of Object.entries(FIXTURE))
     writeFileSync(join(root, "server", file), text);
   const entry = ["index.ts", "harness-install-cli.ts"].map((file) =>
-    join(root, "server", file),
+    join(root, "server", file).split(sep).join("/"),
   );
   await build({
     ...config,

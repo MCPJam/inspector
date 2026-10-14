@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createStackParser, nodeStackLineParser } from "@sentry/core";
 import { expect, it } from "vitest";
@@ -19,6 +19,7 @@ it("binds map IDs only to fixed package files and recognizes Electron's normaliz
     const metadata = sentryBuildMetadata(root, [file]);
     expect(metadata.frameAliases).toEqual({
       [join(root, file)]: file,
+      [join(root, file).split(sep).join("/")]: file,
       [pathToFileURL(join(root, file)).href]: file,
       [`app:///${file}`]: file,
     });
