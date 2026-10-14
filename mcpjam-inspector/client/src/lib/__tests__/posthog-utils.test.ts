@@ -174,7 +174,7 @@ describe("PosthogUtils", () => {
     // hosted + Electron desktop only; dead clicks are on everywhere because
     // they cost nothing extra. Replay is OFF at init on every surface — the
     // session privacy level starts it (lib/session-privacy.ts).
-    it("self-hosted web (npx/docker): no replay, no exceptions, unmasked autocapture", async () => {
+    it("unresolved self-hosted web: no replay, exceptions or rich autocapture", async () => {
       vi.resetModules();
       const { options: opts, isErrorCaptureSurface } =
         await import("../PosthogUtils");
@@ -183,7 +183,7 @@ describe("PosthogUtils", () => {
       expect(opts.capture_exceptions).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
       expect(opts.capture_dead_clicks).toBe(false);
-      // `off` keeps today's analytics.
+      // No backend content grant has resolved on this surface.
       expect(opts.mask_all_text).toBe(true);
       expect(opts.mask_all_element_attributes).toBe(true);
     });
@@ -307,18 +307,22 @@ describe("PosthogUtils", () => {
   });
 
   describe("autocapture follows the level", () => {
-    it("masks element text and attributes only while the level is not full", async () => {
+    it("unmasks analytics only after a backend content grant", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
       vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.resetModules();
       const { options: opts } = await import("../PosthogUtils");
       const { setSessionPrivacy } = await import("../session-privacy");
-
+      const policy = await import("../telemetry-context");
       expect(opts.mask_all_text).toBe(true);
       setSessionPrivacy("full");
+      expect(opts.mask_all_text).toBe(true);
+      policy.setTelemetryActor("user_A");
+      policy.setTelemetryCaptureContext({ projectIds: ["project_A"], organizationIds: [] });
+      policy.setTelemetryContentPolicy("user_A", "full");
       expect(opts.mask_all_text).toBe(false);
       expect(opts.mask_all_element_attributes).toBe(false);
-      setSessionPrivacy("masked");
+      policy.setTelemetryContentPolicy("user_A", "strict");
       expect(opts.mask_all_text).toBe(true);
       expect(opts.mask_all_element_attributes).toBe(true);
     });

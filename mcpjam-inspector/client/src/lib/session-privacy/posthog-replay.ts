@@ -15,7 +15,9 @@ import {
 import {
   currentSessionPrivacy,
   isCredentialBearingPath,
+  isErrorCaptureSurface,
   recordingSurface,
+  shouldMaskAnalytics,
 } from "./level";
 import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
 
@@ -141,7 +143,7 @@ export function posthogPrivacyConfig(
         autocapture: true,
         capture_dead_clicks: true,
         rageclick: true,
-        capture_exceptions: true,
+        capture_exceptions: isErrorCaptureSurface(),
         disable_surveys: false,
         enable_heatmaps: true,
         // `null`, not `undefined` (posthog-js skips undefined in set_config):
@@ -231,9 +233,9 @@ export function syncSessionRecording(
   lastPostHogClient = client;
   try {
     const privacy = currentSessionPrivacy();
-    // Analytics masking follows the level even while replay is held off:
-    // `pending` and `off` analytics are masked.
-    const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
+    // Full product capture need not wait for replay or run a recorder.
+    const profile: PostHogProfile =
+      shouldMaskAnalytics() || privacy === "masked" ? "masked" : "full";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
         discardingReplayBuffer = profile === "masked";
@@ -250,6 +252,7 @@ export function syncSessionRecording(
     const shouldRecord =
       recordingSurface() === "hosted" &&
       privacy === "full" &&
+      !shouldMaskAnalytics() &&
       !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
       replayStartedAt = Date.now();

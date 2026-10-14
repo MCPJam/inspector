@@ -343,6 +343,7 @@ export async function bootTelemetryHarness(): Promise<TelemetryHarness> {
         projectIds: [RELAY_PROJECT_ID],
         organizationIds: [],
       });
+      telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, level === "full" ? "full" : "strict");
       await act(async () => {
         root.render(tree(level));
       });

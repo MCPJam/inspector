@@ -44,6 +44,7 @@ it("rechecks fetch and XHR retries after policy tightens", async () => {
     for (const api_transport of ["fetch", "XHR"] as const) {
       attempts.length = 0;
       setSessionPrivacy("full");
+      telemetry.setTelemetryContentPolicy(actor, "full");
       const client = posthog.init(
         "phc_test",
         {
@@ -74,7 +75,7 @@ it("rechecks fetch and XHR retries after policy tightens", async () => {
       await vi.advanceTimersByTimeAsync(100);
       await network.settle();
       expect(attempts).toEqual(["full"]);
-      setSessionPrivacy("off");
+      telemetry.setTelemetryContentPolicy(actor, "strict");
       await vi.advanceTimersByTimeAsync(30_000);
       await network.settle();
       expect(attempts).toEqual(["full", "strict"]);

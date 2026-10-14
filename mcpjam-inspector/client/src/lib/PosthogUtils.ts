@@ -17,7 +17,6 @@ import {
 } from "./session-privacy";
 
 export { POSTHOG_PROJECT_KEY as VITE_PUBLIC_POSTHOG_KEY };
-export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
 
 // posthog-js talks to the same-origin /relay reverse proxy (server/routes/
 // relay.ts) instead of *.posthog.com directly: ad blockers block PostHog by
@@ -220,13 +219,14 @@ export function getPageviewCaptureOptions(
 
 export const options = {
   api_host: getPostHogApiHost(),
-  disable_beacon: true,
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
   ui_host: "https://us.posthog.com",
   ...getPostHogBootstrap(),
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
+  // Fetch keeps the SDK bearer and the live-policy guard on unload batches.
+  disable_beacon: true,
   // Capture records policy only; the relay owns the final vendor serializer.
   before_send: [
     dropInjectedScriptException,
@@ -363,12 +363,12 @@ export const getPostHogOptions = (
         // Same relay host as the enabled branch, so dev-mode requests are not
         // ad-blocked either.
         api_host: getPostHogApiHost(),
-        disable_beacon: true,
         ui_host: "https://us.posthog.com",
         ...getPostHogBootstrap(serverFlags),
         ...getPageviewCaptureOptions(),
         ...SERVER_EVALUATED_FLAG_OPTIONS,
         person_profiles: "always" as const,
+        disable_beacon: true,
         // Explicitly off in the opt-out branch too. `opt_out_capturing_by_default`
         // suppresses event SENDING but the recorder and the exception handlers
         // still load — which in dev means fetching /relay/static/recorder.js on
