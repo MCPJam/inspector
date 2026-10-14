@@ -1,4 +1,5 @@
 export {
+  sentryInjectedDebugId,
   rebuildSentryEvent,
   rebuildSentryFrameLocations,
   rebuildSentryTransaction,

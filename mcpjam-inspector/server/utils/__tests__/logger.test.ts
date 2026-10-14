@@ -261,7 +261,7 @@ describe("logger", () => {
         expect(row).not.toHaveProperty("serverId");
       });
 
-      it("scrubs Sentry extras before the legacy hook", async () => {
+      it("leaves Sentry content to its final transport", async () => {
         const Sentry = await import("@sentry/node");
         logger.error(
           "connect failed for https://mcp.acme.com/tenants/42",
@@ -273,15 +273,15 @@ describe("logger", () => {
           expect.any(Error),
           expect.objectContaining({
             extra: {
-              message: "connect failed for https://mcp.acme.com/…",
-              serverName: "string(13)",
-              serverUrl: "https://mcp.acme.com/…",
+              message: "connect failed for https://mcp.acme.com/tenants/42",
+              serverName: "Acme Prod CRM",
+              serverUrl: "https://mcp.acme.com/x",
             },
           }),
         );
       });
 
-      it("scrubs origin extras before the legacy hook", async () => {
+      it("passes origin content to the final Sentry transport", async () => {
         const Sentry = await import("@sentry/node");
         const { captureOriginErrorToSentry } = await import("../logger.js");
         const error = new Error("upstream refused");
@@ -301,8 +301,8 @@ describe("logger", () => {
             tags: { error_origin: "mcpjam" },
             extra: {
               source: "routes.web.tools",
-              rawMessage: "refused for [redacted-email]",
-              body: "{arguments: {amount: number}}",
+              rawMessage: "refused for bob@acme.com",
+              body: { arguments: { amount: 4200 } },
             },
           }),
         );

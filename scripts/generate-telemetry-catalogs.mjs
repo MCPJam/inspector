@@ -20,6 +20,7 @@ const catalogs = {
 };
 const fields = {};
 const events = [];
+const diagnosticCodes = [];
 const literal = (node) =>
   ts.isLiteralTypeNode(node) &&
   (ts.isStringLiteral(node.literal) || ts.isNumericLiteral(node.literal))
@@ -35,6 +36,17 @@ for (const file of files) {
     true,
   );
   const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ["V1_ERROR_CODES", "AI_EXECUTION_REFUSAL_CODES", "AI_REUSED_REFUSAL_CODES", "PLATFORM_V1_ERROR_CODES", "ROUTINE_CODES", "ORG_POLICY_ROUTINE_CODES"].includes(node.name.getText(source))) {
+      const collect = (child) => { if (ts.isStringLiteral(child)) diagnosticCodes.push(child.text); else ts.forEachChild(child, collect); };
+      if (node.initializer) collect(node.initializer);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const owner = node.expression.expression.getText(source);
+      const method = node.expression.name.text;
+      const message = node.arguments[0];
+      if ((method === "captureMessage" || (owner === "logger" && ["error", "warn", "info", "debug"].includes(method))) && message && ts.isStringLiteral(message))
+        catalog.messages.push(message.text);
+    }
     if (
       ts.isClassDeclaration(node) &&
       node.name &&
@@ -103,9 +115,11 @@ catalogs.sdk.files.push("dist/index.js");
 catalogs.inspector.files.push("dist/server/index.js", ".vite/build/main.cjs");
 
 const outputs = {
-  "sdk/src/internal/telemetry-catalog.generated.json": catalogs.sdk,
+  "sdk/src/internal/telemetry-catalog.generated.json": { ...catalogs.sdk, diagnosticFields: { code: [...new Set(diagnosticCodes)].sort() } },
   "mcpjam-inspector/shared/telemetry-catalog.generated.json": {
     ...catalogs.inspector,
+    messages: [...catalogs.inspector.messages, ...events],
+    diagnosticFields: { code: [...new Set(diagnosticCodes)].sort() },
     events: [...new Set(events)].sort(),
     fields,
   },

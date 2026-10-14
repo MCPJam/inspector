@@ -11,7 +11,6 @@ import type {
 } from "./log-events.js";
 import {
   MAX_ERROR_TEXT_CHARS,
-  scrubLogPayload,
   scrubLogText,
 } from "../../shared/log-scrubber.js";
 import { HOSTED_MODE } from "../config.js";
@@ -171,7 +170,6 @@ export function captureOriginErrorToSentry(
   withIdentityCapture(() =>
     Sentry.captureException(error, {
       ...options,
-      extra: scrubLogPayload(options.extra),
       ...identity,
       tags: { ...options.tags, ...identity.tags },
     }),
@@ -204,10 +202,10 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
-      // The current Sentry hook only strips credentials; reduce context here.
+      // The final Sentry transport reconstructs approved diagnostics.
       withIdentityCapture(() =>
         Sentry.captureException(error ?? new Error(message), {
-          extra: scrubLogPayload({ message, ...context }),
+          extra: { message, ...context },
           ...sentryIdentityMetadata(),
         }),
       );

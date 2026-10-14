@@ -1,5 +1,9 @@
+import { sentryProtocolMetadata, type SentryBuildMetadata } from "./sentry-protocol.js";
+export { sentryInjectedDebugId } from "./sentry-protocol.js";
+
 /** Framework-free, reconstructive boundary for first-party telemetry clients. */
-export interface TelemetryCatalog {
+export interface TelemetryCatalog extends SentryBuildMetadata {
+  diagnosticFields?: Readonly<Record<string, readonly string[]>>;
   files?: readonly string[];
   frameAliases?: Readonly<Record<string, string>>;
   routes?: readonly string[];
@@ -106,8 +110,9 @@ function frames(
     const frame = telemetryRecord(raw);
     const rawFilename =
       typeof frame.filename === "string" ? frame.filename : "";
-    const filename = catalog.frameAliases?.[rawFilename] ?? rawFilename;
-    if (!catalog.files?.includes(filename)) continue;
+    const ownedFile = catalog.frameAliases?.[rawFilename] ?? rawFilename;
+    if (!catalog.files?.includes(ownedFile)) continue;
+    const filename = catalog.frameOutputNames?.[ownedFile] ?? ownedFile;
     const lineno = bounded(frame.lineno, 1000000);
     if (lineno === undefined || !Number.isInteger(lineno) || lineno < 1) continue;
     const column = bounded(frame.colno, 1000000);
@@ -155,7 +160,7 @@ function tags(input: unknown): Fields {
 export interface SentryBoundaryOptions extends TelemetryCatalog {
   actorId?: string;
   release?: string;
-  environment?: "dev" | "staging" | "production" | "test";
+  environment?: "dev" | "staging" | "prod" | "preview" | "production" | "local" | "test";
 }
 
 function envelope(source: Fields, options: SentryBoundaryOptions): Fields {
@@ -167,6 +172,7 @@ function envelope(source: Fields, options: SentryBoundaryOptions): Fields {
     /^(?:@mcpjam\/sdk@)?\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$|^[0-9a-f]{7,40}$/
   );
   return {
+    ...sentryProtocolMetadata([], options),
     ...(eventId ? { event_id: eventId } : {}),
     ...(timestamp === undefined ? {} : { timestamp }),
     ...(actor ? { user: { id: actor } } : {}),
@@ -182,22 +188,38 @@ export function rebuildSentryEvent<T extends object>(
 ): T {
   const source = telemetryRecord(input);
   const chain = exceptions(source.exception, options);
-  const message =
-    member(source.message, options.messages ?? []) ?? "telemetry_event";
+  const extra = telemetryRecord(source.extra);
+  const approvedMessage =
+    member(source.message, options.messages ?? []) ??
+    member(extra.message, options.messages ?? []);
+  const message = approvedMessage ?? "telemetry_event";
   const breadcrumbs = Array.isArray(source.breadcrumbs)
     ? source.breadcrumbs
         .slice(-20)
         .map((value) => rebuildSentryBreadcrumb(telemetryRecord(value)))
         .filter(Boolean)
     : [];
+  const ownedFrames = chain.values.flatMap((value) => value.stacktrace?.frames ?? []);
+  const topFrame = ownedFrames.at(-1);
+  const code = member(extra.code ?? extra.errorCode, options.diagnosticFields?.code ?? []);
   return {
     ...envelope(source, options),
+    ...sentryProtocolMetadata(ownedFrames.map((frame) => String(frame.filename)), options),
     level: member(source.level, LEVELS) ?? "error",
     ...(chain.values.length
-      ? { exception: { values: chain.values } }
+      ? {
+          exception: { values: chain.values },
+          ...(approvedMessage ? { message } : {}),
+        }
       : { message }),
-    fingerprint: [chain.values.at(-1)?.type ?? message],
+    fingerprint: [
+      chain.values.at(-1)?.type ?? message,
+      ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
+      ...(code ? [code] : []),
+      ...(topFrame ? [`${topFrame.filename}:${topFrame.lineno}`] : []),
+    ],
     extra: {
+      ...(code ? { code } : {}),
       dropped_frames: Math.min(
         1000000,
         chain.dropped
