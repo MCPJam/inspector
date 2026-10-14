@@ -8,6 +8,7 @@ import {
   compareSelectionForRow,
   mergePickedRows,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
@@ -23,7 +24,7 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -110,6 +111,7 @@ import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-sessio
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
 import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -128,6 +130,8 @@ import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-av
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -242,7 +246,7 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -497,6 +501,7 @@ export function ChatTabV2({
     reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: hostedContext?.hostId || hostedContext?.executionTarget ? "inherit" : "picked",
     hostedContext: {
       ...hostedContext,
       projectId: effectiveHostedProjectId,
@@ -804,13 +809,12 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource
@@ -829,13 +833,14 @@ export function ChatTabV2({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -849,6 +854,8 @@ export function ChatTabV2({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       markHistorySessionRead,
       setSelectedModel,
@@ -1287,10 +1294,11 @@ export function ChatTabV2({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections]
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections]
   );
   // What the grid renders: the v2 cards, else one card per v1 model (keyed by
   // its id, no per-card effort — exactly the v1 behaviour).
@@ -1789,7 +1797,13 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const compareHasDisallowedModel =
+    isMultiModelMode &&
+    modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model));
+  const submitBlocked = baseSubmitBlocked || compareHasDisallowedModel;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
     // Chat tab doesn't have a multi-host axis — its compare mode is
     // exactly multi-model. Pass through directly.
@@ -2004,8 +2018,15 @@ export function ChatTabV2({
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
   // that flag on failures a blind resend cannot help with.
+  //
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // they get the same resend. Every other policy refusal needs a
+  // configuration change first and offers no Retry.
   const canRetryLastMessage =
-    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+    isConcurrencyThrottle ||
+    errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+    isRetryableOrgKeysRefusal(errorMessage?.code);
   const errorRetryHandler = canRetryLastMessage
     ? handleRetryLastMessage
     : undefined;
@@ -2387,7 +2408,7 @@ export function ChatTabV2({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     // In compare mode the chip edits the lead card's effort (each card has
     // its own chip too); before the v2 migration ran, cards carry no effort,
     // so the chip is withheld rather than shown doing nothing.
@@ -2397,7 +2418,7 @@ export function ChatTabV2({
           reasoningEffortLevels,
           onReasoningEffortChange: hostedContext?.scenarioId
             ? undefined
-            : setReasoningEffort,
+            : (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
         }
       : leadCompareCard?.editableSelection
       ? {
@@ -2458,6 +2479,7 @@ export function ChatTabV2({
         : undefined,
     onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
@@ -2582,6 +2604,7 @@ export function ChatTabV2({
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2717,6 +2740,8 @@ export function ChatTabV2({
                           compareId={key}
                           compareLabel={label}
                           model={model}
+                          selection={card?.selection}
+                          hostedOrgModelConfig={hostedOrgModelConfig}
                           reasoningEffort={card?.reasoningEffort}
                           effort={
                             card?.editableSelection
@@ -2869,6 +2894,7 @@ export function ChatTabV2({
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
                             <TopupGatedErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -3022,6 +3048,7 @@ export function ChatTabV2({
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}

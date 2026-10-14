@@ -1785,6 +1785,79 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current.browserStorage).toBeUndefined();
   });
 
+  it("mounts inline and modal views opaque when the client's app iframe is not same-origin", async () => {
+    mcpAppsModalPropsRef.current = null;
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // srcdoc without allow-same-origin. A widget moved to the
+    // modal must not regain the origin the inline frame lacks.
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+    expect(mcpAppsModalPropsRef.current?.widgetMountMode).toBe("opaque");
+  });
+
+  it("mounts an app that declares ui.domain opaque too", async () => {
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          permissive: true,
+          mimeTypeValid: true,
+          declaredDomain: "abc123.claudemcpcontent.com",
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toContain("live-widget");
+    });
+    // No client with an opaque app iframe has been seen to honor ui.domain.
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+  });
+
+  it("mounts a cached replay opaque when the client's app iframe is not same-origin", async () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { sameOriginAppIframe: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    expect(sandboxedIframePropsRef.current.mountMode).toBe("opaque");
+  });
+
+  it("uses the default mount when the profile never mentions it", async () => {
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    expect(sandboxedIframePropsRef.current.mountMode).not.toBe("opaque");
+  });
+
   it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
     // Claude and Cursor ship all-true subtype matrices. Those restrict
     // nothing, so treating the policy's mere presence as a host restriction
@@ -3301,6 +3374,71 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }),
         undefined,
         null,
+      );
+    });
+  });
+
+  it("counts an opaque mount as a healthy view with no origin", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "opaque",
+          url: "about:srcdoc",
+        },
+      } as MessageEvent);
+    });
+
+    // No URL by design (the client models an opaque host), not a degraded mount.
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "ok" }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "opaque",
+          assignedOrigin: undefined,
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
+  it("shows a closed channel when an opaque view reloads itself", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-channel-closed",
+          reason: "view navigated or reloaded itself",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          kind: "view-channel-closed",
+          status: "error",
+          message: "view navigated or reloaded itself",
+        }),
       );
     });
   });
