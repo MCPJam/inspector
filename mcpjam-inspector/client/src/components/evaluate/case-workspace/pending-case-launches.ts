@@ -105,7 +105,7 @@ export async function trackCaseLaunchTarget<T extends CaseLaunchResponse>(
   id: string | undefined,
   targetIndex: number,
   request: Promise<T>,
-): Promise<T> {
+) {
   try {
     const response = await request;
     if (id)
