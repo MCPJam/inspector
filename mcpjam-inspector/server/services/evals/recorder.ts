@@ -26,6 +26,7 @@ import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/con
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import { randomUUID } from "node:crypto";
 import {
   readStoredLegacySelection,
@@ -858,6 +859,15 @@ export const startSuiteRunWithRecorder = async ({
     if (billing) {
       throw billing;
     }
+    // The organization requires its own provider keys (or has no model for
+    // a required role) and the backend refused the launch before creating
+    // anything, listing every unavailable dependency in `problems`. The
+    // organization's configuration, not an outage: its own answer, with the
+    // code the client and the CLI key on.
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) {
+      throw aiRefusal;
+    }
     // The environment resolves to no model — no override on it, none pinned on
     // its client — so the backend refused before creating anything. Remediable
     // and specific, so it gets its own 409 rather than surfacing as an opaque
@@ -960,6 +970,10 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) {
+      throw aiRefusal;
     }
     // `cause` is logged above and recorded on the run; the response carries
     // only the run id (MJ-020, MJ-021).

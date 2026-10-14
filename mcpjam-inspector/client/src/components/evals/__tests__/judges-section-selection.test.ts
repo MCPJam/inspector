@@ -129,3 +129,34 @@ describe("judgeModelPatch — reasoning effort", () => {
   });
 });
 
+
+describe("judgeModelPatch — organization judges", () => {
+  const orgDirect: ModelDefinition = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
+    judgeEligible: true,
+  };
+
+  it("saves a bare-id org row under its canonical id, with its connection", () => {
+    expect(judgeModelPatch(orgDirect, [orgDirect])).toEqual({
+      judgeModel: "anthropic/claude-sonnet-4.5",
+      judgeSelection: {
+        modelId: "anthropic/claude-sonnet-4.5",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_anthropic" },
+        nativeModelId: "claude-sonnet-4-5",
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+  });
+
+  it("keeps the legacy id alone when the deployment does not store selections", () => {
+    expect(judgeModelPatch(orgDirect, [orgDirect], false)).toEqual({
+      judgeModel: "claude-sonnet-4-5",
+      judgeSelection: undefined,
+    });
+  });
+});

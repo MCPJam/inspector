@@ -51,7 +51,6 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -195,7 +194,6 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -206,6 +204,8 @@ function EvaluateTabContent({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -1579,6 +1579,8 @@ function EvaluateTabContent({
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
           availableModels={availableModels}
+          requireOrgKeys={requireOrgKeys}
+          onManageOrgProviders={onManageOrgProviders}
           route={route}
           userMap={userMap}
           projectId={projectId}
@@ -1590,7 +1592,6 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
-          evaluateObserveFirst={observeFirstEnabled}
           onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
