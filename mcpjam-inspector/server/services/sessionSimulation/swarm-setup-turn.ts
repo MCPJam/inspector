@@ -33,8 +33,13 @@ export class SwarmSetupError extends Error {
      * prerequisites, and setup is never retried.
      */
     readonly platformFailure?: SponsoredPlatformFailure,
+    /**
+     * What stopped the setup turn, as thrown. Kept so the runner can store a
+     * server sign-in failure as that, rather than as missing prerequisites.
+     */
+    cause?: unknown,
   ) {
-    super("Prerequisites unavailable");
+    super("Prerequisites unavailable", { cause });
     this.name = "SwarmSetupError";
   }
 }
@@ -279,7 +284,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
           message: error instanceof Error ? error.message : String(error),
         })
       : undefined;
-    throw new SwarmSetupError(setup, platformFailure);
+    throw new SwarmSetupError(setup, platformFailure, error);
   } finally {
     setup.durationMs = Date.now() - setup.startedAt;
     deadline.dispose();

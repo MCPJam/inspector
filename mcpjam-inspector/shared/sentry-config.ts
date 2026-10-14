@@ -21,7 +21,6 @@ import { isInjectedScriptException } from "./injected-script-frames";
 import {
   describeShape,
   MAX_ERROR_TEXT_CHARS,
-  scrubLogPayload,
   scrubLogText,
 } from "./log-scrubber";
 
@@ -47,7 +46,7 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * One entry per artifact set, not per platform-as-metadata — two builds that
  * are separately compiled need separate names even when their sources match:
  *
- * - `web`          Docker/Railway image, `dist/client`
+ * - `web`          hosted Railway image, `dist/client`
  * - `npm`          published tarball, `dist/client`
  * - `desktop-mac`  mac installer's embedded-server UI, `dist/client`
  * - `desktop-win`  Windows installer's embedded-server UI, `dist/client`
@@ -61,8 +60,9 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * where the same two-platform collision applies.
  *
  * `local` is the default for a build that names no surface (a contributor
- * checkout, or a self-hosted user building from source). Those have no
- * uploaded artifacts, and saying so is better than borrowing another build's.
+ * checkout, or a self-hosted user building from source), and what the Docker
+ * Hub image passes. Those have no uploaded artifacts, and saying so is better
+ * than borrowing another build's.
  */
 export const SENTRY_BUILD_SURFACES = [
   "web",
@@ -388,149 +388,12 @@ function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
   return frames.length === 1 && frames[0]?.function === "?";
 }
 
-/**
- * Minimal structural view of what a Node SDK attaches to an event ON ITS OWN:
- * the incoming request, the exception's text, a captured message. Declared
- * here for the same reason as `FingerprintableEvent`.
- */
-export interface ScrubbableEvent extends FingerprintableEvent {
-  message?: string;
-  transaction?: string;
-  logentry?: { message?: string; params?: unknown[] };
-  request?: {
-    url?: string;
-    query_string?: unknown;
-    cookies?: unknown;
-    headers?: Record<string, string>;
-    data?: unknown;
-  };
-}
-
-/**
- * Request headers whose VALUES are kept. Every other header keeps its name —
- * "an Authorization header was present" is a diagnostic — and loses its value.
- */
-const KEPT_REQUEST_HEADERS = new Set([
-  "accept",
-  "content-length",
-  "content-type",
-  "host",
-  "origin",
-  "user-agent",
-]);
-
 function originOf(url: string): string {
   try {
     return new URL(url).origin;
   } catch {
     return stripQueryAndFragment(url);
   }
-}
-
-/** `a=1&b=2` (or its object / pair-list spellings) → `a=[redacted]&b=[redacted]`. */
-function queryParamNames(query: unknown): string | undefined {
-  let names: string[] = [];
-  if (typeof query === "string") {
-    names = query
-      .replace(/^\?/, "")
-      .split("&")
-      .filter(Boolean)
-      .map((pair) => pair.split("=")[0] ?? "");
-  } else if (Array.isArray(query)) {
-    names = query.map((pair) => String(Array.isArray(pair) ? pair[0] : pair));
-  } else if (query && typeof query === "object") {
-    names = Object.keys(query);
-  }
-  return names.length > 0
-    ? names.map((name) => `${scrubLogText(name, 40)}=[redacted]`).join("&")
-    : undefined;
-}
-
-/**
- * The SDK captures up to ~10KB of the raw body and sends it as a string. Its
- * structure is the useful part; a body cut off mid-JSON (or not JSON at all)
- * can only report its length.
- */
-function describeRequestBody(data: unknown): string {
-  if (typeof data !== "string") return describeShape(data);
-  try {
-    return describeShape(JSON.parse(data));
-  } catch {
-    return describeShape(data);
-  }
-}
-
-/**
- * The server-side `beforeSend`: take customer content out of what the Node SDK
- * attaches by itself, keep everything a triager reads.
- *
- * - `request.data`. The http integration attaches the incoming body to every
- *   error event — a chat turn's messages, a tool call's arguments — whatever
- *   `sendDefaultPii` says. It becomes a shape summary rather than being turned
- *   off: "this route got `{messages: array(14)…}`" still reproduces.
- * - `request.url` / `query_string` / `cookies` / `headers`. The path stays;
- *   query values, cookies and header values go.
- * - Exception and message text, capped and redacted like the log rows: an
- *   upstream error quotes URLs, response bodies and, now and then, a token.
- *   Grouping is by stack frames, which are untouched.
- * - `extra.__serialized__`, where the SDK dumps a thrown NON-Error object.
- *
- * Everything else in `extra` was already scrubbed by `logger.ts`, the
- * server's only capture path, and is left alone: a shape summary scrubbed
- * twice would collapse to `string(N)`.
- */
-export function scrubServerSentryEvent<T extends ScrubbableEvent>(event: T): T {
-  const scrubbable: ScrubbableEvent = event;
-
-  for (const exception of scrubbable.exception?.values ?? []) {
-    if (typeof exception.value === "string") {
-      exception.value = scrubLogText(exception.value, MAX_ERROR_TEXT_CHARS);
-    }
-  }
-  if (typeof scrubbable.message === "string") {
-    scrubbable.message = scrubLogText(scrubbable.message, MAX_ERROR_TEXT_CHARS);
-  }
-  if (scrubbable.logentry) {
-    const { message, params } = scrubbable.logentry;
-    if (typeof message === "string") {
-      scrubbable.logentry.message = scrubLogText(message, MAX_ERROR_TEXT_CHARS);
-    }
-    if (Array.isArray(params)) {
-      scrubbable.logentry.params = params.map(describeShape);
-    }
-  }
-
-  const request = scrubbable.request;
-  if (request) {
-    if (typeof request.url === "string") {
-      request.url = scrubCredentialUrl(stripQueryAndFragment(request.url));
-    }
-    if (request.query_string !== undefined) {
-      request.query_string = queryParamNames(request.query_string);
-    }
-    delete request.cookies;
-    if (request.headers) {
-      request.headers = Object.fromEntries(
-        Object.entries(request.headers).map(([name, value]) => [
-          name,
-          KEPT_REQUEST_HEADERS.has(name.toLowerCase()) ? value : "[redacted]",
-        ]),
-      );
-    }
-    if (request.data !== undefined) {
-      request.data = describeRequestBody(request.data);
-    }
-  }
-
-  if (scrubbable.extra && "__serialized__" in scrubbable.extra) {
-    scrubbable.extra.__serialized__ = scrubLogPayload(
-      scrubbable.extra.__serialized__,
-    );
-  }
-  if (typeof scrubbable.transaction === "string") {
-    scrubbable.transaction = sentryTransactionTemplate(scrubbable.transaction);
-  }
-  return event;
 }
 
 /**
@@ -665,13 +528,6 @@ export function scrubClientSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
   appOrigin: string | undefined,
 ): T | null {
   return scrubSentryBreadcrumb(breadcrumb, { appOrigin });
-}
-
-/** `beforeBreadcrumb` for the Node surfaces: the server and Electron main. */
-export function scrubServerSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
-  breadcrumb: T,
-): T | null {
-  return scrubSentryBreadcrumb(breadcrumb, "origin");
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {

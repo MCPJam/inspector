@@ -14,7 +14,6 @@ import {
   FileJson,
   MessageSquareText,
   Regex,
-  Target,
   LayoutPanelTop,
   Type,
   Eye,
@@ -75,7 +74,12 @@ export type EvalAddChoice =
   | { kind: "step"; stepKind: "prompt" | "interact" | "toolCall" }
   | { kind: "check"; predicateKind: PredicateKind }
   | { kind: "widget-check"; widgetKind: WidgetAssertion["kind"] }
+  | { kind: "route-check"; routeKind: "noTools" | "exactOrder" }
   | { kind: "outcome" };
+export const ROUTE_CHECK_LABELS = {
+  noTools: "No tools should be called",
+  exactOrder: "Tools must be called in this exact order",
+} as const;
 export type EvalAddEntry = {
   key: string;
   label: string;
@@ -133,21 +137,28 @@ const widgetIcons: Record<WidgetAssertion["kind"], LucideIcon> = {
 export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
   ...(
     [
-      ["prompt", "Prompt", MessageSquare],
+      ["prompt", "User prompt", MessageSquare],
       ["interact", "Interact", MousePointerClick],
       ["toolCall", "Call tool", Wrench],
     ] as const
-  ).map(
-    ([stepKind, label, Icon]): EvalAddEntry => ({
-      key: stepKind,
-      label,
-      Icon,
-      section: "Actions",
-      scope: "inline",
-      advisory: false,
-      choice: { kind: "step", stepKind },
-    }),
-  ),
+  ).map(([stepKind, label, Icon]): EvalAddEntry => ({
+    key: stepKind,
+    label,
+    Icon,
+    section: "Actions",
+    scope: "inline",
+    advisory: false,
+    choice: { kind: "step", stepKind },
+  })),
+  ...(["noTools", "exactOrder"] as const).map((routeKind): EvalAddEntry => ({
+    key: `route:${routeKind}`,
+    label: ROUTE_CHECK_LABELS[routeKind],
+    section: ASSERTION_SECTIONS.selection,
+    Icon: routeKind === "noTools" ? Ban : ListOrdered,
+    scope: "whole-run",
+    advisory: false,
+    choice: { kind: "route-check", routeKind },
+  })),
   ...(Object.keys(PREDICATE_KIND_LABELS) as PredicateKind[]).map(
     (predicateKind): EvalAddEntry => ({
       key: `check:${predicateKind}`,
@@ -172,13 +183,4 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
       choice: { kind: "widget-check", widgetKind },
     }),
   ),
-  {
-    key: "outcome",
-    label: "Expected outcome / goal completion",
-    section: ASSERTION_SECTIONS.userValue,
-    Icon: Target,
-    scope: "outcome",
-    advisory: false,
-    choice: { kind: "outcome" },
-  },
 ];

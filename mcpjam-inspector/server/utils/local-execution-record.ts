@@ -37,7 +37,9 @@ export { PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS };
 
 /** How a local provider call ended. `aborted` is reported as an error. */
 export type LocalAttemptOutcome =
-  { kind: "ok" } | { kind: "error"; code?: string } | { kind: "aborted" };
+  | { kind: "ok" }
+  | { kind: "error"; code?: string }
+  | { kind: "aborted" };
 
 export type LocalExecutionAttempt = {
   rail: "local";
@@ -49,7 +51,7 @@ export type LocalExecutionAttempt = {
 
 /** The closed record shape `/stream/org/local-usage` accepts for this rail. */
 export type LocalExecutionRecord = {
-  requested: ModelSelection;
+  requested: ModelSelection & { origin?: "backfill" };
   resolved: {
     rail: "local";
     wireModelId: string;
@@ -126,6 +128,8 @@ export function buildLocalExecutionRecord(args: {
   wireModelId: string;
   /** The settings the provider call was actually sent with. */
   effectiveSettings: EffectiveModelSettings & { maxOutputTokens?: number };
+  attempts?: LocalExecutionAttempt[];
+  origin?: "backfill";
   outcome: LocalAttemptOutcome;
   at: number;
   /** The model id the provider reported serving, when it reported one. */
@@ -135,6 +139,7 @@ export function buildLocalExecutionRecord(args: {
   if (selection?.source !== "org" || !selection.connectionRef) {
     return undefined;
   }
+  if (args.attempts?.length === 0) return undefined;
   const nativeModelId = selection.nativeModelId;
   const attempt: LocalExecutionAttempt =
     args.outcome.kind === "ok"
@@ -161,7 +166,10 @@ export function buildLocalExecutionRecord(args: {
     args.effectiveSettings;
   const upstreamModel = args.upstreamModel?.trim();
   return {
-    requested: copySelection(selection),
+    requested: {
+      ...copySelection(selection),
+      ...(args.origin ? { origin: args.origin } : {}),
+    },
     resolved: {
       rail: "local",
       wireModelId: args.wireModelId,
@@ -183,7 +191,9 @@ export function buildLocalExecutionRecord(args: {
           ? Math.floor(maxOutputTokens)
           : PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
     },
-    attempts: [attempt],
+    attempts: args.attempts
+      ? args.attempts.map((item) => ({ ...item }))
+      : [attempt],
     ...(upstreamModel ? { upstreamModel } : {}),
   };
 }
