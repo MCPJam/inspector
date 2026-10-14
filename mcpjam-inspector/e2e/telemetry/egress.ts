@@ -665,6 +665,7 @@ export function describeHits(hits: readonly SentinelHit[]): string {
 export interface PostHogEvent {
   event: string;
   properties: Record<string, unknown>;
+  $set?: Record<string, unknown>;
 }
 
 /** Every PostHog event in the decoded requests (batches flattened). */
