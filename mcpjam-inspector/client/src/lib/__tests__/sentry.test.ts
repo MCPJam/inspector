@@ -107,6 +107,7 @@ describe("client sentry init", () => {
   });
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", undefined);
     const { resolveClientSentryConfig } = await import("../sentry");
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");

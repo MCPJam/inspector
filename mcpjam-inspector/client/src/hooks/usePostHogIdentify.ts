@@ -25,7 +25,8 @@ import {
  * content grant, then names follow the identity grant — a member of an
  * organization with enterprise privacy never has them sent, even on the
  * first load. The backend answers `"id_only"` only together with strict
- * content, so an id-only actor is not identified at all. This is
+ * content, so no identify call is made while that answer holds; names sent
+ * under an earlier full answer stay on the PostHog person. This is
  * independent of the session's replay recording level. Desktop content
  * remains strict, so identify is withheld.
  */
