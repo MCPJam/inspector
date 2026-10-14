@@ -17,6 +17,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import config from "../tsup.config";
 import {
   injectServerSourcemaps,
+  uploadServerSourcemaps,
   verifyServerSourcemaps,
 } from "../../scripts/server-sourcemaps.mjs";
 import { sentryBuildMetadata } from "../../shared/sentry-build-metadata";
@@ -45,6 +46,7 @@ const THROW = "throw new Error(detail.reason)";
 // esbuild resolves source symlinks, so the output root must use the same path.
 const work = realpathSync(mkdtempSync(join(tmpdir(), "server sourcemaps-")));
 let builds: string[] = [];
+let injected: ReturnType<typeof injectServerSourcemaps>[] = [];
 
 async function buildServer(name: string, banner: string): Promise<string> {
   if (typeof config === "function" || Array.isArray(config))
@@ -80,13 +82,17 @@ beforeAll(async () => {
     await buildServer("a", ""),
     await buildServer("b", "// offset\n// offset\n// offset"),
   ];
+  // Injected once here, so each test can also run on its own.
+  injected = builds.map((root) =>
+    injectServerSourcemaps(join(root, "dist/server")),
+  );
 });
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
 it("ties each build's transport debug_meta to its map and maps the owned frame to its source", () => {
-  const seen = builds.map((root) => {
+  const seen = builds.map((root, index) => {
     const dir = join(root, "dist/server");
-    const [{ debugId }] = injectServerSourcemaps(dir);
+    const [{ debugId }] = injected[index];
     const map = JSON.parse(readFileSync(join(dir, "index.js.map"), "utf8"));
     expect(debugId).toBe(map.debugId ?? map.debug_id);
     const lines = readFileSync(join(dir, "index.js"), "utf8").split("\n");
@@ -169,4 +175,52 @@ it("fails a shifted, mismatched, missing or uninjected map and any unowned outpu
   reset();
   writeFileSync(join(broken, "chunk-ABC123.js"), "export {};\n");
   expect(() => verifyServerSourcemaps(broken)).toThrow(/unowned outputs/);
+});
+
+it("uploads under the frames' URL prefix and reports, not throws, a failed upload", () => {
+  const summary = join(work, "step-summary.md");
+  vi.stubEnv("GITHUB_STEP_SUMMARY", summary);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const target = { release: "9.9.9", dist: "npm", ids: "index.js id-1" };
+    const calls: string[][] = [];
+    const record = (args: string[]) => void calls.push(args);
+    expect(uploadServerSourcemaps("dist/server", target, record)).toBe(true);
+    const [args] = calls;
+    expect(args.slice(0, 2)).toEqual(["sourcemaps", "upload"]);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--org=mcpjam-gh",
+        "--project=inspector-server",
+        "--release=9.9.9",
+        "--dist=npm",
+        "--strict",
+        "dist/server",
+      ]),
+    );
+    // Sentry matches an uploaded file to a frame by prefix + file name.
+    const prefix = args
+      .find((arg) => arg.startsWith("--url-prefix="))
+      ?.slice("--url-prefix=".length);
+    const { frameOutputNames } = sentryBuildMetadata(builds[0], [
+      "dist/server/index.js",
+    ]);
+    expect(`${prefix}/index.js`).toBe(frameOutputNames["dist/server/index.js"]);
+
+    const outage = () => {
+      throw new Error("503 from sentry.io");
+    };
+    expect(uploadServerSourcemaps("dist/server", target, outage)).toBe(false);
+    const failed =
+      "[server-sourcemaps] NOT uploaded to mcpjam-gh/inspector-server release 9.9.9 dist npm: 503 from sentry.io";
+    expect(log).toHaveBeenLastCalledWith(`::error::${failed}`);
+    expect(readFileSync(summary, "utf8").split("\n")).toEqual([
+      "[server-sourcemaps] uploaded index.js id-1 to mcpjam-gh/inspector-server release 9.9.9 dist npm",
+      failed,
+      "",
+    ]);
+  } finally {
+    log.mockRestore();
+    vi.unstubAllEnvs();
+  }
 });

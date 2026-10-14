@@ -105,6 +105,41 @@ function report(line, annotation = "") {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
 }
 
+/**
+ * Uploads the verified files under the release and `dist` the bundle reports.
+ * A failure is reported, not thrown: a Sentry outage must not fail a release
+ * or deploy, so the build log line is what telemetry acceptance reads.
+ */
+export function uploadServerSourcemaps(
+  dir,
+  { release, dist, ids },
+  cli = sentryCli,
+) {
+  const target = `mcpjam-gh/inspector-server release ${release} dist ${dist}`;
+  try {
+    cli([
+      "sourcemaps",
+      "upload",
+      "--org=mcpjam-gh",
+      "--project=inspector-server",
+      `--release=${release}`,
+      `--dist=${dist}`,
+      "--url-prefix=app:///dist/server",
+      "--strict",
+      "--wait-for=120",
+      dir,
+    ]);
+    report(`[server-sourcemaps] uploaded ${ids} to ${target}`);
+    return true;
+  } catch (error) {
+    report(
+      `[server-sourcemaps] NOT uploaded to ${target}: ${error.message}`,
+      "::error::",
+    );
+    return false;
+  }
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -118,32 +153,11 @@ if (
   ).version;
   // Same variable and fallback as the `define` in server/tsup.config.ts.
   const dist = process.env.MCPJAM_BUILD_SURFACE || "local";
-  const target = `mcpjam-gh/inspector-server release ${release} dist ${dist}`;
   if (!process.env.SENTRY_AUTH_TOKEN?.trim()) {
     console.log(
       `[server-sourcemaps] injected ${ids}; not uploaded: SENTRY_AUTH_TOKEN unset`,
     );
   } else {
-    try {
-      sentryCli([
-        "sourcemaps",
-        "upload",
-        "--org=mcpjam-gh",
-        "--project=inspector-server",
-        `--release=${release}`,
-        `--dist=${dist}`,
-        "--url-prefix=app:///dist/server",
-        "--strict",
-        "--wait-for=120",
-        dir,
-      ]);
-      report(`[server-sourcemaps] uploaded ${ids} to ${target}`);
-    } catch (error) {
-      // Reported, not thrown: a Sentry outage must not fail a release or deploy.
-      report(
-        `[server-sourcemaps] NOT uploaded to ${target}: ${error.message}`,
-        "::error::",
-      );
-    }
+    uploadServerSourcemaps(dir, { release, dist, ids });
   }
 }
