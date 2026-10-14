@@ -78,6 +78,7 @@ import {
   mergePickedRows,
   replaceLeadCompareSelection,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
@@ -1023,8 +1024,8 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  // Match the global host picker / HostsTab / useAppState scope: prefer
-  // the shared project id (what `GlobalHostBar` and `HostsTab` write),
+  // Match the HostsTab / useAppState scope: prefer the shared project
+  // id (what Connect's `HostsTab` and `HostCanvasSelector` write),
   // falling back to `activeProjectId` for CLI / no-cloud-sync flows where
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
@@ -1410,6 +1411,7 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
         flag: extensionsFlag,
@@ -1686,7 +1688,7 @@ export function PlaygroundMain({
         undefined,
       );
       if (match) {
-        setSelectedModel(match);
+        setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
         // A host with none clears what the previous host seeded (High must
@@ -1704,7 +1706,7 @@ export function PlaygroundMain({
         // the lead card keeps a level the USER chose for this row, but not
         // one the previous host seeded.
         const cards = compareCardsRef.current;
-        const leadSelection = compareSelectionForRow(
+        const leadSelection = cfg.modelSelection ?? compareSelectionForRow(
           match,
           hostedOrgModelConfig,
         );
@@ -2167,10 +2169,11 @@ export function PlaygroundMain({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections],
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections],
   );
 
   const compareCardsRef = useRef(compareCards);
@@ -2227,8 +2230,8 @@ export function PlaygroundMain({
   // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
   // the lead.
   //
-  // This is the SINGLE source of truth for picker + grid. The
-  // `PlaygroundHostPicker` rendered below is a controlled component —
+  // This is the SINGLE source of truth for picker + grid. The chat-input
+  // `ClientSelector` (`clientSelector` below) is a controlled component —
   // it does NOT call `usePersistedHost` itself. Two sibling hooks
   // wouldn't stay in sync because `selected-host-storage.ts` doesn't
   // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
@@ -3400,8 +3403,8 @@ export function PlaygroundMain({
   // Chat history coordination (docked `chatHistory` pane bridge)
   //
   // Ported from ChatTabV2:466-996 with the following intentional differences:
-  // - Draft-discard uses `window.confirm` instead of the full DiscardDraftDialog
-  //   port (matches PlaygroundHeader's existing window.confirm style).
+  // - Draft-discard uses an inline `AlertDialog` (`discardDraftDialogOpen`)
+  //   instead of ChatTabV2's `DiscardDraftDialog` component.
   // - `widgetStateQueue` is not part of `hasUnsavedDraft` (Playground doesn't
   //   queue widget-state updates the way ChatTabV2 does).
   // - Multi-server restoration: Playground is single-server in v1; if a saved
@@ -3663,13 +3666,12 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource,
@@ -3688,6 +3690,7 @@ export function PlaygroundMain({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -3704,8 +3707,8 @@ export function PlaygroundMain({
           sessionId: detail.chatSessionId,
           engine: "cloud",
         });
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -3720,6 +3723,8 @@ export function PlaygroundMain({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       adoptRestoredConversationTarget,
       readRecordedTarget,
@@ -4143,7 +4148,7 @@ export function PlaygroundMain({
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
-        pendingRestoredModelRef.current = detail.session.modelId
+        pendingRestoredModelRef.current = !detail.session.modelSelection && detail.session.modelId
           ? {
               chatSessionId: detail.session.chatSessionId,
               modelId: detail.session.modelId,
@@ -5188,7 +5193,7 @@ export function PlaygroundMain({
       // Compare off" — that left the user having to manually
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
-      // `MultiHostPicker` pick up the live lead from `currentHostId`.
+      // `ClientSelector` pick up the live lead from `currentHostId`.
       // Checked against `selectedHostIds.length` directly, NOT
       // `isComparingHosts` (which also requires `canEnableMultiHost`, a
       // transient signal that lags behind the Convex host-list query) and
@@ -5213,11 +5218,11 @@ export function PlaygroundMain({
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
-  // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
-  // via `onMultiHostEnabledChange`. After the "lift state ownership"
-  // fix the picker no longer calls `usePersistedHost` itself — both
-  // the toggle value and its setter come from THIS component's single
-  // hook instance, so any flip propagates without storage events.
+  // `handleMultiModelEnabledChange`). Wired into the chat-input
+  // `ClientSelector` via `onMultiHostEnabledChange`. The selector does
+  // not call `usePersistedHost` itself — both the toggle value and its
+  // setter come from THIS component's single hook instance, so any flip
+  // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiHostEnabled(enabled);
@@ -6246,7 +6251,7 @@ export function PlaygroundMain({
     ? {
         reasoningEffort,
         reasoningEffortLevels,
-        onReasoningEffortChange: setReasoningEffort,
+        onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
       }
     : leadCompareCard?.editableSelection
       ? {
@@ -6311,7 +6316,7 @@ export function PlaygroundMain({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     ...composerEffortProps,
     onResetChat: handleResetAllChats,
     submitDisabled:
@@ -7056,9 +7061,9 @@ export function PlaygroundMain({
                 />
               ) : null
             }
-            // The standalone "Compare" host picker moved into the chat-input
-            // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
-            // switching still lives in the global `GlobalHostBar`.
+            // Client switching and host comparison both live in the chat-input
+            // client chip (see `clientSelector` in `sharedChatInputProps`), so
+            // the header carries no host picker.
             trailing={
               effectiveHasMessages ? (
                 <Tooltip>
@@ -7357,6 +7362,7 @@ export function PlaygroundMain({
                             compareLabel={entry.label}
                             compareKind="model"
                             model={model}
+                            selection={card?.selection}
                             reasoningEffort={card?.reasoningEffort}
                             reasoningEffortHarness={compareEffortHarness}
                             effort={

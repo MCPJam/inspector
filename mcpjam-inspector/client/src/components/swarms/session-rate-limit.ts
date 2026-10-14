@@ -20,6 +20,7 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { isXaaConnectFailureReason } from "@/shared/xaa-connect-failure";
 import {
   describeProviderNotAllowlisted,
   isProviderNotAllowlistedCode,
@@ -224,7 +225,26 @@ export function describeSwarmAttemptFailure(
       rawCode: code,
     };
   }
-  const base = describeError(info.message);
+  // A server sign-in (XAA) the authorization server throttled says "(HTTP
+  // 429)" too, but no AI provider was involved. Read by its words it would
+  // card as the provider's quota, causes and advice included, so it gets the
+  // sign-in's own instead and keeps its own sentence.
+  const xaaSignInFailure = isXaaConnectFailureReason(code);
+  const described = describeError(info.message);
+  const base =
+    xaaSignInFailure && described.slug === "provider/quota"
+      ? {
+          ...describeAsSlug("internal/unknown"),
+          likelyCauses: [
+            "The server's authorization server refused or throttled MCPJam's sign-in.",
+          ],
+          nextSteps: [
+            "Check the server's auth settings.",
+            "Wait a few minutes, then run the swarm again.",
+          ],
+          severity: "warning" as const,
+        }
+      : described;
   if (
     base.slug === "provider/quota" &&
     !isAccountLimit(info.message, errorCode ?? info.code)

@@ -791,17 +791,20 @@ describe("App hosted OAuth callback handling", () => {
 
     it("shows the setup error when storage cannot record the reload", () => {
       setup();
-      const setItem = vi
-        .spyOn(Storage.prototype, "setItem")
-        .mockImplementation(() => {
+      const storage = sessionStorage;
+      vi.stubGlobal("sessionStorage", {
+        getItem: storage.getItem.bind(storage),
+        removeItem: storage.removeItem.bind(storage),
+        setItem: () => {
           throw new Error("QuotaExceededError");
-        });
+        },
+      });
       try {
         render(<App />);
         expect(reload).not.toHaveBeenCalled();
         expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
       } finally {
-        setItem.mockRestore();
+        vi.unstubAllGlobals();
       }
     });
 

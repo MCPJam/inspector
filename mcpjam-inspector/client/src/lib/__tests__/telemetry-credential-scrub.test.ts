@@ -81,6 +81,20 @@ describe("scrubCaptureEvent (PostHog before_send)", () => {
     },
   );
 
+  it.each(["jwt", "auth", "authorization", "otp"])(
+    "redacts a ?%s= query value and keeps the other keys",
+    async (key) => {
+      const { scrubCaptureEvent } = await loadAt("full");
+      const url = `https://app.mcpjam.com/p/k1/servers?tab=tools&${key}=${SECRET}#${key}=${SECRET}`;
+      const out = scrubCaptureEvent(
+        event("$pageview", { $current_url: url, $referrer: url }),
+      );
+      const expected = `https://app.mcpjam.com/p/k1/servers?tab=tools&${key}=[redacted]#${key}=[redacted]`;
+      expect(out?.properties.$current_url).toBe(expected);
+      expect(out?.properties.$referrer).toBe(expected);
+    },
+  );
+
   it("returns an event with nothing to scrub intact", async () => {
     const { scrubCaptureEvent } = await loadAt("full");
     const input = event("clicked", {
