@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef } from "react";
 export function useChatThreadTransition(options: {
   threadId: string;
   ownerScope: string;
-  begin: () => Promise<boolean>;
+  /** `isCurrent` is false once the action that asked for the chat lapsed. */
+  begin: (isCurrent: () => boolean) => Promise<boolean>;
   /** Target bootstrap/restoration can settle after the new thread ID renders. */
   destinationReady?: boolean;
   timeoutMs?: number;
@@ -74,7 +75,7 @@ export function useChatThreadTransition(options: {
             current.current.ownerScope === start.ownerScope &&
             current.current.threadId === start.threadId &&
             isCurrent()
-              ? start.begin()
+              ? start.begin(isCurrent)
               : false,
           )
           .then(

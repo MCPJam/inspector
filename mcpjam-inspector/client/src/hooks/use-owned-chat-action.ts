@@ -15,6 +15,8 @@ export type OwnedChatActionOptions<Payload> = {
     payload: Payload,
     isCurrent: () => boolean,
   ) => Promise<Payload | null>;
+  /** How long a `prepareNew` result stays usable; no new chat starts after. */
+  preparedForMs?: number;
   lock?: { current: boolean };
   /** Readiness for a draft, which only edits the composer: ownership,
    * read-only and transition state, never whether a send could run. */
@@ -75,6 +77,7 @@ export function useOwnedChatAction<Payload>(
       setPending(true);
       let expectedScope = start.scope;
       let transferred = false;
+      let usableUntil = Infinity;
       const stillOwned = () =>
         mounted.current &&
         (transferred || requireLive()) &&
@@ -98,8 +101,11 @@ export function useOwnedChatAction<Payload>(
             if (!prepared || !stillOwned()) return false;
             payload = prepared;
             transferred = true;
+            usableUntil = Date.now() + (start.preparedForMs ?? Infinity);
           }
-          const created = await start.newChat!.begin(stillOwned);
+          const created = await start.newChat!.begin(
+            () => stillOwned() && Date.now() < usableUntil,
+          );
           const live = current.current;
           if (
             !mounted.current ||

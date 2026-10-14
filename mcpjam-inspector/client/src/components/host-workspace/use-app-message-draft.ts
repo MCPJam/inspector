@@ -57,8 +57,7 @@ export function draftImageAttachments(
 export function useAppMessageDraft(
   key: string,
   composer: {
-    input: string;
-    setInput: (value: string) => void;
+    setInput: Dispatch<SetStateAction<string>>;
     setFileAttachments: Dispatch<SetStateAction<FileAttachment[]>>;
   },
 ) {
@@ -67,6 +66,9 @@ export function useAppMessageDraft(
     items: readonly DraftItem[];
   }>({ key, items: NO_ITEMS });
   const items = state.key === key ? state.items : NO_ITEMS;
+  // What a draft or a submit sees when it runs before the next render.
+  const latest = useRef(items);
+  latest.current = items;
   const remove = useCallback(
     (index: number) =>
       setState((old) =>
@@ -77,38 +79,51 @@ export function useAppMessageDraft(
     [key],
   );
   const clear = useCallback(() => setState({ key, items: NO_ITEMS }), [key]);
-  // A composer submit reads the draft when it starts and clears the composer
-  // when it ends. A draft placed in between would be acknowledged to its App
-  // and then cleared unsent, so placement is refused for the whole submit.
-  // A ref, not state: it must hold before React re-renders.
-  const submits = useRef(0);
-  const holdForSubmit = useCallback(() => {
-    submits.current += 1;
+  /** Removes the items a send carried, keeping any placed since. */
+  const discard = useCallback(
+    (sent: readonly DraftItem[]) =>
+      setState((old) =>
+        old.key === key
+          ? { key, items: old.items.filter((item) => !sent.includes(item)) }
+          : old,
+      ),
+    [key],
+  );
+  const snapshot = useCallback(() => latest.current, []);
+  // A composer submit, the discard-draft dialog and archive-all each read the
+  // composer when they start and may clear it when they end. A draft placed
+  // in between would be acknowledged to its App and then cleared unsent, so
+  // placement is refused while any of them holds. A ref, not state: it must
+  // hold before React re-renders.
+  const holds = useRef(0);
+  const hold = useCallback(() => {
+    holds.current += 1;
     let held = true;
     return () => {
-      if (held) submits.current -= 1;
+      if (held) holds.current -= 1;
       held = false;
     };
   }, []);
   /** Places the whole draft or nothing. Nothing executes. */
   const place = async (intent: PluginMessageIntent) => {
-    if (submits.current > 0) return false;
+    if (holds.current > 0) return false;
     const draft = pluginMessageDraft(intent.params);
     const images = draftImageAttachments(draft.images);
-    if (!images || items.length + draft.items.length > DRAFT_ITEMS_MAX)
+    if (!images || latest.current.length + draft.items.length > DRAFT_ITEMS_MAX)
       return false;
     if (draft.text)
-      composer.setInput(appendDraftText(composer.input, draft.text));
+      composer.setInput((old) => appendDraftText(old, draft.text));
     if (images.length)
       composer.setFileAttachments((old) => [...old, ...images]);
-    if (draft.items.length)
+    if (draft.items.length) {
+      latest.current = [...latest.current, ...draft.items];
       setState((old) => ({
         key,
         items: [...(old.key === key ? old.items : []), ...draft.items],
       }));
+    }
     return true;
   };
-  const parts = useMemo(() => items.map((item) => item.part), [items]);
   const contextAttachments = useMemo(
     (): ContextAttachment[] =>
       items.map((item, index) => ({
@@ -119,5 +134,13 @@ export function useAppMessageDraft(
       })),
     [items, remove],
   );
-  return { items, parts, contextAttachments, place, clear, holdForSubmit };
+  return {
+    items,
+    contextAttachments,
+    place,
+    clear,
+    discard,
+    snapshot,
+    hold,
+  };
 }

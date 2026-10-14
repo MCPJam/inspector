@@ -197,6 +197,39 @@ describe("owned app message dispatch", () => {
     expect(f.send).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledOnce();
   });
+  it("stops counting a prepared new-chat message as current once it lapses", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const f = fixture();
+      const newChat = {
+        ownerScope: "owner",
+        threadId: "old",
+        begin: vi.fn(
+          (_owned: () => boolean) => new Promise<string | null>(() => {}),
+        ),
+      };
+      const view = renderHook((props) => usePluginMessage(props), {
+        initialProps: { ...f, newChat, preparedForMs: 500 },
+      });
+      const input = {
+        ...intent(),
+        params: {
+          ...intent().params,
+          _meta: { "openai/message": { target: "new" as const } },
+        },
+      };
+      await act(async () => {
+        void view.result.current.send(input, () => true);
+      });
+      await waitFor(() => expect(newChat.begin).toHaveBeenCalledOnce());
+      const owned = newChat.begin.mock.calls[0]![0];
+      expect(owned()).toBe(true);
+      now.mockReturnValue(1_500);
+      expect(owned()).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it("shares one dispatch lock across App sources and prevents concurrent preparation", async () => {
     const f = fixture();
     const lock = { current: false };

@@ -32,6 +32,10 @@ export function pluginMessageSendMode(params: PluginMessageParams) {
   } as const;
 }
 
+/** How long the server honours a new-chat message prepared while its App was
+ * live. */
+export const PLUGIN_MESSAGE_PREPARATION_MS = 60_000;
+
 /** Private, one-turn transport input. Never stamp handles into UI history.
  * The send schema refuses a draft and the draft schema refuses a send, so a
  * draft can never reach a model turn. */

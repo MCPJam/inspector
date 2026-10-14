@@ -15,10 +15,13 @@ const draft = (content: unknown[]) => ({
 });
 
 function composer(input = "") {
+  let text = input;
   let attachments: FileAttachment[] = [];
   return {
-    input,
-    setInput: vi.fn(),
+    setInput: vi.fn((next: string | ((old: string) => string)) => {
+      text = typeof next === "function" ? next(text) : next;
+    }),
+    text: () => text,
     setFileAttachments: vi.fn(
       (
         next: FileAttachment[] | ((old: FileAttachment[]) => FileAttachment[]),
@@ -68,15 +71,13 @@ describe("an App's editable draft in the composer", () => {
         ),
       ).toBe(true);
     });
-    expect(c.setInput).toHaveBeenCalledWith(
-      "Already typed\n\nHelp me design a bracket.",
-    );
+    expect(c.text()).toBe("Already typed\n\nHelp me design a bracket.");
     expect(c.attachments()).toHaveLength(1);
     expect(c.attachments()[0].file.type).toBe("image/png");
     expect(
       view.result.current.contextAttachments.map((item) => item.title),
     ).toEqual(["Bracket spec", "part.stl", "fixture://notes"]);
-    expect(view.result.current.parts).toEqual([
+    expect(view.result.current.items.map((item) => item.part)).toEqual([
       {
         type: "data-plugin-message-text",
         data: { title: "Bracket spec", text: "Spec" },
@@ -146,11 +147,12 @@ describe("an App's editable draft in the composer", () => {
     const upload = new Promise<void>((done) => (finishUpload = done));
     let submitted: unknown[] = [];
     const submit = (async () => {
-      const release = view.result.current.holdForSubmit();
+      const release = view.result.current.hold();
       try {
-        submitted = view.result.current.parts;
+        const sent = view.result.current.snapshot();
+        submitted = sent.map((entry) => entry.part);
         await upload;
-        view.result.current.clear();
+        view.result.current.discard(sent);
       } finally {
         release();
       }
@@ -173,8 +175,8 @@ describe("an App's editable draft in the composer", () => {
 
   it("releases each submit hold once, even when released twice", async () => {
     const view = renderHook(() => useAppMessageDraft("chat-1", composer()));
-    const first = view.result.current.holdForSubmit();
-    const second = view.result.current.holdForSubmit();
+    const first = view.result.current.hold();
+    const second = view.result.current.hold();
     first();
     first();
     const text = draft([{ type: "text", text: "x" }]);
@@ -185,5 +187,46 @@ describe("an App's editable draft in the composer", () => {
     await act(async () => {
       expect(await view.result.current.place(text)).toBe(true);
     });
+  });
+
+  it("keeps both texts when two drafts land before the composer renders", async () => {
+    const c = composer("Mine");
+    const view = renderHook(() => useAppMessageDraft("chat-1", c));
+    await act(async () => {
+      const { place } = view.result.current;
+      await place(draft([{ type: "text", text: "First" }]));
+      await place(draft([{ type: "text", text: "Second" }]));
+    });
+    expect(c.text()).toBe("Mine\n\nFirst\n\nSecond");
+  });
+
+  it("counts items placed before a render against the limit", async () => {
+    const view = renderHook(() => useAppMessageDraft("chat-1", composer()));
+    const item = { type: "text", text: "x", _meta: { "openai/title": "T" } };
+    await act(async () => {
+      const { place } = view.result.current;
+      expect(await place(draft(Array.from({ length: 64 }, () => item)))).toBe(
+        true,
+      );
+      expect(await place(draft([item]))).toBe(false);
+    });
+    expect(view.result.current.items).toHaveLength(64);
+  });
+
+  it("removes only the items a send carried", async () => {
+    const view = renderHook(() => useAppMessageDraft("chat-1", composer()));
+    const titled = (title: string) =>
+      draft([{ type: "text", text: title, _meta: { "openai/title": title } }]);
+    await act(async () => {
+      await view.result.current.place(titled("Sent"));
+    });
+    const sent = view.result.current.snapshot();
+    await act(async () => {
+      await view.result.current.place(titled("Later"));
+    });
+    act(() => view.result.current.discard(sent));
+    expect(view.result.current.items.map((entry) => entry.title)).toEqual([
+      "Later",
+    ]);
   });
 });
