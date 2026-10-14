@@ -181,6 +181,7 @@ export function EvalExportModal({
 
     if (!singleServerId) {
       setActiveTab("sdk");
+      setPromptRequested(false);
       setAgentPromptState({ status: "idle", prompt: null, error: null });
       return;
     }

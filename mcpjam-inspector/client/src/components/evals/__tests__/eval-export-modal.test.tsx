@@ -412,7 +412,7 @@ describe("EvalExportModal", () => {
   });
 
   it.each([{ servers: [] }, { servers: ["weather", "calendar"] }])(
-    "returns to SDK code if the prompt's single-server requirement changes to $servers",
+    "requires a new prompt selection after the suite changes to $servers",
     async ({ servers }) => {
       const user = userEvent.setup();
       const { rerender } = renderWithProviders(
@@ -436,6 +436,19 @@ describe("EvalExportModal", () => {
       );
       expect(screen.getByRole("tab", { name: "Prompt for agent" })).toBeDisabled();
       expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+
+      rerender(<EvalExportModal {...baseProps} />);
+
+      expect(screen.getByRole("tab", { name: "SDK code" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByRole("tab", { name: "Prompt for agent" })).toBeEnabled();
+      expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+      await screen.findByText(/MCP Server Brief: weather/);
+      expect(mockExportServerApi).toHaveBeenCalledTimes(2);
     },
   );
 });
