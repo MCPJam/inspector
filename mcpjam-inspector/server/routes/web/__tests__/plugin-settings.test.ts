@@ -227,6 +227,33 @@ describe("owned structured settings", () => {
     f.catalog.mockResolvedValue({ ...catalog(), hostRevision: "changed" });
     expect((await post("read", op())).status).toBe(403);
   });
+  it.each([
+    [
+      { title: "Reset library", annotations: { title: "Annotation label" } },
+      "Reset library",
+    ],
+    [{ annotations: { title: "Annotation label" } }, "Annotation label"],
+    [{}, "reset"],
+  ])(
+    "labels settings actions from the referenced tool: %j",
+    async (presentation, title) => {
+      f.catalog.mockImplementation(async () => {
+        const current = catalog();
+        return {
+          ...current,
+          tools: current.tools.map((tool) =>
+            tool.name === "reset" ? { ...tool, ...presentation } : tool,
+          ),
+        };
+      });
+      await opened();
+      const response = await post("actions", handle());
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        actions: [{ name: "reset", title, kind: "app" }],
+      });
+    },
+  );
   it("refuses undeclared action tools", async () => {
     await opened();
     expect(

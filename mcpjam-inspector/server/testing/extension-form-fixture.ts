@@ -1,7 +1,9 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import {
   createElicitInput,
   OpenAIFormSchema,
+  requestFormInput,
+  type OpenAIFormRequestParams,
 } from "@openai/mcp-extensions/server";
 import { z } from "zod/v4";
 import { extendedFormFixture } from "../../shared/plugin-extensions/testing/form-fixtures.js";
@@ -46,23 +48,13 @@ export function registerExtensionFormFixture(server: McpServer) {
         inputSchema: z.object({}),
         annotations: { readOnlyHint: true, destructiveHint: false },
       },
-      async () => {
-        // The extension package is typed against the v1 SDK. It only calls
-        // request(request, resultSchema) and getClientCapabilities(), which
-        // the v2 server provides with the same shape.
-        const elicit = createElicitInput({
-          server: server.server as unknown as Parameters<
-            typeof createElicitInput
-          >[0]["server"],
+      async (_args, context) => {
+        const result = await requestForm(server, context, {
+          mode: "form",
+          message: "Disposable form check",
+          requestedSchema: OpenAIFormSchema.parse(requestedSchema),
         });
-        const result = await elicit(
-          {
-            mode: "form",
-            message: "Disposable form check",
-            requestedSchema: OpenAIFormSchema.parse(requestedSchema),
-          },
-          { timeout: 300_000 },
-        );
+        if ("resultType" in result) return result;
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
         };
@@ -83,4 +75,27 @@ export function registerExtensionFormFixture(server: McpServer) {
       ],
     }),
   );
+}
+
+/** The same form over either wire, as OpenAI's own helpers send it: MRTR
+ * (`input_required` with the schema in `_meta["openai/elicitation"]`) on
+ * 2026-07-28 connections, `openai/elicitation/create` before that. */
+function requestForm(
+  server: McpServer,
+  context: ServerContext,
+  params: OpenAIFormRequestParams,
+) {
+  const envelope = z
+    .object({
+      "io.modelcontextprotocol/protocolVersion": z.string().optional(),
+    })
+    .parse(context.mcpReq.envelope ?? {});
+  const version =
+    envelope["io.modelcontextprotocol/protocolVersion"] ??
+    server.server.getNegotiatedProtocolVersion();
+  if (version !== undefined && version >= "2026-07-28")
+    return Promise.resolve(
+      requestFormInput(context, { ...params, key: "form" }),
+    );
+  return createElicitInput(server)(context, params, { timeout: 300_000 });
 }

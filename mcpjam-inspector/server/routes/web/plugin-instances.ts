@@ -85,6 +85,7 @@ import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { isAbortError } from "../../../shared/abort-errors.js";
 import {
   PluginActivationError,
+  pluginEntrypointDiagnostics,
   pluginEntrypointKinds,
   pluginEntrypointPlan,
   pluginEntrypointTitle,
@@ -490,8 +491,13 @@ instances.post("/discover", (c) =>
         catalog.serverIdentity?.kind === "plugin"
           ? catalog.serverIdentity.pluginId
           : undefined;
+      const diagnostics = pluginEntrypointDiagnostics(
+        catalog.tools,
+        body.serverId,
+      );
       return c.json({
         entries,
+        ...(diagnostics.length ? { diagnostics } : {}),
         ...(icons.serverIcons.length ? { serverIcons: icons.serverIcons } : {}),
         ...(pluginId ? { pluginId } : {}),
         mentions:

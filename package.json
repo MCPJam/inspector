@@ -84,6 +84,9 @@
     "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
     "external-editor": {
       "tmp": "^0.2.6"
+    },
+    "@openai/mcp-extensions": {
+      "zod": "^4.6.5"
     }
   }
 }

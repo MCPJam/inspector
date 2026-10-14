@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { Client } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { createSettings } from "@openai/mcp-extensions/server";
 import {
   pluginSettingsCapability,
@@ -71,6 +70,39 @@ describe("native settings capability", () => {
 });
 
 describe("native settings semantic admission", () => {
+  it("accepts a settings tool action without a deprecated layout title", () => {
+    const input = {
+      ...settingsFixture(),
+      layout: [
+        {
+          kind: "group",
+          title: "Library",
+          items: [{ kind: "tool", tool: "cad.library" }],
+        },
+      ],
+    };
+    const document = parsePluginSettingsDocument(input);
+    expect(document.groups[0].items[0]).toMatchObject({
+      kind: "tool",
+      tool: "cad.library",
+    });
+    expect(input.layout[0].items[0]).not.toHaveProperty("title");
+    expect(document.values).toEqual(input.values);
+  });
+
+  it.each([
+    { kind: "tool", tool: " " },
+    { kind: "tool", tool: "cad.library", unexpected: true },
+    { kind: "tool", tool: "cad.library", title: 123 },
+  ])("keeps refusing malformed title-less actions: %j", (action) => {
+    expect(() =>
+      parsePluginSettingsDocument({
+        ...settingsFixture(),
+        layout: [{ kind: "group", title: "Library", items: [action] }],
+      }),
+    ).toThrow("PLUGIN_SETTINGS_INVALID_RESULT");
+  });
+
   it("bounds read and update envelopes even when a field has no length constraint", () => {
     const input = {
       schema: {

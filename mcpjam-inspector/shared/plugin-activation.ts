@@ -1,8 +1,12 @@
 import { z } from "zod";
 import {
-  OpenAIUiToolMetadataSchema,
+  OpenAIUiEntrypointSchema,
   type OpenAIUiEntrypoint,
 } from "@openai/mcp-extensions/server";
+import {
+  pluginDiagnostic,
+  type PluginDiagnostic,
+} from "./plugin-diagnostics.js";
 
 export type PluginEntrypointTool = {
   name: string;
@@ -33,14 +37,52 @@ export type PluginEntrypointSelector = z.infer<
 >;
 export class PluginActivationError extends Error {}
 
-/** Catalog metadata is presentation, not a source of execution authority. */
+const entrypointListSchema = z.object({ entrypoints: z.array(z.unknown()) });
+
+/** Catalog metadata is presentation, not a source of execution authority.
+ * Each declaration is read on its own, so one this host does not recognize
+ * (such as a removed kind) drops only itself, never the tool's other
+ * entrypoints. */
+function readEntrypoints(tool: { _meta?: Record<string, unknown> }) {
+  const list = entrypointListSchema.safeParse(tool._meta?.["openai/ui"]);
+  if (!list.success) return { entrypoints: [], ignored: 0 };
+  const entrypoints = list.data.entrypoints.flatMap((entry) => {
+    const parsed = OpenAIUiEntrypointSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return {
+    entrypoints,
+    ignored: list.data.entrypoints.length - entrypoints.length,
+  };
+}
+
 export function pluginEntrypointDeclarations(tool: {
   _meta?: Record<string, unknown>;
 }): OpenAIUiEntrypoint[] {
-  const metadata = OpenAIUiToolMetadataSchema.safeParse(
-    tool._meta?.["openai/ui"],
+  return readEntrypoints(tool).entrypoints;
+}
+
+/** One Logs row naming the tools whose unrecognized declarations were ignored. */
+export function pluginEntrypointDiagnostics(
+  tools: readonly { name: string; _meta?: Record<string, unknown> }[],
+  serverId: string,
+): PluginDiagnostic[] {
+  const names = tools.flatMap((tool) =>
+    readEntrypoints(tool).ignored ? [tool.name] : [],
   );
-  return metadata.success ? (metadata.data.entrypoints ?? []) : [];
+  if (!names.length) return [];
+  return [
+    {
+      ...pluginDiagnostic(
+        "warning",
+        "PLUGIN_ENTRYPOINT_UNRECOGNIZED",
+        "Entrypoint declaration ignored",
+        'Some `_meta["openai/ui"].entrypoints` items are not a global, thread or file entrypoint (for example the removed `type: "settings"`), so MCPJam ignored them. The tools\' other entrypoints still work. Declare structured settings with the `openai/settings` server capability instead.',
+        { tools: names.slice(0, 16) },
+      ),
+      serverId,
+    },
+  ];
 }
 
 export function pluginEntrypointTitle(tool: PluginEntrypointTool): string {
@@ -53,13 +95,11 @@ export function pluginEntrypointTitle(tool: PluginEntrypointTool): string {
 
 export function pluginEntrypointKinds(tool: {
   _meta?: Record<string, unknown>;
-}): ("global" | "thread" | "settings")[] {
+}): ("global" | "thread")[] {
   return [
     ...new Set(
       pluginEntrypointDeclarations(tool).flatMap(({ type }) =>
-        type === "global" || type === "thread" || type === "settings"
-          ? [type]
-          : [],
+        type === "global" || type === "thread" ? [type] : [],
       ),
     ),
   ];
@@ -73,30 +113,6 @@ export function pluginQuickAction(tool: { _meta?: Record<string, unknown> }) {
       : [],
   );
   return actions.length === 1 ? structuredClone(actions[0]) : undefined;
-}
-
-/** Use only a single authorized server's catalog; names never cross servers. */
-export function pluginSettingsEntrypoints(
-  tools: readonly PluginEntrypointTool[],
-  search = "",
-) {
-  const query = search.trim().toLocaleLowerCase();
-  return tools.flatMap((tool) => {
-    const declarations = pluginEntrypointDeclarations(tool).filter(
-      (entrypoint) => entrypoint.type === "settings",
-    );
-    if (!declarations.length) return [];
-    const title = pluginEntrypointTitle(tool);
-    const searchTerms = [
-      ...new Set(
-        declarations.flatMap((entrypoint) => entrypoint.searchTerms ?? []),
-      ),
-    ];
-    const matches = [title, tool.name, ...searchTerms].some((term) =>
-      term.toLocaleLowerCase().includes(query),
-    );
-    return matches ? [{ toolName: tool.name, title, searchTerms }] : [];
-  });
 }
 
 /** Declaration-only registry. A match does not grant access to a file. */
@@ -142,7 +158,12 @@ export function pluginEntrypointPlan(
       scope: { kind: "global" as const },
     };
   }
-  if (!pluginEntrypointKinds(tool).includes(selector.kind))
+  // A settings selector names MCPJam's structured-settings surface, which no
+  // tool declares as an entrypoint.
+  if (
+    selector.kind === "settings" ||
+    !pluginEntrypointKinds(tool).includes(selector.kind)
+  )
     throw new PluginActivationError("PLUGIN_ENTRYPOINT_UNAVAILABLE");
   return {
     selector,

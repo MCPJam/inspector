@@ -37,12 +37,36 @@ beforeEach(() => {
   f.open.mockResolvedValue({
     controller,
     close,
-    actions: [{ name: "reset", kind: "app" }],
+    actions: [{ name: "reset", title: "Reset", kind: "app" }],
     openApp,
     action: vi.fn(),
   });
 });
 describe("shared server settings view", () => {
+  it("uses the catalog action title instead of a deprecated layout title", async () => {
+    f.open.mockResolvedValue({
+      controller,
+      close,
+      actions: [{ name: "reset", title: "Reset library", kind: "tool" }],
+      openApp,
+      action: vi.fn(),
+    });
+    render(
+      <ServerSettingsView
+        scope={scope}
+        serverId="server"
+        serverName="Bits & Bolts"
+        approve={approve}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Reset library" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Reset", exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses the server name and existing controlled editor to save without a dialog", async () => {
     const view = render(
       <ServerSettingsView
@@ -144,7 +168,7 @@ describe("settings rows, replies and described errors", () => {
     f.open.mockResolvedValue({
       controller,
       close,
-      actions: [{ name: "reset", kind: "tool" }],
+      actions: [{ name: "reset", title: "Reset", kind: "tool" }],
       openApp,
       action,
     });
@@ -167,7 +191,7 @@ describe("settings rows, replies and described errors", () => {
     f.open.mockResolvedValue({
       controller,
       close,
-      actions: [{ name: "reset", kind: "tool" }],
+      actions: [{ name: "reset", title: "Reset", kind: "tool" }],
       openApp,
       action: vi.fn(async () => ({
         isError: true,
