@@ -245,6 +245,12 @@ describe("guest-session module", () => {
       status: 503,
       statusText: "Service Unavailable",
     } as Response;
+    const refused = (retryAfterSeconds: number) =>
+      new Response(null, {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: { "Retry-After": String(retryAfterSeconds) },
+      });
 
     it("rejects with the real cause and status on a non-ok response", async () => {
       vi.mocked(global.fetch).mockResolvedValue(unavailable);
@@ -283,6 +289,35 @@ describe("guest-session module", () => {
       ).resolves.toBeNull();
       expect(guestSession.getGuestSessionRefusal()).not.toBeNull();
       expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("force refresh resolves null on a 429 refusal and records it, like a mint", async () => {
+      // A burst (several tabs falling back to guest at once, or a reconnect
+      // storm) hits the per-IP limiter, and Convex's refetch goes through the
+      // force-refresh path. A rethrown refusal would send the auth ladder into
+      // the same 429 three more times and report it as a failure.
+      vi.mocked(global.fetch).mockResolvedValue(refused(45));
+
+      const before = Date.now();
+      await expect(
+        guestSession.forceRefreshGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      const refusal = guestSession.getGuestSessionRefusal();
+      expect(refusal).not.toBeNull();
+      expect(refusal!.until).toBeGreaterThanOrEqual(before + 45_000);
+      expect(refusal!.until).toBeLessThan(before + 46_000);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("force refresh does not request while a refusal stands", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(refused(45));
+      await guestSession.getOrCreateGuestSessionOrThrow();
+      vi.mocked(global.fetch).mockClear();
+
+      await expect(
+        guestSession.forceRefreshGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it("force refresh rejects while its wrapper returns null", async () => {

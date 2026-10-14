@@ -1,4 +1,4 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
@@ -15,7 +15,7 @@ import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
  * `server/utils/host-runtime-config.ts`). Without this affordance the guest
  * either sees the control silently missing or hits an opaque runtime error.
  * Instead we name the situation and offer the exact next step — WorkOS
- * sign-in — wired to the same `useAuth().signIn` flow the header uses.
+ * sign-in — wired to the same `useInspectorAuth().signIn` flow the header uses.
  *
  * Surface-agnostic: pass a `message` naming what THIS surface gates. Mirrors
  * {@link ComputersUnavailableMessage}'s tone (state the fact, don't blame the
@@ -34,7 +34,7 @@ export function GuestSignInMessage({
   /** Inline (in-tab) layout instead of a full-height centered pane. */
   compact?: boolean;
 }) {
-  const { signIn } = useAuth();
+  const { signIn } = useInspectorAuth();
 
   const handleSignIn = () => {
     // track() injects platform/environment/location (standardEventProps); the
