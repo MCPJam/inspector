@@ -3,10 +3,10 @@ import {
   AGENT_MAX_STEPS,
   MCPJAM_AGENT_BILLING_FEATURE,
   MCPJAM_AGENT_MODEL_DEFINITION,
+  MCPJAM_AGENT_MODEL_SELECTION,
 } from "../../../shared/mcpjam-agent-model.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
- *
  * UI-ONLY chat surface: the agent ACTS exclusively by driving the inspector
  * UI through the client-fulfilled `ui_*` tools, so every action is visible
  * to the user in their own app. It KNOWS things via read-only sources:
@@ -15,7 +15,6 @@ import {
  *   - the MCP project's own docs server (`https://modelcontextprotocol.io/mcp`,
  *     also Mintlify) for what the PROTOCOL says, and
  *   - the `web_search` built-in.
- *
  * Why a second docs server rather than protocol knowledge in the prompt (or
  * a pinned skill): the spec is published per version — `/specification/`
  * holds `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`, `2026-07-28`
@@ -86,6 +85,10 @@ import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
 import {
   validateUiToolEntries,
   UiToolValidationError,
@@ -336,6 +339,17 @@ mcpjamAgent.post("/", async (c) => {
       return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
     }
     if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+
+    // Before the MCP manager exists: a continuation this turn's step budget
+    // cannot serve is refused without connecting the docs servers, calling the
+    // model or persisting a turn. `AGENT_MAX_STEPS` is the ceiling the engine
+    // enforces below, so the two cannot disagree about when the budget is gone.
+    const loopVerdict = checkAgentLoopGuard({
+      messages: body.messages,
+      maxSteps: AGENT_MAX_STEPS,
+    });
+    if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "mcpjam_agent");
+
     const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(
@@ -507,6 +521,7 @@ mcpjamAgent.post("/", async (c) => {
           // for this exact id, so sending anything else would refuse the turn
           // rather than quietly bill someone.
           modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION as never,
+          routingSelection: MCPJAM_AGENT_MODEL_SELECTION,
           systemPrompt: effectiveSystemPrompt,
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,

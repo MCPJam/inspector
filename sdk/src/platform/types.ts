@@ -28,6 +28,16 @@ import type {
   ModelReasoningEffort,
   RequestedModelSelection,
 } from "../host-config/model-selection.js";
+import type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
+export type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1449,12 +1459,7 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    /**
-     * `gateway_preferred`: Gateway when configured and priced there, else
-     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
-     * with a fallback model only when the classifier cannot be reached.
-     */
-    routing?: "gateway_preferred" | "typed_decision";
+    routing?: PlatformAnalysisRouting;
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
@@ -1702,8 +1707,10 @@ export type PlatformEvalRunGroupEntry =
        * The RUN's status (always `"running"` at launch). Named apart from the
        * entry's own `status` on purpose — two fields called `status` in one
        * object is how a reader ends up branching on the wrong one.
-       */
+      */
       runStatus: string;
+      /** True when this target replays a run already started with this key. */
+      deduped?: boolean;
       servers?: Array<{ id: string; name?: string }>;
       environment?: PlatformEvalRunEnvironment | null;
       caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
@@ -5290,7 +5297,7 @@ export interface PlatformUnifiedFindings {
   } | null;
   job: null | {
     kind: "build" | "enrich";
-    status: "pending" | "completed" | "failed";
+    status: PlatformFindingsJobStatus;
     startedAt: number;
     updatedAt: number;
     errorCode?: string;
@@ -5865,12 +5872,13 @@ export interface PlatformServerConnectionCreateBody {
 // ── Directory readiness ─────────────────────────────────────────────────
 
 /**
- * The two words the public vocabulary uses.
+ * The words the public vocabulary uses.
  *
- * Never `anthropic`/`chatgpt`: a caller writes what the product says, and the
- * product says "Claude directory readiness" and "OpenAI plugin directory".
+ * Never `anthropic`/`chatgpt`/`meta`: a caller writes what the product says,
+ * and the product says "Claude directory readiness", "OpenAI plugin
+ * directory" and "Muse".
  */
-export type PlatformReadinessKind = "claude" | "openai";
+export type PlatformReadinessKind = "claude" | "openai" | "muse";
 
 /**
  * The submission shapes a HOSTED run may grade.
@@ -5886,9 +5894,9 @@ export type PlatformReadinessSubmissionMode =
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
 /**
- * Every lane either publisher grades, as one union.
+ * Every lane any publisher grades, as one union.
  *
- * Claude uses five of these and OpenAI seven; the union is their sum rather
+ * Claude uses five of these, OpenAI seven and Muse four; the union is their sum rather
  * than two types, because a client renders a run whose publisher it learns at
  * runtime. Spelled out rather than left as `string` so a `switch` over lane
  * copy is exhaustiveness-checked — a lane added here becomes a compile error
@@ -5901,7 +5909,8 @@ export type PlatformReadinessLane =
   | "submission-artifacts"
   | "experience-insights"
   | "plugin-package"
-  | "release-contract";
+  | "release-contract"
+  | "tool-policy";
 
 /**
  * What one lane managed to look at, reported separately from what it found.
@@ -5943,15 +5952,7 @@ export interface PlatformReadinessObservationState {
     | "billing-blocked"
     | "provider-failed"
     | "invalid-output";
-  reason?:
-    | "not_requested"
-    | "billing_limit_reached"
-    | "platform_cap_reached"
-    | "provider_error"
-    | "provider_timeout"
-    | "schema_invalid"
-    | "no_evidence"
-    | "cancelled";
+  reason?: PlatformReadinessObservationReason;
   detail?: string;
 }
 
@@ -6034,6 +6035,18 @@ export interface PlatformOpenAIReadinessStartBody
    */
   submissionMode: PlatformReadinessSubmissionMode;
 }
+
+/**
+ * Body for a Muse start: the replay guard only.
+ *
+ * No `includeLlmObservations` — Muse has no observation catalogue and the
+ * platform refuses the opt-in — and no submission mode, which belongs to the
+ * OpenAI plugin directory.
+ */
+export type PlatformMuseReadinessStartBody = Pick<
+  PlatformReadinessStartBody,
+  "idempotencyKey"
+>;
 
 /** Suites the hosted agent/API surface can start. OAuth is refused. */
 export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";

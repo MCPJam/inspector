@@ -183,10 +183,10 @@ jobs:
               if (!run) {
                 core.setFailed(
                   `No successful ${workflowId} run found for ${context.sha}. ` +
-                    `That workflow runs on every push to main, so this usually means ` +
-                    `it is still running, failed, or was cancelled because a newer ` +
-                    `commit superseded this one. Re-run it for this SHA, or release ` +
-                    `the newer HEAD.`
+                    `That workflow runs in the merge queue on every commit before it ` +
+                    `lands on main, so this commit either did not come through the ` +
+                    `queue or its run is older than the pages searched here. Re-run ` +
+                    `that queue run for this SHA, or release a newer HEAD.`
                 );
                 return;
               }
@@ -404,12 +404,11 @@ jobs:
   # action does not depend on either.
   evals-action-smoke:
     needs: preflight
-    # The repo variables are what make the live smoke possible. While they are
-    # unset, the smoke SKIPS instead of failing the whole release. Set both
-    # variables to turn the gate back on.
-    if: >-
-      needs.preflight.outputs.evals_action_changed == 'true' &&
-      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
+    # Runs whenever the action changed, including when the repo variables are
+    # unset — the called workflow fails loudly on empty inputs, which is the
+    # point. Skipping here instead meant the gate quietly became a no-op and
+    # `evals-v1` shipped untested while the README said the smoke gated it.
+    if: needs.preflight.outputs.evals_action_changed == 'true'
     uses: ./.github/workflows/evals-action-smoke.yml
     with:
       project: ${{ vars.EVALS_SMOKE_PROJECT }}
@@ -418,18 +417,19 @@ jobs:
 
   publish-evals-action:
     needs: [preflight, evals-action-smoke]
-    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
-    # variables are unset) still lets the tag ship, while a FAILED smoke still
-    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
-    # job along with it — but that also stops a FAILED `needs` from skipping
-    # it, so `preflight` is re-asserted by hand. It must be: the change
-    # detection runs before preflight's green-CI gate, so a preflight that
-    # fails later still reports `evals_action_changed: true`.
+    # The tag moves only on a smoke that actually PASSED. It used to move on
+    # anything that was not a failure, which included `skipped` — so with the
+    # smoke's repo variables unset, every published tag was untested.
+    #
+    # `!cancelled()` is kept so a cancelled run does not read as success, and
+    # `preflight` is re-asserted by hand because the change detection runs
+    # before preflight's green-CI gate: a preflight that fails later still
+    # reports `evals_action_changed: true`.
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
-      needs.evals-action-smoke.result != 'failure'
+      needs.evals-action-smoke.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     concurrency:
@@ -506,7 +506,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify evaluator publication ordering
-        run: node --test .github/scripts/publish-evaluators-first.test.mjs
+        run: node --test .github/scripts/publish-evaluators-first.test.mjs .github/scripts/sdk-sourcemaps.test.mjs
 
       - name: Build evaluators
         run: npm run build -w @mcpjam/evaluators
@@ -706,17 +706,6 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
-      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
-      # below, overwriting these injected debug ids in the packed tarball. That
-      # is a pre-existing bug (it predates this job split) and is tracked
-      # separately — the real fix is to inject inside the sdk's own prepack.
-      # Left in place so behavior matches what shipped before.
-      - name: Inject SDK sourcemap debug ids
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npx @sentry/cli sourcemaps inject ./sdk/dist
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
       - name: Publish evaluator dependency first
         if: fromJSON(needs.preflight.outputs.publish_evaluators)
         run: node .github/scripts/publish-evaluators-first.mjs
@@ -732,6 +721,8 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
+          # npm's SDK prepack injects after its prepublish rebuild. No build or
+          # injection may run between packing and uploading these same files.
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
             --release="@mcpjam/sdk@${version}" \
@@ -740,6 +731,30 @@ jobs:
             ./sdk/dist
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # The Docker Hub image at the Inspector version npm just got. No job here
+  # waits on it, so a Docker Hub outage or a rejected token cannot hold back
+  # the webapp or the GitHub release; the run still ends red so the failure is
+  # seen. The run, and with it the `release` concurrency group, stays open
+  # until the image is pushed, so a release dispatched meanwhile starts after
+  # it. Retry with "Re-run failed jobs", or dispatch docker-release.yml.
+  # `always()` and the explicit result check are needed because
+  # publish-packages often runs after a skipped deploy-backend-prod, and a
+  # skipped ancestor would otherwise skip this job too.
+  docker-release:
+    needs:
+      - preflight
+      - publish-packages
+    if: |
+      always() &&
+      needs.preflight.outputs.publish_inspector == 'true' &&
+      needs.publish-packages.result == 'success'
+    uses: ./.github/workflows/docker-release.yml
+    with:
+      sha: ${{ github.sha }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   deploy-backend-prod:
     needs:

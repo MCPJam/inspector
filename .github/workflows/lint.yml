@@ -6,8 +6,10 @@ on:
   # below it until that one merges — never matched `main` and was never built
   # or linted.
   pull_request:
-  push:
-    branches: [main]
+  # The merge queue tests the merged result before it lands on main; without
+  # this trigger the queue's required checks never report and entries time out.
+  # No `push: main`, for the reason in test.yml.
+  merge_group:
 
 # A newer push to the same branch makes in-flight runs obsolete — cancel them
 # so superseded runs don't keep burning a runner. Matters more now that this
@@ -24,7 +26,11 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Blacksmith, and TEST_RUNNER to fall back: see test.yml.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    # About 3x the slowest green run with a warm node_modules cache, so a cold
+    # install still fits and a hung step fails in minutes instead of six hours.
+    timeout-minutes: 20
     name: Build and Test
 
     steps:
@@ -43,6 +49,9 @@ jobs:
       - name: Verify MCP deploy workflow path filters
         run: node --test .github/scripts/mcp-workflow-paths.test.mjs
 
+      - name: Verify the node_modules cache warmer matches its consumers
+        run: node --test .github/scripts/warm-node-modules.test.mjs
+
       # The scripts behind prepare-release.yml, release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.
@@ -53,6 +62,7 @@ jobs:
             .github/scripts/release-plan.test.mjs \
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
+            .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
             .github/scripts/check-workos-loopback.test.mjs
 
@@ -73,6 +83,14 @@ jobs:
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
+
+      - name: Verify telemetry catalogs
+        run: |
+          npm run telemetry:check
+          node --test scripts/__tests__/telemetry-route-catalog.test.mjs
+
+      - name: Verify SDK source-map packing and artifact smoke
+        run: node --test .github/scripts/sdk-sourcemaps.test.mjs
 
       - name: Verify DESIGN.md and mirrored token surfaces are in sync
         run: npm run design:check
@@ -99,6 +117,14 @@ jobs:
 
       - name: Typecheck inspector client
         run: npm run typecheck:client -w @mcpjam/inspector
+
+      # A ratchet, not a clean gate: server/tsc-baseline.json holds each
+      # server file's current error count, and a file may only go down. Runs
+      # before the build so the count matches a fresh checkout.
+      - name: Typecheck inspector server
+        run: |
+          node --test mcpjam-inspector/scripts/__tests__/typecheck-server.test.mjs
+          npm run typecheck:server -w @mcpjam/inspector
 
       - name: Build inspector package
         run: npm run build:inspector

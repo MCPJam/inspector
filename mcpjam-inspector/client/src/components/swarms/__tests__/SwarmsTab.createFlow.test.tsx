@@ -1,10 +1,4 @@
-/**
- * New swarm create flow: Describe → Confirm details → Create & launch.
- *
- * The properties worth pinning are the ones that cost money or lose work:
- * nothing is written until Launch, each journey is launched exactly once, and
- * a partial failure keeps what landed instead of unwinding it.
- */
+/** Swarm creation preserves targets, billing gates, and partial launch progress. */
 import {
   cleanup,
   fireEvent,
@@ -15,13 +9,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 import type { Predicate } from "@/shared/eval-matching";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { WebApiError } from "@/lib/apis/web/base";
 
-// The harness × model picker locks read each host's config; these tests mock
-// convex/react without that query, so the reads answer "not known yet".
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
@@ -30,11 +23,7 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
-/**
- * `project-environments-enabled`, as a ref: an org can hold Swarms without it
- * (the sidebar gates the two surfaces on different flags), and that
- * combination has its own case below.
- */
+/** Swarms and environments have separate flags; test both combinations. */
 const { environmentsFlagRef } = vi.hoisted(() => ({
   environmentsFlagRef: { current: true },
 }));
@@ -57,12 +46,7 @@ vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => [],
 }));
 
-/**
- * Clients and the project server catalog, as refs: the cloud-reachability
- * preflight reads BOTH (a client's `serverCount`, and what those servers are),
- * so a case has to be able to re-point them. Defaults deliberately omit
- * `serverCount` — an older backend does, and "unknown" must not read as zero.
- */
+/** Defaults omit serverCount: unknown enrollment must not read as zero. */
 const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   hostsRef: {
     current: [
@@ -144,6 +128,7 @@ const {
       name: string;
       hostId: string;
       revision: number;
+      serverAttachmentId?: string;
     }>,
   },
 }));
@@ -171,7 +156,6 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
   };
 });
 
-// Kept in sync with environmentsRef for the Convex listEnvironments mock.
 let environments = environmentsRef.current;
 
 let existingPersonas: Array<Record<string, unknown>> = [];
@@ -244,11 +228,15 @@ vi.mock("convex/react", () => ({
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
   useConvex: () => ({ query: convexQueryMock }),
+  // The credit balance (Continue's out-of-credits gate): not loaded here.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
-    serverAttachments: [],
+    serverAttachments: [
+      { _id: "att-default", name: "Servers", serverIds: ["srv-1"] },
+    ],
     isLoading: false,
   }),
   useProjectServers: () => ({
@@ -438,6 +426,7 @@ beforeEach(() => {
       projectId: "proj-1",
       name: "Prod-like",
       hostId: "host-1",
+      serverAttachmentId: "att-default",
       revision: 1,
     },
     {
@@ -445,6 +434,7 @@ beforeEach(() => {
       projectId: "proj-1",
       name: "Amazon",
       hostId: "host-2",
+      serverAttachmentId: "att-default",
       revision: 1,
     },
   ];
@@ -705,18 +695,17 @@ describe("SwarmsTab — New swarm create flow", () => {
     );
   });
 
-  /**
-   * SUTB-5. Both reporters wrote personas and goals first and only then met
-   * `ENV_NO_SERVERS` from the resolver — one with an empty client, one with a
-   * local (stdio) server a cloud run can't reach. The flow has to refuse BEFORE
-   * anything is written, and say which of the two it is: "connect a server" and
-   * "make the server you have reachable" are different fixes.
-   */
+  // Missing and unreachable selections must be rejected before any write.
   it("refuses to continue when the target has no servers, and names the reason", () => {
     hostsRef.current = [
       { hostId: "host-1", name: "Claude", serverCount: 0 },
       { hostId: "host-2", name: "Cursor", serverCount: 0 },
     ];
+    environmentsRef.current = environmentsRef.current.map((env) => ({
+      ...env,
+      serverAttachmentId: undefined,
+    }));
+    environments = environmentsRef.current;
     openDescribe();
     fillDescribe();
 
@@ -1207,10 +1196,17 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       (await screen.findAllByText(/Claude has no model/)).length,
     ).toBeGreaterThan(0);
-    expect(convexQueryMock).toHaveBeenCalledWith(
+    const [ref, args] = convexQueryMock.mock.calls.find(
+      ([, args]) => args.serverSource === "swarm_explicit",
+    )!;
+    expect(getFunctionName(ref)).toBe(
       "projectEnvironments:resolveEnvironmentForLaunch",
-      { projectId: "proj-1", environmentId: "env-1" },
     );
+    expect(args).toEqual({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      serverSource: "swarm_explicit",
+    });
     // Caught before the persona slate, so nothing costs credits or persists.
     expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
     expect(createSwarmMock).not.toHaveBeenCalled();
@@ -2044,7 +2040,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     // point of the change is that Describe text never becomes an environment.
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
       projectId: "proj-1",
-      stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
+      stacks: [
+        { hostId: "host-1", serverAttachmentId: "att-default" },
+        { hostId: "host-2", serverAttachmentId: "att-default" },
+      ],
     });
     expect(createEnvironmentMock).not.toHaveBeenCalled();
 
@@ -2085,7 +2084,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     );
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
       projectId: "proj-1",
-      stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
+      stacks: [
+        { hostId: "host-1", serverAttachmentId: "att-default" },
+        { hostId: "host-2", serverAttachmentId: "att-default" },
+      ],
     });
     expect(createEnvironmentMock).not.toHaveBeenCalled();
 
@@ -3229,7 +3231,7 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
 
     const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
     expect(moves).toHaveTextContent("Cursor");
-    expect(moves).toHaveTextContent("Different client.");
+    expect(moves).toHaveTextContent("Different client and server group.");
   });
 
   it("does not caution when the move keeps the same server group", async () => {

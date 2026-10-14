@@ -231,6 +231,14 @@ export interface WidgetSurfaceInfo {
    * input because `minimalMode` is per-instance).
    */
   playgroundCspMode: CspMode;
+  /**
+   * The one display mode the host presents this App in, chosen by the host
+   * rather than negotiated: a plugin extension entrypoint opens `fullscreen`,
+   * the way ChatGPT presents every entrypoint. A resource's or App's
+   * display-mode declaration cannot select another mode here, so it never
+   * refuses the App either. Absent: modes are negotiated as usual.
+   */
+  fixedDisplayMode?: DisplayMode;
 }
 
 // --- Instrumentation ---------------------------------------------------------
@@ -300,7 +308,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -330,9 +339,11 @@ export interface WidgetSandboxApplied {
    * How the proxy mounted the view. `"url"` means it was written into a blank
    * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
    * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
-   * forced because the frame's document was unreachable).
+   * forced because the frame's document was unreachable). `"opaque"` is the
+   * intended srcdoc mount of a client whose app iframe is not same-origin
+   * (e.g. Claude's no-`stable-origin` mode): no URL and an opaque origin, by design.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
@@ -582,6 +593,12 @@ export interface WidgetHostProfileSandbox {
    * field missing here silently disappears before reaching the renderer.
    */
   browserStorage?: BrowserStoragePolicy;
+  /**
+   * Probe-measured: whether the app iframe shares the sandbox page's origin.
+   * `false` makes the proxy mount the view in an opaque origin (srcdoc, no
+   * `allow-same-origin`), `ui.domain` or not. Absent or `true` = same-origin.
+   */
+  sameOriginAppIframe?: boolean;
 }
 
 /**

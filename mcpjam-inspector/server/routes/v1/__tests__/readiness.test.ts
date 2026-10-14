@@ -55,11 +55,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
   lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
 }));
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 vi.mock("../../../services/readiness/worker.js", () => ({
   executeHostedReadinessRun: executeHostedReadinessRunMock,

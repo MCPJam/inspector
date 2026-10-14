@@ -11,7 +11,18 @@
  * unit-testable without stubbing globals.
  */
 
+import { clientRequestUrl, stripQueryAndFragment } from "./breadcrumb-urls";
+import {
+  credentialRouteTemplate,
+  scrubCredentialUrl,
+  scrubTelemetryEvent,
+} from "./credential-urls";
 import { isInjectedScriptException } from "./injected-script-frames";
+import {
+  describeShape,
+  MAX_ERROR_TEXT_CHARS,
+  scrubLogText,
+} from "./log-scrubber";
 
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
@@ -35,7 +46,7 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * One entry per artifact set, not per platform-as-metadata — two builds that
  * are separately compiled need separate names even when their sources match:
  *
- * - `web`          Docker/Railway image, `dist/client`
+ * - `web`          hosted Railway image, `dist/client`
  * - `npm`          published tarball, `dist/client`
  * - `desktop-mac`  mac installer's embedded-server UI, `dist/client`
  * - `desktop-win`  Windows installer's embedded-server UI, `dist/client`
@@ -49,8 +60,9 @@ export type SentryDeployment = "hosted" | "self_hosted";
  * where the same two-platform collision applies.
  *
  * `local` is the default for a build that names no surface (a contributor
- * checkout, or a self-hosted user building from source). Those have no
- * uploaded artifacts, and saying so is better than borrowing another build's.
+ * checkout, or a self-hosted user building from source), and what the Docker
+ * Hub image passes. Those have no uploaded artifacts, and saying so is better
+ * than borrowing another build's.
  */
 export const SENTRY_BUILD_SURFACES = [
   "web",
@@ -346,7 +358,9 @@ export function buildBrowserBeforeSend(origin?: string) {
       });
       if (isInjectedScriptException(stacks, origin)) return null;
     }
-    return groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event));
+    return scrubSentryCredentials(
+      groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event)),
+    );
   };
 }
 
@@ -372,6 +386,148 @@ export function buildBrowserBeforeSend(origin?: string) {
  */
 function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
   return frames.length === 1 && frames[0]?.function === "?";
+}
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return stripQueryAndFragment(url);
+  }
+}
+
+/**
+ * A transaction name with any credential path replaced by its template:
+ * `GET /api/web/score/runs/<token>` → `GET /api/web/score/runs/:token`.
+ * Keeps an HTTP method prefix if there is one.
+ */
+export function sentryTransactionTemplate(name: string): string {
+  const match = /^([A-Z]+ )?(\/\S*)$/.exec(name);
+  if (!match) return scrubCredentialUrl(name);
+  const [, method = "", path] = match;
+  const pathname = path.split(/[?#]/)[0];
+  const template = credentialRouteTemplate(pathname);
+  return template
+    ? `${method}${template}`
+    : `${method}${scrubCredentialUrl(path)}`;
+}
+
+/**
+ * The last step of every Sentry hook on every surface: every credential out
+ * of the whole event (`shared/credential-urls.ts`) — request URLs,
+ * transaction names, span descriptions, breadcrumbs, exception text, tags,
+ * contexts, extras — whatever the SDK or our own code put there.
+ *
+ * Fail closed. If the walker cannot finish, the URL-bearing fields are
+ * deleted and the rest scrubbed; if even that fails, `null` drops the event.
+ */
+export function scrubSentryCredentials<T extends object>(event: T): T | null {
+  return scrubTelemetryEvent(event);
+}
+
+/** Minimal structural view of a Sentry breadcrumb. */
+export interface ScrubbableBreadcrumb {
+  category?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * How much of a console call's first argument survives. Enough for the label
+ * (`"[chat] stream failed:"`), not for a payload interpolated after it.
+ */
+const CONSOLE_BREADCRUMB_MAX_CHARS = 120;
+
+function describeConsoleCall(
+  args: unknown[] | undefined,
+  fallback: string | undefined,
+): string {
+  if (!args || args.length === 0) {
+    return scrubLogText(fallback ?? "", CONSOLE_BREADCRUMB_MAX_CHARS);
+  }
+  const [first] = args;
+  const head =
+    typeof first === "string"
+      ? scrubLogText(first, CONSOLE_BREADCRUMB_MAX_CHARS)
+      : first instanceof Error
+        ? `${first.name}: ${scrubLogText(first.message, CONSOLE_BREADCRUMB_MAX_CHARS)}`
+        : describeShape(first);
+  return args.length > 1 ? `${head} (+${args.length - 1} args)` : head;
+}
+
+/**
+ * Every surface's `beforeBreadcrumb`.
+ *
+ * - `console`: the SDK joins EVERY argument into `message` and keeps the raw
+ *   values in `data.arguments` — the payload someone logged while debugging.
+ *   Level and category stay; the message becomes the first argument's label
+ *   and an argument count.
+ * - `http` / `fetch` / `xhr`: the query string and fragment always go. On the
+ *   server (`"origin"`) the path goes too — outgoing requests there are to a
+ *   customer's MCP server, and its host is what tells you which one. The
+ *   browser keeps the path of a call to its own origin (`appOrigin`), whose
+ *   paths are ours, and only the origin of a call anywhere else.
+ * - `navigation`: the query goes (an OAuth callback carries `code`/`state`).
+ * - Anything else: its message is redacted and capped.
+ */
+export function scrubSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
+  breadcrumb: T,
+  urlDetail: "origin" | { appOrigin: string | undefined },
+): T | null {
+  const crumb: ScrubbableBreadcrumb = breadcrumb;
+  const data = crumb.data;
+  switch (crumb.category) {
+    case "console": {
+      const args = Array.isArray(data?.arguments) ? data.arguments : undefined;
+      crumb.message = describeConsoleCall(args, crumb.message);
+      crumb.data = {
+        ...(data?.logger !== undefined ? { logger: data.logger } : {}),
+        ...(args ? { argumentCount: args.length } : {}),
+      };
+      break;
+    }
+    case "http":
+    case "fetch":
+    case "xhr": {
+      if (data && typeof data.url === "string") {
+        data.url =
+          urlDetail === "origin"
+            ? originOf(data.url)
+            : clientRequestUrl(data.url, urlDetail.appOrigin);
+      }
+      delete data?.["http.query"];
+      delete data?.["http.fragment"];
+      break;
+    }
+    case "navigation": {
+      for (const key of ["from", "to"]) {
+        const value = data?.[key];
+        if (data && typeof value === "string") {
+          data[key] = stripQueryAndFragment(value);
+        }
+      }
+      break;
+    }
+    default:
+      if (typeof crumb.message === "string") {
+        crumb.message = scrubLogText(crumb.message, MAX_ERROR_TEXT_CHARS);
+      }
+  }
+  // Every category, Electron's (`electron`) and any the SDK adds later
+  // included: whatever URL a breadcrumb carries — `data.url`, `from`, `to` —
+  // loses its credentials. A crumb that cannot be shown clean is dropped.
+  return scrubSentryCredentials(breadcrumb) as T;
+}
+
+/**
+ * `beforeBreadcrumb` for the browser client and Electron renderer.
+ * `appOrigin` is the app's own origin, read by the caller.
+ */
+export function scrubClientSentryBreadcrumb<T extends ScrubbableBreadcrumb>(
+  breadcrumb: T,
+  appOrigin: string | undefined,
+): T | null {
+  return scrubSentryBreadcrumb(breadcrumb, { appOrigin });
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
@@ -425,7 +581,8 @@ export function buildClientSentryConfig(
     replayEnabled?: boolean;
     /**
      * The app's own origin, used to spot frames the browser stamped with the
-     * document. The caller reads it — this module stays globals-free.
+     * document and to tell the app's own requests from a third party's in
+     * breadcrumbs. The caller reads it — this module stays globals-free.
      */
     documentOrigin?: string;
   },
@@ -438,6 +595,13 @@ export function buildClientSentryConfig(
     // collapsing those by message would merge unrelated defects. The OAuth
     // debugger runs only in the browser client too.
     beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
+    // Spans and transaction names carry request URLs (`GET /api/web/score/
+    // runs/<token>`). Names are set to route templates at the source; this is
+    // the backstop for everything else in a transaction.
+    beforeSendTransaction: scrubSentryCredentials,
+    // Console arguments are whatever a component logged — often a payload.
+    beforeBreadcrumb: <T extends ScrubbableBreadcrumb>(breadcrumb: T) =>
+      scrubClientSentryBreadcrumb(breadcrumb, ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),

@@ -34,14 +34,12 @@ vi.mock("../../env.js", async (importOriginal) => {
 });
 
 const {
-  CSP_REPORT_SAMPLE_RATE,
   DOCUMENT_CONTENT_SECURITY_POLICY,
   DOCUMENT_PERMISSIONS_POLICY,
   buildReportOnlyContentSecurityPolicy,
   documentScriptNonce,
   resetContentSecurityPolicyForTests,
   securityHeadersMiddleware,
-  sentryCspTargets,
   withScriptNonce,
 } = await import("../security-headers.js");
 
@@ -339,51 +337,16 @@ describe("securityHeadersMiddleware document policies", () => {
     );
   });
 
-  it("carries report-uri on a sampled share while the policy is on every document", async () => {
+  it("never advertises a native report endpoint on hosted responses", async () => {
     mockConfig.hosted = true;
-    const app = createApp();
-
-    vi.mocked(Math.random).mockReturnValue(CSP_REPORT_SAMPLE_RATE - 0.001);
-    const sampled = await app.request("/document");
-    expect(sampled.headers.get("Content-Security-Policy-Report-Only")).toMatch(
-      /report-uri /,
-    );
-
-    vi.mocked(Math.random).mockReturnValue(CSP_REPORT_SAMPLE_RATE);
-    const unsampled = await app.request("/document");
-    const unsampledPolicy = unsampled.headers.get(
-      "Content-Security-Policy-Report-Only",
-    );
-    // The header is always there (MJ-016); only the report
-    // endpoint is sampled.
-    expect(unsampledPolicy).toMatch(/^default-src 'self'; /);
-    expect(unsampledPolicy).not.toMatch(/report-uri /);
-    // The enforcing policy and Permissions-Policy are on every document.
-    for (const res of [sampled, unsampled]) {
-      expect(res.headers.get("Content-Security-Policy")).toBe(
-        DOCUMENT_CONTENT_SECURITY_POLICY,
-      );
-      expect(res.headers.get("Permissions-Policy")).toBe(
-        DOCUMENT_PERMISSIONS_POLICY,
-      );
+    for (const random of [0, 0.049, 0.5, 1]) {
+      vi.mocked(Math.random).mockReturnValue(random);
+      const response = await createApp().request("/document?code=SECRET");
+      const policy = response.headers.get("Content-Security-Policy-Report-Only");
+      expect(policy).toMatch(/^default-src 'self'; /);
+      expect(policy).not.toMatch(/report-uri|report-to|SECRET/);
+      expect(response.headers.get("Content-Security-Policy")).toBe(DOCUMENT_CONTENT_SECURITY_POLICY);
     }
-
-    vi.mocked(Math.random).mockRestore();
-    let reported = 0;
-    for (let i = 0; i < 2000; i++) {
-      const res = await app.request("/");
-      expect(res.headers.has("Content-Security-Policy-Report-Only")).toBe(true);
-      if (
-        res.headers
-          .get("Content-Security-Policy-Report-Only")!
-          .includes("report-uri ")
-      ) {
-        reported++;
-      }
-    }
-    expect(CSP_REPORT_SAMPLE_RATE).toBe(0.05);
-    expect(reported).toBeGreaterThan(40);
-    expect(reported).toBeLessThan(170);
   });
 });
 
@@ -441,6 +404,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://js.stripe.com",
       "https://*.js.stripe.com",
       "https://maps.googleapis.com",
+      "https://snippet.meticulous.ai",
+      "https://browser.sentry-cdn.com",
     ]);
     expect(policy.get("style-src")).toEqual([
       "'self'",
@@ -462,6 +427,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
         "https://api.stripe.com",
         "https://maps.googleapis.com",
         "https://r.stripe.com",
+        "https://cognito-identity.us-west-2.amazonaws.com",
+        "https://user-events-v3.s3-accelerate.amazonaws.com",
       ]),
     );
     expect(policy.get("frame-src")).toEqual([
@@ -473,6 +440,7 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://hooks.stripe.com",
       "https://m.stripe.network",
       "https://www.youtube.com",
+      "https://snippet.meticulous.ai",
     ]);
     expect(policy.get("img-src")).toEqual([
       "'self'",
@@ -482,50 +450,18 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
     ]);
     expect(policy.get("worker-src")).toEqual(["'self'", "blob:"]);
     expect(policy.get("base-uri")).toEqual(["'self'"]);
-    expect(policy.get("report-uri")).toHaveLength(1);
+    expect(policy.has("report-uri")).toBe(false);
     expect(policy.get("default-src")).toEqual(["'self'"]);
   });
 
-  it("drops only report-uri when the response is not sampled", async () => {
-    const sampled = directives(buildReportOnlyContentSecurityPolicy());
-    const unsampled = directives(
-      buildReportOnlyContentSecurityPolicy(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        false,
-      ),
-    );
-    expect(unsampled.has("report-uri")).toBe(false);
-    sampled.delete("report-uri");
-    expect(unsampled).toEqual(sampled);
-  });
-
-  it("reports to the Sentry security endpoint for the DSN", () => {
-    const dsn = "https://publickey@o123.ingest.us.sentry.io/456";
-    expect(sentryCspTargets(dsn)).toEqual({
-      ingestOrigin: "https://o123.ingest.us.sentry.io",
-      reportUri:
-        "https://o123.ingest.us.sentry.io/api/456/security/?sentry_key=publickey",
-    });
-
-    const policy = directives(
-      buildReportOnlyContentSecurityPolicy(
-        { convexUrl: "https://rt.mcpjam.test" },
-        new Set(),
-        dsn,
-      ),
-    );
-    expect(policy.get("report-uri")).toEqual([
-      "https://o123.ingest.us.sentry.io/api/456/security/?sentry_key=publickey",
-    ]);
-    expect(policy.get("connect-src")).toEqual(
-      expect.arrayContaining([
-        "https://o123.ingest.us.sentry.io",
-        "https://api.workos.com",
-      ]),
-    );
+  it("retains Sentry's connect origin without adding a native report endpoint", () => {
+    const policy = directives(buildReportOnlyContentSecurityPolicy(
+      { convexUrl: "https://rt.mcpjam.test" }, new Set(),
+      "https://publickey@o123.ingest.us.sentry.io/456",
+    ));
+    expect(policy.has("report-uri")).toBe(false);
+    expect(policy.has("report-to")).toBe(false);
+    expect(policy.get("connect-src")).toContain("https://o123.ingest.us.sentry.io");
   });
 
   it("omits report-uri when the DSN cannot be parsed", () => {

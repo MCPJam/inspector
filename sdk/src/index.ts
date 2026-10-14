@@ -43,9 +43,7 @@ export type {
   HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
-// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
-// uses these internally; they are public so the CLI and the conformance
-// runner judge tool declarations with the SAME walk the wire does.
+// SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
   classifyMcpHeader,
@@ -470,6 +468,7 @@ export type {
  */
 export {
   GRADING_POLICY_READ_REFUSALS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   gradingPolicyForReportedRun,
   gradingPolicyFromLoadedSuiteFile,
@@ -1157,6 +1156,7 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 export {
   describeError,
   describeAsSlug,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -1173,6 +1173,24 @@ export type {
   ErrorCatalogEntry,
   ErrorCatalogSlug,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; also exported from `@mcpjam/sdk/browser`.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 // OAuth conformance
 export {
@@ -1978,3 +1996,5 @@ export type {
   ConnectionRoutingSnapshot,
   ConnectionToolMetadata,
 } from "./mcp-client-manager/multi-connection-tools.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";

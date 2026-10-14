@@ -18,6 +18,28 @@
 If you find yourself importing `@sentry/node` in a route, you are adding a
 double-capture. Use the logger.
 
+## What an event carries
+
+`sendDefaultPii: false` governs what the SDK collects about the USER (IP,
+cookies); it does not stop the http integration from attaching the incoming
+request body, and it does not touch exception text. So:
+
+- Logger capture sites attach context; the final Sentry transport reconstructs
+  errors, transactions and standalone spans from closed schemas. Unsupported
+  envelope items, including attachments, are discarded.
+- Server, desktop and SDK diagnostics are strict by default. Only finite error
+  classes/codes, owned route templates, bounded numbers and trusted ids leave.
+  Free text, request bodies, headers, arbitrary tags and source context do not.
+- Stack frames retain verified first-party file and integer line/column locations
+  only. Function labels are discarded. Unknown customer bundles have no trusted
+  frame aliases and still produce finite error diagnostics.
+- User identity is an id and an actor kind. Email and name are not sent in strict
+  diagnostics. Live opt-out is checked again when a queued envelope is sent.
+
+Electron main installs the same final boundary for its embedded server. Its
+transport sends reconstructed envelopes directly; raw offline events and
+minidumps are not persisted for later vendor delivery.
+
 ## Process-level handlers
 
 | Signal              | Capture                                           | Log                                     |
@@ -94,3 +116,24 @@ Volume is genuinely unknown.
 
 The `deployment` tag exists precisely so step 3 can be scoped rather than
 blanket.
+
+## Actor identity
+
+Request captures carry `user.id` and `actor_kind` from the verified signed-in
+user, then the verified guest. The request uses AsyncLocalStorage; stream
+reporters and request loggers also bind delayed callbacks to that context.
+Session-authenticated local Electron requests snapshot the desktop actor at
+request start, so changing accounts cannot relabel a running request.
+Unknown hosted requests remain anonymous.
+
+Electron main and renderer start with a random `installation:<uuid>` ID saved
+in the app's user-data directory. Sign-in and guest changes update main through
+IPC accepted only from the app window's main frame and origin. Sign-out, reload,
+and window replacement restore the installation fallback. Native crash reports
+keep the scope stored at crash time. New server and main paths send only the ID
+and actor kind; desktop diagnostic and updater filters retain only `user.id`.
+
+After hosted deployment and the desktop release, check new events for `user.id`
+and `actor_kind`. Historical events stay unchanged. User counts represent
+accounts, guests, or installations, rather than an exact number of people.
+This change does not alter HTTP/database APIs or the 256 KiB request limit.

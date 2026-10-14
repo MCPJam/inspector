@@ -67,7 +67,12 @@ permissions:
   contents: read
 
 env:
-  MCPJAM_PROJECT: MCPJam MCP dogfood
+  # The project ID, not its name. Two projects are named "MCPJam MCP dogfood"
+  # — the live one and the retired copy in the org this moved out of — and a
+  # name-based lookup refuses an ambiguous match outright:
+  #   Project name "MCPJam MCP dogfood" is ambiguous. Use one of these IDs: ...
+  # A name is also not stable: anyone can create a third. The ID is.
+  MCPJAM_PROJECT: v9792k32kvw1s9h2xxrqcyjk958ft6k3
   # The staging suite, which is what the promotion gate evaluates. The
   # production monitor passes the other file explicitly.
   DEFAULT_SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml

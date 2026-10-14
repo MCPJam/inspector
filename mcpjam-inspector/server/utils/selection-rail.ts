@@ -1,3 +1,4 @@
+import { inheritedSelectionOrigin } from "./runtime-model-choice.js";
 /**
  * Which rail a turn runs on — and so who pays for it — decided from the turn's
  * SAVED SELECTION.
@@ -25,7 +26,11 @@
  *
  * Pure apart from the warm hosted-catalog cache the no-selection branch reads.
  */
-import type { ModelSelection, RequestedModelSelection } from "@mcpjam/sdk";
+import {
+  assertModelSelection,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import {
@@ -33,7 +38,15 @@ import {
   readSelectionOrigin,
   readStoredLegacySelection,
   type ModelSelectionOrigin,
+  backendModelSelection,
+  wireModelIdForSelection,
 } from "./model-resolution-local.js";
+import {
+  orgHarnessSelection,
+  runsHarness,
+  type OrgHarnessSelection,
+} from "./harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 
 export { readRoutingSelection, readSelectionOrigin, readStoredLegacySelection };
 export type { ModelSelectionOrigin };
@@ -57,25 +70,111 @@ export type RailModel = {
   id: string | { toString(): string };
   provider?: string;
   hosted?: boolean;
+  nativeModelId?: string;
+  customProviderName?: string;
+  orgProvider?: { id?: string; providerKey: string };
 };
 
 /**
  * The selection, only if it is for the model this turn runs. A saved
  * selection belongs to ONE model; a turn on a different model takes today's
- * path for that model instead. Matched on the raw id or its canonical form
- * (a bare hosted id `gpt-5-nano` + `openai` is `openai/gpt-5-nano`).
+ * path for that model instead. Match raw, canonical or explicit native ids;
+ * a native alias must also agree with the row's provider and connection.
  */
 export function routingSelectionForModel(
   selection: RequestedModelSelection | undefined,
-  model: { id: string | { toString(): string }; provider?: string },
+  model: RailModel,
 ): RequestedModelSelection | undefined {
   if (!selection) return undefined;
   const id = String(model.id).trim();
   if (!id) return undefined;
-  if (selection.modelId === id) return selection;
-  return selection.modelId === getCanonicalModelId(id, model.provider)
-    ? selection
-    : undefined;
+  const connection =
+    selection.source === "legacy" ? undefined : selection.connectionRef;
+  if (
+    connection?.kind === "localProvider" && model.provider &&
+    connection.providerKey !== model.provider
+  ) return undefined;
+  if (
+    connection?.kind === "localProvider" && model.customProviderName &&
+    connection.customProviderName !== model.customProviderName
+  ) return undefined;
+  if (
+    connection?.kind === "orgProvider" && model.orgProvider?.id &&
+    connection.id !== model.orgProvider.id
+  ) return undefined;
+  if (
+    selection.source !== "legacy" && selection.nativeModelId && model.nativeModelId &&
+    selection.nativeModelId !== model.nativeModelId
+  ) return undefined;
+  const canonical = getCanonicalModelId(id, model.provider);
+  if (selection.modelId === id || selection.modelId === canonical) return selection;
+  if (
+    selection.source === "legacy" || selection.source === "hosted" ||
+    selection.nativeModelId !== id
+  ) return undefined;
+  // A native id cannot override a known canonical identity or provider.
+  if (
+    canonical !== id || id.startsWith(`${model.provider}/`) || (model.provider &&
+      !selection.modelId.startsWith(`${model.provider}/`) &&
+      connection?.kind !== "localProvider" && !model.orgProvider?.id)
+  ) return undefined;
+  return selection;
+}
+
+/** Strict HTTP boundary; tolerant stored reads must never erase an explicit ask. */
+export function resolveChatSelection(args: {
+  raw: unknown;
+  inherited?: RequestedModelSelection;
+  inheritedOrigin?: "backfill";
+  model: RailModel;
+  hostWins: boolean;
+  allowLocal: boolean;
+}):
+  | { ok: true; selection?: RequestedModelSelection; requestSelection?: RequestedModelSelection; origin?: "backfill" }
+  | { ok: false; error: string } {
+  if (args.hostWins || args.raw === undefined || args.raw === null) {
+    return {
+      ok: true,
+      selection: routingSelectionForModel(args.inherited, args.model),
+      origin: inheritedSelectionOrigin({ selection: routingSelectionForModel(args.inherited, args.model), inheritedOrigin: args.inheritedOrigin }),
+    };
+  }
+  const selection = readRoutingSelection(args.raw);
+  if (!selection) return { ok: false, error: "Invalid modelSelection" };
+  if (!args.allowLocal && (selection.source === "local" || selection.source === "legacy")) {
+    return { ok: false, error: "This modelSelection requires local credentials; choose a model available in this workspace." };
+  }
+  if (!routingSelectionForModel(selection, args.model)) {
+    return { ok: false, error: "modelSelection does not match the requested model or connection" };
+  }
+  return { ok: true, selection, requestSelection: selection };
+}
+
+/** Authoritative fields shared by every hosted tool-loop request. */
+export function streamSelectionFields(
+  raw: unknown,
+  model: RailModel,
+  endpointPath: string,
+  origin?: "backfill",
+) {
+  if (raw === undefined || raw === null) return {};
+  const selection = backendModelSelection(assertModelSelection(raw));
+  if (
+    !selection ||
+    selection.source !== (endpointPath === "/stream/org" ? "org" : "hosted") ||
+    !routingSelectionForModel(selection, model)
+  ) {
+    throw new Error("modelSelection does not match the stream model or source");
+  }
+  return {
+    model: selection.source === "org"
+      ? wireModelIdForSelection(selection)
+      : selection.modelId,
+    modelSelection: selection,
+    modelSelectionOrigin: origin,
+    // The selection is the sole deployment authority, including when absent.
+    nativeModelId: undefined,
+  };
 }
 
 /**
@@ -144,4 +243,66 @@ export function forwardableSelection(
     return undefined;
   }
   return selection;
+}
+
+/**
+ * How a chat turn on a harness host runs, decided once for the web and MCP
+ * chat routes so their routing, refusals and persisted spend cannot disagree.
+ *
+ *  - `externalAccount`: the runtime pays on the customer's own vendor account.
+ *  - `orgSelection`: a brokered harness on the ORGANIZATION'S own key (its
+ *    saved selection names an org connection on the harness's vendor), already
+ *    narrowed: it is what the lease is minted for. Such a turn runs the REAL
+ *    runtime, never the org-BYOK branch, which would run the emulated engine
+ *    under the harness's name.
+ *  - `orgStepUpResume`: a scope step-up resume on an org-key harness turn. A
+ *    resume runs the emulated engine; on MCPJam's `/stream` it would spend
+ *    MCPJam's credits past an org that requires its own keys, so it takes the
+ *    org path (`/stream/org`) on the organization's key.
+ *  - `usesFreePath`: the MCPJam path (an MCPJam-provided model, or a harness
+ *    runtime) rather than the org-BYOK branch.
+ *  - `modelSource`: whose spend the turn is.
+ */
+export type HarnessTurnRail = {
+  externalAccount: boolean;
+  orgSelection: OrgHarnessSelection | undefined;
+  orgStepUpResume: boolean;
+  usesFreePath: boolean;
+  modelSource: "external-account" | "byok" | "mcpjam";
+};
+
+export function harnessTurnRail(args: {
+  harness: string | undefined;
+  model: { id: string; provider?: string; hosted?: boolean };
+  selection: RequestedModelSelection | null | undefined;
+  mcpjamProvided: boolean;
+  stepUpResume: boolean;
+}): HarnessTurnRail {
+  const externalAccount =
+    !!args.harness && harnessUsesExternalAccount(args.harness);
+  const orgSelection =
+    args.harness &&
+    !externalAccount &&
+    runsHarness({
+      harness: args.harness,
+      model: args.model,
+      selection: args.selection,
+    })
+      ? orgHarnessSelection(args.selection)
+      : undefined;
+  const orgStepUpResume = !!orgSelection && args.stepUpResume;
+  return {
+    externalAccount,
+    orgSelection,
+    orgStepUpResume,
+    usesFreePath:
+      args.mcpjamProvided ||
+      externalAccount ||
+      (!!orgSelection && !orgStepUpResume),
+    modelSource: externalAccount
+      ? "external-account"
+      : orgSelection
+        ? "byok"
+        : "mcpjam",
+  };
 }

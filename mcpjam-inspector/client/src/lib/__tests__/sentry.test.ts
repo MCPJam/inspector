@@ -4,12 +4,14 @@ const init = vi.fn();
 const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
+const addIntegration = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
   replayIntegration,
   browserTracingIntegration,
   getClient,
+  addIntegration,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -21,6 +23,17 @@ function stubReplay(recording: boolean) {
   };
   getClient.mockReturnValue({ getIntegrationByName: () => replay });
   return replay;
+}
+
+async function allowFullContext() {
+  const telemetry = await import("../telemetry-context");
+  telemetry.setTelemetryActor("user_01K00000000000000000000000");
+  telemetry.setTelemetryCaptureContext({
+    projectIds: ["project_test"],
+    organizationIds: [],
+  });
+  telemetry.setTelemetryContentPolicy("user_01K00000000000000000000000", "full");
+  (await import("../session-privacy")).setSessionPrivacy("full");
 }
 
 describe("client sentry init", () => {
@@ -50,10 +63,20 @@ describe("client sentry init", () => {
     expect(config.sendDefaultPii).toBe(false);
   });
 
+  it("initializes desktop identity without dropping deployment tags", async () => {
+    const installationId = "installation:12345678-1234-4321-8123-123456789abc";
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost:6274", pathname: "/" },
+      electronAPI: { sentry: { installationId } },
+    });
+    const { initSentry } = await import("../sentry");
+    initSentry();
+    expect(init.mock.calls[0][0].initialScope).toEqual({
+      user: { id: installationId },
+      tags: { deployment: "self_hosted", actor_kind: "installation" },
+    });
+  });
   it("reports the build surface as dist so artifacts resolve per build", async () => {
-    // The release alone is the bare app version, which the web, npm and
-    // desktop builds all share. Without `dist` here, Sentry symbolicates this
-    // bundle's events against whichever of those uploaded last.
     const { resolveClientSentryConfig } = await import("../sentry");
 
     expect(resolveClientSentryConfig().dist).toBe("npm");
@@ -85,10 +108,6 @@ describe("client sentry init", () => {
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
     const { resolveClientSentryConfig } = await import("../sentry");
-    // Asserted against the literal the dev/test bundle must produce, NOT
-    // against `import.meta.env.PROD ? ... : ...` — mirroring the
-    // implementation expression would make this pass no matter what the
-    // implementation did.
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");
   });
@@ -103,15 +122,17 @@ describe("client sentry init", () => {
 
     initSentry();
     const config = init.mock.calls[0][0];
-    // The integration must not even LOAD — zero rates alone would still ship
-    // the recorder and open its buffers.
     expect(replayIntegration).not.toHaveBeenCalled();
     expect(browserTracingIntegration).toHaveBeenCalled();
     expect(config.integrations).toHaveLength(1);
   });
 
-  it("records replays and wires both integrations on hosted", async () => {
+  it("sets hosted sample rates but leaves the recorder to the privacy level", async () => {
+    // Constructing it here and stopping it later would not do:
+    // `replay.stop()` FLUSHES the buffered segment, which is exactly what a
+    // `pending` session or a `/results/<token>` page must keep out.
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
     const { initSentry } = await import("../sentry");
 
@@ -119,37 +140,21 @@ describe("client sentry init", () => {
     const config = init.mock.calls[0][0];
     expect(config.replaysSessionSampleRate).toBe(0.1);
     expect(config.replaysOnErrorSampleRate).toBe(1.0);
-    expect(replayIntegration).toHaveBeenCalled();
-    expect(config.integrations).toHaveLength(2);
-  });
-
-  it("never starts a replay for a session that LOADS on /results/", async () => {
-    // The runtime guard cannot rescue this case: `replay.stop()` FLUSHES the
-    // buffered segment, and that segment is the token-bearing page. The only
-    // safe answer is to never construct the recorder for this session.
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-    vi.stubGlobal("location", {
-      hostname: "app.mcpjam.com",
-      origin: "https://app.mcpjam.com",
-      pathname: "/results/super-secret-token",
-    });
-    vi.resetModules();
-    const { initSentry } = await import("../sentry");
-
-    initSentry();
-    const config = init.mock.calls[0][0];
     expect(replayIntegration).not.toHaveBeenCalled();
-    expect(config.replaysSessionSampleRate).toBe(0);
     expect(config.integrations).toHaveLength(1);
   });
+
 });
 
-describe("syncSentryReplayForPath", () => {
+describe("syncSentryReplay", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
     vi.stubGlobal("__BUILD_SURFACE__", "npm");
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     getClient.mockReset();
+    addIntegration.mockReset();
+    replayIntegration.mockClear();
     vi.resetModules();
   });
 
@@ -159,15 +164,73 @@ describe("syncSentryReplayForPath", () => {
     vi.resetModules();
   });
 
+  /** `../sentry` with the session already at `level`. */
+  async function loadAt(
+    level: import("../session-privacy").SessionPrivacy | null,
+  ) {
+    const privacy = await import("../session-privacy");
+    await allowFullContext();
+    privacy.setSessionPrivacy(level ?? (privacy.recordingSurface() === "off" ? "off" : "pending"));
+    return { ...(await import("../sentry")), ...privacy };
+  }
+
+  describe("constructing the recorder", () => {
+    function clientWithoutReplay() {
+      getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    }
+
+    it("never while the level is pending", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay } = await loadAt(null);
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+
+    it("once the level allows it, with the masking options", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay, SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+
+      syncSentryReplay("/servers");
+      syncSentryReplay("/tools");
+
+      expect(replayIntegration).toHaveBeenCalledTimes(1);
+      expect(replayIntegration).toHaveBeenCalledWith(SENTRY_REPLAY_OPTIONS);
+      expect(addIntegration).toHaveBeenCalledTimes(1);
+    });
+
+    it("not on a hard load onto /results/, only after leaving it", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay } = await loadAt("full");
+
+      syncSentryReplay("/results/secret-token");
+      expect(addIntegration).not.toHaveBeenCalled();
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).toHaveBeenCalledTimes(1);
+    });
+
+    it("never on an off surface", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      clientWithoutReplay();
+      const { syncSentryReplay, currentSessionPrivacy } = await loadAt(null);
+
+      expect(currentSessionPrivacy()).toBe("off");
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+  });
+
   it("stops an active replay on the way into /results/ and resumes it on the way out", async () => {
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/results/secret-token");
+    syncSentryReplay("/results/secret-token");
     expect(replay.stop).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
 
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
@@ -175,15 +238,15 @@ describe("syncSentryReplayForPath", () => {
     // `stop()` clears the replay id, so re-reading it on the second
     // credential path would disarm the resume and the eventual exit would
     // never restart the recording.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
     replay.stop.mockImplementation(() =>
       replay.getReplayId.mockReturnValue(undefined),
     );
 
-    syncSentryReplayForPath("/results/token-a");
-    syncSentryReplayForPath("/results/token-b");
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/results/token-a");
+    syncSentryReplay("/results/token-b");
+    syncSentryReplay("/servers");
 
     expect(replay.stop).toHaveBeenCalledTimes(2);
     expect(replay.start).toHaveBeenCalledTimes(1);
@@ -193,34 +256,95 @@ describe("syncSentryReplayForPath", () => {
     // `start()` bypasses `replaysSessionSampleRate`, so resuming what this
     // guard did not stop would record 100% of the sessions that ever touched
     // a results link.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(false);
 
-    syncSentryReplayForPath("/results/secret-token");
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/results/secret-token");
+    syncSentryReplay("/servers");
 
     expect(replay.stop).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
   });
 
   it("never starts a replay on an ordinary navigation", async () => {
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/servers");
-    syncSentryReplayForPath("/tools");
+    syncSentryReplay("/servers");
+    syncSentryReplay("/tools");
 
     expect(replay.start).not.toHaveBeenCalled();
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
+  it("stops at masked and starts a new replay only when full returns", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true);
+
+    syncSentryReplay("/servers");
+    setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
+
+    expect(replay.stop).toHaveBeenCalledOnce();
+    expect(replay.start).toHaveBeenCalledOnce();
+  });
+
+  it("resumes a buffering replay as a buffering replay", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true) as ReturnType<typeof stubReplay> & {
+      getRecordingMode: ReturnType<typeof vi.fn>;
+      startBuffering: ReturnType<typeof vi.fn>;
+    };
+    replay.getRecordingMode = vi.fn(() => "buffer");
+    replay.startBuffering = vi.fn();
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+
+    syncSentryReplay("/results/secret-token");
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
+
+    expect(replay.startBuffering).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+  });
+
+  it("stops on a location whose query carries a secret", async () => {
+    const { syncSentryReplay } = await loadAt("full");
+    const replay = stubReplay(true);
+
+    syncSentryReplay({ pathname: "/servers", search: "?code=abc" });
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the replay stopped while the level drops back to pending", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+
+    setSessionPrivacy("pending");
+    syncSentryReplay("/servers");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+
+    setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
   it("is a no-op on a self-hosted build", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
     vi.resetModules();
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt(null);
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/results/secret-token");
+    syncSentryReplay("/results/secret-token");
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
@@ -228,14 +352,17 @@ describe("syncSentryReplayForPath", () => {
     // Deliberately on the hosted surface: with HOSTED_MODE off the function
     // returns at its first guard and never reaches `getClient()`, so the
     // assertion would pass no matter what the client guard did.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
 
     getClient.mockReturnValue(undefined);
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/servers")).not.toThrow();
 
     getClient.mockReturnValue({ getIntegrationByName: () => undefined });
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
-    expect(() => syncSentryReplayForPath("/servers")).not.toThrow();
+    addIntegration.mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => syncSentryReplay("/servers")).not.toThrow();
 
     // posthog-js is not the only ad-block target; a client that throws on
     // lookup must not take the render down either.
@@ -244,91 +371,111 @@ describe("syncSentryReplayForPath", () => {
         throw new Error("blocked");
       },
     });
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/results/x")).not.toThrow();
   });
 });
 
-describe("query event processor wiring", () => {
-  it("does not forward events dropped by the browser filter", async () => {
+describe("syncSentryReplay, a quick in-and-out", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
     vi.resetModules();
-    init.mockClear();
-    const diagnostics = await import("../convex-query-diagnostics");
-    const processor = vi.fn(diagnostics.createConvexQueryEventProcessor());
-    const factory = vi
-      .spyOn(diagnostics, "createConvexQueryEventProcessor")
-      .mockReturnValue(processor);
-    try {
-      const { initSentry } = await import("../sentry");
-      initSentry();
-      const config = init.mock.calls[0][0];
-      const dropped = config.beforeSend(
-        {
-          exception: {
-            values: [
-              {
-                type: "Error",
-                value: "injected script failure",
-                stacktrace: {
-                  frames: [
-                    {
-                      filename: `${window.location.origin}/playground`,
-                      function: "injected",
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-        {},
-      );
-      expect(dropped).toBeNull();
-      expect(processor).not.toHaveBeenCalled();
-    } finally {
-      factory.mockRestore();
-    }
   });
 
-  it("enriches global errors, deduplicates boundary reports and retains DOM grouping", async () => {
+  it("resumes only after the guard's stop has finished flushing", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
-    init.mockClear();
-    const { configureConvexQueryDiagnostics } =
-      await import("../convex-query-diagnostics");
-    configureConvexQueryDiagnostics("https://test.convex.cloud");
-    const { initSentry } = await import("../sentry");
-    initSentry();
-    const config = init.mock.calls[0][0];
-    const makeEvent = () => ({
-      exception: {
-        values: [
-          {
-            type: "Error",
-            value:
-              "[CONVEX Q(scenarios:listScenarios)] [Request ID: ab1234] Server Error",
-          },
-        ],
-      },
-    });
-    expect(config.beforeSend(makeEvent(), {}).tags).toMatchObject({
-      convex_backend: "test.convex.cloud",
-      request_id: "ab1234",
-    });
-    expect(config.beforeSend(makeEvent(), {})).toBeNull();
-    expect(
-      config.beforeSend(
-        {
-          environment: "prod",
-          exception: {
-            values: [
-              {
-                type: "NotFoundError",
-                value: "Failed to execute 'removeChild' on 'Node': not a child",
-              },
-            ],
-          },
-        },
-        {},
-      ).fingerprint,
-    ).toEqual(["dom-mutation-conflict", "prod"]);
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    let finishStop: () => void = () => {};
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => (finishStop = resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/tok");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the first stop when a second stop returns at once", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    const events: string[] = [];
+    let finishFirstStop: () => void = () => {};
+    let stops = 0;
+    const replay = {
+      start: vi.fn(() => events.push("start")),
+      // Like Sentry's: the first stop flushes for a while; a stop while the
+      // replay is already stopping returns a resolved promise.
+      stop: vi.fn(() => {
+        stops += 1;
+        if (stops > 1) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          finishFirstStop = () => {
+            events.push("first stop settled");
+            resolve();
+          };
+        });
+      }),
+      getReplayId: vi.fn(() => (stops === 0 ? "replay-id" : undefined)),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/results/b");
+    expect(replay.stop).toHaveBeenCalledTimes(2);
+    syncSentryReplay("/servers");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
+
+    finishFirstStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["first stop settled", "start"]);
+  });
+
+  it("stays stopped when the location is blocked again before the flush ends", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    // Every stop issued so far finishes flushing together.
+    const flushing: (() => void)[] = [];
+    const finishStop = () => flushing.splice(0).forEach((resolve) => resolve());
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => flushing.push(resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/servers");
+    syncSentryReplay("/results/b");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
+
+    // …and still resumes on the way out.
+    syncSentryReplay("/servers");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
   });
 });

@@ -598,8 +598,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       ok: false,
       kind: "model-not-hosted",
       reason:
-        "the claude-code harness only runs MCPJam-provided models — pick one " +
-        "on this host to run the real runtime",
+        "the Claude Code harness requires a supported model and an eligible Anthropic connection",
     });
 
     const app = createApp();
@@ -625,7 +624,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
 
     expect(response.status).toBe(422);
     const body = await response.json();
-    expect(body.error).toMatch(/MCPJam-provided models/);
+    expect(body.error).toMatch(/eligible Anthropic connection/);
     expect(body).toMatchObject({
       code: "FEATURE_NOT_SUPPORTED",
       reason: "HARNESS_UNAVAILABLE",
@@ -809,16 +808,20 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       ).toBe("sbx_pg");
     });
 
-    it("the same cloud harness without comparePane stays on the personal computer", async () => {
+    it("the same cloud harness without comparePane gets the conversation's box", async () => {
       const response = await post({
         modelId: "openai/gpt-5-mini",
         harness: "codex",
       });
       expect(response.status).toBe(200);
-      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ harness: "codex" }),
+      );
       expect(
-        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0].harnessSandboxBinding,
-      ).toBeUndefined();
+        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0].harnessSandboxBinding
+          ?.sandboxId,
+      ).toBe("sbx_pg");
     });
 
     it("refuses with the control plane's status when no box can be had, booting no engine", async () => {

@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/node";
 import { buildServerSentryConfig } from "../shared/sentry-config.js";
+import {
+  withSentryBoundary,
+} from "../shared/strict-sentry.js";
+import { strictServerSentryOptions } from "./utils/strict-sentry-options.js";
 import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
 
 /**
@@ -43,6 +47,14 @@ export function initServerSentry(): void {
     // Quota kill-knob. If a self-hosted noise pattern floods the project,
     // this can be dialed down by env var without a deploy.
     sampleRate: resolveErrorSampleRate(),
+    beforeSend: undefined,
+    beforeSendTransaction: undefined,
+    beforeBreadcrumb: undefined,
+    transport: (options) => withSentryBoundary(
+      Sentry.makeNodeTransport(options), strictServerSentryOptions,
+      () => ["1", "true"].includes(process.env.DO_NOT_TRACK ?? ""),
+      options.recordDroppedEvent,
+    ),
     integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that
       // deliberately swallows the MCP SDK's "Connection closed" rejections
@@ -67,6 +79,8 @@ export function initServerSentry(): void {
       }),
     ],
   });
+
+
 
   if (!enabled) {
     process.stderr.write(

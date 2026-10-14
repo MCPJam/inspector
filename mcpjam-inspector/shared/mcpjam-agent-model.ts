@@ -1,3 +1,4 @@
+import { defaultFallbackForPurpose, type ModelSelection } from "@mcpjam/sdk/browser";
 /**
  * Ask MCPJam's pinned model and per-turn step ceiling.
  *
@@ -14,13 +15,13 @@
  * or BYOK model — fine when the customer paid, not something MCPJam can hand
  * out.
  *
- * GPT-5.6 Luna, the model the backend's analysis pipelines already run on.
- * Every step of a turn re-sends the whole conversation, so the agent's bill is
- * almost all input tokens. Luna's input price is a fifth of Haiku 4.5's, and
- * OpenAI caches a repeated prompt prefix on its own, so the part of a step
- * that repeats the one before it costs a tenth of that again. It is still not
- * a frontier model, which keeps it a poor thing to farm through throwaway
- * signups. The backend pins its reasoning effort; this side sends none.
+ * Claude Haiku 5.5. Every step of a turn re-sends the whole conversation, so
+ * the agent's bill is almost all input tokens. Haiku 5.5's input price is half
+ * of GPT-5.6 Luna's and its output price under half, and the backend asks the
+ * Gateway to cache the repeated prompt prefix. It is still not a frontier
+ * model, which keeps it a poor thing to farm through throwaway signups, and it
+ * is guest-allowed, so a guest's turns on the customer rail work too. The
+ * backend pins its reasoning effort; this side sends none.
  *
  * MIRRORED from the backend's `convex/lib/agentModel.ts`, pinned by that
  * repo's `convex/lib/mirrors.json` (`mcpjam-agent-model`). Drift is not
@@ -29,7 +30,7 @@
  */
 import type { ModelDefinition } from "./types.js";
 
-export const MCPJAM_AGENT_MODEL = "openai/gpt-5.6-luna";
+export const MCPJAM_AGENT_MODEL = "anthropic/claude-haiku-5.5";
 
 /**
  * Steps one agent turn may take. The backend enforces the same ceiling on
@@ -64,11 +65,15 @@ export const PLATFORM_EXA_SEARCH_PATH = "/tools/exa/search/platform";
  *  would not be MCPJam-paid, and the backend would refuse the claim. */
 export const MCPJAM_AGENT_MODEL_DEFINITION: ModelDefinition = {
   id: MCPJAM_AGENT_MODEL,
-  name: "GPT-5.6 Luna",
-  provider: "openai",
+  name: "Claude Haiku 5.5",
+  provider: "anthropic",
   hosted: true,
 };
 
 /** The body field that ASKS the backend to bill MCPJam. Only honoured for a
  *  signed-in user, on their own login, and only for this model. */
 export const MCPJAM_AGENT_BILLING_FEATURE = "mcpjam_agent";
+
+export const MCPJAM_AGENT_MODEL_SELECTION: ModelSelection = {
+  source: "hosted", modelId: MCPJAM_AGENT_MODEL, fallback: defaultFallbackForPurpose("chat"),
+};

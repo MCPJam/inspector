@@ -155,10 +155,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -251,6 +247,20 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 }));
 
 // Mock convex/react
+// The project's installed plugins, as the hidden environment reads them.
+// None here, so nothing is composed.
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    plugins: [],
+    pluginServers: [],
+    wanted: false,
+    environmentId: null,
+    pluginServerIds: [],
+    failed: false,
+    recover: async () => ({ ok: false }),
+  }),
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).

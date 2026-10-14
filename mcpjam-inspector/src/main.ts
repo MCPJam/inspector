@@ -10,48 +10,27 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
-import * as Sentry from "@sentry/electron/main";
+import { initDesktopSentry } from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
-  buildElectronSentryConfig,
-  electronBuildSurface,
-} from "../shared/sentry-config.js";
-import {
-  crashReportingIntegrations,
-  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { loadSentryInstallationId } from "./sentry-installation.js";
+import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
+import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
+import { SENTRY_INSTALLATION_ARGUMENT } from "../shared/sentry-identity.js";
 
-// `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
-// a packaged build, so the previous NODE_ENV check reported every shipped
-// desktop event as `environment: "dev"`.
-Sentry.init({
-  ...buildElectronSentryConfig({
-    environment: app.isPackaged ? "prod" : "dev",
-    release: app.getVersion(),
-    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
-    // publish separately compiled main bundles under the same release, so
-    // without this they share one artifact namespace.
-    dist: electronBuildSurface(process.platform),
-    deployment: "self_hosted",
-  }),
-  ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
-  // Promotes crashed/oom from breadcrumbs to captured events — see
-  // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 5.12 and is left alone.
-  integrations: crashReportingIntegrations,
-  // Drops the ONE rejection the app cannot catch: Electron leaves
-  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
-  // in-flight Update.exe arrives as an unhandled rejection for something that
-  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
-  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
-  beforeSend: dropUpdaterInstallSpawnRejection,
-});
+const installationIdentity = initializeDesktopSentryIdentity(
+  loadSentryInstallationId(app.getPath("userData")),
+);
+
+initDesktopSentry({ release: app.getVersion(), packaged: app.isPackaged, root: app.getAppPath() });
 
 const desktopDiagnostics = installDesktopDiagnostics();
+const desktopSentryIdentity = installDesktopSentryIdentity();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -673,12 +652,16 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       // true in dev too, and the two differ on whether a Playwright browser can
       // be launched at all (forge packages `.vite` only, so `import("playwright")`
       // always rejects in the shipped app).
-      additionalArguments: app.isPackaged ? ["--mcpjam-packaged"] : [],
+      additionalArguments: [
+        ...(app.isPackaged ? ["--mcpjam-packaged"] : []),
+        `${SENTRY_INSTALLATION_ARGUMENT}${installationIdentity.id}`,
+      ],
     },
     show: false, // Don't show until ready
   });
 
   desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
+  desktopSentryIdentity.bind(window, rendererDevServerUrl ?? serverUrl);
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);

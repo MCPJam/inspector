@@ -212,8 +212,8 @@ export function CreditBalanceCard({
               isLoading || !balance
                 ? null
                 : hasRollover
-                ? `${monthlyRemaining.toLocaleString()} credits remaining`
-                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
+                  ? `${monthlyRemaining.toLocaleString()} credits remaining`
+                  : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
             }
             fillPercent={
               isLoading || meterCapacity <= 0
@@ -231,6 +231,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
+            isCreditMeter={balance != null && monthlyTotal > 0}
             testId="usage-monthly"
           />
         ) : (
@@ -239,8 +240,8 @@ export function CreditBalanceCard({
               isLoading
                 ? "Credits"
                 : balance?.platformFreeBudgetExhausted
-                ? "Free allowance temporarily unavailable"
-                : "Free daily credits"
+                  ? "Free allowance temporarily unavailable"
+                  : "Free daily credits"
             }
             rightText={
               isLoading || !balance
@@ -258,6 +259,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
+            isCreditMeter={balance != null && balance.freeDailyCreditsTotal > 0}
             testId="usage-daily"
           />
         )}
@@ -534,6 +536,8 @@ interface UsageRowProps {
   testId?: string;
   /** Prefix the value with a coin icon — matches the credit-amount rows. */
   showCoin?: boolean;
+  /** Credit meters use the theme accent and a low-balance text warning. */
+  isCreditMeter?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
   /** Accessible label for the progress bar. Defaults to the daily usage label. */
@@ -549,6 +553,7 @@ function UsageRow({
   isLoading,
   testId,
   showCoin = false,
+  isCreditMeter = false,
   tooltip,
   ariaLabel,
   ariaValueText,
@@ -590,6 +595,9 @@ function UsageRow({
           )}
         </span>
       </div>
+      {!isLoading && isCreditMeter && fillPercent <= 10 && (
+        <span className="text-xs text-foreground">Low credits</span>
+      )}
       {isLoading ? (
         <Skeleton className="h-2 w-full rounded-full" />
       ) : (
@@ -600,7 +608,9 @@ function UsageRow({
           className={
             fillPercent <= 10
               ? "bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-              : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+              : isCreditMeter
+                ? "bg-muted"
+                : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
           }
           aria-valuetext={ariaValueText}
         />

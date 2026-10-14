@@ -85,7 +85,7 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { decideTurnRail } from "./selection-rail.js";
+import { decideTurnRail, harnessTurnRail, forwardableSelection } from "./selection-rail.js";
 import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
@@ -111,10 +111,7 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
-import {
-  getHarnessAdapter,
-  harnessUsesExternalAccount,
-} from "./harness/registry.js";
+import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
@@ -123,6 +120,7 @@ import type { EffectiveCapabilitySet } from "../services/environments/effective-
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -307,6 +305,12 @@ export interface WebChatTurnPersistContext {
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
+   * The Playground's HIDDEN environment, HARNESS side: the turn delivers the
+   * project's live skill pool beside `runtimeSkillsOverride` (the harness's
+   * `live_plus` source). Forwarded verbatim; never inferred downstream.
+   */
+  includeProjectSkills?: boolean;
+  /**
    * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
    * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
    * this is what the Computer delivery path needs on top of it — the resolved
@@ -406,6 +410,7 @@ export interface WebChatTurnPrepareInputs {
    * hosted-list check, unchanged.
    */
   routingSelection?: RequestedModelSelection;
+  routingSelectionOrigin?: "backfill";
   systemPrompt?: string;
   temperature?: number;
   /**
@@ -1234,30 +1239,32 @@ export async function streamWebChatTurn(
       model: prepare.modelDefinition,
     }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
-  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
-  //
-  // Without this the branch below sends a Cursor turn down the org-BYOK path,
-  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
-  // approve the turn and the turn would then run on a completely different
-  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
-  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
-  // product just told the user was ready.
-  //
-  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
-  // model", and an external-account turn is exactly the case where it does not.
-  // The two reasons to take the non-BYOK branch are different facts, so they
-  // stay separate values.
-  const isExternalAccountHarnessTurn =
-    !!persist.harness && harnessUsesExternalAccount(persist.harness);
-  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted: without it the
+  // branch below would send a Cursor turn down the org-BYOK path, which never
+  // reaches `runHarnessTurn`. …OR a brokered harness on the ORGANIZATION'S own
+  // key. `isMCPJam` means "MCPJam pays for this model"; the other two are
+  // different facts, so the rail keeps them apart (`harnessTurnRail`).
+  const rail = harnessTurnRail({
+    harness: persist.harness,
+    model: {
+      id: String(prepare.modelDefinition.id),
+      provider: prepare.modelDefinition.provider,
+      hosted: prepare.modelDefinition.hosted,
+    },
+    selection: prepare.routingSelection,
+    mcpjamProvided: isMCPJam,
+    stepUpResume: !!scopeStepUpResume,
+  });
+  const usesMcpjamFreePath = rail.usesFreePath;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
   // EMULATED engine on the org's key, which would report the harness's name
   // over a turn the harness never touched. The route pre-flight refuses a
   // non-MCPJam model on a brokered harness already; this refuses the same
   // thing here, with the same sentence, for any caller that reaches this
-  // helper without one.
-  if (persist.harness && !usesMcpjamFreePath) {
+  // helper without one. (An org-key harness turn's step-up resume is the one
+  // exception, above: it is the emulated engine on any path.)
+  if (persist.harness && !usesMcpjamFreePath && !rail.orgStepUpResume) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1266,6 +1273,9 @@ export async function streamWebChatTurn(
         hosted: prepare.modelDefinition.hosted,
       },
       purpose: harnessModelPurposeForSourceType(persist.sourceType),
+      ...(prepare.routingSelection
+        ? { selection: prepare.routingSelection }
+        : {}),
     });
     throw new WebRouteError(
       503,
@@ -1273,7 +1283,7 @@ export async function streamWebChatTurn(
       `This host runs the ${persist.harness} harness, which isn't available: ` +
         `${
           refusal?.reason ??
-          "the harness only runs MCPJam-provided models — pick one on this host to run the real runtime"
+          "choose a supported model and an eligible connection for this harness"
         }.`,
     );
   }
@@ -1339,9 +1349,8 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
-        // What the session records for this turn: the selection it ran,
-        // effort included (last turn wins, like its modelId).
-        modelSelection: ranTurnSelection({
+        // Backfill origin cannot be stored on a session selection.
+        modelSelection: prepare.routingSelectionOrigin ? undefined : ranTurnSelection({
           selection: prepare.routingSelection,
           model: prepare.modelDefinition,
           reasoningEffort: prepare.reasoningEffort,
@@ -1502,6 +1511,10 @@ export async function streamWebChatTurn(
     // Cloud-only providers skip the /stream/org/resolve round-trip — the
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
+    // A refusal by the organization's AI-key policy (a local-runtime
+    // connection when the org requires its own keys, a connection that is
+    // gone) is answered as the refusal it is, never as an outage and never by
+    // falling back to another rail.
     const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
       ? await resolveOrgProviderRuntime(
           persist.projectId,
@@ -1529,7 +1542,9 @@ export async function streamWebChatTurn(
                 }
               : {}),
           },
-        )
+        ).catch((error: unknown) => {
+          throw asAiRefusalRouteError(error) ?? error;
+        })
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
@@ -1540,19 +1555,13 @@ export async function streamWebChatTurn(
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
     if (orgRuntime.runtimeLocation === "local") {
-      // The local runtime cannot resume a server-executed approval, and it
-      // refuses a WHOLE turn that advertises one. The workspace operations
-      // that pause for approval (MJ-008) would therefore take every other tool
-      // down with them; they are withheld here instead — refused, not run
-      // unasked.
+      // Withhold approval tools because the local runtime cannot resume them.
       if (localTools.removed.length > 0) {
         logger.warn(
           "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",
           { toolNames: localTools.removed },
         );
       }
-      // The inspector calls the provider on this runtime, so the effort is
-      // applied here as provider options, or refused before any spend.
       const localEffort = directChatEffort({
         providerKey: orgRuntime.provider.providerKey,
         modelId,
@@ -1568,6 +1577,10 @@ export async function streamWebChatTurn(
       }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
+        admission: orgRuntime.admission,
+        modelSelection: prepare.routingSelection?.source === "org" ? prepare.routingSelection : undefined,
+        modelSelectionOrigin: prepare.routingSelectionOrigin,
+        reasoningEffort: prepare.reasoningEffort,
         ...(historyPresentation ? { historyPresentation } : {}),
         failureReporter,
         projectId: persist.projectId,
@@ -1617,6 +1630,9 @@ export async function streamWebChatTurn(
       failureReporter,
       providerKey: orgRuntime.providerKey,
       modelId,
+      ...(prepare.routingSelection?.source === "org"
+        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const }, modelSelectionOrigin: prepare.routingSelectionOrigin }
+        : {}),
       ...(typeof prepare.modelDefinition.nativeModelId === "string"
         ? { nativeModelId: prepare.modelDefinition.nativeModelId }
         : {}),
@@ -1679,9 +1695,11 @@ export async function streamWebChatTurn(
   // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
   // which this turn does not have. See `chatModelSourceValidator` in the
   // backend for the two surfaces that read it that way.
+  // A harness turn on the organization's own key is the org's spend, never
+  // MCPJam's: `'byok'`, exactly like an org-BYOK chat turn.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
+    rail.modelSource,
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1761,6 +1779,10 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // Preserve the resolved selection for hosted steps and harness leases.
+    ...(forwardableSelection(prepare.routingSelection)
+      ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }
+      : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),
@@ -1782,6 +1804,7 @@ export async function streamWebChatTurn(
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
+    ...(persist.includeProjectSkills ? { includeProjectSkills: true } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),

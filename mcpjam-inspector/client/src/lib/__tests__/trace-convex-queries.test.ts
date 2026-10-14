@@ -1,3 +1,5 @@
+import { authRefusalDiagnostics } from "../auth/auth-refusal-diagnostics";
+import { guestTabRecovery } from "../auth/guest-tab-recovery";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexReactClient } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -53,6 +55,26 @@ describe("traced watches", () => {
   beforeEach(() => {
     vi.mocked(reportCaught).mockReset();
     resetSessionRevokedForTests();
+    authRefusalDiagnostics.dispose();
+    guestTabRecovery.setGuest(null);
+  });
+  it("still handles revocation when diagnostics throw", () => {
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const diagnostic = vi.spyOn(authRefusalDiagnostics, "record").mockImplementation(() => { throw Error("logging failed"); });
+    const f = fixture();
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(handler).toHaveBeenCalledOnce();
+    diagnostic.mockRestore();
+  });
+  it("does not sign WorkOS out for a stale guest watch", () => {
+    guestTabRecovery.setGuest("old-guest");
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const f = fixture(); const watch = f.client.watchQuery(query, {});
+    guestTabRecovery.setGuest(null);
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    watch.onUpdate(() => {});
+    expect(handler).not.toHaveBeenCalled();
   });
   it("preserves args, options, results, other watch methods and cleanup", () => {
     const f = fixture();
@@ -145,6 +167,64 @@ describe("traced watches", () => {
     watch.onUpdate(() => {});
     expect(() => watch.localQueryResult()).toThrow();
     expect(reportCaught).not.toHaveBeenCalled();
+  });
+  it.each([
+    "ENV_NO_SERVERS",
+    "ENV_SERVERS_UNRESOLVED",
+    "ENV_MODEL_REQUIRED",
+    "ENV_PLUGIN_UNAVAILABLE",
+  ])("leaves %s refusals for the preflight UI without reporting", (code) => {
+    const f = fixture();
+    const refused = new ConvexError({
+      code,
+      message: "Check the environment before launching.",
+      details: { environmentId: "env-a" },
+    });
+    f.set(undefined, refused);
+    const watch = f.client.watchQuery(
+      makeFunctionReference<"query">(
+        "projectEnvironments:resolveEnvironmentForLaunch",
+      ),
+      {},
+    );
+    const callback = vi.fn();
+    const stop = watch.onUpdate(callback);
+    f.update();
+    expect(callback).toHaveBeenCalledOnce();
+    expect(() => watch.localQueryResult()).toThrow(refused);
+    try {
+      watch.localQueryResult();
+    } catch (error) {
+      expect(error).toBe(refused);
+      expect(error).toHaveProperty("data.code", code);
+    }
+    expect(reportCaught).not.toHaveBeenCalled();
+
+    f.set(undefined, failure);
+    f.update();
+    expect(reportCaught).toHaveBeenCalledOnce();
+    stop();
+    expect(f.unsubscribe).toHaveBeenCalledOnce();
+  });
+  it.each([
+    new Error("ENV_NO_SERVERS"),
+    new ConvexError("ENV_NO_SERVERS"),
+    new ConvexError({ code: "INTERNAL_ERROR", message: "Resolution failed" }),
+    new ConvexError({ code: "ENV_NO_SERVERS" }),
+    new ConvexError({ code: "ENV_NO_SERVERS", message: "" }),
+    new ConvexError({ code: 123, message: "Resolution failed" }),
+  ])("still reports unexpected or malformed environment errors: %s", (error) => {
+    const f = fixture();
+    f.set(undefined, error);
+    const watch = f.client.watchQuery(
+      makeFunctionReference<"query">(
+        "projectEnvironments:resolveEnvironmentForLaunch",
+      ),
+      {},
+    );
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow(error);
+    expect(reportCaught).toHaveBeenCalledOnce();
   });
   it("signs the tab out once, and reports nothing, when its session was signed out elsewhere", () => {
     const signOut = vi.fn();

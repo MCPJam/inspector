@@ -1,4 +1,5 @@
 import type { DesktopActivity } from "../../../shared/desktop-diagnostics";
+import type { SentryActor } from "../../../shared/sentry-identity";
 import type {
   UpdateStatus,
   FailedUpdateStatus,
@@ -9,6 +10,11 @@ export type {
 } from "../../../shared/desktop-update";
 
 export interface ElectronAPI {
+  sentry?: {
+    installationId: string;
+    isDisabled?: () => Promise<boolean>;
+    setActor: (actor: SentryActor | null) => void;
+  };
   diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {

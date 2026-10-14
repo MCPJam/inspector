@@ -14,6 +14,7 @@ export {
   MUSE_RUNNER_CAPABILITIES,
   MUSE_STAGE_LANES,
   isDispositiveMuseFinding,
+  isMuseReadinessResult,
   rollUpMuseStage,
 } from "./types.js";
 export type {

@@ -180,7 +180,8 @@ is resolved per caller, these are held off this surface for **everyone**
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
 - Conformance and readiness: `start_claude_readiness_run`,
-  `start_openai_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
+  `start_openai_readiness_run`, `start_muse_readiness_run`,
+  `get_readiness_run`, `list_readiness_runs`,
   `cancel_readiness_run`, `get_readiness_report`, `start_conformance_run`,
   `get_conformance_run`, `list_conformance_runs`, `get_conformance_report`
 - Unified sessions: `search_sessions`

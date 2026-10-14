@@ -1,3 +1,4 @@
+import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 /**
  * HOST TARGETING for the v1 agent-Playground turn — which ENGINE runs it.
  *
@@ -45,7 +46,6 @@ import {
 } from "@mcpjam/sdk";
 import { selectionIfMatches } from "@mcpjam/sdk/browser";
 import {
-  readRoutingSelection,
   readStoredModelSelection,
 } from "../../utils/model-resolution-local.js";
 import { routingSelectionForModel } from "../../utils/selection-rail.js";
@@ -173,7 +173,7 @@ export function hostSelectionForModel(
   modelId: string,
 ): ModelSelection | undefined {
   return selectionIfMatches(
-    readStoredModelSelection(runtimeConfig?.modelSelection),
+    readStoredModelSelection(readRuntimeModelChoice(runtimeConfig).selection),
     modelId,
   );
 }
@@ -189,7 +189,7 @@ export function hostRoutingSelectionForModel(
   model: { id: string | { toString(): string }; provider?: string },
 ): RequestedModelSelection | undefined {
   return routingSelectionForModel(
-    readRoutingSelection(runtimeConfig?.modelSelection),
+    readRuntimeModelChoice(runtimeConfig).selection,
     model,
   );
 }
@@ -286,6 +286,12 @@ export function resolveChatSessionEngine(args: {
    * on a harness host is refused up front instead of dropped.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The selection that decides this turn's rail (the host's saved one, for
+   * this model). An org connection on the harness's own vendor runs the
+   * harness on the organization's key instead of being refused.
+   */
+  selection?: RequestedModelSelection;
 }): ChatSessionEngineResult {
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
@@ -317,6 +323,7 @@ export function resolveChatSessionEngine(args: {
     // runs. A harness that cannot apply it refuses the turn instead of running
     // without it.
     ...(hostEffort !== undefined ? { reasoningEffort: hostEffort } : {}),
+    ...(args.selection ? { selection: args.selection } : {}),
   });
   if (!availability.ok) {
     return {

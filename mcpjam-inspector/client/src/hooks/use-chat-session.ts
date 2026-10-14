@@ -1,4 +1,9 @@
 import {
+  orgPolicyBlocksChatSend,
+  orgPolicySendRefusal,
+  orgPolicyChatTransport,
+} from "./org-policy-chat";
+import {
   pluginMessageParts,
   type PluginMessageIntent,
 } from "@/shared/plugin-message";
@@ -52,7 +57,13 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
-import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
+import {
+  autoResumeStopReason,
+  describeAutoResumeStop,
+  lastStepHasPendingApproval,
+  type AutoResumeStopReason,
+} from "@/lib/chat-auto-resume";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   useAppToolsRegistryApi,
   recordAppToolInvocation,
@@ -73,7 +84,10 @@ import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
+import { chatRequestSelection } from "@/lib/chat-request-selection";
+import { compareSelectionForRow, replaceLeadCompareSelection, resolveCompareSelectionRow } from "@/lib/compare-cards";
 import {
   reasoningEffortMemoryKey,
   reasoningEffortOptions,
@@ -93,12 +107,16 @@ import {
   loadLeadModelProviderHint,
   saveLastOwnProviderModelId,
   saveLeadModelProviderHint,
+  loadSelectedModelSelections,
+  saveSelectedModelSelections,
   type LeadModelProviderHint,
 } from "@/lib/selected-model-storage";
 import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
   harnessPickerModels,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import {
@@ -111,7 +129,15 @@ import {
   OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  isOrgPolicyLockReason,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -247,6 +273,7 @@ import {
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
   isHarnessSubagentStepDataPart,
+  isHarnessToolOutputDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
@@ -266,6 +293,7 @@ import {
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
+import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -273,7 +301,16 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
-import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type {
+  HiddenEnvironmentRecovery,
+  HostedRuntimeContext,
+} from "@/lib/hosted-runtime-context";
+import {
+  hiddenEnvironmentServerOverride,
+  plainHiddenEnvironmentFailure,
+  readRecoverableHiddenEnvironmentCode,
+  retargetHiddenEnvironmentBody,
+} from "@/lib/plugins/hidden-environment";
 import type { HostedExecutionTarget } from "@/shared/execution-target";
 import {
   buildResolvedServerBatchRequest,
@@ -297,7 +334,7 @@ import { fetchArtifact } from "@/lib/artifact-urls";
 // attempted) and intentionally maps to no toast.
 const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "sandbox-replaced":
-    "Started a new session — the project computer was reset, so earlier context isn't available.",
+    "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
@@ -417,6 +454,9 @@ function pluginGlobalTurnFields(
 }
 
 export interface UseChatSessionOptions {
+  /** A card's saved choice; its connection and settings remain authoritative. */
+  pickedModelSelection?: RequestedModelSelection;
+  selectionIntent?: "picked" | "inherit";
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
   /**
    * The Playground's global extension owner. Its Apps have no chat of their
@@ -616,6 +656,9 @@ export interface TokenUsage {
 }
 
 export interface SetSelectedModelOptions {
+  /** History choices stay local to this conversation. */
+  persist?: boolean;
+  selection?: RequestedModelSelection | null;
   /**
    * True only when this came from the model menu. Restores — a history
    * session, an eval hand-off — go through the same setter but must not
@@ -716,6 +759,11 @@ export interface UseChatSessionReturn {
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
+  /**
+   * One line when a browser-fulfilled tool step was NOT resumed on its own —
+   * the reply was cut off, or the turn spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
   chatSessionId: string;
 
   // Model state
@@ -738,6 +786,9 @@ export interface UseChatSessionReturn {
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
+  /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -750,7 +801,7 @@ export interface UseChatSessionReturn {
   systemPrompt: string;
   setSystemPrompt: (prompt: string) => void;
   temperature: number;
-  setTemperature: (temp: number) => void;
+  setTemperature: (temp: number, userInitiated?: boolean) => void;
   /**
    * The effort this chat's selected model runs at, or undefined. Always one
    * of `reasoningEffortLevels` (an effort the model does not support is never
@@ -760,7 +811,7 @@ export interface UseChatSessionReturn {
   /** Levels the selected model supports here; empty hides the control. */
   reasoningEffortLevels: ModelReasoningEffort[];
   /** User pick: applies to the selected model and is remembered for it. */
-  setReasoningEffort: (effort: ModelReasoningEffort | undefined) => void;
+  setReasoningEffort: (effort: ModelReasoningEffort | undefined, userInitiated?: boolean) => void;
   /**
    * Default the effort for `model` (a host's saved effort, a reopened chat's
    * pin). Not remembered: only an explicit pick is.
@@ -886,6 +937,7 @@ export interface UseChatSessionReturn {
        * reasoning effort is seeded for it (not for the pre-restore selection).
        */
       restoredModel?: ModelDefinition;
+      restoredSelection?: RequestedModelSelection | null;
     },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null, sessionId?: string) => void;
@@ -923,7 +975,22 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+  /**
+   * The surface supplied a hidden environment and this chat's turns carry it
+   * (see `HostedHiddenEnvironment`). False when none was supplied.
+   */
+  hiddenEnvironmentActive: boolean;
+  /**
+   * A hidden environment was supplied, but this turn has to stay on this
+   * machine's own chat route, which cannot run it — so it runs as the plain
+   * client turn it would have been. Null otherwise.
+   */
+  hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null;
 }
+
+/** Why a supplied hidden environment does not carry this chat's turns. */
+export type HiddenEnvironmentOffReason =
+  "local_harness" | "local_server" | "local_model" | "local_tools";
 
 /**
  * Provider for a locked (guest / host-pinned) model id.
@@ -942,6 +1009,20 @@ export interface UseChatSessionReturn {
 function inferModelProviderFromId(modelId: string): ModelProvider {
   return providerForModelId(modelId) ?? "ollama";
 }
+
+/**
+ * The selection when the list offers nothing at all (the organization
+ * requires its own keys and has no eligible provider). The picker shows its
+ * own empty state; this only keeps every reader of `selectedModel` defined.
+ */
+export const NO_ORG_MODEL_PLACEHOLDER: ModelDefinition = Object.freeze({
+  id: "",
+  name: "No model available",
+  provider: "custom",
+  hosted: false,
+  disabled: true,
+  disabledReason: ORG_KEYS_MODEL_REASON,
+}) as ModelDefinition;
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
   // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
@@ -1833,6 +1914,8 @@ type HostedSessionScope = {
   targetKey?: string;
 };
 
+const EMPTY_SERVER_IDS: string[] = [];
+
 /** Build the {@link HostedSessionScope} target key. Exported for tests. */
 export function hostedTargetKey(input: {
   projectId?: string | null;
@@ -1931,6 +2014,8 @@ export function useChatSession(
     reasoningEffortEnabled = false,
     fixedReasoningEffort,
     pinnedModelProvider,
+    pickedModelSelection,
+    selectionIntent = "picked",
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -1956,6 +2041,12 @@ export function useChatSession(
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
+  // A hidden environment rides a CLIENT-turn context: it needs the client it
+  // was composed for, and nothing else may already be saying what to run.
+  const hostedHiddenEnvironment =
+    hostedHostId && !hostedScenarioId && !hostedContext?.executionTarget
+      ? hostedContext?.hiddenEnvironment
+      : undefined;
   // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
   // added to a request body or to `hostedTargetKey`: the execution target must
   // stay a single statement.
@@ -1998,12 +2089,21 @@ export function useChatSession(
   // silently receive a message composed for the previous one.
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
+  const [restoredChoice, setRestoredChoice] = useState<{
+    target: string; selection: RequestedModelSelection;
+  } | null>(null);
+  const [pickedTarget, setPickedTarget] = useState<string | null>(null);
+  const effectiveSelectionIntent = hostedScenarioId
+    ? "inherit"
+    : pickedTarget === hostedTargetKeyValue ? "picked" : selectionIntent;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedScenarioSurface = hostedContext?.scenarioSurface;
   // Published-scenario runtime sessions must use the org-aware web engine
   // on every platform — their servers resolve by Convex id, which the
   // local /api/mcp engine can't connect. See HostedRuntimeContext.
-  const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
+  // The surface's own statement. The effective flag, which also counts a
+  // hidden environment this chat carries, is `hostedRequiresWebChatApi` below.
+  const explicitRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
   const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
@@ -2064,7 +2164,7 @@ export function useChatSession(
   const setSystemPrompt = useCallback((prompt: string) => {
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
-  const [temperature, setTemperature] = useState(initialTemperature);
+  const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
    * null for every other surface.
@@ -2137,6 +2237,26 @@ export function useChatSession(
    * false), so a finished turn always overwrites a stopped predecessor.
    */
   const turnAbortedRef = useRef(false);
+  /**
+   * How the last response ended, from the same `onFinish`, and in which
+   * session. A finish reason reaches the browser nowhere else — it is not
+   * stored on the message — and the SDK runs `onFinish` before it asks
+   * `sendAutomaticallyWhen`, so the auto-resume bound below always weighs the
+   * response it is deciding about.
+   */
+  const lastFinishRef = useRef<{
+    chatSessionId: string;
+    finishReason: string | undefined;
+  } | null>(null);
+  /**
+   * What the latest auto-resume decision held back, and for which session.
+   * Recorded by `sendAutomaticallyWhen` itself — the SDK makes that decision
+   * before the settled response renders — and read at render for the notice.
+   */
+  const autoResumeHeldBackRef = useRef<{
+    chatSessionId: string;
+    reason: AutoResumeStopReason;
+  } | null>(null);
   const [, setHydrationTick] = useState(0);
   const [resumedVersionState, setResumedVersion] = useState<{
     sessionId: string;
@@ -2653,6 +2773,11 @@ export function useChatSession(
         } else if (isHarnessSubagentStepDataPart(part)) {
           // A subagent's step, shown live on its Agent call's card.
           useHarnessAgentActivityStore.getState().applyStep(part.data);
+        } else if (isHarnessToolOutputDataPart(part)) {
+          // A running command's output, shown live on its activity row.
+          useHarnessLiveOutputStore
+            .getState()
+            .append(part.data.toolCallId, part.data.delta);
         } else if (isHarnessBackgroundTaskDataPart(part)) {
           // A background agent's status, on the same card. Notices and
           // keepalives carry no tool call and are dropped by the store.
@@ -2835,10 +2960,35 @@ export function useChatSession(
     pendingHydration.resolve?.();
   }, []);
 
+  // Model selection with persistence
+  const {
+    selectedModelId,
+    selectedModelSelection: savedLeadSelection,
+    setSelectedModelId,
+    selectedModelIds,
+    setSelectedModelIds: persistSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
+    isInitialized: isPersistedModelInitialized,
+  } = usePersistedModel();
+  // The saved lead and compare picks. When the organization's AI key policy
+  // no longer offers one, the composition keeps it as a disallowed row, so the
+  // saved choice stays selected (the picker warns on its trigger) instead of
+  // silently switching to another model.
+  const savedModelIdsSignature = [selectedModelId ?? "", ...selectedModelIds]
+    .filter(Boolean)
+    .join("\u0001");
+  const savedModelIds = useMemo(
+    () =>
+      savedModelIdsSignature ? savedModelIdsSignature.split("\u0001") : [],
+    [savedModelIdsSignature],
+  );
+
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (scenario embeds resolve a host-provided project context).
-  const outOfCredits = useOutOfCredits();
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -2855,6 +3005,7 @@ export function useChatSession(
         outOfCredits,
         freeTierOnly,
         hostedCatalog,
+        savedModelIds,
       }),
     [
       hasToken,
@@ -2868,13 +3019,17 @@ export function useChatSession(
       outOfCredits,
       freeTierOnly,
       hostedCatalog,
+      savedModelIds,
     ],
   );
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
-  // and every caller that mirrors the selection back) reads this list.
+  // and every caller that mirrors the selection back) reads this list. Under
+  // the organization's key policy that is only organization models on the
+  // harness's own vendor (Claude Code: Anthropic, Codex: OpenAI).
   const harnessId = harnessModelTarget?.harnessId ?? null;
   const harnessRuntimeVersion = harnessModelTarget?.runtimeVersion ?? null;
+  const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
   const availableModels = useMemo(
     () =>
       harnessPickerModels(
@@ -2882,38 +3037,18 @@ export function useChatSession(
         harnessId
           ? { harnessId, runtimeVersion: harnessRuntimeVersion }
           : null,
+        { requireOrgKeys },
       ),
-    [composedModels, harnessId, harnessRuntimeVersion],
+    [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
-  // Model selection with persistence
-  const {
-    selectedModelId,
-    setSelectedModelId,
-    selectedModelIds,
-    setSelectedModelIds: persistSelectedModelIds,
-    multiModelEnabled,
-    setMultiModelEnabled,
-    isInitialized: isPersistedModelInitialized,
-  } = usePersistedModel();
-  // Which provider the lead id was picked under. The id alone is ambiguous —
-  // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
-  // re-picking the SAME id under a different provider (OpenRouter's
-  // `anthropic/claude-sonnet-5`, then the hosted one) leaves `selectedModelId`
-  // unchanged, so only a state change can re-run resolution. Re-read when the
-  // id changes from elsewhere (another tab); a hint for a different id is
-  // ignored at resolution, so a stale one is harmless.
+  // Compatibility ids can name several providers; keep their hint in state so
+  // a same-id provider change still resolves the intended row.
   const [leadProviderHint, setLeadProviderHint] =
     useState<LeadModelProviderHint | null>(() => loadLeadModelProviderHint());
   useEffect(() => {
     const stored = loadLeadModelProviderHint();
-    // Storage is not the authority when it has nothing for this id. The save
-    // swallows failures (quota exceeded, storage blocked), so after a pick the
-    // in-memory hint can be the only record of it — and replacing it with
-    // storage's null, or with a hint for an older id, would put an OpenRouter
-    // pick straight back on the hosted row (#5472). So: storage wins when it
-    // names this id (another tab picked it), then the state hint when IT names
-    // this id, and storage otherwise.
+    // A failed storage write must not discard the in-memory hint for this id.
     setLeadProviderHint((current) =>
       stored?.modelId === selectedModelId
         ? stored
@@ -2926,7 +3061,18 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
+  const savedSelection = (restoredChoice?.target === hostedTargetKeyValue
+    ? restoredChoice.selection : undefined) ?? pickedModelSelection ??
+    (!initialModelId ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
+    if (savedSelection) {
+      const candidates = initialModelId
+        ? availableModels.filter((row) => String(row.id) === initialModelId &&
+            (!pinnedModelProvider || row.provider === pinnedModelProvider))
+        : availableModels;
+      return resolveCompareSelectionRow(savedSelection, candidates, hostedOrgModelConfig) ??
+        { ...createLockedInitialModel(savedSelection.modelId), disabledReason: "The saved model or connection is unavailable. Choose a model again." };
+    }
     const fallback =
       (harnessId
         ? harnessDefaultModel(
@@ -2937,7 +3083,15 @@ export function useChatSession(
         : undefined) ??
       getDefaultModel(
         selectableModels.length > 0 ? selectableModels : availableModels,
-      );
+      ) ??
+      // Nothing to offer at all: a disabled stand-in, never `undefined`
+      // (INSPECTOR-CLIENT-222), which every reader below dereferences. The
+      // chat refuses to send on it (`submitBlocked`). A harness host none of
+      // the rows runs on says why; otherwise the organization requires its
+      // own keys and has no eligible provider yet.
+      (harnessId || !requireOrgKeys
+        ? noRunnableHarnessModel(harnessId ?? "", { requireOrgKeys })
+        : NO_ORG_MODEL_PLACEHOLDER);
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -2957,10 +3111,14 @@ export function useChatSession(
         (model) =>
           // Keep an out-of-credits model selected so the existing send →
           // limit-error → out-of-credits modal still fires. The gray-out
-          // must not silently switch the user off it. Other locks (guest,
-          // ollama-no-tools) stay unselectable.
+          // must not silently switch the user off it. The organization's
+          // AI key policy (a saved model it no longer allows, its settings
+          // still loading, a project no organization owns) never switches
+          // a saved choice either. Other locks (guest, ollama-no-tools)
+          // stay unselectable.
           !model.disabled ||
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON,
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
+          isOrgPolicyLockReason(model.disabledReason),
       );
 
     if (initialModelId) {
@@ -2979,9 +3137,14 @@ export function useChatSession(
     leadProviderHint,
     preferredModelId,
     pinnedModelProvider,
+    requireOrgKeys,
     selectableModels,
     selectedModelId,
+    savedSelection,
+    hostedOrgModelConfig,
   ]);
+  const temperature = temperatureOverride ??
+    (savedSelection?.source !== "legacy" ? savedSelection?.settings?.temperature : undefined) ?? initialTemperature;
 
   // Reasoning effort, per model. The state holds only what this hook session
   // set or was seeded with; anything else reads the remembered pick. Derived
@@ -2999,10 +3162,10 @@ export function useChatSession(
         ? []
         : reasoningEffortOptions(
             model,
-            reasoningEffortRouteForRow(model),
+            reasoningEffortRouteForRow(model, hostedOrgModelConfig),
             reasoningEffortHarness,
           ),
-    [reasoningEffortHarness, reasoningEffortEnabled],
+    [reasoningEffortHarness, reasoningEffortEnabled, hostedOrgModelConfig],
   );
   const reasoningEffortLevels = useMemo(
     () => reasoningEffortLevelsFor(selectedModel),
@@ -3017,8 +3180,10 @@ export function useChatSession(
       ? (fixedReasoningEffort ?? undefined)
       : effortKey in effortByModel
         ? effortByModel[effortKey]
-        : rememberedEffort;
-  // Never report (so never send) a level the model does not offer here.
+        : savedSelection && savedSelection.source !== "legacy"
+          ? savedSelection.settings?.reasoningEffort
+          : rememberedEffort;
+  // The request boundary refuses unsupported saved efforts instead of dropping them.
   const reasoningEffort =
     reasoningEffortEnabled &&
     storedEffort &&
@@ -3026,12 +3191,21 @@ export function useChatSession(
       ? storedEffort
       : undefined;
   const setReasoningEffort = useCallback(
-    (effort: ModelReasoningEffort | undefined) => {
+    (effort: ModelReasoningEffort | undefined, userInitiated = false) => {
+      if (userInitiated) setPickedTarget(hostedTargetKeyValue);
       setEffortByModel((prev) => ({ ...prev, [effortKey]: effort }));
       saveRememberedReasoningEffort(effortKey, effort);
     },
-    [effortKey],
+    [effortKey, hostedTargetKeyValue],
   );
+  const setTemperature = useCallback((value: number, userInitiated = false) => {
+    setTemperatureOverride(value);
+    if (userInitiated) {
+      setPickedTarget(hostedTargetKeyValue);
+      setEffortByModel((prev) => ({ ...prev, [effortKey]: undefined }));
+      saveRememberedReasoningEffort(effortKey, undefined);
+    }
+  }, [effortKey, hostedTargetKeyValue]);
   const setReasoningEffortForModel = useCallback(
     (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
       const key = reasoningEffortMemoryKey(model);
@@ -3069,16 +3243,55 @@ export function useChatSession(
   const isSelectedModelResolved = useMemo(() => {
     if (initialModelId) return true;
     if (isPersistedModelInitialized === false) return false;
+    // The organization's AI settings are still loading: the list is a locked
+    // placeholder, and its default must not be written back as a choice.
+    if (hostedOrgModelConfig?.pending) return false;
+    if (savedSelection) return !selectedModel.disabled;
+    // Nothing to offer at all: the placeholder is not a choice either.
+    if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId,
+      (model) =>
+        String(model.id) === selectedModelId &&
+        (!model.disabled ||
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
     );
   }, [
     availableModels,
+    hostedOrgModelConfig?.pending,
     initialModelId,
     isPersistedModelInitialized,
+    selectedModel,
     selectedModelId,
+    savedSelection,
   ]);
+
+  // Whether the organization's AI key policy leaves this chat no model to
+  // send to: its settings are still loading, it offers no model yet, or the
+  // saved model is one it no longer allows (it stays selected, and the picker
+  // warns on its trigger). A personal key in local mode has no server-side
+  // check to refuse it, so the chat must. The composer reads it through
+  // `submitBlocked`; `sendMessage` reads it too, because retry, the eval
+  // handoff and widget follow-ups call it directly.
+  const orgPolicyPending = hostedOrgModelConfig?.pending === true;
+  const orgPolicyBlocksSend = orgPolicyBlocksChatSend({
+    pending: orgPolicyPending,
+    requireOrgKeys,
+    selectedModel,
+    availableModels,
+  });
+  // Read at call time: a caller can hold a `sendMessage` from an earlier
+  // render (the eval handoff sends after the seeded thread hydrates).
+  const orgPolicySendRef = useRef({
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  });
+  orgPolicySendRef.current = {
+    blocked: orgPolicyBlocksSend,
+    pending: orgPolicyPending,
+    model: selectedModel,
+  };
 
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
@@ -3094,43 +3307,36 @@ export function useChatSession(
       if (initialModelId) {
         return;
       }
-      // Remember own-provider picks separately from the lead selection so the
-      // out-of-credits → "bring your own key" hand-off can restore the model
-      // the user actually wants instead of re-deriving one from list order.
-      // See `loadLastOwnProviderModelId` / BACK2-628.
-      //
-      // Only a pick from the menu counts. This setter is also how a history
-      // session and an eval hand-off restore *their* model, and letting those
-      // write would mean opening an old thread silently re-aims the next
-      // hand-off at whatever that thread happened to run on. Off by default so
-      // a new caller has to say it meant it.
+      // Only menu picks update the remembered own-provider hand-off.
       if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
         saveLastOwnProviderModelId(String(model.id));
       }
-      // Record the provider with the id, before the id, so resolution sees
-      // both together. Every caller here hands over a full definition — the
-      // picker, a history session, an eval hand-off — so each restores the
-      // exact row it means, not the first row that shares its id.
-      const hint = { modelId: String(model.id), provider: model.provider };
+      // Persist the full selection before its compatibility id/provider hint.
+      const saved = loadSelectedModelSelections() ?? [];
+      const existing = saved[0];
+      const selection = options?.selection ??
+        (existing && resolveCompareSelectionRow(existing, [model], hostedOrgModelConfig)
+          ? existing : compareSelectionForRow(model, hostedOrgModelConfig));
+      if (selection && options?.persist === false) {
+        setRestoredChoice({ target: hostedTargetKeyValue, selection });
+        setPickedTarget(hostedTargetKeyValue);
+        return;
+      }
+      setRestoredChoice(null);
+      if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
+      if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
+      const modelId = selection?.modelId ?? String(model.id);
+      const hint = { modelId, provider: model.provider };
       saveLeadModelProviderHint(hint);
       setLeadProviderHint(hint);
-      setSelectedModelId(String(model.id));
+      setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue],
   );
 
   const setSelectedModelIds = useCallback(
     (modelIds: string[]) => {
-      // A surface with a pinned model — a hosted scenario or share link,
-      // where `executionConfig.modelId` names the model the scenario owner
-      // chose — is not expressing *this* user's choice. `setSelectedModel`
-      // already no-ops for that reason; this setter has to as well, because
-      // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
-      // and so writes the same global lead key. Without the guard, opening a
-      // share link overwrote the model the user had selected in their own
-      // chats — the load-time clobber of BACK2-628, by a second route that
-      // `isSelectedModelResolved` cannot gate (it short-circuits to true
-      // whenever `initialModelId` is set).
+      // A pinned scenario owns its model and cannot update the global picker.
       if (initialModelId) {
         return;
       }
@@ -3164,6 +3370,46 @@ export function useChatSession(
       return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
+  // ── Hidden environment (a Playground chat's plugins) ────────────────────
+  //
+  // Only the web chat route resolves an environment, so a chat carries its
+  // hidden environment only where that route can run the turn. In the hosted
+  // app it always can. On this machine, a turn that has to stay on the local
+  // route — a client run here, a local-only server, a model keyed on this
+  // machine, this machine's browser or shell — runs as the plain client turn
+  // it would have been, and the surface says the plugins were off.
+  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
+    !hostedHiddenEnvironment || HOSTED_MODE
+      ? null
+      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+        ? "local_harness"
+        : hasLocalOnlySelectedServer
+          ? "local_server"
+          : !(isMcpJamModel || selectedModelUsesOrgRuntime)
+            ? "local_model"
+            : localBrowserRequested ||
+                (resolvedLocalEngine && Boolean(localConsentToken))
+              ? "local_tools"
+              : null;
+  const hiddenEnvironmentActive =
+    !!hostedHiddenEnvironment && hiddenEnvironmentOffReason === null;
+  // What this turn actually sends against: set only once the environment is
+  // composed. Until then a hidden-environment chat holds sends (see
+  // `hostedContextNotReady`) rather than racing a client turn out without
+  // its plugins.
+  const hiddenEnvironmentId = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.environmentId ?? null)
+    : null;
+  const hiddenPluginServerIds = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.pluginServerIds ?? EMPTY_SERVER_IDS)
+    : EMPTY_SERVER_IDS;
+  const hiddenEnvironmentRecover = hiddenEnvironmentActive
+    ? hostedHiddenEnvironment?.recover
+    : undefined;
+  // Like an environment target, a hidden environment's turn can only run on
+  // `/api/web/chat-v2`.
+  const hostedRequiresWebChatApi =
+    explicitRequiresWebChatApi || hiddenEnvironmentActive;
   const localMcpRuntimeRequired =
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
@@ -3199,6 +3445,24 @@ export function useChatSession(
       // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
       // the turn on the route that can honour it.
       !localHarnessRequested);
+  const requestChoice = useMemo(() => chatRequestSelection({
+    intent: effectiveSelectionIntent,
+    selection: savedSelection,
+    model: selectedModel,
+    orgConfig: hostedOrgModelConfig,
+    allowLocal: !shouldUseOrgAwareChatApi,
+    temperature: temperatureOverride,
+    effortLevels: reasoningEffortOptions(selectedModel,
+      reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
+    effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
+      effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+    shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
+    temperatureOverride, reasoningEffortHarness]);
+  const requestChoiceRef = useRef(requestChoice);
+  requestChoiceRef.current = requestChoice;
+  const requestEffort = requestChoice.kind === "picked" && requestChoice.selection.source !== "legacy"
+    ? requestChoice.selection.settings?.reasoningEffort : reasoningEffort;
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -3272,6 +3536,44 @@ export function useChatSession(
         }
       }
 
+      // Hidden environment recovery. A plugin this chat's composition pins
+      // was disabled, uninstalled or replaced after it was composed, and the
+      // route refused the turn PRE-STREAM. Re-read the plugins, recompose,
+      // and replay ONCE — onto the new composition, or as a plain client turn
+      // when nothing is runnable any more. A second refusal, or a recovery
+      // that cannot finish, is restated in plain words: the route's own
+      // message names an environment the member never chose.
+      if (
+        !response.ok &&
+        hiddenEnvironmentRecover &&
+        hostedHostId &&
+        typeof init?.body === "string" &&
+        (await readRecoverableHiddenEnvironmentCode(response))
+      ) {
+        const refused = response;
+        const recovery: HiddenEnvironmentRecovery =
+          await hiddenEnvironmentRecover();
+        const replayBody = recovery.ok
+          ? retargetHiddenEnvironmentBody(
+              init.body,
+              recovery.environmentId === null
+                ? { environmentId: null, hostId: hostedHostId }
+                : {
+                    environmentId: recovery.environmentId,
+                    pluginServerIds: recovery.pluginServerIds,
+                  },
+            )
+          : null;
+        if (replayBody !== null) {
+          response = await authFetch(input, { ...init, body: replayBody });
+          if (await readRecoverableHiddenEnvironmentCode(response)) {
+            response = plainHiddenEnvironmentFailure(response);
+          }
+        } else {
+          response = plainHiddenEnvironmentFailure(refused);
+        }
+      }
+
       // Stash on every outcome, including ok: a stream that fails partway
       // through still wants the request id that opened it.
       lastChatResponseRef.current = readChatResponseMeta(response);
@@ -3293,6 +3595,8 @@ export function useChatSession(
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
+      hiddenEnvironmentRecover,
+      hostedHostId,
     ],
   );
 
@@ -3503,14 +3807,35 @@ export function useChatSession(
                 ? { environmentOverrides: hostedEnvironmentOverrides }
                 : {}),
             }
-          : // Host-bound direct preview: forward the saved host id so the server
-            // re-resolves the host's authoritative runtime config (harness /
-            // computer included). Only on the direct path — scenario sessions own
-            // their host via scenarioId and the server ignores hostId when
-            // scenarioId is set.
-            isHostedDirectChat && hostedHostId
-            ? { hostId: hostedHostId }
-            : {}),
+          : hiddenEnvironmentId
+            ? {
+                // Hidden environment (a Playground chat's plugins): the
+                // composed environment INSTEAD of `hostId`. Its server set is
+                // always an explicit override — the chat's own resolved
+                // servers plus its plugins' — because an override replaces
+                // the environment's set, and the composition stores none.
+                executionTarget: {
+                  kind: "environment" as const,
+                  environmentId: hiddenEnvironmentId,
+                },
+                environmentOverrides: {
+                  serverIds: hiddenEnvironmentServerOverride(
+                    resolvedServerIds,
+                    hiddenPluginServerIds,
+                  ),
+                },
+                // The project's skills reach this turn as they reach a client
+                // turn, alongside the plugins' own.
+                includeProjectSkills: true,
+              }
+            : // Host-bound direct preview: forward the saved host id so the server
+              // re-resolves the host's authoritative runtime config (harness /
+              // computer included). Only on the direct path — scenario sessions own
+              // their host via scenarioId and the server ignores hostId when
+              // scenarioId is set.
+              isHostedDirectChat && hostedHostId
+              ? { hostId: hostedHostId }
+              : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3521,6 +3846,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
         // `buildHostedBody` (which hard-requires the project id): hosted
         // turns scope created tasks by the turn's project, non-hosted turns
@@ -3546,6 +3872,7 @@ export function useChatSession(
             : undefined;
         return {
           model: selectedModel,
+          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -3555,7 +3882,7 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(reasoningEffort ? { reasoningEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -3746,6 +4073,8 @@ export function useChatSession(
     });
   }, [
     selectedModel,
+    requestChoice,
+    requestEffort,
     getToken,
     getCustomProviderByName,
     customProviders,
@@ -3773,6 +4102,8 @@ export function useChatSession(
     hostedExecutionTarget,
     hostedEnvironmentId,
     hostedEnvironmentOverrides,
+    hiddenEnvironmentId,
+    hiddenPluginServerIds,
     hostedAccessVersion,
     hostedScenarioSurface,
     getOllamaBaseUrl,
@@ -3796,12 +4127,12 @@ export function useChatSession(
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
     () =>
-      withWebMcpTraffic({
-        sendMessages: (options) =>
-          latestTransportRef.current.sendMessages(options),
-        reconnectToStream: (options) =>
-          latestTransportRef.current.reconnectToStream(options),
-      }),
+      withWebMcpTraffic(
+        orgPolicyChatTransport(
+          () => latestTransportRef.current,
+          () => orgPolicySendRef.current,
+        ),
+      ),
     [],
   );
 
@@ -3834,8 +4165,12 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort, message }) => {
+    onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
+      lastFinishRef.current = {
+        chatSessionId: chatSessionIdRef.current,
+        finishReason,
+      };
       baseSetMessages((current) =>
         timestampMessageById(current, message.id, Date.now()),
       );
@@ -4030,8 +4365,11 @@ export function useChatSession(
     // already have their result in this response; posting them again would
     // create a redundant turn and can reuse a one-shot scope continuation.
     // Preserve main's BUG-4 guard: a pending approval must never be answered
-    // by an automatic follow-up.
+    // by an automatic follow-up. Bounded like the agent surface: never past a
+    // cut-off reply or a spent step budget, or a turn the server can no
+    // longer serve is re-posted indefinitely (`autoResumeStopReason`).
     sendAutomaticallyWhen: (options) => {
+      autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
         shouldAutoSendCompletedClientToolCalls(
@@ -4039,7 +4377,22 @@ export function useChatSession(
           scopeStepUpResumeInFlightRef.current,
         )
       ) {
-        return true;
+        const lastFinish = lastFinishRef.current;
+        const reason = autoResumeStopReason({
+          ...options,
+          finishReason:
+            lastFinish?.chatSessionId === chatSessionIdRef.current
+              ? lastFinish.finishReason
+              : undefined,
+          maxSteps: DEFAULT_TURN_MAX_STEPS,
+        });
+        if (reason && chatSessionIdRef.current) {
+          autoResumeHeldBackRef.current = {
+            chatSessionId: chatSessionIdRef.current,
+            reason,
+          };
+        }
+        return reason === null;
       }
       return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
@@ -4627,6 +4980,17 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      // The organization's AI key policy leaves no model to send to. Refused
+      // here, not only in the composer, so no caller can send around it.
+      const orgPolicy = orgPolicySendRef.current;
+      if (orgPolicy.blocked) {
+        toast.error(orgPolicySendRefusal(orgPolicy.model, orgPolicy.pending));
+        return Promise.resolve(false);
+      }
+      if (requestChoiceRef.current.kind === "blocked") {
+        toast.error(requestChoiceRef.current.reason);
+        return Promise.resolve(false);
+      }
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -5235,6 +5599,7 @@ export function useChatSession(
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
         restoredModel?: ModelDefinition;
+        restoredSelection?: RequestedModelSelection | null;
       },
     ) => {
       // The resume pointer is only a destination hint. Read the existing
@@ -5314,16 +5679,16 @@ export function useChatSession(
         if (session.resumeConfig?.systemPrompt !== undefined) {
           setSystemPrompt(session.resumeConfig.systemPrompt);
         }
-        if (session.resumeConfig?.temperature !== undefined) {
-          setTemperature(session.resumeConfig.temperature);
-        }
+        const selectionSettings = options?.restoredSelection?.source !== "legacy"
+          ? options?.restoredSelection?.settings : undefined;
+        setTemperatureOverride(selectionSettings?.temperature ?? session.resumeConfig?.temperature);
         {
           // The chat pinned its effort: a reopened chat keeps it (for the
           // model the session restores; a level it does not offer is not sent).
           // One that pinned none runs at the model's default, not at whatever
           // effort was last remembered for that model. Tracked so a new chat
           // does not inherit it (see `resetChat`).
-          const pinned = session.resumeConfig?.reasoningEffort;
+          const pinned = selectionSettings?.reasoningEffort ?? session.resumeConfig?.reasoningEffort;
           const restoredEffort =
             typeof pinned === "string" &&
             (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
@@ -5390,7 +5755,7 @@ export function useChatSession(
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setTemperature(executionTemperature ?? 0.7);
+    setTemperatureOverride(executionTemperature);
   }, [isExecutionConfigControlled, executionTemperature]);
 
   useEffect(() => {
@@ -5767,13 +6132,16 @@ export function useChatSession(
   // `servers:getProjectServers`, so they can never appear in the browser's
   // name-keyed catalog and the gate would never open.
   const hostedContextNotReady =
-    orgOrHostedContextRequired &&
-    (!hostedProjectId ||
-      (!hostedEnvironmentId &&
-        selectedServerIdsRequired &&
-        selectedServers.length > 0 &&
-        !hostedEnsureServerIds &&
-        hostedSelectedServerIds.length !== selectedServers.length));
+    (orgOrHostedContextRequired &&
+      (!hostedProjectId ||
+        (!hostedEnvironmentId &&
+          selectedServerIdsRequired &&
+          selectedServers.length > 0 &&
+          !hostedEnsureServerIds &&
+          hostedSelectedServerIds.length !== selectedServers.length))) ||
+    // A hidden environment still being composed: a send now would go out as a
+    // client turn without the chat's plugins.
+    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,
@@ -5838,8 +6206,20 @@ export function useChatSession(
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
-    hostedContextNotReady;
+    hostedContextNotReady ||
+    requestChoice.kind === "blocked" ||
+    isNoRunnableHarnessModel(selectedModel) ||
+    // The organization's AI key policy leaves no model to send to.
+    orgPolicyBlocksSend;
   const inputDisabled = submitBlocked;
+
+  // Only once the response has settled, and only for the session it was
+  // recorded on — the ref outlives a switch to another conversation.
+  const heldBack = autoResumeHeldBackRef.current;
+  const autoResumeNotice =
+    status === "ready" && heldBack && heldBack.chatSessionId === chatSessionId
+      ? describeAutoResumeStop(heldBack.reason)
+      : null;
 
   return {
     // Chat state
@@ -5850,6 +6230,7 @@ export function useChatSession(
     stop: stopChat,
     status,
     error,
+    autoResumeNotice,
     chatSessionId,
 
     // Model state
@@ -5862,6 +6243,7 @@ export function useChatSession(
     setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
+    outOfCreditsReason,
 
     // Auth state
     isAuthenticated,
@@ -5940,5 +6322,7 @@ export function useChatSession(
     disableForAuthentication,
     submitBlocked,
     inputDisabled,
+    hiddenEnvironmentActive,
+    hiddenEnvironmentOffReason,
   };
 }

@@ -14,6 +14,7 @@ let balanceState:
       walletLocked: boolean;
       billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
+      rolloverCreditsRemaining?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
     }
@@ -129,6 +130,49 @@ describe("SidebarCredits", () => {
     vi.useRealTimers();
   });
 
+  it("uses the same rollover capacity as Billing for low credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 550,
+      rolloverCreditsRemaining: 550,
+    };
+    renderCredits();
+    expect(screen.getByText("Low credits")).toBeInTheDocument();
+    expect(screen.getByText("550 / 5,550")).toBeInTheDocument();
+  });
+
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    renderCredits();
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
+  it.each([75, 100, 5])(
+    "shows credit balance at %s percent with a text warning only when low",
+    (percent) => {
+      balanceState = {
+        ...balanceState!,
+        freeDailyCreditsRemaining: percent * 3,
+      };
+      renderCredits();
+      const meter = screen.getByRole("progressbar", {
+        name: "Free daily credits",
+      });
+      expect(meter).toHaveAttribute("aria-valuetext", `${percent * 3} / 300`);
+      expect(meter).not.toHaveClass(
+        "[&_[data-slot=progress-indicator]]:bg-foreground/60",
+      );
+      expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+    },
+  );
+
   it("shows the remaining sponsored swarm conversations when the user has an allowance", () => {
     allowanceState = { remaining: 412, granted: 500 };
     renderCredits();
@@ -232,6 +276,44 @@ describe("SidebarCredits", () => {
     expect(monthlyRow).toHaveTextContent("resets in 16 days");
     expect(monthlyRow.textContent ?? "").not.toMatch(/resets in 16 days \(/);
     expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
+  });
+
+  it("lists shared paid credits under the plan allowance without merging them", () => {
+    balanceState = {
+      paidCreditsRemaining: 988,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: 0,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 0,
+      walletLocked: false,
+      billingModel: "monthly_per_seat",
+      monthlyAllowanceTotal: 24_000,
+      monthlyAllowanceRemaining: 18_000,
+      monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
+    };
+
+    renderCredits();
+
+    const paidRow = screen.getByTestId("sidebar-usage-paid");
+    expect(paidRow).toHaveTextContent("Shared paid credits");
+    expect(paidRow).toHaveTextContent("988 credits");
+    // Absolute count, no denominator: no bar to draw.
+    expect(
+      screen.queryByRole("progressbar", { name: "Shared paid credits" }),
+    ).not.toBeInTheDocument();
+    // The monthly row is exactly what it was; the two pools stay apart.
+    const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
+    expect(monthlyRow).toHaveTextContent("18,000 / 24,000");
+    expect(monthlyRow).not.toHaveTextContent("988");
+  });
+
+  it("renders no paid credits row at all when the pool is empty", () => {
+    // Default state has paidCreditsRemaining: 0.
+    renderCredits();
+
+    expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shared paid credits")).not.toBeInTheDocument();
   });
 
   it("hides the eval iteration bar for an organization with no cap", () => {

@@ -160,6 +160,7 @@ import {
   evalRunServerFactsSchema,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
+  evalExecutionBudgetsSchema,
   IMPORT_MAPPING_STATUSES,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
@@ -275,7 +276,11 @@ import {
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
-import { judgeModelIdSchema } from "./judge-model-id.js";
+import {
+  judgeModelIdInputSchema,
+  judgeModelIdSchema,
+  judgeRunOverride,
+} from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -2666,6 +2671,11 @@ function toSuiteDetailDto(
       // runs today, but only one of them is something the user chose.
       minimumIterations:
         typeof suite.minIterations === "number" ? suite.minIterations : null,
+      // `null` = nothing authored, so every clock resolves to the platform
+      // default. Readable because it is writable: a caller that could PATCH a
+      // budget and never read it back cannot tell a stored value from a
+      // dropped one, which is precisely the bug this pair closes.
+      executionBudgets: suite.executionBudgets ?? null,
       matchOptions: toPublicMatchOptions(suite.defaultMatchOptions),
       checks:
         projectCheckRolesForVocabulary(
@@ -3145,7 +3155,7 @@ const publicCaseBodyShape = {
   /** Policy-v2 ONLY. See {@link assertCasePolicyFieldsSupported}. */
   passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
-  scenario: z.string().optional(),
+  scenario: z.string().min(1).nullable().optional(),
   /**
    * Optional analytics label. Omitted preserves it on PATCH; `null` clears it.
    * `createCaseSchema` narrows this to the stored (string-only) form below.
@@ -3441,6 +3451,20 @@ function caseResource(c: Context, doc: CaseDoc, status = 200) {
  * vocabulary-2 twin can be built from it (see `eval-case-vocabulary-2.ts`).
  */
 const suiteSettingsShape = {
+  /**
+   * Authored execution budgets — the clocks this suite's runs are bounded by.
+   *
+   * The canonical schema from `@mcpjam/sdk/contract` rather than a restatement
+   * of it: its `max` on each field IS the platform ceiling, so a value the
+   * platform could never run is refused by parsing, before the ladder ever
+   * sees it. A second copy here would be a second place for the ceilings to
+   * drift from §3.2.
+   *
+   * `null` clears back to the platform defaults, matching `minimumIterations`
+   * below and the backend's own `executionBudgets: null` contract — an omitted
+   * field leaves the stored value alone, which is not the same thing.
+   */
+  executionBudgets: evalExecutionBudgetsSchema.nullable().optional(),
   minimumAccuracy: z.number().min(0).max(100).optional(),
   // Suite-level FLOOR on per-case iterations: every case runs at least
   // this many times (`max(case.iterations, minimumIterations)`). `null`
@@ -3790,12 +3814,17 @@ const requestRunJudgeSchema = z
     /** Re-grade a run that already has a result. */
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
-    /** Judge model for THIS run only. */
-    model: judgeModelIdSchema.optional(),
+    /**
+     * Judge model for THIS run only. Normalized beside the selection by
+     * `judgeRunOverride`: only a hosted judge's `mcpjam/` spelling changes.
+     */
+    model: judgeModelIdInputSchema.optional(),
     /**
      * The judge's full selection for THIS run only (source, connection,
      * reasoning effort). Must name `model` when both are sent; sent alone it
-     * names the judge model. Judges run on MCPJam-hosted models only.
+     * names the judge model. A hosted or an organization (BYOK) selection;
+     * the backend refuses local and stored-legacy judges, and a picked hosted
+     * judge when the organization requires its own provider keys.
      */
     modelSelection: modelSelectionSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
@@ -6029,20 +6058,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   // re-stating an override returns to suite-config grading on its own.
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
-  if (parsed.model !== undefined) override.judgeModel = parsed.model;
-  if (parsed.modelSelection !== undefined) {
-    if (
-      parsed.model !== undefined &&
-      parsed.model.trim() !== parsed.modelSelection.modelId
-    ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${parsed.model}).`,
-      );
-    }
-    override.judgeSelection = parsed.modelSelection;
-  }
+  Object.assign(
+    override,
+    judgeRunOverride(parsed.model, parsed.modelSelection),
+  );
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {
@@ -8956,6 +8975,14 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     // would turn every attempt to remove the floor into a silent no-op.
     if (s.minimumIterations !== undefined)
       updateArgs.minIterations = s.minimumIterations;
+    // Forwarded verbatim, `null` INCLUDED, for the same reason as the floor
+    // above: the platform reads null as "clear back to the defaults". Sending
+    // nothing when the schema accepted a value is the failure this program has
+    // already shipped once — a field parsed, 200 returned, and the setting
+    // silently dropped, with green CI throughout because the settings ratchet
+    // proves the schema PARSES the path, not that the handler acts on it.
+    if (s.executionBudgets !== undefined)
+      updateArgs.executionBudgets = s.executionBudgets;
     // PATCH is merge semantics: updateTestSuite replaces these objects
     // wholesale, so a partial public field (e.g. only matchOptions.arguments,
     // or only judge.model) must be layered onto the suite's CURRENT values —

@@ -13,7 +13,9 @@ const captureMock = vi.fn();
 const shutdownMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => ({ capture: captureMock, shutdown: shutdownMock })),
+  PostHog: vi.fn(function () {
+    return { capture: captureMock, shutdown: shutdownMock };
+  }),
 }));
 
 import { captureServerEvent, shutdownAnalytics } from "../analytics.js";
@@ -40,11 +42,13 @@ describe("captureServerEvent (hosted mode)", () => {
 
   it("stamps deployment: hosted", () => {
     captureServerEvent(
-      fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+      fakeContext({
+        requestLogContext: {
+          userExternalId: "user_01H00000000000000000000000",
+        },
+      }),
       "send_message_server",
     );
-    expect(captureMock.mock.calls[0][0].properties.deployment).toBe(
-      "hosted",
-    );
+    expect(captureMock.mock.calls[0][0].properties.deployment).toBe("hosted");
   });
 });

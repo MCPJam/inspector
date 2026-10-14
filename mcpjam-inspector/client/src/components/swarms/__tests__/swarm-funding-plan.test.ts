@@ -9,6 +9,7 @@ import {
   fundingPreviewRuns,
   fundingReviewNotice,
   fundingSplitOf,
+  launchOutOfCreditsReason,
   launchRunOverrides,
   withChosenIterations,
 } from "../swarm-funding-plan";
@@ -235,6 +236,62 @@ describe("fundingSplitOf", () => {
   });
 });
 
+describe("launchOutOfCreditsReason", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  const split = (sponsored: number) => ({
+    sponsored,
+    credits: 15 - sponsored,
+    total: 15,
+  });
+
+  it("blocks a launch the split says has nothing sponsored", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: undefined,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("blocks when no sponsored allowance is left, even before the goals exist", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: null,
+        pendingGoals: 3,
+        allowanceRemaining: 0,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("never blocks a launch that is or may be sponsored", () => {
+    for (const input of [
+      { split: split(5), pendingGoals: 0, allowanceRemaining: 5 },
+      // The new goals are not in the split yet.
+      { split: split(0), pendingGoals: 2, allowanceRemaining: undefined },
+      // Sponsorship not known here at all.
+      { split: null, pendingGoals: 0, allowanceRemaining: undefined },
+    ]) {
+      expect(
+        launchOutOfCreditsReason({ outOfCreditsReason: REASON, ...input }),
+      ).toBeNull();
+    }
+  });
+
+  it("never blocks while the org can spend", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: null,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: 0,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("creditFundingExplanation", () => {
   const split = { sponsored: 0, credits: 3, total: 3 };
 
@@ -357,6 +414,12 @@ describe("creditFundingExplanation", () => {
       expect(
         explain([{ targetId: "a", reason: "persona_model_not_included" }]),
       ).toMatch(/the persona model isn't included in them/);
+    });
+
+    it("names the organization's key policy as the cause", () => {
+      expect(explain([{ targetId: "a", reason: "org_keys_required" }])).toMatch(
+        /can't use sponsored conversations \(this organization requires its own provider keys\)/,
+      );
     });
 
     // The backend names the saved SELECTION (not hosted), not where the judge

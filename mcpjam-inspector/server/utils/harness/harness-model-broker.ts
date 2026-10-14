@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "../ai-request-headers.js";
 /**
  * Header-broker start/revoke client — the ONLY harness credential delivery
  * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
@@ -15,7 +16,14 @@ import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
 import { harnessPinnedVersion } from "@/shared/harness-model-support";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
+import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
+import {
+  orgLeaseUpstreamFrom,
+  leaseSelectionField,
+  orgBindingUnconfirmed,
+  type HarnessOrgLeaseUpstream,
+} from "./harness-org-lease.js";
 
 /**
  * The harness runtime CLI version the lease is for — the adapter's pinned
@@ -53,6 +61,8 @@ export type HarnessBrokerStartResult =
       protocol: "anthropic" | "openai";
       proxyBaseUrl: string;
       delivery: "e2b-network-transform";
+      /** Present exactly when the lease runs on the org's own key. */
+      orgUpstream?: HarnessOrgLeaseUpstream;
     }
   | {
       ok: false;
@@ -90,20 +100,24 @@ export type HarnessLoopbackStartResult =
        * instead.
        */
       lease: string;
+      /** Present exactly when the lease runs on the org's own key. */
+      orgUpstream?: HarnessOrgLeaseUpstream;
     }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; code?: string };
 
-function getConvexHttpUrl(): string {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) {
-    throw new Error("CONVEX_HTTP_URL is required for harness model broker");
-  }
-  return convexHttpUrl;
-}
-
-function bearerHeader(bearer: string): string {
-  const trimmed = bearer.trim();
-  return /^Bearer\s/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
+/**
+ * A start that asked for an org-key lease and got one that does not confirm
+ * the org binding is refused, and that lease revoked before anything runs:
+ * an org binding is never assumed. Null when there is nothing to refuse.
+ */
+async function refuseUnconfirmedOrgLease(args: {
+  asked: boolean;
+  orgUpstream: HarnessOrgLeaseUpstream | null;
+  revoke: Parameters<typeof revokeHarnessModelBroker>[0];
+}): Promise<ReturnType<typeof orgBindingUnconfirmed> | null> {
+  if (!args.asked || args.orgUpstream) return null;
+  await revokeHarnessModelBroker(args.revoke);
+  return orgBindingUnconfirmed();
 }
 
 /**
@@ -167,6 +181,17 @@ export async function startHarnessModelBroker(args: {
    * omitted when the turn has none, so an older backend sees the same body.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved selection. Sent only when it names an org connection
+   * (`source: 'org'`): the lease then runs on that organization's key, and
+   * the backend resolves the connection itself.
+   */
+  modelSelection?: ModelSelection | null;
+  /**
+   * The org credential revision `/reserve` prepared this turn for. The start
+   * is refused (`byok_connection_changed`) if the key was replaced since.
+   */
+  expectedCredentialRevision?: string;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -191,6 +216,7 @@ export async function startHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -204,6 +230,11 @@ export async function startHarnessModelBroker(args: {
           : {}),
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
+          : {}),
+        ...leaseSelectionField(args.modelSelection),
+        ...(args.modelSelection?.source === "org" &&
+        args.expectedCredentialRevision
+          ? { expectedCredentialRevision: args.expectedCredentialRevision }
           : {}),
       }),
       signal: args.signal,
@@ -239,6 +270,19 @@ export async function startHarnessModelBroker(args: {
     Number.isFinite(payload.expiresAt) &&
     (payload?.protocol === "anthropic" || payload?.protocol === "openai") &&
     payload?.delivery === "e2b-network-transform";
+  const orgUpstream = orgLeaseUpstreamFrom(payload);
+  const unconfirmed = await refuseUnconfirmedOrgLease({
+    asked: validShape && args.modelSelection?.source === "org",
+    orgUpstream,
+    revoke: {
+      runId: payload?.runId,
+      ...(args.box.kind === "computer"
+        ? { projectId: args.box.projectId }
+        : {}),
+      bearer: args.bearer,
+    },
+  });
+  if (unconfirmed) return unconfirmed;
   if (!validShape) {
     return {
       ok: false,
@@ -260,6 +304,9 @@ export async function startHarnessModelBroker(args: {
     protocol: payload.protocol,
     proxyBaseUrl: payload.proxyBaseUrl,
     delivery: "e2b-network-transform",
+    ...(args.modelSelection?.source === "org" && orgUpstream
+      ? { orgUpstream }
+      : {}),
   };
 }
 
@@ -303,6 +350,7 @@ export async function registerLocalInstance(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -357,6 +405,8 @@ export async function startLoopbackModelBroker(args: {
   maxOutputTokens?: number;
   /** See `startHarnessModelBroker`. */
   reasoningEffort?: ModelReasoningEffort;
+  /** See `startHarnessModelBroker`: sent only for an org selection. */
+  modelSelection?: ModelSelection | null;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessLoopbackStartResult> {
@@ -381,6 +431,7 @@ export async function startLoopbackModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -404,6 +455,7 @@ export async function startLoopbackModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
+        ...leaseSelectionField(args.modelSelection),
       }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
@@ -442,6 +494,13 @@ export async function startLoopbackModelBroker(args: {
     // usable local start, whatever else it says.
     typeof payload?.lease === "string" &&
     payload.lease.length > 0;
+  const orgUpstream = orgLeaseUpstreamFrom(payload);
+  const unconfirmed = await refuseUnconfirmedOrgLease({
+    asked: validShape && args.modelSelection?.source === "org",
+    orgUpstream,
+    revoke: { runId: payload?.runId, bearer: args.bearer },
+  });
+  if (unconfirmed) return unconfirmed;
   if (!validShape) {
     return {
       ok: false,
@@ -450,6 +509,9 @@ export async function startLoopbackModelBroker(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Harness model-broker failed (${response.status})`,
+      ...(!response.ok && typeof payload?.code === "string"
+        ? { code: payload.code }
+        : {}),
     };
   }
 
@@ -461,6 +523,9 @@ export async function startLoopbackModelBroker(args: {
     proxyBaseUrl: payload.proxyBaseUrl,
     delivery: "inspector-loopback-gateway",
     lease: payload.lease,
+    ...(args.modelSelection?.source === "org" && orgUpstream
+      ? { orgUpstream }
+      : {}),
   };
 }
 
@@ -491,6 +556,7 @@ export async function revokeHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -522,8 +588,14 @@ export type HarnessBoxReservationResult =
   | {
       ok: true;
       expiresAt?: number;
+      /**
+       * For an org selection: the hashed credential revision the turn is
+       * being prepared for. Handed back to the start, which refuses if the
+       * organization's key was replaced in between.
+       */
+      credentialRevision?: string;
     }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; code?: string };
 
 /**
  * Claim a box for the span of a turn's PREPARATION — waking it and installing
@@ -540,6 +612,8 @@ export async function reserveHarnessBox(args: {
   harnessId: HarnessId;
   modelId: string;
   runId: string;
+  /** See `startHarnessModelBroker`: an org selection is checked here first. */
+  modelSelection?: ModelSelection | null;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBoxReservationResult> {
@@ -564,6 +638,7 @@ export async function reserveHarnessBox(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -575,6 +650,9 @@ export async function reserveHarnessBox(args: {
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         runId: args.runId,
+        // An org selection is resolved HERE, before the box installs
+        // anything: a disabled or mismatched connection fails early.
+        ...leaseSelectionField(args.modelSelection),
       }),
       signal: args.signal,
     });
@@ -596,12 +674,17 @@ export async function reserveHarnessBox(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Couldn't reserve the computer (${response.status})`,
+      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
   return {
     ok: true,
     ...(typeof payload.expiresAt === "number"
       ? { expiresAt: payload.expiresAt }
+      : {}),
+    ...(args.modelSelection?.source === "org" &&
+    typeof payload.credentialRevision === "string"
+      ? { credentialRevision: payload.credentialRevision }
       : {}),
   };
 }
@@ -629,6 +712,7 @@ export async function renewHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -688,6 +772,7 @@ export async function releaseHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({

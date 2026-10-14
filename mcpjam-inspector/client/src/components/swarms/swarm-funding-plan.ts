@@ -113,6 +113,30 @@ export function fundingSplitOf(
   );
 }
 
+/**
+ * Why Continue is off while the org is out of credits, or null. Only once no
+ * conversation in the launch is known to be sponsored: the split says none, or
+ * no allowance is left. A split still unknown (goals not created yet) may be
+ * sponsored, so it never blocks.
+ */
+export function launchOutOfCreditsReason({
+  outOfCreditsReason,
+  split,
+  pendingGoals,
+  allowanceRemaining,
+}: {
+  outOfCreditsReason: string | null;
+  split: FundingSplit | null;
+  pendingGoals: number;
+  allowanceRemaining: number | undefined;
+}): string | null {
+  if (outOfCreditsReason === null) return null;
+  const noneSponsored =
+    (split !== null && pendingGoals === 0 && split.sponsored === 0) ||
+    allowanceRemaining === 0;
+  return noneSponsored ? outOfCreditsReason : null;
+}
+
 const plural = (count: number, one: string, many: string) =>
   `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
@@ -176,6 +200,10 @@ function ineligibilityClause(
       return "the judge is set to a model MCPJam doesn't host";
     case "judge_model_not_included":
       return "the judge model isn't included in them";
+    // Run-wide: every model the run uses must come from the organization's
+    // own providers, which sponsored conversations never cover.
+    case "org_keys_required":
+      return "this organization requires its own provider keys";
     default:
       return null;
   }

@@ -16,7 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -84,6 +84,9 @@ export interface RunAssistantTurnOptions {
    * refuses the turn before any spend.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** The saved selection; an org one runs a harness on the org's own key. */
+  modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
   /**
@@ -494,6 +497,7 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
+    modelSelectionOrigin: opts.modelSelectionOrigin,
     ...(opts.reasoningEffort !== undefined
       ? { reasoningEffort: opts.reasoningEffort }
       : {}),
@@ -507,10 +511,7 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
-    // Carry the harness selector through to the handler — runHarnessTurn reads it
-    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
-    // unified harness turns reach runHarnessTurn with harness=undefined (the old
-    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
@@ -702,6 +703,7 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
     });
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
@@ -733,6 +735,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
+    handlerOptions.modelSelection = opts.modelSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness
