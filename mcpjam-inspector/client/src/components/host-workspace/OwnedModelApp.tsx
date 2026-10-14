@@ -73,6 +73,8 @@ export interface OwnedModelAppPorts {
     intent: PluginMessageIntent,
     isLive: () => boolean,
   ) => Promise<boolean>;
+  /** The client's Display modes toggle when the App opened (presentation only). */
+  openAIDisplayModes?: boolean;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -85,6 +87,8 @@ export function useOwnedModelAppWorkspace(
    * context from the composer and the next turn in the same render; the Apps
    * keep running and their context returns when it is turned back on. */
   contextEnabled = true,
+  /** The client's Display modes toggle; read by each App when it opens. */
+  openAIDisplayModes = false,
 ) {
   // Rotate synchronously: old asynchronous publications cannot enter a new chat,
   // even before the previous leaf's passive cleanup has run.
@@ -199,8 +203,13 @@ export function useOwnedModelAppWorkspace(
     [identity, epoch],
   );
   const value = useMemo(
-    () => ({ publishContext, sendMessage: dispatch, registerMessageSource }),
-    [publishContext, dispatch, registerMessageSource],
+    () => ({
+      publishContext,
+      sendMessage: dispatch,
+      registerMessageSource,
+      openAIDisplayModes,
+    }),
+    [publishContext, dispatch, registerMessageSource, openAIDisplayModes],
   );
   const contexts =
     scope && contextEnabled && state.epoch === epoch ? state.contexts : {};
@@ -385,7 +394,9 @@ function ModelApp({
   const ownedHost = useMemo(() => {
     if (!handle) return null;
     const withContext = withAppContext(
-      createThreadAppHost(base, handle, marker.serverId, "model"),
+      createThreadAppHost(base, handle, marker.serverId, "model", {
+        openAIDisplayModes: ports?.openAIDisplayModes === true,
+      }),
       base,
       handle,
       context,

@@ -2056,6 +2056,7 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
+    pluginExtensions.capabilities.displayModes,
   );
   usePublishPluginIcons(pluginIconsById);
   const composerMentions = useComposerMentions(
