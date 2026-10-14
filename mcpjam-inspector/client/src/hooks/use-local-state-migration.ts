@@ -6,6 +6,7 @@ import {
 } from "@/lib/local-state-migration";
 import { HOSTED_MODE } from "@/lib/config";
 import { importHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useLogger } from "./use-logger";
 
 /**
@@ -189,6 +190,9 @@ export function useLocalStateMigration({
   const mergeServersIntoExistingProject = useMutation(
     "projects:mergeServersIntoExistingProject" as any,
   );
+  // Each migrated project is seeded with an MCPJam client in the viewer's
+  // theme, as a project created from the sidebar would be.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const convex = useConvex();
 
   useEffect(() => {
@@ -245,10 +249,11 @@ export function useLocalStateMigration({
 
     inFlightRef.current = true;
     runLocalStateMigration({
-      createProject: createProject as any,
+      createProject: (args) => createProject({ ...args, themeMode }),
       ensureDefaultProject: async ({ organizationId: orgId }) => {
         const result = await (ensureDefaultProject as any)({
           ...(orgId ? { organizationId: orgId } : {}),
+          themeMode,
         });
         if (typeof result !== "string") {
           throw new Error(
@@ -369,6 +374,7 @@ export function useLocalStateMigration({
     createProject,
     ensureDefaultProject,
     mergeServersIntoExistingProject,
+    themeMode,
     convex,
     logger,
     retryTick,
