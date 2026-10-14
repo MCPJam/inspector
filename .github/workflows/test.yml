@@ -340,8 +340,7 @@ jobs:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
-    # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.63.0-noble
+    # Local Browser needs a non-root runner to keep Chromium sandboxed.
     # This job boots the PR's build against the community backend, which runs
     # backend main, and bars the browser from production
     # (e2e/community-backend.ts). Minting a guest there takes its guest-session
@@ -358,14 +357,6 @@ jobs:
       DO_NOT_TRACK: "1"
 
     steps:
-      # Git in the Playwright container can fail to discover its CA bundle.
-      # Rebuild the system trust store before checkout and select it explicitly.
-      - name: Prepare container certificates
-        run: |
-          update-ca-certificates --fresh
-          test -s /etc/ssl/certs/ca-certificates.crt
-          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
-
       - name: Checkout code
         uses: actions/checkout@v7
         with:
@@ -398,8 +389,11 @@ jobs:
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
         run: npm run build -w @mcpjam/inspector
 
-      # The secret goes on these two steps only, so `npm ci`'s lifecycle
-      # scripts never see it.
+      - name: Install Chromium and system dependencies
+        working-directory: mcpjam-inspector
+        run: npx playwright install --with-deps chromium
+
+      # The secret goes on these two steps only, so install scripts never see it.
       - name: Run Playwright smoke
         env:
           MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
