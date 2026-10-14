@@ -7,6 +7,10 @@ import {
 } from "./strict-sentry-boundary";
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import { createSentryDropPolicy } from "./sentry-drop-policy";
+import { subscribeTelemetryPolicy } from "./telemetry-context";
+import { telemetryOptedOut } from "../../../shared/sentry-identity";
+import { matchAppRoute } from "./app-routes";
+import { parseProjectPath } from "./project-route";
 import * as Sentry from "@sentry/react";
 import {
   buildClientSentryConfig,
@@ -14,7 +18,6 @@ import {
 } from "../../../shared/sentry-config";
 import {
   credentialRouteTemplate,
-  scrubCredentialUrl,
   URL_BEARING_FIELDS,
   type LocationLike,
 } from "../../../shared/credential-urls";
@@ -76,7 +79,10 @@ export function resolveClientSentryConfig() {
  * (`filterSentryTransactionContent`).
  */
 export function sentryTransactionName(pathname: string): string {
-  return credentialRouteTemplate(pathname) ?? scrubCredentialUrl(pathname);
+  const project = parseProjectPath(pathname);
+  const route = matchAppRoute(project?.relativePath ?? pathname);
+  if (route) return `${project ? "/p/:projectId" : ""}/${route.path}`.replace(/\/{2,}/g, "/");
+  return credentialRouteTemplate(pathname) ?? "unknown_operation";
 }
 
 /**
@@ -153,7 +159,13 @@ export function initSentry() {
     transport: (options) => withStrictSentryTransport(
       Sentry.makeFetchTransport(options),
       fullSentrySerializer(config, processQueryEvent),
-      () => !config.enabled || ["1", "true"].includes(navigator.doNotTrack ?? ""),
+      async () => {
+        if (!config.enabled || telemetryOptedOut(navigator.doNotTrack)) return true;
+        if (!window.isElectron) return false;
+        try { return (await window.electronAPI?.sentry?.isDisabled?.()) !== false; }
+        catch { return true; }
+      },
+      options.recordDroppedEvent,
     ),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
     // at the first moment the privacy level allows recording — never while
@@ -178,6 +190,7 @@ export function initSentry() {
   );
   Sentry.getClient()?.on?.("spanStart", stampSentrySpanStart);
   Sentry.getClient()?.on?.("beforeAddBreadcrumb", stampSentryBreadcrumb);
+  subscribeTelemetryPolicy(() => syncSentryReplay(window.location));
 
 }
 
