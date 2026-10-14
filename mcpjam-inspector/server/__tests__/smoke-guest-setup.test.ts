@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { FullConfig } from "@playwright/test";
+import { chmod, rm } from "node:fs/promises";
 import smokeGuestSetup from "../../e2e/smoke-guest-setup";
 
 const client = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const client = vi.hoisted(() => ({
 }));
 const newContext = vi.hoisted(() => vi.fn());
 vi.mock("@playwright/test", () => ({ request: { newContext } }));
+vi.mock("node:fs/promises", () => ({ chmod: vi.fn(), rm: vi.fn() }));
 const config = {
   projects: [
     {
@@ -32,7 +34,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 it("mints once and saves the cookie jar and local-access marker for every worker", async () => {
-  await smokeGuestSetup(config);
+  const cleanup = await smokeGuestSetup(config);
   expect(newContext).toHaveBeenCalledExactlyOnceWith({
     baseURL: "http://localhost:6274",
     extraHTTPHeaders: { Origin: "http://localhost:6274" },
@@ -56,6 +58,11 @@ it("mints once and saves the cookie jar and local-access marker for every worker
     path: "/tmp/smoke-guest.json",
   });
   expect(client.dispose).toHaveBeenCalledOnce();
+  expect(chmod).toHaveBeenCalledExactlyOnceWith("/tmp/smoke-guest.json", 0o600);
+  await cleanup?.();
+  expect(rm).toHaveBeenCalledExactlyOnceWith("/tmp/smoke-guest.json", {
+    force: true,
+  });
 });
 
 it("reports the actual setup refusal without retrying or disabling a limit", async () => {

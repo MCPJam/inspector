@@ -1,4 +1,5 @@
 import { request, type FullConfig } from "@playwright/test";
+import { chmod, rm } from "node:fs/promises";
 
 /** Fresh browser contexts reuse one guest cookie instead of minting per test. */
 export default async function smokeGuestSetup(config: FullConfig) {
@@ -29,6 +30,7 @@ export default async function smokeGuestSetup(config: FullConfig) {
       ],
     },
   });
+  let saved = false;
   try {
     const response = await client.post("/api/web/guest-session", { data: {} });
     if (!response.ok())
@@ -36,7 +38,11 @@ export default async function smokeGuestSetup(config: FullConfig) {
         `Smoke guest setup was refused (HTTP ${response.status()}).`,
       );
     await client.storageState({ path: storageState });
+    await chmod(storageState, 0o600);
+    saved = true;
+    return () => rm(storageState, { force: true });
   } finally {
     await client.dispose();
+    if (!saved) await rm(storageState, { force: true });
   }
 }
