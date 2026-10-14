@@ -19,7 +19,12 @@ vi.mock("@/lib/app-navigation", () => ({
 vi.mock("convex/react", () => ({
   useQuery: mocks.useQuery,
   usePaginatedQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
-    const value = mocks.useQuery(getFunctionName(query), args);
+    // Usage is paged per BYOK source; serve each fixture once, as cloud usage.
+    const local =
+      (args as { modelSource?: string })?.modelSource === "local_byok";
+    const value = local
+      ? undefined
+      : mocks.useQuery(getFunctionName(query), args);
     return { results: value ? [value] : [], status: "Exhausted", loadMore: vi.fn() };
   },
   useAction: mocks.useAction,

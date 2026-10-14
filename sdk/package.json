@@ -143,6 +143,7 @@
     "prettier-fix": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
+    "prepack": "npm run sentry:inject --silent 1>&2",
     "pretest": "npm run build -w @mcpjam/evaluators && npm run bundle:runtimes",
     "pretest:watch": "npm run build -w @mcpjam/evaluators && npm run bundle:runtimes",
     "pretest:coverage": "npm run build -w @mcpjam/evaluators && npm run bundle:runtimes",

@@ -1,10 +1,17 @@
+import { sentryEnvelopeHeaders, sentryEventId, sentryProtocolMetadata, rebuildSentryClientReport, sentryDropCategory, type SentryBuildMetadata, type SentryDropCounter } from "./sentry-protocol.js";
+import { rebuildSentryFacts } from "./sentry-facts.js";
+export { sentryEnvelopeHeaders, sentryEventId, sentryInjectedDebugId, rebuildSentryClientReport, sentryDropCategory } from "./sentry-protocol.js";
+export type { SentryDropCounter } from "./sentry-protocol.js";
+
 /** Framework-free, reconstructive boundary for first-party telemetry clients. */
-export interface TelemetryCatalog {
+export interface TelemetryCatalog extends SentryBuildMetadata {
   files?: readonly string[];
   frameAliases?: Readonly<Record<string, string>>;
   routes?: readonly string[];
   errors?: readonly string[];
   messages?: readonly string[];
+  slugs?: readonly string[];
+  diagnosticFields?: Readonly<Record<string, readonly string[]>>;
 }
 
 type Fields = Record<string, unknown>;
@@ -106,8 +113,9 @@ function frames(
     const frame = telemetryRecord(raw);
     const rawFilename =
       typeof frame.filename === "string" ? frame.filename : "";
-    const filename = catalog.frameAliases?.[rawFilename] ?? rawFilename;
-    if (!catalog.files?.includes(filename)) continue;
+    const ownedFile = catalog.frameAliases?.[rawFilename] ?? rawFilename;
+    if (!catalog.files?.includes(ownedFile)) continue;
+    const filename = catalog.frameOutputNames?.[ownedFile] ?? ownedFile;
     const lineno = bounded(frame.lineno, 1000000);
     if (lineno === undefined || !Number.isInteger(lineno) || lineno < 1) continue;
     const column = bounded(frame.colno, 1000000);
@@ -155,11 +163,11 @@ function tags(input: unknown): Fields {
 export interface SentryBoundaryOptions extends TelemetryCatalog {
   actorId?: string;
   release?: string;
-  environment?: "dev" | "staging" | "production" | "test";
+  environment?: "dev" | "staging" | "prod" | "preview" | "production" | "local" | "test";
 }
 
 function envelope(source: Fields, options: SentryBoundaryOptions): Fields {
-  const eventId = token(source.event_id, /^[0-9a-f]{32}$/);
+  const eventId = sentryEventId(source.event_id);
   const timestamp = bounded(source.timestamp, 100000000000);
   const actor = telemetryActorId(options.actorId);
   const release = token(
@@ -167,6 +175,7 @@ function envelope(source: Fields, options: SentryBoundaryOptions): Fields {
     /^(?:@mcpjam\/sdk@)?\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$|^[0-9a-f]{7,40}$/
   );
   return {
+    ...sentryProtocolMetadata([], options),
     ...(eventId ? { event_id: eventId } : {}),
     ...(timestamp === undefined ? {} : { timestamp }),
     ...(actor ? { user: { id: actor } } : {}),
@@ -182,22 +191,41 @@ export function rebuildSentryEvent<T extends object>(
 ): T {
   const source = telemetryRecord(input);
   const chain = exceptions(source.exception, options);
-  const message =
-    member(source.message, options.messages ?? []) ?? "telemetry_event";
+  const extra = telemetryRecord(source.extra);
+  const approvedMessage =
+    member(source.message, options.messages ?? []) ??
+    member(extra.message, options.messages ?? []);
+  const message = approvedMessage ?? "telemetry_event";
   const breadcrumbs = Array.isArray(source.breadcrumbs)
     ? source.breadcrumbs
         .slice(-20)
         .map((value) => rebuildSentryBreadcrumb(telemetryRecord(value)))
         .filter(Boolean)
     : [];
+  const ownedFrames = chain.values.flatMap((value) => value.stacktrace?.frames ?? []);
+  const topFrame = ownedFrames.at(-1);
+  const facts = rebuildSentryFacts(extra, options);
+  const code = typeof facts.code === "string" ? facts.code : typeof facts.slug === "string" ? facts.slug : undefined;
+  const last = chain.values.at(-1);
+  if (last && code) last.value = code;
   return {
     ...envelope(source, options),
+    ...sentryProtocolMetadata(ownedFrames.map((frame) => String(frame.filename)), options),
     level: member(source.level, LEVELS) ?? "error",
     ...(chain.values.length
-      ? { exception: { values: chain.values } }
+      ? {
+          exception: { values: chain.values },
+          ...(approvedMessage ? { message } : {}),
+        }
       : { message }),
-    fingerprint: [chain.values.at(-1)?.type ?? message],
+    fingerprint: [
+      chain.values.at(-1)?.type ?? message,
+      ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
+      ...(code ? [code] : []),
+      ...(topFrame ? [`${topFrame.filename}:${topFrame.lineno}`] : []),
+    ],
     extra: {
+      ...facts,
       dropped_frames: Math.min(
         1000000,
         chain.dropped
@@ -269,17 +297,23 @@ export function restrictSentryEnvelope(
   envelope: { 0: unknown; 1: unknown[] },
   options: SentryBoundaryOptions = {}
 ): void {
-  envelope[0] = {};
+  let hasEvent = false;
   const items = envelope[1].flatMap((item) => {
     if (!Array.isArray(item)) return [];
     const type = telemetryRecord(item[0]).type;
+    if (type === "client_report") {
+      const report = rebuildSentryClientReport(telemetryRecord(item[1]));
+      return report ? [[{ type }, report]] : [];
+    }
     if (type !== "event" && type !== "transaction" && type !== "span") return [];
+    if (type !== "span" && hasEvent) return [];
     if (
       typeof item[1] !== "object" ||
       item[1] === null ||
       Array.isArray(item[1])
     )
       return [];
+    if (type !== "span") hasEvent = true;
     const value =
       type === "event"
         ? rebuildSentryEvent(item[1], options)
@@ -287,18 +321,27 @@ export function restrictSentryEnvelope(
     return [[{ type }, value]];
   });
   envelope[1].splice(0, envelope[1].length, ...items);
+  const event = items.find((item) => ["event", "transaction"].includes(String(telemetryRecord(item[0]).type)));
+  envelope[0] = sentryEnvelopeHeaders(telemetryRecord(event?.[1]).event_id);
 }
 
 /** The only serializer before a vendor transport; all other families are denied. */
 export function withSentryBoundary<T extends {
   send(envelope: never): PromiseLike<unknown>;
   flush(timeout?: number): PromiseLike<boolean>;
-}>(transport: T, options: () => SentryBoundaryOptions, disabled: () => boolean): T {
+}>(transport: T, options: () => SentryBoundaryOptions, disabled: () => boolean, onDrop?: SentryDropCounter): T {
   return {
     ...transport,
     send: async (value: { 0: unknown; 1: unknown[] }) => {
       if (disabled()) return {};
+      const before = value[1].map((item) => Array.isArray(item) ? telemetryRecord(item[0]).type : undefined);
       restrictSentryEnvelope(value, options());
+      const kept = value[1].map((item) => Array.isArray(item) ? telemetryRecord(item[0]).type : undefined);
+      for (const type of before) {
+        const index = kept.indexOf(type);
+        if (index >= 0) kept.splice(index, 1);
+        else if (type !== "client_report") onDrop?.("before_send", sentryDropCategory(type), 1);
+      }
       return value[1].length ? transport.send(value as never) : {};
     },
     flush: (timeout?: number) => transport.flush(timeout),
@@ -316,9 +359,18 @@ export function rebuildSentryFrameLocations<T extends object>(input: T, catalog:
       return { ...item, ...(item.stacktrace ? { stacktrace: stack(item.stacktrace) } : {}) };
     }) };
   };
-  return { ...source,
+  const result: Fields = { ...source,
     ...(source.stacktrace ? { stacktrace: stack(source.stacktrace) } : {}),
     ...(source.exception ? { exception: chain(source.exception) } : {}),
     ...(source.threads ? { threads: chain(source.threads) } : {}),
-  } as T;
+  };
+  delete result.debug_meta;
+  const kept = [result.stacktrace, ...[result.exception, result.threads].flatMap((value) =>
+    (Array.isArray(telemetryRecord(value).values) ? telemetryRecord(value).values as unknown[] : [])
+      .map((entry) => telemetryRecord(entry).stacktrace))];
+  const files = kept.flatMap((value) => {
+    const values = telemetryRecord(value).frames;
+    return (Array.isArray(values) ? values : []).map((frame) => String(telemetryRecord(frame).filename));
+  });
+  return { ...result, ...sentryProtocolMetadata(files, catalog) } as T;
 }

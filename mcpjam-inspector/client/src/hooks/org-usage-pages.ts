@@ -65,13 +65,36 @@ type PageArgs = {
   startAt: number;
   endAt: number;
   rangeDays: number;
+  modelSource: UsageSource;
   paginationOpts: PaginationOptions;
 };
+type UsageSource = "byok" | "local_byok";
+type ReportingWindow = Pick<PageArgs, "startAt" | "endAt" | "rangeDays">;
 const usagePage = makeFunctionReference<
   "query",
   PageArgs,
   { page: OrgModelUsageSummary[]; isDone: boolean; continueCursor: string }
 >("organizationUsagePages:page");
+
+/** One source per pagination, so each page reads only its own BYOK index. */
+function useSourcePages(
+  organizationId: string | null,
+  enabled: boolean,
+  reportingWindow: ReportingWindow,
+  modelSource: UsageSource,
+) {
+  const { results, status, loadMore } = usePaginatedQuery(
+    usagePage,
+    organizationId && enabled
+      ? { organizationId, ...reportingWindow, modelSource }
+      : "skip",
+    { initialNumItems: 100 },
+  );
+  useEffect(() => {
+    if (organizationId && enabled && status === "CanLoadMore") loadMore(100);
+  }, [organizationId, enabled, status, loadMore]);
+  return { results, exhausted: status === "Exhausted" };
+}
 
 export function useOrgUsagePages(
   organizationId: string | null,
@@ -84,17 +107,22 @@ export function useOrgUsagePages(
     const days = Math.min(366, Math.max(1, Math.floor(rangeDays)));
     return { endAt, startAt: endAt - days * 86_400_000, rangeDays: days };
   }, [organizationId, enabled, rangeDays, refreshedAt]);
-  const { results, status, loadMore } = usePaginatedQuery(
-    usagePage,
-    organizationId && enabled ? { organizationId, ...reportingWindow } : "skip",
-    { initialNumItems: 100 },
+  const cloud = useSourcePages(
+    organizationId,
+    enabled,
+    reportingWindow,
+    "byok",
   );
-  useEffect(() => {
-    if (organizationId && enabled && status === "CanLoadMore") loadMore(100);
-  }, [organizationId, enabled, status, loadMore]);
+  const local = useSourcePages(
+    organizationId,
+    enabled,
+    reportingWindow,
+    "local_byok",
+  );
+  const exhausted = cloud.exhausted && local.exhausted;
   useEffect(() => {
     // Keep cursors on one snapshot until pagination completes.
-    if (!organizationId || !enabled || status !== "Exhausted") return;
+    if (!organizationId || !enabled || !exhausted) return;
     const refresh = () => {
       if (document.visibilityState === "visible") setRefreshedAt(Date.now());
     };
@@ -106,13 +134,16 @@ export function useOrgUsagePages(
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [organizationId, enabled, status]);
+  }, [organizationId, enabled, exhausted]);
   const summary = useMemo(
-    () => (status === "Exhausted" ? mergeOrgUsagePages(results) : undefined),
-    [results, status],
+    () =>
+      exhausted
+        ? mergeOrgUsagePages([...cloud.results, ...local.results])
+        : undefined,
+    [cloud.results, local.results, exhausted],
   );
   return {
     summary,
-    isLoading: !!organizationId && enabled && status !== "Exhausted",
+    isLoading: !!organizationId && enabled && !exhausted,
   };
 }

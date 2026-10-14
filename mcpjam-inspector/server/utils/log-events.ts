@@ -510,6 +510,7 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
+  llm_spend_unattested_ip_pooled: Record<string, never>;
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "cursor";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
