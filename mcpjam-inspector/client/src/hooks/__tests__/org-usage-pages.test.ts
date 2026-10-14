@@ -52,20 +52,22 @@ describe("paged usage totals", () => {
 
 describe("usage reporting window refresh", () => {
   const openedAt = Date.UTC(2026, 9, 13);
-  let status: "Exhausted" | "CanLoadMore";
-  let records: number[];
+  type Source = "byok" | "local_byok";
+  let status: Record<Source, "Exhausted" | "CanLoadMore">;
+  let records: { at: number; source: Source }[];
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(openedAt);
-    status = "Exhausted";
-    records = [openedAt - 1];
+    status = { byok: "Exhausted", local_byok: "Exhausted" };
+    records = [{ at: openedAt - 1, source: "byok" }];
     query.loadMore.mockReset();
     query.usePaginatedQuery
       .mockReset()
       .mockImplementation(
         (
           _reference: unknown,
-          args: { startAt: number; endAt: number } | "skip",
+          args:
+            { startAt: number; endAt: number; modelSource: Source } | "skip",
         ) => ({
           results:
             args === "skip"
@@ -73,11 +75,15 @@ describe("usage reporting window refresh", () => {
               : [
                   page(
                     records.filter(
-                      (at) => at >= args.startAt && at <= args.endAt,
+                      ({ at, source }) =>
+                        source === args.modelSource &&
+                        at >= args.startAt &&
+                        at <= args.endAt,
                     ).length,
                   ),
                 ],
-          status,
+          status:
+            args === "skip" ? "LoadingFirstPage" : status[args.modelSource],
           loadMore: query.loadMore,
         }),
       );
@@ -89,17 +95,27 @@ describe("usage reporting window refresh", () => {
   });
   const latestArgs = () => query.usePaginatedQuery.mock.lastCall?.[1];
 
+  it("pages each BYOK source separately and merges both", () => {
+    records.push({ at: openedAt - 2, source: "local_byok" });
+    const { result } = renderHook(() => useOrgUsagePages("org", true, 30));
+    const sources = query.usePaginatedQuery.mock.calls.map(
+      ([, args]) => args.modelSource,
+    );
+    expect(sources).toEqual(expect.arrayContaining(["byok", "local_byok"]));
+    expect(result.current.summary?.total.requestCount).toBe(2);
+  });
+
   it("includes records created after opening on the next minute", () => {
     const { result } = renderHook(() => useOrgUsagePages("org", true, 30));
     expect(result.current.summary?.total.requestCount).toBe(1);
-    records.push(openedAt + 10_000);
+    records.push({ at: openedAt + 10_000, source: "local_byok" });
     act(() => vi.advanceTimersByTime(60_000));
     expect(latestArgs()).toMatchObject({ endAt: openedAt + 60_000 });
     expect(result.current.summary?.total.requestCount).toBe(2);
   });
 
   it("keeps pagination on one window until all pages finish", () => {
-    status = "CanLoadMore";
+    status.local_byok = "CanLoadMore";
     const { result, rerender } = renderHook(() =>
       useOrgUsagePages("org", true, 30),
     );
@@ -107,7 +123,7 @@ describe("usage reporting window refresh", () => {
     act(() => vi.advanceTimersByTime(120_000));
     expect(latestArgs()).toMatchObject({ endAt: openedAt });
     expect(result.current.summary).toBeUndefined();
-    status = "Exhausted";
+    status.local_byok = "Exhausted";
     rerender();
     act(() => vi.advanceTimersByTime(60_000));
     expect(latestArgs()).toMatchObject({ endAt: openedAt + 180_000 });
