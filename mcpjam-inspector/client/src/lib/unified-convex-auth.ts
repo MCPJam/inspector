@@ -280,7 +280,7 @@ export function useUnifiedConvexAuth() {
           ) {
             useSessionRefreshStore.getState().notifyFailure("transient");
           } else {
-            useSessionRefreshStore.getState().clear();
+            useSessionRefreshStore.getState().notifyFailure("manual");
           }
           try {
             reportCaught(

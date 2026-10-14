@@ -199,16 +199,32 @@ describe("transient guest bootstrap recovery", () => {
     expect(useSessionRefreshStore.getState().status).toBe("idle");
   });
 
-  it("does not automatically retry an explicit 403 refusal", async () => {
-    const { fetch } = await exhaustedBootstrap(403);
-    await act(async () => {
-      window.dispatchEvent(new Event("online"));
-      await vi.advanceTimersByTimeAsync(60_000);
-    });
-    expect(fetch).toHaveBeenCalledTimes(4);
-  });
+  it.each([400, 401, 403, 404])(
+    "keeps manual Retry without automatic recovery after %s",
+    async (status) => {
+      const { result, fetch } = await exhaustedBootstrap(status);
+      expect(useSessionRefreshStore.getState()).toMatchObject({
+        status: "failed",
+        kind: "manual",
+      });
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        window.dispatchEvent(new Event("focus"));
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(fetch).toHaveBeenCalledTimes(4);
+      allowSession(fetch);
+      await act(async () => {
+        useSessionRefreshStore.getState().retry();
+      });
+      expect(fetch).toHaveBeenCalledTimes(5);
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(useSessionRefreshStore.getState().status).toBe("idle");
+    },
+  );
 
-  it("ends the retrying state if recovery reaches a terminal refusal", async () => {
+  it("keeps Retry available if recovery reaches a non-transient rejection", async () => {
     const { fetch } = await exhaustedBootstrap();
     fetch.mockImplementation(async () => new Response(null, { status: 403 }));
     await act(async () => {
@@ -216,7 +232,15 @@ describe("transient guest bootstrap recovery", () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
     expect(fetch).toHaveBeenCalledTimes(8);
-    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(useSessionRefreshStore.getState()).toMatchObject({
+      status: "failed",
+      kind: "manual",
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(8);
   });
 
   it.each(["sign-in", "unmount"])(
