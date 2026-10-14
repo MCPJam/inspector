@@ -9,7 +9,7 @@
  * a PR whose checks are green.
  *
  * Env: GITHUB_TOKEN, GITHUB_REPOSITORY, HEAD_SHA, STATE_DIR; PR_NUMBER when the
- * event carries it. Writes `gate.json` and the `proceed`, `phase` and `base`
+ * event carries it; REVIEW_PIPELINE (off, suggest or on). Writes `gate.json` and the `proceed`, `phase` and `base`
  * step outputs.
  */
 import { appendFileSync } from "node:fs";
@@ -81,6 +81,20 @@ export function decide({ runs, reviewFix, reviewed }) {
   return target;
 }
 
+/** A PR with this label runs the full pipeline whatever REVIEW_PIPELINE says. */
+export const OPT_IN_LABEL = "review-pipeline";
+
+/**
+ * "off", "suggest" (reviews only, nothing pushed) or "on", from the
+ * REVIEW_PIPELINE repository variable. Unset or unknown means off, so the
+ * pipeline does nothing until someone turns it on.
+ */
+export function pipelineMode(setting, labels) {
+  if (labels.some((label) => label.name === OPT_IN_LABEL)) return "on";
+  const value = (setting ?? "").trim().toLowerCase();
+  return value === "suggest" || value === "on" ? value : "off";
+}
+
 async function findPr(request, sha) {
   if (process.env.PR_NUMBER) return request(`pulls/${process.env.PR_NUMBER}`);
   const pulls = await request(`commits/${sha}/pulls`);
@@ -88,12 +102,16 @@ async function findPr(request, sha) {
   return match ? request(`pulls/${match.number}`) : null;
 }
 
-export async function gate(request, sha, repo) {
+export async function gate(request, sha, repo, setting = process.env.REVIEW_PIPELINE) {
   const pr = await findPr(request, sha);
   if (!pr) return { proceed: false, reason: "No open PR has this commit as its head." };
   if (pr.state !== "open" || pr.draft) return { proceed: false, reason: "The PR is closed or a draft." };
   if (pr.head.sha !== sha) return { proceed: false, reason: "The PR has a newer head; its own runs will be gated." };
   if (pr.head.repo?.full_name !== repo) return { proceed: false, reason: "Fork PRs are not reviewed." };
+  const mode = pipelineMode(setting, pr.labels ?? []);
+  if (mode === "off") {
+    return { proceed: false, reason: `The review pipeline is off: set REVIEW_PIPELINE or add the ${OPT_IN_LABEL} label.` };
+  }
 
   const [runs, commits, reviews] = await Promise.all([
     paginate(request, `actions/runs?head_sha=${sha}&event=pull_request`, (page) => page.workflow_runs),
@@ -104,7 +122,7 @@ export async function gate(request, sha, repo) {
     review.user?.type === "Bot" && review.body?.includes(phaseMarker(id, sha)))));
   const rounds = autofixRounds(commits);
   const { phase, status } = decide({ runs, reviewFix: tipIsReviewFix(commits), reviewed });
-  const base = { pr: pr.number, sha, headRef: pr.head.ref, phase, status, rounds };
+  const base = { pr: pr.number, sha, headRef: pr.head.ref, phase, status, rounds, mode };
   if (status === "wait") return { ...base, proceed: false, reason: `Waiting for the ${phase} phase to finish.` };
   if (status === "done") return { ...base, proceed: false, reason: `The ${phase} phase was already triaged for this commit.` };
   if (status === "skip") return { ...base, proceed: false, reason: "The head is the review's own autofix; the review ran on the commit before it." };
@@ -112,7 +130,9 @@ export async function gate(request, sha, repo) {
   const compare = await request(`compare/${pr.base.sha}...${sha}`);
   return {
     ...base, proceed: true, mergeBase: compare.merge_base_commit.sha,
-    autofix: rounds < MAX_AUTOFIX_ROUNDS,
+    autofix: mode === "on" && rounds < MAX_AUTOFIX_ROUNDS,
+    autofixReason: mode !== "on" ? "the pipeline is in suggest mode, so the bot does not push"
+      : rounds >= MAX_AUTOFIX_ROUNDS ? "the autofix limit for this PR was reached" : "",
     failedRuns: PHASES.find((entry) => entry.id === phase).workflows
       .map((file) => latestRuns(runs).get(file))
       .filter((run) => run && FAILED.has(run.conclusion))

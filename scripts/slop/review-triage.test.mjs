@@ -42,10 +42,12 @@ test("autofixes that cannot run are posted as suggestions, with the reason", () 
     [item({ replace: "const b = 2;" }), true, /did not apply/],
   ];
   for (const [input, autofix, reason] of cases) {
-    const [result] = validate([input], { readFile, autofix });
+    const [result] = validate([input], { readFile, autofix, autofixReason: "the autofix limit for this PR was reached" });
     assert.match(result.downgraded, reason);
     assert.notEqual(result.category, "autofix");
   }
+  const [suggestMode] = validate([item({})], { readFile, autofix: false, autofixReason: "the pipeline is in suggest mode" });
+  assert.deepEqual([suggestMode.category, suggestMode.downgraded], ["suggest", "the pipeline is in suggest mode"]);
   const many = validate(Array.from({ length: 7 }, () => item({})), { readFile, autofix: true });
   assert.equal(many.filter((entry) => entry.category === "autofix").length, 5);
 });

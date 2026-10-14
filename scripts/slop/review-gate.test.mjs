@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { autofixRounds, decide, gate, tipIsReviewFix } from "./review-gate.mjs";
+import { autofixRounds, decide, gate, pipelineMode, tipIsReviewFix } from "./review-gate.mjs";
 import { phaseMarker } from "./review-common.mjs";
 
 const SHA = "a".repeat(40);
@@ -46,7 +46,7 @@ test("only the review's own autofix at the tip skips the review; a CI autofix th
   process.env.PR_NUMBER = "7";
   t.after(() => delete process.env.PR_NUMBER);
   const ciFix = commit("Fix lint\n\nReview-Pipeline-Autofix: ci");
-  const result = await gate(fakeGitHub({ commits: [commit("feat"), ciFix] }), SHA, "o/r");
+  const result = await gate(fakeGitHub({ commits: [commit("feat"), ciFix] }), SHA, "o/r", "on");
   assert.deepEqual([result.proceed, result.phase, result.rounds], [true, "review", 1]);
 });
 
@@ -72,7 +72,7 @@ function fakeGitHub({ pr = {}, runs = green, reviews = [], commits = [] } = {}) 
 test("the gate resolves the merge base and the failed runs of the phase it picked", async (t) => {
   process.env.PR_NUMBER = "7";
   t.after(() => delete process.env.PR_NUMBER);
-  const result = await gate(fakeGitHub({ runs: replace(green, "lint.yml", "failure") }), SHA, "o/r");
+  const result = await gate(fakeGitHub({ runs: replace(green, "lint.yml", "failure") }), SHA, "o/r", "on");
   assert.equal(result.proceed, true);
   assert.equal(result.phase, "ci");
   assert.equal(result.mergeBase, "c".repeat(40));
@@ -85,20 +85,46 @@ test("the gate stops for drafts, forks, stale heads, waiting phases and phases a
   t.after(() => delete process.env.PR_NUMBER);
   for (const pr of [{ draft: true }, { state: "closed" }, { head: { sha: "d".repeat(40), repo: { full_name: "o/r" } } },
     { head: { sha: SHA, ref: "x", repo: { full_name: "fork/r" } } }]) {
-    assert.equal((await gate(fakeGitHub({ pr }), SHA, "o/r")).proceed, false);
+    assert.equal((await gate(fakeGitHub({ pr }), SHA, "o/r", "on")).proceed, false);
   }
-  assert.equal((await gate(fakeGitHub({ runs: replace(green, "test.yml", null) }), SHA, "o/r")).proceed, false);
+  assert.equal((await gate(fakeGitHub({ runs: replace(green, "test.yml", null) }), SHA, "o/r", "on")).proceed, false);
   const reviews = [{ user: { type: "User" }, body: phaseMarker("review", SHA) }];
-  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r")).proceed, true, "a person's copy of the marker does not count");
+  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r", "on")).proceed, true, "a person's copy of the marker does not count");
   reviews.push({ user: { type: "Bot" }, body: phaseMarker("review", SHA) });
-  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r")).proceed, false);
+  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r", "on")).proceed, false);
 });
 
 test("after the autofix limit the gate still triages, but without autofix", async (t) => {
   process.env.PR_NUMBER = "7";
   t.after(() => delete process.env.PR_NUMBER);
   const fix = { commit: { message: "Fix\n\nReview-Pipeline-Autofix: ci" } };
-  const result = await gate(fakeGitHub({ runs: replace(green, "test.yml", "failure"), commits: [fix, fix] }), SHA, "o/r");
+  const result = await gate(fakeGitHub({ runs: replace(green, "test.yml", "failure"), commits: [fix, fix] }), SHA, "o/r", "on");
   assert.equal(result.proceed, true);
   assert.equal(result.autofix, false);
+});
+
+test("the pipeline is off unless the variable or the PR label turns it on", async (t) => {
+  assert.equal(pipelineMode(undefined, []), "off");
+  assert.equal(pipelineMode("", []), "off");
+  assert.equal(pipelineMode("yes please", []), "off");
+  assert.equal(pipelineMode(" Suggest ", []), "suggest");
+  assert.equal(pipelineMode("on", []), "on");
+  assert.equal(pipelineMode("off", [{ name: "review-pipeline" }]), "on");
+  assert.equal(pipelineMode("suggest", [{ name: "review-pipeline" }]), "on");
+
+  process.env.PR_NUMBER = "7";
+  t.after(() => delete process.env.PR_NUMBER);
+  const off = await gate(fakeGitHub(), SHA, "o/r", undefined);
+  assert.equal(off.proceed, false);
+  assert.match(off.reason, /off.*review-pipeline label/);
+  const labelled = await gate(fakeGitHub({ pr: { labels: [{ name: "review-pipeline" }] } }), SHA, "o/r", undefined);
+  assert.deepEqual([labelled.proceed, labelled.mode, labelled.autofix], [true, "on", true]);
+});
+
+test("suggest mode triages and posts, but never allows an autofix", async (t) => {
+  process.env.PR_NUMBER = "7";
+  t.after(() => delete process.env.PR_NUMBER);
+  const result = await gate(fakeGitHub({ runs: replace(green, "test.yml", "failure") }), SHA, "o/r", "suggest");
+  assert.deepEqual([result.proceed, result.mode, result.autofix], [true, "suggest", false]);
+  assert.match(result.autofixReason, /suggest mode/);
 });

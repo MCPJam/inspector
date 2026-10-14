@@ -17,6 +17,11 @@ name: Adversarial Review
 # them and the pipeline starts over. The review does not run again on its own
 # autofix commit, and after two bot commits in a row the bot only suggests.
 #
+# Switched by the REVIEW_PIPELINE repository variable: unset or "off" does
+# nothing, "suggest" posts reviews but never pushes, "on" runs everything.
+# The review-pipeline label turns it fully on for one PR; adding the label
+# re-runs the quality checks, which starts the pipeline.
+#
 # Every step that holds a secret runs scripts/slop from the default branch.
 # The PR's own files are only read from git, never executed or checked out
 # into a path that is written.
@@ -95,6 +100,7 @@ jobs:
         id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          REVIEW_PIPELINE: ${{ vars.REVIEW_PIPELINE }}
         run: |
           if [ ! -f .reviewer/scripts/slop/review-gate.mjs ]; then
             echo "::notice::The review pipeline must merge into the default branch before it can run."

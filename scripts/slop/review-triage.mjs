@@ -75,16 +75,17 @@ const subject = (item) =>
 
 /**
  * Enforce what the prompt asks for. `readFile(path)` returns head content or
- * null. Autofixes are capped, and only allowed when the gate allows them.
+ * null. Autofixes are capped, and only allowed when the gate allows them: in
+ * suggest mode, or after the autofix limit, every autofix becomes a suggestion.
  */
-export function validate(items, { readFile, autofix }) {
+export function validate(items, { readFile, autofix, autofixReason = "" }) {
   let autofixes = 0;
   return items.map((raw) => {
     const item = { ...raw, path: raw.path.trim(), downgraded: "" };
     const content = item.path ? readFile(item.path) : null;
     const placed = content !== null && locate(content, item.find) !== null;
     if (item.category === "autofix") {
-      const reason = !autofix ? "the autofix limit for this PR was reached"
+      const reason = !autofix ? autofixReason || "autofix is off for this run"
         : autofixes >= MAX_AUTOFIXES ? `at most ${MAX_AUTOFIXES} autofixes run at once`
         : !autofixAllowedFor(item.path) ? "the bot does not commit to this path"
         : !placed || item.replace === item.find ? "the edit did not apply cleanly"
@@ -121,7 +122,7 @@ export async function triage({ gate, feedback, readFile, call = callClaude }) {
     format: FORMAT,
   });
   const known = items.filter((item) => CATEGORIES.includes(item.category));
-  return validate(known, { readFile, autofix: gate.autofix });
+  return validate(known, { readFile, autofix: gate.autofix, autofixReason: gate.autofixReason });
 }
 
 export async function main() {
