@@ -14,6 +14,9 @@ export function parsePluginMessage(value: unknown) {
   const params = OpenAIMessageParamsSchema.parse(value);
   if (!params.content.length || params.content.length > 64)
     throw new Error("PLUGIN_MESSAGE_CONTENT_INVALID");
+  // An editable draft never runs a turn, so the send path refuses it.
+  if (params._meta?.["openai/message"]?.send === false)
+    throw new Error("PLUGIN_MESSAGE_DRAFT_UNSUPPORTED");
   parsePluginModelContext({
     content: params.content,
     ...(params._meta ? { _meta: params._meta } : {}),
