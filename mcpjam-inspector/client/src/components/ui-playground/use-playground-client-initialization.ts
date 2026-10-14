@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { useHostMutations, type HostListItem } from "@/hooks/useClients";
 import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
@@ -23,10 +23,29 @@ function readSelection(projectId: string): Selection {
 }
 
 /**
+ * A lead now on one of `ownHostIds` is this flow's own write (the
+ * missing-preview fallback picking the default as it arrived), not a user
+ * choice, so it does not count as a change.
+ */
+function unchangedSince(
+  now: Selection,
+  since: Selection,
+  ownHostIds: string[],
+): boolean {
+  const leadIsOurs =
+    now.previewed !== null && ownHostIds.includes(now.previewed);
+  return (
+    (leadIsOurs || now.previewed === since.previewed) &&
+    now.selected.length === since.selected.length &&
+    now.selected.every((id, index) => id === since.selected[index])
+  );
+}
+
+/**
  * Applies a selection this flow chose, unless the user chose something else
- * while the request was out. A lead now on one of `ownHostIds` is this flow's
- * own write (the missing-preview fallback picking the default as it arrived),
- * not a user choice, so it does not veto the selection.
+ * while the request was out. What this flow last wrote for the project is not
+ * a user choice either: the default's write can land after a comparison
+ * request read `before`, and the backend reports a created lineup only once.
  *
  * Saved to the request's project even after a switch, so returning to it
  * shows the lineup; live state only changes while that project is open.
@@ -36,19 +55,21 @@ function applySelection(
   before: Selection,
   next: { lead: string; lineup: string[]; ownHostIds: string[] },
   live: PlaygroundSelectionTarget,
+  written: Map<string, Selection>,
 ) {
   const now = readSelection(projectId);
-  const leadIsOurs =
-    now.previewed !== null && next.ownHostIds.includes(now.previewed);
-  const changed =
-    (!leadIsOurs && now.previewed !== before.previewed) ||
-    now.selected.length !== before.selected.length ||
-    now.selected.some((id, index) => id !== before.selected[index]);
-  if (changed) return;
+  const lastWrite = written.get(projectId);
+  if (
+    !unchangedSince(now, before, next.ownHostIds) &&
+    !(lastWrite && unchangedSince(now, lastWrite, next.ownHostIds))
+  ) {
+    return;
+  }
   const isActive = live.activeProjectIdRef.current === projectId;
   if (isActive && live.restoringAdhocRef.current) return;
   savePreviewedHostId(projectId, next.lead);
   saveSelectedHostIds(projectId, next.lineup);
+  written.set(projectId, readSelection(projectId));
   if (!isActive) return;
   live.setPreviewedHostId(next.lead);
   live.setSelectedHostIds(next.lineup);
@@ -99,6 +120,7 @@ export function usePlaygroundClientInitialization({
   >(() => new Set());
   const comparisonSettled =
     projectId !== null && settledComparison.has(projectId);
+  const writtenRef = useRef(new Map<string, Selection>());
 
   const withSelection =
     (initializeComparison: boolean) =>
@@ -136,6 +158,7 @@ export function usePlaygroundClientInitialization({
         before,
         { lead: result.hostId, lineup: own, ownHostIds: own },
         live,
+        writtenRef.current,
       );
     },
   });
@@ -165,6 +188,7 @@ export function usePlaygroundClientInitialization({
           ownHostIds: [result.hostId, ...comparison.hostIds],
         },
         live,
+        writtenRef.current,
       );
     },
   });

@@ -258,6 +258,42 @@ describe("usePlaygroundClientInitialization", () => {
     expect(live.setSelectedHostIds).toHaveBeenLastCalledWith(LINEUP);
   });
 
+  /** The list shows the default before its own request resolves. */
+  async function defaultResolvesAfterComparisonStarts(live = liveTarget()) {
+    let resolveDefault!: (value: unknown) => void;
+    let resolveComparison!: (value: unknown) => void;
+    mocks.ensure
+      .mockReturnValueOnce(new Promise((r) => (resolveDefault = r)))
+      .mockReturnValueOnce(new Promise((r) => (resolveComparison = r)));
+    const { update } = renderInit([], live);
+    await settle();
+    update({ hostList: [MCPJAM] });
+    await settle();
+    // PlaygroundMain's missing-preview fallback leads with the new default.
+    savePreviewedHostId("p1", "h-mcpjam");
+    await act(async () =>
+      resolveDefault({ hostId: "h-mcpjam", created: true, comparison: null }),
+    );
+    expect(loadSelectedHostIds("p1")).toEqual(["h-mcpjam"]);
+    return () => act(async () => resolveComparison(CREATED_LINEUP));
+  }
+
+  it("selects the lineup when the default's own write lands mid-request", async () => {
+    const live = liveTarget();
+    const resolveComparison = await defaultResolvesAfterComparisonStarts(live);
+    await resolveComparison();
+    expect(loadPreviewedHostId("p1")).toBe("h-claude");
+    expect(loadSelectedHostIds("p1")).toEqual(LINEUP);
+    expect(live.setSelectedHostIds).toHaveBeenLastCalledWith(LINEUP);
+  });
+
+  it("keeps a lineup the user changed after the default's own write", async () => {
+    const resolveComparison = await defaultResolvesAfterComparisonStarts();
+    saveSelectedHostIds("p1", ["h-mine"]);
+    await resolveComparison();
+    expect(loadSelectedHostIds("p1")).toEqual(["h-mine"]);
+  });
+
   it("asks for a settled lineup once, however often loading flips", async () => {
     mocks.ensure.mockResolvedValue({
       ...CREATED_LINEUP,
