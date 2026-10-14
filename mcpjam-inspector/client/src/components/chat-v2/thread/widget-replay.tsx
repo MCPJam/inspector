@@ -1,3 +1,4 @@
+import type { RecorderCaptureMode } from "@mcpjam/sdk/widget-runtime";
 import { OwnedModelApp } from "@/components/host-workspace/OwnedModelApp";
 import {
   serverDisplayName,
@@ -88,7 +89,10 @@ export interface WidgetReplayProps {
   minimalMode?: boolean;
   /** Tier 2 recorder — forwarded to MCPAppsRenderer. Default off. */
   recordMode?: boolean;
-  onRecorderStep?: (step: unknown) => void;
+  recorderCaptureMode?: RecorderCaptureMode;
+  onRecorderStep?: (step: unknown, captureId?: string) => void;
+  onRecorderFlushReady?: (flush: (() => Promise<{ ok: boolean; reason?: string }>) | null) => void;
+  onRecorderPick?: (target: unknown) => void;
   onRecorderReady?: () => void;
   /** Replay controller publisher — forwarded to MCPAppsRenderer. */
   onReplayControllerReady?: (
@@ -143,6 +147,9 @@ function LiveWidgetReplay({
   resolveHostSupportsWidget = () => true,
   minimalMode = false,
   recordMode,
+  recorderCaptureMode,
+  onRecorderPick,
+  onRecorderFlushReady,
   onRecorderStep,
   onRecorderReady,
   onReplayControllerReady,
@@ -288,6 +295,9 @@ function LiveWidgetReplay({
       initialWidgetState={renderOverride?.initialWidgetState}
       minimalMode={minimalMode}
       recordMode={recordMode}
+      recorderCaptureMode={recorderCaptureMode}
+      onRecorderPick={onRecorderPick}
+      onRecorderFlushReady={onRecorderFlushReady}
       onRecorderStep={onRecorderStep}
       onRecorderReady={onRecorderReady}
       onReplayControllerReady={onReplayControllerReady}

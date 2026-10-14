@@ -34,34 +34,28 @@ describe("generateLocator", () => {
     expect(matches[loc.nth!]).toBe(second);
   });
 
-  it("falls back to ARIA role + accessible name", () => {
+  it("uses a unique CSS path for a button without a test ID", () => {
     mount(`<button>Submit</button>`);
     const el = document.querySelector("button")!;
-    expect(generateLocator(el)).toEqual({
-      role: { role: "button", name: "Submit" },
-    });
+    expect(document.querySelector(generateLocator(el).css!)).toBe(el);
   });
 
-  it("uses an explicit role and aria-label over text", () => {
+  it("uniquely targets an element with an explicit role and label", () => {
     mount(`<div role="link" aria-label="Home">x</div>`);
     const el = document.querySelector("div")!;
-    expect(generateLocator(el)).toEqual({
-      role: { role: "link", name: "Home" },
-    });
+    expect(document.querySelector(generateLocator(el).css!)).toBe(el);
   });
 
-  it("treats <a href> as a link role", () => {
+  it("uniquely targets a link without custom role matching", () => {
     mount(`<a href="/x">Docs</a>`);
     const el = document.querySelector("a")!;
-    expect(generateLocator(el)).toEqual({
-      role: { role: "link", name: "Docs" },
-    });
+    expect(document.querySelector(generateLocator(el).css!)).toBe(el);
   });
 
-  it("falls back to visible text for a non-role element", () => {
+  it("uses a unique CSS path for text elements", () => {
     mount(`<span>Hello world</span>`);
     const el = document.querySelector("span")!;
-    expect(generateLocator(el)).toEqual({ text: "Hello world" });
+    expect(document.querySelector(generateLocator(el).css!)).toBe(el);
   });
 
   it("falls back to a CSS path that resolves back to the element", () => {
@@ -101,7 +95,7 @@ describe("generateLocator", () => {
     mount(`<span>Hello world</span>`);
     const el = document.querySelector("span")!;
     const loc = generateLocator(el);
-    expect(loc).toEqual({ text: "Hello world" });
+    expect(loc.css).toBeDefined();
     expect(resolveLocator(loc)).toBe(el);
   });
 });
@@ -293,7 +287,7 @@ describe("RECORDER_SHIM_JS", () => {
     expect(RECORDER_SHIM_JS).toContain("function resolveLocator");
     expect(RECORDER_SHIM_JS).toContain("runReplayStep");
     expect(RECORDER_SHIM_JS).toContain("recorder:replay-step");
-    expect(RECORDER_SHIM_JS).toContain("recorderBootstrap()");
+    expect(RECORDER_SHIM_JS).toContain("installRecorder(generateLocator, eventToStep, runReplayStep)");
     expect(RECORDER_SHIM_JS).toContain(
       "var __name = function(target) { return target; };"
     );

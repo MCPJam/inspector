@@ -59,6 +59,7 @@ export type {
 } from "./app-tool-invocations.js";
 
 export { mcpAppToolResultSchema } from "./tool-result-schema.js";
+export type { RecorderCaptureMode } from "./recorder-protocol.js";
 
 export {
   readResourceDisplayHints,

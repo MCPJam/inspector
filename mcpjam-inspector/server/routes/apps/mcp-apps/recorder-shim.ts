@@ -16,6 +16,7 @@
  * the tested code never drift. The functions MUST stay self-contained (no
  * module-scope refs; only each other + DOM globals) for serialization to work.
  */
+import { RECORDER_CAPTURE_JS } from "./recorder-capture";
 import type {
   ElementLocator,
   ScriptedStep,
@@ -32,146 +33,94 @@ export interface ReplayStepResult {
   deferred?: "widgetToolCalled";
 }
 
-/**
- * Build an `ElementLocator` from a clicked element. Priority mirrors the
- * harness's `resolveScriptedLocator` (testId → role+name → text → css) so a
- * recorded locator resolves to the same element in the headless harness at run
- * time. Self-contained: all helpers are inlined for `.toString()` serialization.
- */
+/** Prefer test IDs, then unique structural CSS. Accessible names are resolved by
+ * Playwright at run time; a second implementation in the guest would disagree. */
 export function generateLocator(el: Element): ElementLocator {
-  const text = (s: string | null | undefined): string =>
-    (s ?? "").replace(/\s+/g, " ").trim();
-  // CSS.escape is present in real browsers (the guest); fall back for older
-  // jsdom in tests. Self-contained so it survives `.toString()` serialization.
-  const esc = (s: string): string =>
+  const esc = (value: string): string =>
     typeof CSS !== "undefined" && CSS.escape
-      ? CSS.escape(s)
-      : s.replace(/["\\\]]/g, "\\$&");
-
-  // A candidate locator is only trustworthy if it re-selects THIS exact element.
-  // `resolveLocator` mirrors the harness's `resolveScriptedLocator`, so a
-  // candidate that round-trips here resolves identically in the headless run.
-  // When a higher-priority candidate (role+name, text) is ambiguous — it lands
-  // on a sibling or a descendant (e.g. `text="🛒"` resolving to the wrong glyph)
-  // — we skip it and fall through to the CSS path, which is built to be unique.
-  // This is the general invariant that keeps record == replay, with no "is this
-  // element interactive?" guessing. See the draft note for open refinements.
-  const roundTripsTo = (candidate: ElementLocator): boolean => {
-    try {
-      return resolveLocator(candidate) === el;
-    } catch {
-      return false;
-    }
-  };
-
-  // 1) testId — most stable.
+      ? CSS.escape(value)
+      : value.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
   const testId = el.getAttribute("data-testid");
   if (testId) {
-    const matches = el.ownerDocument.querySelectorAll(
-      `[data-testid="${esc(testId)}"]`
+    const matches = Array.from(
+      el.ownerDocument.querySelectorAll(`[data-testid="${esc(testId)}"]`),
     );
-    const loc: ElementLocator = { testId };
-    if (matches.length > 1) loc.nth = Array.prototype.indexOf.call(matches, el);
-    return loc;
-  }
-
-  // 2) ARIA role (explicit or implicit) + accessible name.
-  const implicitRole = (node: Element): string | undefined => {
-    const tag = node.tagName.toLowerCase();
-    if (tag === "button") return "button";
-    if (tag === "a" && node.hasAttribute("href")) return "link";
-    if (tag === "select") return "combobox";
-    if (tag === "textarea") return "textbox";
-    if (tag === "input") {
-      const t = (node.getAttribute("type") || "text").toLowerCase();
-      if (t === "checkbox") return "checkbox";
-      if (t === "radio") return "radio";
-      if (t === "button" || t === "submit" || t === "reset") return "button";
-      if (["text", "search", "email", "url", "tel", "password"].includes(t))
-        return "textbox";
-    }
-    return undefined;
-  };
-  const accessibleName = (node: Element): string => {
-    const aria = text(node.getAttribute("aria-label"));
-    if (aria) return aria;
-    const labelledby = node.getAttribute("aria-labelledby");
-    if (labelledby) {
-      const parts = labelledby
-        .split(/\s+/)
-        .map((id) => text(node.ownerDocument.getElementById(id)?.textContent))
-        .filter(Boolean);
-      if (parts.length) return parts.join(" ");
-    }
-    return text(node.textContent);
-  };
-  const role = el.getAttribute("role") || implicitRole(el);
-  if (role) {
-    const name = accessibleName(el);
-    const candidate: ElementLocator = {
-      role: { role, ...(name ? { name } : {}) },
+    return {
+      testId,
+      ...(matches.length > 1 ? { nth: matches.indexOf(el) } : {}),
     };
-    // Only accept role+name when it uniquely re-selects this element. A
-    // container whose name resolves to a child, or a duplicate-named sibling,
-    // falls through.
-    if (roundTripsTo(candidate)) return candidate;
   }
-
-  // 3) Visible text — accepted only when it round-trips to this exact element
-  // (ambiguous/duplicate text falls through to the unique CSS path).
-  const visible = text(el.textContent);
-  if (visible && visible.length <= 80) {
-    const candidate: ElementLocator = { text: visible };
-    if (roundTripsTo(candidate)) return candidate;
-  }
-
-  // 4) CSS path fallback (id → nth-of-type chain), with nth if non-unique.
-  const cssPath = (node: Element): string => {
-    if (node.id) return `#${esc(node.id)}`;
-    const parts: string[] = [];
-    let cur: Element | null = node;
-    while (cur && cur.nodeType === 1 && parts.length < 5) {
-      let sel = cur.tagName.toLowerCase();
-      const parent: Element | null = cur.parentElement;
-      if (parent) {
-        const sameTag = Array.prototype.filter.call(
-          parent.children,
-          (c: Element) => c.tagName === cur!.tagName
-        );
-        if (sameTag.length > 1) {
-          sel += `:nth-of-type(${
-            Array.prototype.indexOf.call(sameTag, cur) + 1
-          })`;
-        }
-      }
-      parts.unshift(sel);
-      if (cur.id) break;
-      cur = parent;
+  const parts: string[] = [];
+  let current: Element | null = el;
+  while (current) {
+    if (
+      current.id &&
+      el.ownerDocument.querySelectorAll(`#${esc(current.id)}`).length === 1
+    ) {
+      parts.unshift(`#${esc(current.id)}`);
+      break;
     }
-    return parts.join(" > ");
-  };
-  const css = cssPath(el);
-  const cssMatches = el.ownerDocument.querySelectorAll(css);
-  const loc: ElementLocator = { css };
-  if (cssMatches.length > 1)
-    loc.nth = Array.prototype.indexOf.call(cssMatches, el);
-  return loc;
+    const siblings = current.parentElement
+      ? Array.from(current.parentElement.children).filter(
+          (node) => node.tagName === current!.tagName,
+        )
+      : [current];
+    parts.unshift(
+      `${esc(current.localName)}${siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : ""}`,
+    );
+    current = current.parentElement;
+  }
+  return { css: parts.join(" > ") };
 }
 
 /** Map a DOM event to a scripted step, or null if it's not a recordable action. */
 export function eventToStep(event: Event): ScriptedStep | null {
-  const target = event.target as Element | null;
-  if (!target || target.nodeType !== 1) return null;
-  if (event.type === "click") {
-    return { kind: "click", target: generateLocator(target) };
+  const target = event.target;
+  if (!(target instanceof Element)) return null;
+  if (event.type === "click" || event.type === "contextmenu") {
+    return {
+      kind: "click",
+      target: generateLocator(target),
+      ...(event.type === "contextmenu" ? { clickType: "right" } : {}),
+    };
   }
-  if (event.type === "change") {
-    const t = target as HTMLInputElement | HTMLTextAreaElement;
-    const tag = target.tagName.toLowerCase();
-    if (tag === "input" || tag === "textarea") {
-      return { kind: "type", target: generateLocator(target), text: t.value };
-    }
-  }
+  if (event.type !== "input" && event.type !== "change") return null;
+  if (target instanceof HTMLSelectElement)
+    return {
+      kind: "select",
+      target: generateLocator(target),
+      values: Array.from(target.selectedOptions, (option) => option.value),
+    };
+  if (
+    target instanceof HTMLInputElement &&
+    [
+      "checkbox",
+      "radio",
+      "button",
+      "submit",
+      "reset",
+      "file",
+      "range",
+      "color",
+      "hidden",
+    ].includes(target.type)
+  )
+    return null;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  )
+    return {
+      kind: "type",
+      target: generateLocator(target),
+      text: target.value,
+    };
+  if (target instanceof HTMLElement && target.isContentEditable)
+    return {
+      kind: "type",
+      target: generateLocator(target),
+      text: target.textContent ?? "",
+    };
   return null;
 }
 
@@ -287,6 +236,20 @@ export function resolveLocator(locator: ElementLocator): Element | null {
  * `widgetToolCalled` is deferred to the host (the shim can't see tool calls).
  * Async so `wait` and post-action settling work. Self-contained for serialization.
  */
+function replayKeyboardDefault(target: Element, init: KeyboardEventInit): void {
+  if (init.ctrlKey || init.metaKey || init.altKey) return;
+  if (init.key === "Tab") {
+    const controls = Array.from(document.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex]')).filter(node => node.tabIndex >= 0 && !node.matches(":disabled") && node.checkVisibility?.() !== false);
+    const index = controls.indexOf(target as HTMLElement);
+    const next = controls[(index + (init.shiftKey ? -1 : 1) + controls.length) % controls.length];
+    next?.focus();
+  } else if ((init.key === "Enter" && target.matches("button,a[href],input[type=submit],input[type=button]")) || (init.key === " " && target.matches("button,input[type=checkbox],input[type=radio]"))) {
+    if (target instanceof HTMLElement) target.click();
+  } else if (init.key === "Enter" && target instanceof HTMLInputElement) {
+    target.form?.requestSubmit();
+  }
+}
+
 export async function runReplayStep(
   step: ScriptedStep
 ): Promise<ReplayStepResult> {
@@ -382,6 +345,7 @@ export async function runReplayStep(
             block: "center",
           } as ScrollIntoViewOptions);
         if (step.clickType === "double") {
+          if (el instanceof HTMLElement) { el.click(); el.click(); }
           fire(el, "dblclick", { detail: 2 });
         } else if (step.clickType === "right") {
           fire(el, "contextmenu", { button: 2 });
@@ -393,27 +357,46 @@ export async function runReplayStep(
         return { ok: true };
       }
       case "type": {
-        const el = resolveLocator(step.target) as
-          | HTMLInputElement
-          | HTMLTextAreaElement
-          | null;
+        const el = resolveLocator(step.target);
         if (!el) return { ok: false, reason: "input not found" };
         if (typeof (el as HTMLElement).focus === "function")
           (el as HTMLElement).focus();
-        setNativeValue(el, step.text);
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) setNativeValue(el, step.text);
+        else el.textContent = step.text;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
         return { ok: true };
       }
       case "key": {
-        const target =
-          (document.activeElement as Element | null) ?? document.body;
-        target.dispatchEvent(
-          new KeyboardEvent("keydown", { key: step.key, bubbles: true })
+        const target = step.target ? resolveLocator(step.target) : document.activeElement ?? document.body;
+        if (!target) return { ok: false, reason: "key target not found" };
+        if (target instanceof HTMLElement) target.focus();
+        const parts = step.key.split("+");
+        const key = parts.pop()!;
+        const init = { key: key === "Space" ? " " : key === "Equal" ? (parts.includes("Shift") ? "+" : "=") : key === "NumpadAdd" ? "+" : key, ctrlKey: parts.includes("Control"), metaKey: parts.includes("Meta"), altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"), bubbles: true, cancelable: true };
+        const accepted = target.dispatchEvent(
+          new KeyboardEvent("keydown", init)
         );
+        if (accepted) replayKeyboardDefault(target, init);
         target.dispatchEvent(
-          new KeyboardEvent("keyup", { key: step.key, bubbles: true })
+          new KeyboardEvent("keyup", init)
         );
+        return { ok: true };
+      }
+      case "select": {
+        const target = resolveLocator(step.target);
+        if (!(target instanceof HTMLSelectElement)) return { ok: false, reason: "select not found" };
+        if (step.values.some(value => !Array.from(target.options).some(option => option.value === value))) return { ok: false, reason: "option not found" };
+        for (const option of Array.from(target.options)) option.selected = step.values.includes(option.value);
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        return { ok: true };
+      }
+      case "scrollTo": {
+        const target = resolveLocator(step.target);
+        if (!target) return { ok: false, reason: "scroll target not found" };
+        const scroller = target === document.documentElement || target === document.scrollingElement ? window : target;
+        scroller.scrollTo({ left: step.x, top: step.y, behavior: "instant" });
         return { ok: true };
       }
       case "scroll": {
@@ -438,100 +421,6 @@ export async function runReplayStep(
 }
 
 /**
- * Guest bootstrap: attach capture-phase listeners and post recorded steps to the
- * proxy (`window.parent`). Posts `recorder:ready` on install and keeps a quiet
- * heartbeat while active so the host can detect a strict-CSP guest that silently
- * blocked the shim without depending on one perfectly timed postMessage. Written
- * as a string factory referencing the two functions by name (they're serialized
- * alongside).
- */
-function recorderBootstrap(): void {
-  // These names are resolved from the serialized IIFE scope (see RECORDER_SHIM_JS).
-  const toStep = eventToStep;
-  const replayStep = runReplayStep;
-  const debug = (message: string, details?: unknown) => {
-    try {
-      if (window.localStorage?.getItem("mcpjam:recorder-debug") === "1") {
-        console.info("[recorder:guest] " + message, details ?? {});
-      }
-    } catch {
-      /* debug logging is best-effort */
-    }
-  };
-  const post = (data: unknown) => {
-    try {
-      window.parent.postMessage(data, "*");
-    } catch {
-      /* cross-origin post is best-effort */
-    }
-  };
-  const handler = (event: Event) => {
-    const step = toStep(event);
-    if (step) {
-      debug("step", {
-        type: event.type,
-        tagName: (event.target as Element | null)?.tagName ?? null,
-      });
-      post({ type: "recorder:step", step });
-    }
-  };
-  const announceReady = () => {
-    debug("ready");
-    post({ type: "recorder:ready" });
-  };
-
-  // Host → guest replay: the host posts `recorder:replay-step` (one step at a
-  // time, with a correlation `id`); the shim drives the live widget and posts
-  // `recorder:replay-result` back. This is the inverse of the capture path and
-  // the same channel the proxy already relays both ways.
-  const onReplayMessage = (event: MessageEvent) => {
-    const data = event.data as {
-      type?: string;
-      id?: unknown;
-      step?: unknown;
-    } | null;
-    if (!data || data.type !== "recorder:replay-step") return;
-    const id = data.id;
-    debug("replay-step", { id });
-    Promise.resolve(replayStep(data.step as never))
-      .then((result) => {
-        post({ type: "recorder:replay-result", id, ...result });
-      })
-      .catch((err: unknown) => {
-        post({
-          type: "recorder:replay-result",
-          id,
-          ok: false,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      });
-  };
-  window.addEventListener("message", onReplayMessage);
-
-  debug("bootstrap");
-  document.addEventListener("click", handler, true);
-  document.addEventListener("change", handler, true);
-
-  // `srcdoc` navigations can replace the inner iframe while the first ready ping
-  // is in flight. Ready is idempotent on the host, so repeat it across the short
-  // boot window instead of treating one dropped postMessage as recorder failure.
-  announceReady();
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", announceReady, {
-      once: true,
-    });
-  }
-  window.addEventListener("load", announceReady, { once: true });
-  [50, 250, 1000, 2500].forEach((delay) => {
-    window.setTimeout(announceReady, delay);
-  });
-  const heartbeat = window.setInterval(announceReady, 2000);
-  window.addEventListener("pagehide", () => window.clearInterval(heartbeat), {
-    once: true,
-  });
-}
-
-/**
  * The shim source injected into the guest `srcdoc` (an IIFE). Serializes the
  * capture (`generateLocator`/`eventToStep`) AND replay
  * (`resolveLocator`/`runReplayStep`) functions so the injected code is exactly
@@ -547,8 +436,9 @@ export const RECORDER_SHIM_JS: string = [
   generateLocator.toString(),
   eventToStep.toString(),
   resolveLocator.toString(),
+  replayKeyboardDefault.toString(),
   runReplayStep.toString(),
-  recorderBootstrap.toString(),
-  "recorderBootstrap();",
+  RECORDER_CAPTURE_JS,
+  "installRecorder(generateLocator, eventToStep, runReplayStep);",
   "})();",
 ].join("\n");

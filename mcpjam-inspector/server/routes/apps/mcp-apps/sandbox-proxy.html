@@ -1467,12 +1467,16 @@ document.addEventListener('securitypolicyviolation', function(e) {
               data.type === "openai:setOpenInAppUrl" ||
               // Tier 2 recorder: guest → host recorded steps + readiness ping.
               data.type === "recorder:step" ||
+              data.type === "recorder:pick" ||
+              data.type === "recorder:flushed" ||
               data.type === "recorder:ready" ||
               // Replay: guest → host per-step result for a host-driven replay.
               data.type === "recorder:replay-result"
             ) {
               if (
                 data.type === "recorder:step" ||
+                data.type === "recorder:pick" ||
+                data.type === "recorder:flushed" ||
                 data.type === "recorder:ready" ||
                 data.type === "recorder:replay-result"
               ) {

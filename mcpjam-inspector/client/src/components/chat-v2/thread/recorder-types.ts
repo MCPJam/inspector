@@ -1,3 +1,5 @@
+import type { RecorderCaptureMode } from "@mcpjam/sdk/widget-runtime";
+
 /**
  * Tier 3 recorder wiring types, shared across the trace render chain
  * (TraceViewer → Thread → transcript-thread → message-view → part-switch →
@@ -20,10 +22,21 @@ export interface RecordingTarget {
 export interface RecorderStepEvent {
   promptIndex: number;
   toolName: string;
-  /** Runtime-only — attribution/debug; NOT persisted into widgetChecks. */
+  /** The rendered tool call used to keep capture IDs unique across widgets. */
   toolCallId: string;
   /** A ScriptedStep (typed `unknown` here to keep chat-v2 decoupled). */
   step: unknown;
+  /** Repeated IDs replace an unfinished typing/scroll or corrected click gesture. */
+  captureId?: string;
+}
+
+export interface RecorderPickEvent extends Omit<RecorderStepEvent, "step"> {
+  target: unknown;
+}
+
+export interface RecorderFlushControllerEvent {
+  toolCallId: string;
+  flush: (() => Promise<ReplayStepResult>) | null;
 }
 
 /** Emitted when the recorder shim installs in a record-capable widget guest. */
@@ -71,10 +84,13 @@ export interface RecorderProps {
    * is a host-side gate (which widget's steps get SAVED), not a reload.
    */
   recordCapable?: boolean;
+  recorderCaptureMode?: RecorderCaptureMode;
   recordingTarget?: RecordingTarget | null;
   /** Resolve a widget's promptIndex from its runtime toolCallId (trace spans). */
   resolvePromptIndex?: (toolCallId: string) => number | undefined;
   onRecorderStep?: (event: RecorderStepEvent) => void;
+  onRecorderPick?: (event: RecorderPickEvent) => void;
+  onRecorderFlushReady?: (event: RecorderFlushControllerEvent) => void;
   onRecorderReady?: (event: RecorderReadyEvent) => void;
   /** Published per record-capable widget so the host can replay steps against it. */
   onReplayControllerReady?: (event: ReplayControllerEvent) => void;

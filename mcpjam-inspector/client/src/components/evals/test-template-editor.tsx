@@ -1,3 +1,5 @@
+import { INTERACT_ACTION_KINDS } from "./step-fields";
+import { useEvalRecorder } from "./use-eval-recorder";
 import type { EvalSuite, CaseRunLaunchOptions } from "./types";
 import {
   SuiteRunReview,
@@ -73,20 +75,15 @@ import {
 } from "./preview/case-preview-pane";
 import { PreviewHeaderSlot } from "./preview/preview-header-slot";
 import {
-  shouldSaveLiveRecorderStep,
   type RecorderProps,
-  type RecorderReadyEvent,
-  type RecorderStepEvent,
 } from "@/components/chat-v2/thread/recorder-types";
 import {
   MAX_SCRIPTED_STEP_TEXT_CHARS,
   MAX_SCRIPTED_WAIT_MS,
   trimmedField,
   type ElementLocator,
-  type ScriptedStep,
-  type StepAssertion,
 } from "@/shared/scripted-steps";
-import { AssertPickChooser, type AssertPick } from "./assert-pick-chooser";
+import { AssertPickChooser } from "./assert-pick-chooser";
 import { CaseRunsHistory } from "./runs/case-runs-history";
 import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
@@ -151,11 +148,7 @@ import {
   normalizeSteps,
   promptTurnsToSteps,
   resolveDisplayExpectedToolCalls,
-  stepAssertionToWidgetAssertion,
   stepsToPromptTurns,
-  insertStepAfter,
-  lastStepIdOfTurn,
-  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type InteractAction,
@@ -482,19 +475,6 @@ interface TestTemplateEditorProps {
   onCloseCaseChecks?: () => void;
 }
 
-function recorderDebug(message: string, details?: Record<string, unknown>) {
-  try {
-    if (
-      typeof window !== "undefined" &&
-      window.localStorage?.getItem("mcpjam:recorder-debug") === "1"
-    ) {
-      console.info(`[recorder] ${message}`, details ?? {});
-    }
-  } catch {
-    // best-effort debug logging only
-  }
-}
-
 /**
  * Segmented "what does clicking the widget do" toggle, shown once a widget is
  * armed: Record actions (replayable interaction steps) vs Add checks (click an
@@ -703,14 +683,6 @@ const tooLong = (value: unknown): boolean =>
 /**
  * Mirrors the discriminants of `interactActionSchema` (`@mcpjam/sdk/contract`).
  */
-const INTERACT_ACTION_KINDS: readonly InteractAction["kind"][] = [
-  "click",
-  "type",
-  "key",
-  "scroll",
-  "wait",
-];
-
 function getInteractStepGap(step: InteractStep): string | null {
   // Stored blobs reach the editor cast, never parsed, so `action` can arrive
   // missing or carrying a kind this editor has no fields for. Settle that
@@ -724,6 +696,10 @@ function getInteractStepGap(step: InteractStep): string | null {
     return `Pick a view (tool) for the ${label}.`;
   }
   switch (a.kind) {
+    case "select":
+      return getLocatorGap(a.target, label) ?? (Array.isArray(a.values) && a.values.every(value => typeof value === "string" && value.length <= MAX_SCRIPTED_STEP_TEXT_CHARS) ? null : "Enter valid option values.");
+    case "scrollTo":
+      return getLocatorGap(a.target, label) ?? (Number.isFinite(a.x) && Number.isFinite(a.y) ? null : "Enter valid scroll positions.");
     case "click":
       return getLocatorGap(a.target, label);
     case "type":
@@ -734,7 +710,7 @@ function getInteractStepGap(step: InteractStep): string | null {
           : null)
       );
     case "key":
-      return trimmedField(a.key) ? null : "Enter a key for the key step.";
+      return trimmedField(a.key) ? (a.target === undefined ? null : getLocatorGap(a.target, label)) : "Enter a key for the key step.";
     case "scroll":
       return a.amount === undefined ||
         (Number.isInteger(a.amount) && a.amount >= 1)
@@ -1198,8 +1174,6 @@ export function TestTemplateEditor({
   // frozen trace. No grading — the eval runner is out of this path. Past-run
   // review (`replayIteration`) still wins, so opening a run shows its trace.
   const recordingEnabled = useEvalsStartRecordingEnabled();
-  const recordingEnabledRef = useRef(recordingEnabled);
-  recordingEnabledRef.current = recordingEnabled;
   const [recordingRequested, setLiveRecordMode] = useState<boolean>(false);
   const liveRecordMode = recordingEnabled && recordingRequested;
   const [inspectIterationId, setInspectIterationId] = useState<string | null>(
@@ -1214,22 +1188,10 @@ export function TestTemplateEditor({
   const [replayIteration, setReplayIteration] = useState<EvalIteration | null>(
     null,
   );
-  // What a click inside a live widget does: "record" appends an interaction step;
-  // "assert" captures the clicked element's locator and opens the assert chooser
-  // instead. The ref mirror lets the stable `handleRecorderStep` callback read
-  // the mode without re-subscribing.
   const [captureMode, setCaptureMode] = useState<"record" | "assert">("record");
-  const captureModeRef = useRef<"record" | "assert">("record");
-  useEffect(() => {
-    captureModeRef.current = captureMode;
-  }, [captureMode]);
-  // A pending assert-mode pick: the element the user clicked, awaiting a choice
-  // of what to check. Null when the chooser is closed.
-  const [pendingPick, setPendingPick] = useState<AssertPick | null>(null);
   useEffect(() => {
     if (!recordingEnabled) {
       setLiveRecordMode(false);
-      setPendingPick(null);
     }
   }, [recordingEnabled]);
   const handleStartRecording = useCallback(() => {
@@ -2457,15 +2419,6 @@ export function TestTemplateEditor({
     setEditForm((current) => (current ? { ...current, steps: next } : current));
   }, []);
 
-  // Latest `steps` mirrored into a ref so the recorder's append (a stable
-  // callback) can read the current step list without putting `editForm` in its
-  // deps — that would churn `previewRecorder`'s identity on every keystroke and
-  // reload the live widget.
-  const editFormStepsRef = useRef<TestStep[]>(editForm?.steps ?? []);
-  useEffect(() => {
-    editFormStepsRef.current = editForm?.steps ?? [];
-  }, [editForm?.steps]);
-
   // Mirrors `editForm` itself (not just its steps) so the agent command
   // handler below can tell "no case is open" apart from "a case with zero
   // steps is open" — registered once at mount, so it must read live state
@@ -2541,120 +2494,7 @@ export function TestTemplateEditor({
     });
   }, []);
 
-  // Append a recorder-captured widget step (interact or assert) to the END of
-  // turn `turnIndex`'s block in the flat step list. The recorder reports a
-  // turn-granular `promptIndex`; `stepTurnIndices` maps each step to its
-  // implicit turn, so we splice in right after that turn's last step (or append
-  // to the end if that turn has no steps yet).
-  const appendWidgetStepToTurn = useCallback(
-    (turnIndex: number, step: TestStep) => {
-      const currentSteps = editFormStepsRef.current;
-      // `lastStepIdOfTurn` names the turn's last step and `insertStepAfter`
-      // puts the recorded step right behind it — the same position the local
-      // reverse scan produced, pinned against that loop by a property test in
-      // `shared/__tests__/steps-spine.test.ts`. When the turn has no steps yet
-      // (or does not exist), the fallback anchors on the list's last step,
-      // which appends, as before.
-      const next = insertStepAfter(
-        currentSteps,
-        lastStepIdOfTurn(currentSteps, turnIndex) ??
-          currentSteps[currentSteps.length - 1]?.id ??
-          null,
-        step,
-      );
-      setEditForm((current) =>
-        current ? { ...current, steps: next } : current,
-      );
-    },
-    [],
-  );
-
-  // NOTE: the live record panel deliberately does NOT reflect its whole
-  // conversation back into the spec. The right pane is a sandbox; auto-adopting
-  // the model's actual tool calls as `expectedToolCalls` would silently author
-  // assertions the user never asked for. The only sanctioned right→left writes
-  // are the explicit widget recorder (`previewRecorder`) and the assert chooser.
-
-  // Confirm an assert-mode pick: append the chosen widget assertion as an
-  // `assert` TestStep at the end of the picked turn's block, then close the
-  // chooser. Functional setState reads the pending pick so this stays a stable
-  // callback.
-  const handleAssertPickConfirm = useCallback(
-    (assertion: StepAssertion) => {
-      if (!recordingEnabledRef.current) return;
-      setPendingPick((pick) => {
-        if (!pick) return null;
-        appendWidgetStepToTurn(pick.promptIndex, {
-          id: newStepId("wassert"),
-          kind: "assert",
-          assertion: stepAssertionToWidgetAssertion(pick.toolName, assertion),
-        });
-        return null;
-      });
-    },
-    [appendWidgetStepToTurn],
-  );
-  // The live record surface emits a step for ANY clicked widget. Save it as an
-  // `interact` (or open the assert chooser) into the turn `resolvePromptIndex`
-  // reported for the clicked widget — but only into turns that already exist in
-  // the authored spec. A click on a widget from a typed-but-not-yet-added turn
-  // is dropped (the user adds that prompt to the test first — Phase 2b).
-  const handleRecorderStep = useCallback(
-    (event: RecorderStepEvent) => {
-      if (!recordingEnabledRef.current) return;
-      const turnIndex = event.promptIndex;
-      const authoredTurns = groupStepsIntoTurns(
-        editFormStepsRef.current,
-      ).length;
-      const saved =
-        shouldSaveLiveRecorderStep(event) && turnIndex < authoredTurns;
-      recorderDebug("editor recorder step received", {
-        eventToolName: event.toolName,
-        eventPromptIndex: event.promptIndex,
-        eventToolCallId: event.toolCallId,
-        saved,
-      });
-      if (!saved) return;
-      const step = event.step as ScriptedStep;
-      // Assert mode: a click selects an element to check rather than an action to
-      // replay. Capture its derived locator and open the chooser; ignore
-      // non-click steps (e.g. `type`/`change`) — those aren't a pick gesture.
-      if (captureModeRef.current === "assert") {
-        if (step.kind === "click") {
-          setPendingPick({
-            promptIndex: turnIndex,
-            toolName: event.toolName,
-            locator: step.target,
-          });
-        }
-        return;
-      }
-      appendWidgetStepToTurn(turnIndex, {
-        id: newStepId("interact"),
-        kind: "interact",
-        toolName: event.toolName,
-        action: step as unknown as InteractAction,
-      });
-    },
-    [appendWidgetStepToTurn],
-  );
-  const handleRecorderReady = useCallback((event?: RecorderReadyEvent) => {
-    recorderDebug("editor recorder ready received", {
-      event: event as unknown as Record<string, unknown>,
-    });
-  }, []);
-  // RECORD-CAPABLE bundle for the live Record panel. Every widget loads the shim
-  // on its first render (`recordCapable`), so a click on any live widget emits a
-  // step; `handleRecorderStep` files it into the widget's turn. No armed target —
-  // live mode records every widget in the session.
-  const previewRecorder = useMemo<RecorderProps | undefined>(() => {
-    if (!recordingEnabled) return undefined;
-    return {
-      recordCapable: true,
-      onRecorderStep: handleRecorderStep,
-      onRecorderReady: handleRecorderReady,
-    };
-  }, [recordingEnabled, handleRecorderStep, handleRecorderReady]);
+  const { recorder: previewRecorder, pendingPick, setPendingPick, confirmPick: handleAssertPickConfirm, stopRecording } = useEvalRecorder({ enabled: recordingEnabled, active: liveRecordMode, mode: captureMode, caseId: currentTestCase?._id, setForm: setEditForm, onStop: () => setLiveRecordMode(false) });
 
   // Pre-run Preview: render the forming spec through the SAME chat surface as a
   // real run (synthesized trace: prompt + expected tool calls), so the editor's
@@ -4901,7 +4741,8 @@ export function TestTemplateEditor({
                             // shows. The preview gate keeps past-run review
                             // (`replayIteration`) winning over Record mode.
                             if (!liveRecordMode) setShowSpecOverride(false);
-                            setLiveRecordMode((v) => !v);
+                            if (liveRecordMode) void stopRecording();
+                            else handleStartRecording();
                           }}
                         >
                           <Circle
@@ -5260,7 +5101,7 @@ export function TestTemplateEditor({
                       onStartRecording={
                         recordingEnabled ? handleStartRecording : undefined
                       }
-                      onStopRecording={() => setLiveRecordMode(false)}
+                      onStopRecording={() => void stopRecording()}
                       onAddCheck={() => setCaptureMode("assert")}
                       stepStatusById={workspaceStepStatusById}
                       stepStatusByTurn={workspaceStepStatusByTurn}
@@ -5381,7 +5222,7 @@ export function TestTemplateEditor({
                       onStartRecording={
                         recordingEnabled ? handleStartRecording : undefined
                       }
-                      onStopRecording={() => setLiveRecordMode(false)}
+                      onStopRecording={() => void stopRecording()}
                       onAddCheck={() => setCaptureMode("assert")}
                       overlay={workspaceOverlay}
                       onSelectInAppStep={(stepId) => {
@@ -5463,7 +5304,7 @@ export function TestTemplateEditor({
                       workspaceLiveRecord?.status === "running"
                     }
                     recording={workspacePaneView.kind === "recording"}
-                    onStopRecording={() => setLiveRecordMode(false)}
+                    onStopRecording={() => void stopRecording()}
                     onSelect={(it) => {
                       setReplayIteration(
                         previewRecord?.status === "running" &&

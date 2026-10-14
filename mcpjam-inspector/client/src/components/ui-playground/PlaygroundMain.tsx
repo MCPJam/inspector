@@ -1,3 +1,4 @@
+import { startsUserTurn } from "@/shared/user-context-message";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -5381,11 +5382,8 @@ export function PlaygroundMain({
     entries: Array<[string, number]>;
   } | null>(null);
 
-  // Tier-3 recorder: map each assistant tool call's toolCallId → the ordinal of
-  // the user turn that produced it, so part-switch can attribute a recorded
-  // widget step to the right turn in the live (span-less) preview. Streaming
-  // text changes `messages` often; keep the snapshot identity stable unless the
-  // actual toolCallId → promptIndex mapping changes.
+  // Context messages do not open a recording turn. Keep the resolver stable
+  // while streaming text changes but tool-call ownership stays the same.
   const recorderPromptIndexSnapshot = useMemo(() => {
     if (!recorder) {
       const previous = recorderPromptIndexSnapshotRef.current;
@@ -5398,6 +5396,7 @@ export function PlaygroundMain({
     let userOrdinal = -1;
     for (const msg of messages) {
       if (msg.role === "user") {
+        if (!startsUserTurn(msg)) continue;
         userOrdinal += 1;
         continue;
       }
@@ -5424,7 +5423,7 @@ export function PlaygroundMain({
     return {
       ...recorder,
       resolvePromptIndex: (toolCallId: string) =>
-        toolCallPromptIndex.get(toolCallId),
+        toolCallPromptIndex.get(toolCallId) ?? -1,
     };
   }, [recorder, recorderPromptIndexSnapshot]);
 

@@ -469,6 +469,8 @@ export const SandboxedIframe = forwardRef<
       // and receive per-step results from a host-driven replay.
       if (
         event.data?.type === "recorder:step" ||
+        event.data?.type === "recorder:pick" ||
+        event.data?.type === "recorder:flushed" ||
         event.data?.type === "recorder:ready" ||
         event.data?.type === "recorder:replay-result"
       ) {
