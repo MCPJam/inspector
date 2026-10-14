@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +38,7 @@ export function InviteTeamSignUpDialog({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
 
   // One impression per opening, not per render — StrictMode double-invokes
   // effects, so the ref is scoped to the open transition rather than mount.

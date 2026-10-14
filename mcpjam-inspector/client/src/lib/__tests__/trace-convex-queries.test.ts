@@ -168,6 +168,64 @@ describe("traced watches", () => {
     expect(() => watch.localQueryResult()).toThrow();
     expect(reportCaught).not.toHaveBeenCalled();
   });
+  it.each([
+    "ENV_NO_SERVERS",
+    "ENV_SERVERS_UNRESOLVED",
+    "ENV_MODEL_REQUIRED",
+    "ENV_PLUGIN_UNAVAILABLE",
+  ])("leaves %s refusals for the preflight UI without reporting", (code) => {
+    const f = fixture();
+    const refused = new ConvexError({
+      code,
+      message: "Check the environment before launching.",
+      details: { environmentId: "env-a" },
+    });
+    f.set(undefined, refused);
+    const watch = f.client.watchQuery(
+      makeFunctionReference<"query">(
+        "projectEnvironments:resolveEnvironmentForLaunch",
+      ),
+      {},
+    );
+    const callback = vi.fn();
+    const stop = watch.onUpdate(callback);
+    f.update();
+    expect(callback).toHaveBeenCalledOnce();
+    expect(() => watch.localQueryResult()).toThrow(refused);
+    try {
+      watch.localQueryResult();
+    } catch (error) {
+      expect(error).toBe(refused);
+      expect(error).toHaveProperty("data.code", code);
+    }
+    expect(reportCaught).not.toHaveBeenCalled();
+
+    f.set(undefined, failure);
+    f.update();
+    expect(reportCaught).toHaveBeenCalledOnce();
+    stop();
+    expect(f.unsubscribe).toHaveBeenCalledOnce();
+  });
+  it.each([
+    new Error("ENV_NO_SERVERS"),
+    new ConvexError("ENV_NO_SERVERS"),
+    new ConvexError({ code: "INTERNAL_ERROR", message: "Resolution failed" }),
+    new ConvexError({ code: "ENV_NO_SERVERS" }),
+    new ConvexError({ code: "ENV_NO_SERVERS", message: "" }),
+    new ConvexError({ code: 123, message: "Resolution failed" }),
+  ])("still reports unexpected or malformed environment errors: %s", (error) => {
+    const f = fixture();
+    f.set(undefined, error);
+    const watch = f.client.watchQuery(
+      makeFunctionReference<"query">(
+        "projectEnvironments:resolveEnvironmentForLaunch",
+      ),
+      {},
+    );
+    watch.onUpdate(() => {});
+    expect(() => watch.localQueryResult()).toThrow(error);
+    expect(reportCaught).toHaveBeenCalledOnce();
+  });
   it("signs the tab out once, and reports nothing, when its session was signed out elsewhere", () => {
     const signOut = vi.fn();
     setSessionRevokedHandler(signOut);
