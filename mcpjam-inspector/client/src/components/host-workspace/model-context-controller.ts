@@ -1,6 +1,6 @@
 import {
   parsePluginModelContext,
-  pluginContextAttachments,
+  pluginContextRemoveAllResultSchema,
   type PluginModelContextParams,
   pluginContextSnapshotSchema,
   type PluginContextSnapshot,
@@ -14,7 +14,7 @@ export class PluginContextHeld extends PluginContextUpdateRejected {}
 export function createModelContextController({
   requireLive,
   send,
-  sendRemoval,
+  sendRemoveAll,
   read,
   onSnapshot,
   userAttaching,
@@ -27,10 +27,9 @@ export function createModelContextController({
     params: PluginModelContextParams;
     attach?: "user";
   }) => Promise<unknown>;
-  sendRemoval?: (request: {
+  sendRemoveAll?: (request: {
     operationId: string;
-    updateId: string;
-    index: number;
+    basis: number;
   }) => Promise<unknown>;
   onSnapshot?: (snapshot: PluginContextSnapshot) => void;
   read?: () => Promise<unknown>;
@@ -142,28 +141,28 @@ export function createModelContextController({
         if (!acceptSnapshot(current)) throw new Error("Stale app context read");
         uncertain = false;
       }, true),
-    remove: (updateId: string, index: number) =>
+    /**
+     * Remove this App's whole context. The caller may re-send the same
+     * operation until it has an outcome: the server decides it by `basis`,
+     * so a retry never clears context the person attached afterwards. Any
+     * answer settles an unknown earlier outcome, as a read does.
+     */
+    removeAll: (operation: { operationId: string; basis: number }) =>
       enqueue(async () => {
-        if (
-          !sendRemoval ||
-          snapshot.state?.updateId !== updateId ||
-          !Number.isSafeInteger(index) ||
-          !pluginContextAttachments(snapshot).some(
-            (item) => item.index === index,
-          )
-        )
+        if (!sendRemoveAll)
           throw new PluginContextUpdateRejected(
-            "App context changed; review the current attachment",
+            "App context removal unavailable",
           );
-        const result = await sendRemoval({
-          operationId: crypto.randomUUID(),
-          updateId,
-          index,
-        });
-        // The server now refuses the App's own updates too.
-        held = true;
+        const result = pluginContextRemoveAllResultSchema.parse(
+          await sendRemoveAll(operation),
+        );
         requireLive();
-        acceptSnapshot(result);
-      }),
+        acceptSnapshot(result.snapshot);
+        uncertain = false;
+        // The server's hold, not a guess: a superseded or stale removal
+        // left the person's newer context attached.
+        held = result.snapshot.held === true;
+        return result.outcome;
+      }, true),
   });
 }

@@ -237,6 +237,65 @@ describe("original model App context", () => {
     expect((await request()).status).toBe(403);
     modelApps.close(f.token, actor);
   });
+  it("removes all of its context through the same ownership checks", async () => {
+    const f = fixture();
+    const owner = {
+      projectId: "project",
+      pluginWorkspace: { version: 1, workspaceId: "workspace" },
+      instanceToken: f.token,
+    };
+    const post = (path: string, body: Record<string, unknown>) =>
+      f.router.request(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...owner, ...body }),
+      });
+    await post("/context", {
+      operationId: crypto.randomUUID(),
+      sequence: 1,
+      params: {
+        content: [{ type: "text", text: "Selected part" }],
+        structuredContent: { view: "front" },
+      },
+    });
+    const removal = { operationId: crypto.randomUUID(), basis: 0 };
+    const response = await post("/context/remove-all", removal);
+    expect(response.status).toBe(200);
+    const removed = await response.json();
+    expect(removed).toMatchObject({
+      outcome: "applied",
+      snapshot: { state: null, held: true, removedAt: 1 },
+    });
+    // A retry of the same operation answers from its receipt.
+    expect(await (await post("/context/remove-all", removal)).json()).toEqual(
+      removed,
+    );
+    // The single-block route is gone.
+    expect(
+      (
+        await post("/context/remove", {
+          ...removal,
+          updateId: removal.operationId,
+          index: 0,
+        })
+      ).status,
+    ).toBe(404);
+    // A changed source is refused before anything is removed.
+    mocks.resolve.mockResolvedValue({
+      revision: "other",
+      contextEnabled: true,
+      tool: { _meta: meta },
+    });
+    expect(
+      (
+        await post("/context/remove-all", {
+          ...removal,
+          operationId: crypto.randomUUID(),
+        })
+      ).status,
+    ).toBe(403);
+    modelApps.close(f.token, actor);
+  });
   it("does not advertise context when fresh host policy withholds it", async () => {
     mocks.resolve.mockResolvedValue({
       revision: "source-revision",
