@@ -24,18 +24,21 @@ double-capture. Use the logger.
 cookies); it does not stop the http integration from attaching the incoming
 request body, and it does not touch exception text. So:
 
-- `logger.ts` scrubs every `extra` it attaches with `scrubLogPayload`
-  (`shared/log-scrubber.ts`) — the same pass as the Axiom row.
-- `beforeSend` (`scrubServerSentryEvent`) replaces `request.data` with a shape
-  summary, drops query values, cookies and non-allowlisted header values, and
-  redacts and caps exception and message text. Stack frames are untouched, so
-  grouping is unchanged.
-- `beforeBreadcrumb` (`scrubServerSentryBreadcrumb`) cuts outgoing-request
-  breadcrumbs to the host and reduces console breadcrumbs to their label.
-- User identity is an id and an actor kind. No email, no name — on any surface.
+- Logger capture sites attach context; the final Sentry transport reconstructs
+  errors, transactions and standalone spans from closed schemas. Unsupported
+  envelope items, including attachments, are discarded.
+- Server, desktop and SDK diagnostics are strict by default. Only finite error
+  classes/codes, owned route templates, bounded numbers and trusted ids leave.
+  Free text, request bodies, headers, arbitrary tags and source context do not.
+- Stack frames retain verified first-party file and integer line/column locations
+  only. Function labels are discarded. Unknown customer bundles have no trusted
+  frame aliases and still produce finite error diagnostics.
+- User identity is an id and an actor kind. Email and name are not sent in strict
+  diagnostics. Live opt-out is checked again when a queued envelope is sent.
 
-Electron main installs the same two hooks: the embedded server reports through
-that client.
+Electron main installs the same final boundary for its embedded server. Its
+transport sends reconstructed envelopes directly; raw offline events and
+minidumps are not persisted for later vendor delivery.
 
 ## Process-level handlers
 

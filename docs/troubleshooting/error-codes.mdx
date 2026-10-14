@@ -507,7 +507,7 @@ The response was HTTP 403 with an HTML content type and no authentication challe
 - A corporate proxy or SSO portal intercepted the request.
 
 **Next steps**
-- Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.
+- Allow MCPJam's [egress addresses](/hosted/network), or the address you connect from, on the server's firewall.
 - Open the server URL in a browser from the same network to see what answers.
 
 ### No Bearer challenge
@@ -693,6 +693,7 @@ not.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+- If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
 
 **Swarm and Eval runs**
 
@@ -700,8 +701,11 @@ When credits run out during a Swarm or Eval run, blocked work stops and you rece
 
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
-  turns are always billed to MCPJam and have no BYOK path, so adding a key does
-  not lift this limit for a swarm.
+  turns are billed to MCPJam and have no personal BYOK path, so adding a key
+  does not lift this limit for a swarm. An organization that uses its own keys
+  for all AI features runs those turns on its default AI model instead, and its
+  providers bill their tokens; see
+  [Organization AI key policy](#organization-ai-key-policy).
 </Warning>
 
 ### Credits temporarily held
@@ -777,6 +781,184 @@ The MCP server answered the request with an HTTP error status. The message names
 **Next steps**
 - Check the server URL, including the MCP endpoint path.
 - Check the server's logs for the failed request.
+
+---
+
+## Organization AI key policy
+
+**Use your keys for all AI features** is an organization setting under
+**Organization → AI providers**. It is available on Enterprise plans.
+
+When it is on, every AI request on the organization's data must run on one of
+the organization's own providers. MCPJam-provided models, personal keys and
+local models are disabled for it, and nothing falls back to them: a feature
+without a compatible provider is unavailable instead. Only direct cloud
+providers count; OpenRouter and local-runtime connections do not.
+
+- **Model pickers** list only the organization's eligible models. A suite's
+  judge must be chosen from an organization provider; there is no default
+  judge, and a suite without one can't run.
+- **Harness runtimes** run on the organization's own key for their vendor:
+  Claude Code on an Anthropic provider, Codex on an OpenAI provider. Not
+  supported while the setting is on: SDK model leases (`sdk-direct`), a
+  provider with a custom base URL, and a local-runtime connection.
+- **Default AI model.** Work nobody picks a model for (insights and findings,
+  generation, typed decisions, readiness observations, and the simulated user
+  in Swarm and User Testing) runs on the organization's default AI model. An
+  admin chooses it under **Organization → AI providers → Default AI model**,
+  and can test it there. MCPJam may suggest one but never sets it. Until it is
+  set, that work is unavailable. Model pickers never use it, and it is never
+  a suite's judge.
+- **Feature coverage** on the settings page shows which features are ready,
+  and which wait for the default AI model. Features that can't run on
+  organization providers yet show **Not supported yet** and are unavailable
+  while the setting is on. Today that includes the session map,
+  transcription and Ask MCPJam. When an eligible provider exists, the card
+  names choosing the default model as the fix for work that waits on it.
+- **Billing.** Model tokens are billed by the organization's providers.
+  MCPJam's fixed product fees and usage limits still apply.
+
+Only organization owners and admins can change the setting. Any of them can
+turn it off at any time, including after the organization leaves Enterprise;
+leaving Enterprise never turns it off. Turning it off is recorded in the audit
+log, and the organization's owners get an email.
+
+When a request is refused under the setting, it fails with one of the codes
+below.
+
+## Organization provider refusals
+
+These codes mean an AI request was refused because it could not run on one of
+the organization's own model providers. None of them count against MCPJam
+credits.
+
+Most are configuration: the request won't run until someone changes its model
+or the organization's providers, so trying again doesn't help. Two are
+temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
+organization's AI settings) and `org/provider_unavailable` (the provider is
+rate-limiting or failing). Try those again in a moment.
+
+### Organization provider required
+
+`org/keys_required`
+
+This organization requires its own provider keys for AI features, so the
+request was refused before it reached a model. A required dependency could
+not run on an eligible organization connection:
+
+- An MCPJam-provided (hosted) model.
+- A personal or local key model.
+- A model saved without an organization provider connection (a legacy bare model ID).
+- A model on an organization connection that is missing or not eligible to run it.
+- The suite requires a judge, but none was chosen or its model is not on an eligible organization connection.
+- A harness uses the wrong provider: Claude Code needs an organization Anthropic provider, and Codex needs an organization OpenAI provider.
+
+The **Setup Run** sheet lists these problems and blocks Start until every
+required dependency can run. Organization admins can use **Manage AI
+providers** to configure connections. **Configure suite evaluators** opens
+the suite's judge settings; choosing an existing eligible judge does not
+require organization admin rights.
+
+**Next steps**
+- Choose a model from an organization provider connection that is enabled and eligible, and save its connection.
+- Choose the required judge under **Configure suite evaluators**.
+- Organization admins can add, configure or reconnect a provider under **Organization → AI providers**.
+
+### Organization model not configured
+
+`org/model_unconfigured`
+
+The feature runs on the organization's default AI model, and none is set.
+Work nobody picks a model for, such as insights, findings, generation and
+the simulated user, runs on that model while the organization uses its own
+keys for all AI features.
+
+The feature coverage card on **Organization → AI providers** also explains related
+configuration failures:
+
+- **Default model not set** — admins see "The organization's default AI model
+  isn't set. Choose it below." Members are asked to contact an admin.
+- **Saved model can't run** — the model was saved but its connection was
+  removed or it can no longer serve the feature. Admins see "The
+  organization's default AI model can't run. Choose another below."
+  A removed provider connection reports `credential_missing`.
+- **No eligible provider yet** — when no direct cloud provider exists, the
+  card asks for a provider first, then the model.
+
+**Next steps**
+- Organization admins can set or change the default model under
+  **Organization → AI providers → Default AI model**.
+- Members: ask an organization admin to configure one.
+
+### Organization runtime unsupported
+
+`org/runtime_unsupported`
+
+The feature, runtime, or selected provider cannot run on organization
+credentials yet. Only direct cloud connections are eligible: OpenRouter (a
+shared gateway) and local-runtime connections are not. Cursor has no
+organization-key execution path and is unavailable while this policy is on.
+Claude Code supports an organization Anthropic provider, and Codex supports
+an organization OpenAI provider; custom base URLs are not supported for these
+harnesses.
+
+**Next steps**
+- Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
+- For a harness run, choose Claude Code with an organization Anthropic connection or Codex with an organization OpenAI connection. A feature without an organization-key path remains unavailable under this policy.
+- Organization admins can turn off **Use your keys for all AI features** to run this feature on MCPJam-provided models again.
+
+### Organization scope unresolved
+
+`org/scope_unresolved`
+
+MCPJam could not tell which organization the AI request belongs to, so it did
+not run it.
+
+**Next steps**
+- Open the request from the organization's project and try again.
+- Contact support if this keeps happening.
+
+### Organization AI key policy unavailable
+
+`org/key_policy_unavailable`
+
+MCPJam could not read the organization's AI settings and refused the request
+rather than guess. This is temporary and on MCPJam's side.
+
+**Next steps**
+- Try again in a moment.
+
+### Organization provider auth failed
+
+`org/provider_auth_failed`
+
+The organization's model provider rejected its API key (401 or 403).
+
+**Next steps**
+- Organization admins can update the key under **Organization → AI providers**.
+- Members: ask an organization admin to update it.
+
+### Organization provider missing
+
+`org/credential_missing`
+
+The organization provider the model is saved to run on is no longer available:
+the connection was deleted, disabled or moved, or its API key was removed.
+
+**Next steps**
+- Choose a model from an organization provider that is still connected.
+- Organization admins can add or reconnect the provider under **Organization → AI providers**.
+
+### Organization provider unavailable
+
+`org/provider_unavailable`
+
+The organization's model provider is rate-limiting requests or temporarily
+failing.
+
+**Next steps**
+- Try again shortly.
+- Check the provider's status page and the organization's limits on its dashboard.
 
 ---
 

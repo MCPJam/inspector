@@ -43,6 +43,8 @@ import type {
 
 const UNKNOWN_MODEL = "Unknown model";
 const ALL_FILTER = "__all__";
+const RUN_TABLE_GRID =
+  "grid grid-cols-[2.5rem_4rem_minmax(7rem,1fr)_4rem_4rem_3rem_2.5rem_5.5rem_6.5rem]";
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
@@ -65,6 +67,8 @@ export function CaseRunTimeline({
   openIterationId,
   onSelect,
   live = false,
+  recording = false,
+  onStopRecording,
   liveVerdict,
   pendingRun,
   onSelectLive,
@@ -80,6 +84,8 @@ export function CaseRunTimeline({
   openIterationId?: string | null;
   onSelect: (iteration: EvalIteration) => void;
   live?: boolean;
+  recording?: boolean;
+  onStopRecording?: () => void;
   liveVerdict?: "Running" | "Passed" | "Failed" | "No verdict";
   pendingRun?: { model: string; client?: string };
   onSelectLive?: () => void;
@@ -389,19 +395,25 @@ export function CaseRunTimeline({
         ))}
       </div>
       <div
-        className="min-w-0 w-full rounded-lg border border-border bg-background text-foreground"
+        className="min-w-0 w-full overflow-x-auto rounded-lg border border-border bg-background text-foreground"
         data-testid="case-run-table"
       >
-        <div className="min-w-0 w-full">
-          <div className="grid grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,.95fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <span className="min-w-0 break-words">Run</span>
-            <span className="min-w-0 break-words">Iteration</span>
-            <span className="min-w-0 break-words">Client / Model</span>
-            <span className="min-w-0 break-words">Result</span>
-            <span className="min-w-0 break-words">Latency</span>
-            <span className="min-w-0 break-words">Tokens</span>
-            <span className="min-w-0 break-words">Calls</span>
-            <span className="min-w-0 break-words">Date</span>
+        <div className="min-w-[45rem] w-full">
+          <div
+            className={cn(
+              RUN_TABLE_GRID,
+              "gap-2 whitespace-nowrap border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
+            )}
+          >
+            <span>Run</span>
+            <span>Iteration</span>
+            <span>Client / Model</span>
+            <span>Result</span>
+            <span>Latency</span>
+            <span>Tokens</span>
+            <span>Calls</span>
+            <span>Date</span>
+            <span>Time</span>
           </div>
           {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
             const result = it ? computeIterationResult(it) : "pending";
@@ -429,7 +441,10 @@ export function CaseRunTimeline({
                     else onSelectLive?.();
                     setDrawerOpen(true);
                   }}
-                  className="grid w-full grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,.95fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                  className={cn(
+                    RUN_TABLE_GRID,
+                    "w-full items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30",
+                  )}
                 >
                   <span
                     className="truncate font-medium"
@@ -505,21 +520,29 @@ export function CaseRunTimeline({
                       : "—"}
                   </span>
                   <span
-                    className="min-w-0 break-words text-muted-foreground"
+                    className="whitespace-nowrap tabular-nums text-muted-foreground"
                     data-testid="case-run-date"
                     title={it ? formatTime(it.createdAt) : undefined}
                   >
                     {it ? (
                       <time dateTime={new Date(it.createdAt).toISOString()}>
-                        <span className="block">
-                          {new Date(it.createdAt).toLocaleDateString()}
-                        </span>
-                        <span className="block">
-                          {new Date(it.createdAt).toLocaleTimeString()}
-                        </span>
+                        {new Date(it.createdAt).toLocaleDateString()}
                       </time>
                     ) : (
                       "just now"
+                    )}
+                  </span>
+                  <span
+                    className="whitespace-nowrap tabular-nums text-muted-foreground"
+                    data-testid="case-run-time"
+                    title={it ? formatTime(it.createdAt) : undefined}
+                  >
+                    {it ? (
+                      <time dateTime={new Date(it.createdAt).toISOString()}>
+                        {new Date(it.createdAt).toLocaleTimeString()}
+                      </time>
+                    ) : (
+                      "—"
                     )}
                   </span>
                 </button>
@@ -535,36 +558,48 @@ export function CaseRunTimeline({
           ) : null}
         </div>
       </div>
-      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+      <Sheet
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open && recording) onStopRecording?.();
+        }}
+      >
         <SheetContent
           side="right"
           className="w-full gap-0 sm:w-[min(960px,85vw)] sm:max-w-none"
         >
           <SheetHeader className="shrink-0 border-b border-border pr-12">
             <div className="flex flex-wrap items-center gap-2">
-              <SheetTitle>{runLabel(selected)}</SheetTitle>
+              <SheetTitle>
+                {recording ? "Record interactions" : runLabel(selected)}
+              </SheetTitle>
               <span
                 data-testid="case-run-status"
                 className={cn(
                   "inline-flex shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wide",
-                  verdict === "Passed"
-                    ? "bg-success/15 text-success"
-                    : verdict === "Failed" || verdict === "Timeout"
-                      ? "bg-destructive/15 text-destructive"
-                      : verdict === "Running"
-                        ? "bg-warning/30 text-foreground"
-                        : "bg-muted text-muted-foreground",
+                  recording
+                    ? "bg-muted text-muted-foreground"
+                    : verdict === "Passed"
+                      ? "bg-success/15 text-success"
+                      : verdict === "Failed" || verdict === "Timeout"
+                        ? "bg-destructive/15 text-destructive"
+                        : verdict === "Running"
+                          ? "bg-warning/30 text-foreground"
+                          : "bg-muted text-muted-foreground",
                 )}
               >
-                {verdict}
+                {recording ? "Recording" : verdict}
               </span>
             </div>
             <SheetDescription>
-              {selected
-                ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${
-                    selected.testCaseSnapshot?.model || UNKNOWN_MODEL
-                  }${selectedSuffix} · ${age(selected.createdAt)}`
-                : "Conversation, assertions, tool calls, trace, and replay."}
+              {recording
+                ? "Use the app to add Interact actions, or select Add assertions to check an element."
+                : selected
+                  ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${
+                      selected.testCaseSnapshot?.model || UNKNOWN_MODEL
+                    }${selectedSuffix} · ${age(selected.createdAt)}`
+                  : "Conversation, assertions, tool calls, trace, and replay."}
             </SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">

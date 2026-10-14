@@ -1,7 +1,7 @@
 const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 // Replays use the frozen client and environment; old backends fail closed
 // when they cannot identify the environment whose secrets would be delivered.
@@ -57,8 +57,10 @@ vi.mock("../grading-mode.js", () => ({
   resolveFrozenRunGradingMode: vi.fn(() => undefined),
 }));
 
-vi.mock("../../../utils/org-model-config.js", () => ({
-  resolveOrgModelConfig: vi.fn(async () => undefined),
+const resolveOrgModelConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/org-model-config.js")>(),
+  resolveOrgModelConfig: resolveOrgModelConfigMock,
 }));
 
 import { prepareSuiteReplayFromRun } from "../replay-suite-run.js";
@@ -77,7 +79,13 @@ function convexClient() {
 
 beforeEach(() => {
   runEvalSuiteWithAiSdkMock.mockClear();
+  resolveOrgModelConfigMock.mockReset().mockResolvedValue({
+    aiKeyPolicy: { requireOrgKeys: false }, providers: [],
+  });
+  vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
   it("hands the runner a REASON instead of silence, and never an invented id", async () => {
@@ -137,4 +145,53 @@ it.each(["execution", "harness", "policy"] as const)("refuses replay when %s adm
   await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
   expect(admission.failed).toHaveBeenCalledOnce();
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
+  it("still reads the organization's AI-key policy and hands the runner its config", async () => {
+    const strict = {
+      aiKeyPolicy: { requireOrgKeys: true },
+      providers: [{ providerKey: "openai", exportDenied: true }],
+    };
+    resolveOrgModelConfigMock.mockResolvedValueOnce(strict);
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: convexClient(),
+      convexAuthToken: "token",
+      sourceRunId: "keyed-run",
+      modelApiKeys: { openai: "sk-personal" },
+    });
+    await prepared.execute();
+
+    expect(resolveOrgModelConfigMock).toHaveBeenCalledWith(
+      { projectId: "project-1" },
+      expect.objectContaining({ bearerToken: "token" }),
+    );
+    // The runner refuses personal and hosted selections under this config.
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelApiKeys: { openai: "sk-personal" },
+        orgModelConfig: strict,
+      }),
+    );
+  });
+
+  it("refuses before the replay run is created when the policy can't be read", async () => {
+    admission.failed.mockClear();
+    startSuiteRunWithRecorderMock.mockClear();
+    resolveOrgModelConfigMock.mockRejectedValueOnce(
+      new Error("The organization's AI key policy could not be read"),
+    );
+    await expect(
+      prepareSuiteReplayFromRun({
+        convexClient: convexClient(),
+        convexAuthToken: "token",
+        sourceRunId: "keyed-run",
+        modelApiKeys: { openai: "sk-personal" },
+      }),
+    ).rejects.toThrow(/policy could not be read/);
+    // Nothing was created or reserved, so there is no run to fail.
+    expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    expect(admission.failed).not.toHaveBeenCalled();
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
 });
