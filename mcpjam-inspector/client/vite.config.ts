@@ -9,6 +9,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
+import { telemetryCatalogPlugin } from "./vite-telemetry-catalog";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
 import { meticulousMiddleware } from "./vite-meticulous-middleware";
 import { shouldRecordWithMeticulous } from "./vite-meticulous-recorder";
@@ -177,6 +178,7 @@ export default defineConfig(({ mode }) => {
       env.CLIENT_CACHE_DIR || "node_modules/.vite",
     ),
     plugins: [
+      telemetryCatalogPlugin(),
       // The plugin prepends its script as the first child of <head> from a
       // post-order `transformIndexHtml` hook, so its place in this list does
       // not matter.
@@ -245,6 +247,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
+        "@mcpjam/sdk/internal/telemetry": path.resolve(rootDir, "../sdk/src/internal/telemetry.ts"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
         "@mcpjam/sdk/predicates": sdkPredicatesEntry,

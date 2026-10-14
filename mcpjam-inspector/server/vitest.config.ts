@@ -134,6 +134,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: "@mcpjam/sdk/internal/telemetry", replacement: path.resolve(rootDir, "../sdk/src/internal/telemetry.ts") },
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,

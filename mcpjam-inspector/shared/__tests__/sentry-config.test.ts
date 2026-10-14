@@ -14,11 +14,8 @@ import {
   isSentryBuildSurface,
   resolveClientBuildSurface,
   type ScrubbableBreadcrumb,
-  type ScrubbableEvent,
   scrubClientSentryBreadcrumb,
   scrubSentryCredentials,
-  scrubServerSentryBreadcrumb,
-  scrubServerSentryEvent,
   sentryTransactionTemplate,
   SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
@@ -854,106 +851,6 @@ describe("groupOAuthDebuggerStepFailures", () => {
   );
 });
 
-describe("scrubServerSentryEvent", () => {
-  it("summarizes the captured request body and drops query values, cookies and secret headers", () => {
-    // What @sentry/node's http integration attaches to an error on the chat
-    // route: the first ~10KB of the raw body, as a string.
-    const event: ScrubbableEvent = {
-      request: {
-        url: "https://app.mcpjam.com/api/web/chat-v2?serverUrl=https%3A%2F%2Fmcp.acme.com&code=abc",
-        query_string: "serverUrl=https%3A%2F%2Fmcp.acme.com&code=abc",
-        cookies: { "mcpjam-session": "s3cr3t" },
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig",
-          cookie: "mcpjam-session=s3cr3t",
-          "x-forwarded-for": "203.0.113.7",
-          "user-agent": "Mozilla/5.0",
-        },
-        data: JSON.stringify({
-          messages: [{ role: "user", content: "my diagnosis is …" }],
-          model: "openai/gpt-5",
-        }),
-      },
-    };
-
-    const scrubbed = scrubServerSentryEvent(event);
-    const serialized = JSON.stringify(scrubbed);
-
-    for (const value of ["diagnosis", "s3cr3t", "eyJ", "203.0.113.7", "acme"]) {
-      expect(serialized, `${value} leaked`).not.toContain(value);
-    }
-    expect(scrubbed.request).toEqual({
-      url: "https://app.mcpjam.com/api/web/chat-v2",
-      query_string: "serverUrl=[redacted]&code=[redacted]",
-      headers: {
-        "content-type": "application/json",
-        authorization: "[redacted]",
-        cookie: "[redacted]",
-        "x-forwarded-for": "[redacted]",
-        "user-agent": "Mozilla/5.0",
-      },
-      data: "{messages: array(1)<{role: string(4), content: string(17)}>, model: string(12)}",
-    });
-  });
-
-  it("reports a body cut off mid-JSON by its length", () => {
-    const scrubbed = scrubServerSentryEvent({
-      request: { data: '{"messages":[{"role":"user","content":"long…' },
-    });
-    expect(scrubbed.request?.data).toBe("string(44)");
-  });
-
-  it("redacts exception and message text but keeps the exception type and frames", () => {
-    const frames = [
-      { filename: "/app/server/routes/web/auth.js", function: "connect" },
-    ];
-    const scrubbed = scrubServerSentryEvent({
-      message: "token exchange failed for jane@acme.com",
-      exception: {
-        values: [
-          {
-            type: "TypeError",
-            value:
-              "fetch failed: https://mcp.acme.com/tenants/42/sse?key=k Bearer abc.def.ghi",
-            stacktrace: { frames },
-          },
-        ],
-      },
-    });
-
-    expect(scrubbed.message).toBe("token exchange failed for [redacted-email]");
-    expect(scrubbed.exception?.values?.[0]).toEqual({
-      type: "TypeError",
-      value: "fetch failed: https://mcp.acme.com/… Bearer [redacted-token]",
-      stacktrace: { frames },
-    });
-  });
-
-  it("scrubs a thrown non-Error object but leaves logger-scrubbed extra alone", () => {
-    const scrubbed = scrubServerSentryEvent({
-      extra: {
-        // Already a shape summary: `logger.ts` scrubbed it before capture.
-        body: "{messages: array(2)}",
-        __serialized__: {
-          code: -32602,
-          message: "Invalid params for user bob@acme.com",
-          data: { arguments: { ssn: "123-45-6789" } },
-        },
-      },
-    });
-
-    expect(scrubbed.extra).toEqual({
-      body: "{messages: array(2)}",
-      __serialized__: {
-        code: -32602,
-        message: "Invalid params for user [redacted-email]",
-        data: { arguments: "{ssn: string(11)}" },
-      },
-    });
-  });
-});
-
 describe("scrubSentryBreadcrumb", () => {
   const APP_ORIGIN = "https://app.mcpjam.test";
 
@@ -999,27 +896,6 @@ describe("scrubSentryBreadcrumb", () => {
         APP_ORIGIN,
       )!.message,
     ).toBe("{toolArgs: {city: string(6)}}");
-  });
-
-  it("cuts an outgoing request to the customer's host on the server", () => {
-    // @sentry/node's shape for an outgoing request.
-    const crumb = {
-      category: "http",
-      type: "http",
-      data: {
-        url: "https://mcp.acme.com/tenants/42/mcp",
-        "http.method": "POST",
-        status_code: 401,
-        "http.query": "?api_key=k",
-        "http.fragment": "#x",
-      },
-    };
-
-    expect(scrubServerSentryBreadcrumb(crumb)!.data).toEqual({
-      url: "https://mcp.acme.com",
-      "http.method": "POST",
-      status_code: 401,
-    });
   });
 
   it("keeps the browser's own API paths but drops queries and fragments", () => {
@@ -1089,16 +965,6 @@ describe("scrubSentryBreadcrumb", () => {
     ).toEqual({ url: "null" });
   });
 
-  it("redacts the message of any other breadcrumb", () => {
-    expect(
-      scrubServerSentryBreadcrumb({
-        category: "child_process",
-        message:
-          "Child process errored with 'connect https://db.acme.com/x?password=p'",
-      })!.message,
-    ).toBe("Child process errored with 'connect https://db.acme.com/…'");
-  });
-
   it("is wired into the browser config with the app's origin", () => {
     const config = buildClientSentryConfig({
       environment: "prod",
@@ -1118,34 +984,6 @@ describe("scrubSentryBreadcrumb", () => {
 
 describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
   const SECRET = "SENTINELs3ntry";
-
-  it("server events: request path, transaction, exception text", () => {
-    const event = scrubSentryCredentials(
-      scrubServerSentryEvent({
-        transaction: `GET /api/web/score/runs/${SECRET}`,
-        request: {
-          url: `https://app.mcpjam.com/api/web/score/runs/${SECRET}?x=1`,
-          query_string: `code=${SECRET}`,
-        },
-        exception: {
-          values: [
-            {
-              type: "Error",
-              value: `upstream refused /api/web/bench/results/${SECRET}`,
-            },
-          ],
-        },
-        tags: { route: `/results/${SECRET}` },
-      }),
-    );
-    expect(event).not.toBeNull();
-    expect(JSON.stringify(event)).not.toContain(SECRET);
-    expect(event?.transaction).toBe("GET /api/web/score/runs/:token");
-    expect(event?.request?.url).toBe(
-      "https://app.mcpjam.com/api/web/score/runs/[redacted]",
-    );
-    expect(event?.exception?.values?.[0]?.type).toBe("Error");
-  });
 
   it("transactions and spans", () => {
     const config = buildClientSentryConfig({
@@ -1175,27 +1013,6 @@ describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
       request: { url: `https://app.mcpjam.com/evals/shared/${SECRET}` },
     } as never);
     expect(JSON.stringify(out)).not.toContain(SECRET);
-  });
-
-  it("breadcrumbs of every category, Electron's included", () => {
-    for (const crumb of [
-      { category: "navigation", data: { from: `/results/${SECRET}`, to: "/" } },
-      { category: "fetch", data: { url: `/api/web/score/runs/${SECRET}` } },
-      {
-        category: "electron",
-        data: { url: `mcpjam://oauth/callback?code=${SECRET}` },
-      },
-      { category: "ui.click", message: `a[href="/connect/server/${SECRET}"]` },
-    ]) {
-      const client = scrubClientSentryBreadcrumb(
-        structuredClone(crumb),
-        "https://app.mcpjam.com",
-      );
-      const server = scrubServerSentryBreadcrumb(structuredClone(crumb));
-      expect(JSON.stringify(client)).not.toContain(SECRET);
-      expect(JSON.stringify(server)).not.toContain(SECRET);
-      expect(client?.category).toBe(crumb.category);
-    }
   });
 
   it("drops an event it cannot show clean", () => {

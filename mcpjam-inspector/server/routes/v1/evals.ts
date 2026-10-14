@@ -276,7 +276,11 @@ import {
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
-import { judgeModelIdSchema } from "./judge-model-id.js";
+import {
+  judgeModelIdInputSchema,
+  judgeModelIdSchema,
+  judgeRunOverride,
+} from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -3810,12 +3814,17 @@ const requestRunJudgeSchema = z
     /** Re-grade a run that already has a result. */
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
-    /** Judge model for THIS run only. */
-    model: judgeModelIdSchema.optional(),
+    /**
+     * Judge model for THIS run only. Normalized beside the selection by
+     * `judgeRunOverride`: only a hosted judge's `mcpjam/` spelling changes.
+     */
+    model: judgeModelIdInputSchema.optional(),
     /**
      * The judge's full selection for THIS run only (source, connection,
      * reasoning effort). Must name `model` when both are sent; sent alone it
-     * names the judge model. Judges run on MCPJam-hosted models only.
+     * names the judge model. A hosted or an organization (BYOK) selection;
+     * the backend refuses local and stored-legacy judges, and a picked hosted
+     * judge when the organization requires its own provider keys.
      */
     modelSelection: modelSelectionSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
@@ -6049,20 +6058,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   // re-stating an override returns to suite-config grading on its own.
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
-  if (parsed.model !== undefined) override.judgeModel = parsed.model;
-  if (parsed.modelSelection !== undefined) {
-    if (
-      parsed.model !== undefined &&
-      parsed.model.trim() !== parsed.modelSelection.modelId
-    ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${parsed.model}).`,
-      );
-    }
-    override.judgeSelection = parsed.modelSelection;
-  }
+  Object.assign(
+    override,
+    judgeRunOverride(parsed.model, parsed.modelSelection),
+  );
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {

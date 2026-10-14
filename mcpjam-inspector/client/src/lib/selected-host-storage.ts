@@ -42,8 +42,8 @@
  *     same batch (see the multi-select regression that motivated the
  *     selected-model fix in PR #2171).
  *   - `replaceLeadHostId` DOES dispatch, because it's the outside-seam
- *     write — fired by host-snapshot apply or by the future
- *     `MultiHostPicker` promotion path. Subscribers re-read on the next
+ *     write — fired by host-snapshot apply or by the chat-input
+ *     `ClientSelector` promotion path. Subscribers re-read on the next
  *     event tick with their own `projectId` to resolve the scoped key.
  *   - Cross-tab `storage` events on any project's array key are forwarded
  *     to subscribers. The listener filters on key PREFIX
@@ -140,7 +140,7 @@ export function saveSelectedHostIds(
 /**
  * Promote a host to the lead slot. The single canonical primitive that
  * updates both the per-project previewed host key AND the multi-host
- * array in one atomic operation. `MultiHostPicker` and any future
+ * array in one atomic operation. `ClientSelector` and any future
  * host-snapshot apply seam call only this; nothing else writes the
  * previewed host key for the purpose of promotion (single-mode pickers
  * that simply change the previewed host without rotating the array

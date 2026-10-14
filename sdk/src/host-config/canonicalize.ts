@@ -1199,6 +1199,20 @@ function canonicalizeMcpProfile(
         }
       }
 
+      const sameOriginAppIframe = (sandboxIn as { sameOriginAppIframe?: unknown })
+        .sameOriginAppIframe;
+      if (sameOriginAppIframe !== undefined) {
+        if (typeof sameOriginAppIframe !== "boolean") {
+          throw new Error(
+            "hostConfigV2: mcpProfile.apps.sandbox.sameOriginAppIframe must be a boolean"
+          );
+        }
+        // An explicit `true` is kept: it is a measured fact, distinct from
+        // "not yet probed" (absent).
+        (sandboxOut as { sameOriginAppIframe?: boolean }).sameOriginAppIframe =
+          sameOriginAppIframe;
+      }
+
       if (
         (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs !== undefined
       ) {
