@@ -2005,6 +2005,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
+          // ASSUMED, not probed: Codex's real `ui/initialize` hostInfo has
+          // not been captured. The version is OpenAI's documented minimum
+          // desktop build for the DevDay 2026 extensions (mcp-extensions
+          // patterns.md), which Apps such as Bits & Bolts check before
+          // enabling themselves; the name follows this host's `userAgent`.
+          // Replace both with a host-probe capture.
+          uiInitialize: {
+            hostInfo: { name: "chatgpt", version: "26.928.20710" },
+          },
           // OpenAI plugin extensions are on by default for Codex; each one
           // can be switched off in the client's Apps tab.
           pluginExtensions: { enabled: true },
