@@ -50,7 +50,7 @@ const event = (line = 1) => ({
 });
 
 describe("Sentry protocol reconstruction", () => {
-  it("preserves only build-bound map identifiers and distinguishes retained failure sites", () => {
+  it("preserves only build-bound map identifiers and keeps frame positions out of grouping", () => {
     const first = rebuildSentryEvent(event(1), catalog);
     const second = rebuildSentryEvent(event(2), catalog);
     expect(first).toMatchObject({
@@ -60,8 +60,9 @@ describe("Sentry protocol reconstruction", () => {
       debug_meta: {
         images: [{ code_file: `app:///${file}`, debug_id: debugId }],
       },
+      fingerprint: ["{{ default }}", "Error"],
     });
-    expect(first.fingerprint).not.toEqual(second.fingerprint);
+    expect(second.fingerprint).toEqual(first.fingerprint);
     expect(
       rebuildSentryEvent({ ...event(), message: "OTHER_CONTENT" }, catalog)
         .fingerprint

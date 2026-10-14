@@ -1,0 +1,54 @@
+name: SDK Windows Telemetry
+
+# The packaged SDK telemetry test also runs on Linux in "Run Tests", where a
+# native path and the path Sentry's parser reports are the same string. Windows
+# is where they differ (backslashes, drive letters, file URLs), so this job runs
+# that one test on a Windows runner.
+#
+# Path-filtered and advisory, like local-browser-security.yml: it is not a
+# required check. Making it required means dropping `paths`, or every PR that
+# does not touch these files waits on a check that never reports.
+on:
+  pull_request:
+    paths:
+      - "sdk/src/internal/**"
+      - "sdk/src/sentry.ts"
+      - "sdk/tests/packaged-telemetry.test.ts"
+      - "sdk/tsup.config.ts"
+      - "sdk/package.json"
+      - "package-lock.json"
+      - ".github/workflows/sdk-windows-telemetry.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-windows-telemetry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaged-telemetry:
+    name: SDK packaged telemetry (windows-latest)
+    # Skip Dependabot's lockfile rebases for the reason in local-browser-security.yml.
+    if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: mcpjam-inspector/.nvmrc
+          cache: npm
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+      - name: Build the SDK
+        # The test installs the built dist/index.js under a path with a space.
+        run: npm run build -w @mcpjam/sdk
+      - name: Run the packaged telemetry test
+        working-directory: sdk
+        run: npx vitest run tests/packaged-telemetry.test.ts

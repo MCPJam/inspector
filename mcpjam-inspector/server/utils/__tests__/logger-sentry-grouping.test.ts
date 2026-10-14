@@ -46,13 +46,13 @@ it("groups real logger captures by approved messages while denying runtime prose
   expect(events[0]).toMatchObject({ message: first });
   expect(events[1]).toMatchObject({ message: second });
   expect(events.map((event) => event.fingerprint)).toEqual([
-    ["Error", first, expect.stringMatching(/server\/utils\/logger.ts:\d+$/)],
-    ["Error", second, expect.stringMatching(/server\/utils\/logger.ts:\d+$/)],
-    ["Error", expect.stringMatching(/server\/utils\/logger.ts:\d+$/)],
+    ["{{ default }}", "Error", first],
+    ["{{ default }}", "Error", second],
+    ["{{ default }}", "Error"],
   ]);
-  const locations = events.map((event) =>
-    Array.isArray(event.fingerprint) ? event.fingerprint.at(-1) : undefined,
-  );
-  expect(new Set(locations).size).toBe(1);
+  for (const event of events)
+    expect(JSON.stringify(event.exception)).toMatch(
+      /"filename":"server\/utils\/logger.ts","in_app":true,"lineno":\d+/,
+    );
   expect(JSON.stringify(events)).not.toContain("PRIVATE_SENTINEL");
 });
