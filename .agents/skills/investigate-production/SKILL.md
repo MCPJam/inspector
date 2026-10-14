@@ -30,7 +30,7 @@ Paths are relative to `mcpjam-inspector/`.
 
 ### Axiom
 
-- List datasets first; the server writes to the dataset named by `AXIOM_DATASET`.
+- List datasets first; the server uses nonempty `AXIOM_CLEAN_DATASET`, then `AXIOM_DATASET`, falling back to `inspector-logs`.
 - Every row has `level`, `message` and `environment`, plus the context fields
   the call site passed.
 - Typed events have an `event` field. The catalog with payload fields is in

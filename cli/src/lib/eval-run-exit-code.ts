@@ -1,4 +1,10 @@
 import {
+  aiRefusalClass,
+  recognizedAiRefusalCode,
+  type AiRefusalClass,
+  type AiRefusalCode,
+} from "@mcpjam/sdk";
+import {
   isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "./eval-gate-exit-code.js";
@@ -107,6 +113,23 @@ import {
  * survives in `details.code`, and `classifyLaunchErrorExitCode` checks it
  * BEFORE the auth-shaped set, so a disguised billing failure still reads as
  * 4, never 3.
+ *
+ * ## Organization AI-key policy refusals → 2, not 3
+ *
+ * An organization that requires its own provider keys refuses a launch whose
+ * target, judge or persona would run on an MCPJam-provided model (or whose
+ * role has no organization model) — `org_keys_required`,
+ * `org_model_unconfigured`, `org_runtime_unsupported`, `credential_missing`,
+ * or a launch preflight led by a reused model code (`invalid_model`,
+ * `capability_missing`, `capability_unknown`) … The launch route carries that
+ * code in `details.code`, and the v1 envelope
+ * may flatten the wire code onto `FORBIDDEN`, exactly like billing above.
+ * Read by the wire code it would be 3, telling CI to rotate a credential that
+ * works. It is a configuration of the request — choose a model from an
+ * organization provider — so it maps to 2, the same "the request itself was
+ * invalid" reading as `VALIDATION_ERROR`. Checked BEFORE the auth-shaped set.
+ * The policy's two transient refusals (`ai_key_policy_unavailable`,
+ * `provider_unavailable`) are infrastructure, so they stay 4.
  *
  * ## `status: "failed"` → 5, not 4
  *
@@ -294,13 +317,47 @@ function isBillingShapedDetail(details: unknown): boolean {
 }
 
 /**
+ * The exit code for each class of organization AI-key policy refusal. The
+ * class comes from the SDK (`aiRefusalClass`), the same classification the
+ * backend and the inspector use. A configuration refusal is permanent until
+ * someone changes the organization's AI configuration or the request's model
+ * selection, so it is 2; that includes the reused model codes a launch
+ * preflight can lead with. A temporary refusal is infrastructure, never a
+ * credential, so it is 4. See "Organization AI-key policy refusals → 2"
+ * above.
+ */
+const AI_REFUSAL_EXIT_CODE: Readonly<Record<AiRefusalClass, 2 | 4>> = {
+  configuration: 2,
+  temporary: 4,
+};
+
+/** `details.code`, or the wire code itself when the route passed it through. */
+function aiRefusalCodeOf(
+  code: string | undefined,
+  details: unknown
+): AiRefusalCode | undefined {
+  const inner =
+    details && typeof details === "object"
+      ? (details as { code?: unknown }).code
+      : undefined;
+  for (const candidate of [inner, code]) {
+    if (typeof candidate !== "string") continue;
+    const recognized = recognizedAiRefusalCode(candidate);
+    if (recognized) return recognized;
+  }
+  return undefined;
+}
+
+/**
  * Classify a launch-phase thrown platform error (a `CliError` whose
  * `exitCode` was not already 2 — see the eval.ts call site). `details` is
  * the wire error's `details` object, when it carried one; pass it through
  * even though most codes ignore it — it is what lets a billing failure
  * disguised as `FORBIDDEN` (see {@link BILLING_SHAPED_DETAIL_CODES}) still
  * read as 4, not 3, the same way the literal lowercase
- * `billing_limit_reached` code already does. Auth-shaped codes are
+ * `billing_limit_reached` code already does, and an organization AI-key
+ * policy refusal disguised as `FORBIDDEN` read as 2 (configuration), never 3
+ * (see {@link AI_REFUSAL_EXIT_CODE}). Auth-shaped codes are
  * prerequisite to fixing anything else (3); invalid-shaped codes mean the
  * request itself was malformed, not infrastructure (2); everything else —
  * network, timeout, rate limit, an unrecognized code, and
@@ -312,6 +369,10 @@ export function classifyLaunchErrorExitCode(
   details?: unknown
 ): 2 | 3 | 4 {
   if (isBillingShapedDetail(details)) return 4;
+  const aiRefusal = aiRefusalCodeOf(code, details);
+  if (aiRefusal !== undefined) {
+    return AI_REFUSAL_EXIT_CODE[aiRefusalClass(aiRefusal)];
+  }
   if (code !== undefined && AUTH_SHAPED_CODES.has(code)) return 3;
   if (code !== undefined && INVALID_SHAPED_CODES.has(code)) return 2;
   return 4;
