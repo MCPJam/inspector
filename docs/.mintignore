@@ -2,5 +2,6 @@
 # Mintlify publishes every page file it finds, navigation or not, so exclude them explicitly.
 evals-vocabulary-consolidation.md
 public-api-vocabulary-consolidation.md
+observability-coverage.md
 # The ledger of every API reference URL ever published; a test reads it, readers never should.
 reference/published-api-pages.json
