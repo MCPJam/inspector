@@ -1,3 +1,4 @@
+import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
   browserFeatureUnavailable,
@@ -1447,7 +1448,6 @@ async function handleTurn(c: Context): Promise<Response> {
       target.host?.runtimeConfig,
       String(resolvedModelDefinition.id),
     );
-    // What decides the rail: the same saved selection, or a stored legacy one.
     const routingSelection = hostRoutingSelectionForModel(
       target.host?.runtimeConfig,
       resolvedModelDefinition,
@@ -1466,9 +1466,9 @@ async function handleTurn(c: Context): Promise<Response> {
     // continuations reload, including one that came from the host.
     const turnReasoningEffort =
       pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
-    // What the session records for this turn: the selection it ran, effort
-    // included (last turn wins, like its modelId).
-    const sessionModelSelection = ranTurnSelection({
+    // Compatibility origin cannot be stored on a session selection.
+    const selectionOrigin = routingSelection ? readRuntimeModelChoice(target.host?.runtimeConfig).origin : undefined;
+    const sessionModelSelection = selectionOrigin ? undefined : ranTurnSelection({
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort: turnReasoningEffort,
@@ -1846,7 +1846,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // forwarded selection / top-level field on the hosted rails) or refused,
       // instead of dropped. Only a backend-resolvable selection is sent
       // (never `local` or legacy). An unlabelled host takes today's path.
-      ...(routingSelection ? { modelSelection: routingSelection } : {}),
+      ...(routingSelection ? { modelSelection: routingSelection, modelSelectionOrigin: selectionOrigin } : {}),
       ...(turnReasoningEffort !== undefined
         ? { settings: { reasoningEffort: turnReasoningEffort } }
         : {}),

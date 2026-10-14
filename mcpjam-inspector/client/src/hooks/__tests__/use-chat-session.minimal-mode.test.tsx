@@ -981,6 +981,7 @@ describe("useChatSession minimal mode parity", () => {
         hostedOrgModelConfig: {
           providers: [
             {
+              id: "connection-anthropic",
               providerKey: "anthropic",
               enabled: true,
               hasSecret: true,

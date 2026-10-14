@@ -3,7 +3,7 @@ import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { useSettingsDraft } from "./settings/SettingsDraftProvider";
 import { useRef, useState } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -26,7 +26,7 @@ import {
 } from "@/lib/image-upload";
 
 export function ProfileTab() {
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const [isUploading, setIsUploading] = useState(false);
   const [photoError, setPhotoError] = useState("");
 

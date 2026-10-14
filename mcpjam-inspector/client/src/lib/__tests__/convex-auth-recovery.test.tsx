@@ -37,6 +37,7 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: guest.refresh,
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
+  subscribeGuestSessionChanges: () => () => {},
 }));
 
 vi.mock("@/hooks/use-actor-key", () => ({

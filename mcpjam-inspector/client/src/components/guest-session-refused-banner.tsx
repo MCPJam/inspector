@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { CircleAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
@@ -24,7 +24,7 @@ export function GuestSessionRefusedBanner() {
     getGuestSessionRefusal,
     () => null,
   );
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
 
   if (!refusal || user) return null;
 
