@@ -32,6 +32,7 @@ import {
   setTelemetryActor,
   setTelemetryCaptureContext,
   setTelemetryIdentity,
+  setTelemetryContentPolicy,
 } from "@/lib/telemetry-context";
 import { useSessionPrivacy } from "@/hooks/useSessionPrivacy";
 import { SYNTHETIC_PII } from "@/shared/__tests__/fixtures/telemetry-pii";
@@ -179,6 +180,8 @@ async function boot() {
       mode === "full" ? HARNESS_PUBLIC_ORG : HARNESS_PRIVATE_ORG,
     ],
   });
+
+  setTelemetryContentPolicy(HARNESS_ACTOR_ID, mode === "full" ? "full" : "strict");
 
   createRoot(document.getElementById("root")!).render(
     <StrictMode>

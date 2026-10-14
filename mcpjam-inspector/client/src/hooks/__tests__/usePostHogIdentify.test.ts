@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { usePostHogIdentify } from "../usePostHogIdentify";
 import { IDENTIFYING_PERSON_PROPERTIES } from "@/shared/telemetry-privacy";
 
@@ -15,6 +16,8 @@ const mockState = vi.hoisted(() => ({
   identity: "full" as "full" | "id_only" | undefined,
   /** Whether the answer is held for the current actor. */
   grant: true,
+  content: "full" as "full" | "strict",
+  telemetryActor: undefined as string | null | undefined,
   auth: {
     user: null as {
       id: string;
@@ -64,7 +67,14 @@ vi.mock("@/hooks/use-actor-key", () => ({
 
 // The identity grant: the backend's answer, held only for the current actor.
 vi.mock("@/lib/telemetry-context", () => ({
-  subscribeTelemetryIdentity: () => () => {},
+  subscribeTelemetryPolicy: () => () => {},
+  currentTelemetryActor: () =>
+    mockState.telemetryActor === undefined
+      ? mockState.actorKey
+      : mockState.telemetryActor,
+  currentTelemetryCaptureContext: () => ({
+    policy: { content: mockState.content },
+  }),
   telemetryIdentityFor: (actorKey: string | null) =>
     mockState.grant && actorKey !== null && actorKey === mockState.actorKey
       ? mockState.identity
@@ -84,7 +94,65 @@ describe("usePostHogIdentify", () => {
     mockState.actorKey = null;
     mockState.identity = "full";
     mockState.grant = true;
+    mockState.content = "full";
+    mockState.telemetryActor = undefined;
     mockState.detectPlatform.mockReturnValue("mac");
+  });
+
+  it("rechecks content after layout effects before committing the SDK identity", () => {
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "user@example.com" };
+    const hook = renderHook(() => {
+      useLayoutEffect(() => {
+        mockState.content = "strict";
+      }, []);
+      usePostHogIdentify();
+    });
+    expect(mockState.posthog.identify).not.toHaveBeenCalled();
+    mockState.content = "full";
+    hook.rerender();
+    expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.identify).toHaveBeenCalledWith(
+      "user_123",
+      expect.objectContaining({ email: "user@example.com" }),
+    );
+  });
+
+  it("uses an identity restriction applied after render when constructing person properties", () => {
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "user@example.com" };
+    renderHook(() => {
+      useLayoutEffect(() => {
+        mockState.identity = "id_only";
+      }, []);
+      usePostHogIdentify();
+    });
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      deployment: "self_hosted",
+    });
+    for (const [, properties] of mockState.posthog.identify.mock.calls) {
+      expect(properties).not.toHaveProperty("email");
+    }
+    expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not consume identify while the full grant belongs to a previous actor", () => {
+    mockState.actorKey = "user_next";
+    mockState.auth.user = { id: "user_next", email: "next@example.com" };
+    mockState.telemetryActor = "user_previous";
+    const hook = renderHook(usePostHogIdentify);
+    expect(mockState.posthog.identify).not.toHaveBeenCalled();
+
+    mockState.telemetryActor = "user_next";
+    mockState.content = "strict";
+    hook.rerender();
+    mockState.content = "full";
+    hook.rerender();
+    expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.identify).toHaveBeenCalledWith(
+      "user_next",
+      expect.objectContaining({ email: "next@example.com" }),
+    );
   });
 
   it("fetches server-evaluated flags once per new actor", () => {

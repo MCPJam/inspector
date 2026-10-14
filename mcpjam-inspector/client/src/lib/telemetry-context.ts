@@ -24,10 +24,12 @@
 import { setTelemetryTransportPolicyReader } from "./telemetry-transport-policy";
 import {
   encodeCaptureContext,
+  captureContextKey,
   CONSERVATIVE_TELEMETRY_POLICY,
   TELEMETRY_CONTEXT_PROPERTY,
   type TelemetryCaptureContext,
   type TelemetryIdentity,
+  type TelemetryPolicy,
 } from "../../../shared/telemetry-privacy";
 import {
   currentSessionPrivacy,
@@ -41,9 +43,18 @@ import {
 let currentActorId: string | null = null;
 /** The backend's identity answer for `currentActorId`; none yet = undefined. */
 let identityAnswer: TelemetryIdentity | undefined;
+let contentAnswer:
+  | { actor: string; context: string; content: TelemetryPolicy["content"] }
+  | undefined;
 const identityListeners = new Set<() => void>();
+let policyUpdateDepth = 0;
+let policyNotificationPending = false;
 
 function notifyIdentity(): void {
+  if (policyUpdateDepth > 0) {
+    policyNotificationPending = true;
+    return;
+  }
   for (const listener of identityListeners) {
     try {
       listener();
@@ -67,6 +78,7 @@ export function setTelemetryActor(actorId: string | null): void {
   if (actorId === currentActorId) return;
   currentActorId = actorId;
   identityAnswer = undefined;
+  contentAnswer = undefined;
   notifyIdentity();
 }
 
@@ -109,14 +121,11 @@ export function telemetryIdentityFor(
 export function telemetryNamesAllowed(
   actorId: string | null = currentActorId,
 ): boolean {
-  return (
-    telemetryIdentityFor(actorId) === "full" &&
-    currentSessionPrivacy() === "full" &&
-    !contextIds.sharedLink
-  );
+  return telemetryIdentityFor(actorId) === "full" && contentAllowed();
 }
 
-export function subscribeTelemetryIdentity(listener: () => void): () => void {
+/** Policy changes notify recorders even when only the visible context changes. */
+export function subscribeTelemetryPolicy(listener: () => void): () => void {
   identityListeners.add(listener);
   return () => identityListeners.delete(listener);
 }
@@ -138,45 +147,85 @@ export function setTelemetryCaptureContext(ids: {
   organizationIds: ReadonlyArray<string | null | undefined>;
   sharedLink?: boolean;
 }): void {
+  const previous = captureContextKey(contextIds);
+  const wasShared = Boolean(contextIds.sharedLink);
   contextIds = {
     sharedLink: ids.sharedLink,
     projectIds: ids.projectIds.filter((id): id is string => !!id),
     organizationIds: ids.organizationIds.filter((id): id is string => !!id),
   };
+  if (
+    previous !== captureContextKey(contextIds) ||
+    wasShared !== Boolean(contextIds.sharedLink)
+  ) {
+    contentAnswer = undefined;
+    notifyIdentity();
+  }
 }
 
-setTelemetryTransportPolicyReader(() =>
-  currentActorId &&
-  typeof window !== "undefined" &&
-  !window.isElectron &&
-  currentSessionPrivacy() === "full" &&
-  !contextIds.sharedLink &&
-  !isCredentialBearingPath() &&
-  contextIds.projectIds.length + contextIds.organizationIds.length > 0
-    ? currentTelemetryCaptureContext().policy.content
-    : "strict",
-);
+/** Bind the backend answer to the current actor and visible context. */
+export function setTelemetryContentPolicy(
+  actor: string | null,
+  content: TelemetryPolicy["content"] | undefined,
+): void {
+  const next =
+    actor && actor === currentActorId && content
+      ? { actor, context: captureContextKey(contextIds), content }
+      : undefined;
+  if (
+    next?.actor === contentAnswer?.actor &&
+    next?.context === contentAnswer?.context &&
+    next?.content === contentAnswer?.content
+  ) {
+    return;
+  }
+  contentAnswer = next;
+  notifyIdentity();
+}
 
-/**
- * The context an event captured right now is captured under. The label says
- * what this client restricted: `masked` while masked or pending, `off` while
- * the backend has replay off. An `off` surface (npx, Docker) records nothing
- * and masks no analytics (`shouldMaskAnalytics`), so it claims no
- * restriction and the backend's answer decides at the relay.
- */
-export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
-  const full =
-    currentSessionPrivacy() === "full" &&
-    currentActorId !== null &&
+/** Apply a fresh context and its validated answer before notifying recorders. */
+export function setTelemetryCaptureContextAndContent(
+  ids: Parameters<typeof setTelemetryCaptureContext>[0],
+  actor: string | null,
+  content: TelemetryPolicy["content"] | undefined,
+): void {
+  policyUpdateDepth += 1;
+  try {
+    setTelemetryCaptureContext(ids);
+    setTelemetryContentPolicy(actor, content);
+  } finally {
+    policyUpdateDepth -= 1;
+    if (policyUpdateDepth === 0 && policyNotificationPending) {
+      policyNotificationPending = false;
+      notifyIdentity();
+    }
+  }
+}
+
+function contentAllowed(): boolean {
+  return Boolean(
+    contentAnswer?.actor === currentActorId &&
+    contentAnswer?.content === "full" &&
+    contentAnswer.context === captureContextKey(contextIds) &&
+    typeof window !== "undefined" &&
+    !window.isElectron &&
     !contextIds.sharedLink &&
     !isCredentialBearingPath() &&
-    contextIds.projectIds.length + contextIds.organizationIds.length > 0;
+    contextIds.projectIds.length + contextIds.organizationIds.length > 0
+  );
+}
+
+/** Content permission is independent of replay's startup delay and surface. */
+export function currentTelemetryCaptureContext(): TelemetryCaptureContext {
+  const full = contentAllowed();
+  const recording = currentSessionPrivacy();
   return {
     projectIds: [...contextIds.projectIds],
     organizationIds: [...contextIds.organizationIds],
     policy: full
       ? {
-          recording: "full",
+          recording:
+            recording === "full" || recording === "masked" ? recording : "off",
           identity: telemetryNamesAllowed() ? "full" : "id_only",
           content: "full",
         }
@@ -224,4 +273,6 @@ export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
   }
 }
 
-setTelemetryTransportPolicyReader(() => currentTelemetryCaptureContext().policy.content);
+setTelemetryTransportPolicyReader(
+  () => currentTelemetryCaptureContext().policy.content,
+);

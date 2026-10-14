@@ -19,8 +19,8 @@
  * arrived, so a run that observed nothing cannot pass.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { observeFetchOptions } from "./tests/fetch-observer";
 import { captureSentryProof, waitForSentryReplay } from "./replay-resume-proof";
+import { observeFetchOptions } from "./tests/fetch-observer";
 import {
   assertTelemetryBuild,
   drain,

@@ -55,7 +55,7 @@ describe("reportChatFailure", () => {
     expect((error as Error).message).not.toContain("Failed to fetch");
     // The real message is still recoverable for debugging.
     expect(options.extra).not.toHaveProperty("rawMessage");
-    expect(options.extra.provider).toBe("unknown");
+    expect(options.extra).not.toHaveProperty("provider");
   });
 
   it("reports a stream chunk the AI SDK rejected as its own issue, without the chunk's values", () => {
@@ -83,7 +83,7 @@ describe("reportChatFailure", () => {
     expect((reported as Error).message).toBe("chat_stream_protocol_error");
     expect(options.source).toBe("chat_stream_protocol_error");
     expect(options.extra).toEqual({
-      chunkType: "unknown",
+      chunkType: "custom",
       fieldCount: 3,
       origin: "mcpjam",
       requestId: "req_p1",

@@ -8,7 +8,9 @@ import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
 import { IDENTIFYING_PERSON_PROPERTIES } from "@/shared/telemetry-privacy";
 import {
-  subscribeTelemetryIdentity,
+  subscribeTelemetryPolicy,
+  currentTelemetryCaptureContext,
+  currentTelemetryActor,
   telemetryIdentityFor,
 } from "@/lib/telemetry-context";
 
@@ -20,12 +22,12 @@ import {
  *
  * Identity comes from the backend's answer for THIS actor, held by the
  * telemetry identity grant (lib/telemetry-context.ts). Name, email and
- * occupation are sent only when it is `"full"`: while there is no answer for
- * this actor, the actor is identified by id alone, and the rest follows once
- * it is known — so a member of an organization with enterprise privacy never
- * has them sent, not even on the first load. `"id_only"` also clears names
+ * occupation are sent only when it is `"full"`. Identify waits for a full
+ * content grant, then names follow the identity grant — a member of an
+ * organization with enterprise privacy never has them sent, even on the
+ * first load. `"id_only"` also clears names
  * stored on the person earlier. This is independent of the session's replay
- * level: a desktop session is replayed `masked` but may still be named.
+ * recording level. Desktop content remains strict, so identify is withheld.
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
@@ -36,8 +38,11 @@ export function usePostHogIdentify() {
     isAuthenticated ? ({} as any) : "skip",
   );
   const actorKey = useActorKey();
-  const identity = useSyncExternalStore(subscribeTelemetryIdentity, () =>
+  const identity = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     telemetryIdentityFor(actorKey),
+  );
+  const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
+    currentTelemetryCaptureContext().policy.content === "full",
   );
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
     null,
@@ -53,6 +58,7 @@ export function usePostHogIdentify() {
     const previous = previousActorRef.current;
     const isActorChange = !previous || previous.key !== actorKey;
     const isAuthedActor = Boolean(user) && user?.id === actorKey;
+    const currentIdentity = telemetryIdentityFor(actorKey);
 
     if (isActorChange && previous?.wasAuthed) {
       posthog.reset();
@@ -87,7 +93,7 @@ export function usePostHogIdentify() {
     let personProperties: Record<string, string | null | undefined> = {
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
-    if (isAuthedActor && user && identity === "full") {
+    if (isAuthedActor && user && currentIdentity === "full") {
       personProperties = {
         ...personProperties,
         email: user.email,
@@ -107,13 +113,20 @@ export function usePostHogIdentify() {
       }
     }
 
-    posthog.identify(actorKey, personProperties);
+    // Re-read after layout effects: this render may precede an actor/context reset.
+    // A locally accepted identify cannot be retried after the relay rejects it.
+    const canIdentify =
+      contentFull &&
+      currentTelemetryActor() === actorKey &&
+      currentTelemetryCaptureContext().policy.content === "full";
+    if (canIdentify) posthog.identify(actorKey, personProperties);
     // Names just sent: a later id-only answer for this actor (enterprise
     // privacy turned on mid-session) must clear them again.
-    if (identity === "full") identityUnsetForActorRef.current = null;
+    if (currentIdentity === "full") identityUnsetForActorRef.current = null;
     if (
+      canIdentify &&
       isAuthedActor &&
-      identity === "id_only" &&
+      currentIdentity === "id_only" &&
       identityUnsetForActorRef.current !== actorKey
     ) {
       // Person properties outlive the page: someone identified before their
@@ -134,5 +147,5 @@ export function usePostHogIdentify() {
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identity]);
+  }, [posthog, actorKey, user, convexUser, identity, contentFull]);
 }

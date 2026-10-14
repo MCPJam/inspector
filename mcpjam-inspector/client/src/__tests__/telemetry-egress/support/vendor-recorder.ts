@@ -9,7 +9,7 @@ export const RELAY_PROJECT_ID = "k17telemetrye2eproject000001";
 export { TELEMETRY_ACTOR_ID };
 
 /** First-party ingress is intentionally raw; only final vendor bytes are scanned. */
-export function vendorRecorder() {
+export function vendorRecorder(resolve: typeof standInTelemetryPolicy = standInTelemetryPolicy) {
   const requests: CapturedRequest[] = [];
   let pending = Promise.resolve();
   return {
@@ -29,7 +29,7 @@ export function vendorRecorder() {
           await import("../../../../../server/services/telemetry-privacy-policy");
         const originalFetch = globalThis.fetch;
         setTelemetryPolicyQueryForTests(async (_url, _token, context) =>
-          standInTelemetryPolicy(context));
+          resolve(context));
         globalThis.fetch = async (destination, options) => {
           const upstream = new URL(String(destination));
           if (upstream.origin !== "https://us.i.posthog.com")

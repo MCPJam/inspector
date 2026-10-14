@@ -125,8 +125,11 @@ function rejectedChunkShape(error: TypeValidationError): {
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
+  const type = typeof record.type === "string" ? record.type : "unknown";
   return {
-    chunkType: [
+    chunkType: type.startsWith("tool-") ? "tool-*" : type.startsWith("data-") ? "data-*" : [
+      "start", "start-step", "finish-step", "abort", "message-metadata", "custom",
+      "source-url", "source-document", "file", "reasoning-file",
       "text-start",
       "text-delta",
       "text-end",
@@ -138,8 +141,8 @@ function rejectedChunkShape(error: TypeValidationError): {
       "tool-input-end",
       "finish",
       "error",
-    ].includes(String(record.type))
-      ? String(record.type)
+    ].includes(type)
+      ? type
       : "unknown",
     fieldCount: Math.min(Object.keys(record).length, 1000),
   };
@@ -258,8 +261,6 @@ export function reportChatFailure(
   reportCaught(synthetic, {
     source: isRequestFailure ? "chat_request_failed" : "chat_stream_error",
     extra: {
-      code: normalized.slug,
-      provider: "unknown",
       slug: normalized.slug,
       origin,
       ...(meta
@@ -309,7 +310,6 @@ function reportAgentChatFailure(
     },
     fingerprint: agentFingerprint(resolvedFacts),
     extra: {
-      provider: "unknown",
       slug: normalized.slug,
       ...(facts.code ? { code: facts.code } : {}),
       ...(facts.reason ? { reason: facts.reason } : {}),

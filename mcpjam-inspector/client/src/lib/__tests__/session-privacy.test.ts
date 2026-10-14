@@ -6,7 +6,12 @@ type SessionPrivacyModule = typeof import("../session-privacy");
 
 /** A fresh module: its level and recorder state are module-scoped. */
 async function load(
-  env: { hosted?: boolean; desktop?: boolean; posthogDisabled?: boolean } = {},
+  env: {
+    hosted?: boolean;
+    desktop?: boolean;
+    posthogDisabled?: boolean;
+    content?: "full" | "strict";
+  } = {},
 ): Promise<SessionPrivacyModule> {
   if (env.hosted) vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
   if (env.desktop) {
@@ -20,7 +25,10 @@ async function load(
     env.posthogDisabled ? "true" : "false",
   );
   vi.resetModules();
-  return import("../session-privacy");
+  const mod = await import("../session-privacy");
+  const bridge = await import("../telemetry-transport-policy");
+  bridge.setTelemetryTransportPolicyReader(() => env.content ?? "strict");
+  return mod;
 }
 
 afterEach(() => {
@@ -284,7 +292,7 @@ describe("syncSessionRecording", () => {
   });
 
   it("configures, then starts, on the first resolved level", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
 
     mod.setSessionPrivacy("full");
@@ -295,7 +303,7 @@ describe("syncSessionRecording", () => {
   });
 
   it("full → masked: stops BEFORE the profile changes, then restarts masked", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -309,7 +317,7 @@ describe("syncSessionRecording", () => {
   });
 
   it("masked → full: stops, reconfigures, restarts full", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("masked");
     mod.syncSessionRecording(client, "/servers");
@@ -322,7 +330,7 @@ describe("syncSessionRecording", () => {
   });
 
   it("does not restart on an ordinary navigation", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -335,7 +343,7 @@ describe("syncSessionRecording", () => {
   });
 
   it("going back to pending stops the recorder at once", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -344,12 +352,13 @@ describe("syncSessionRecording", () => {
     mod.setSessionPrivacy("pending");
     mod.syncSessionRecording(client, "/servers");
 
-    expect(client.log).toEqual(["stop", "config:masked"]);
+    expect(client.log).toEqual(["stop"]);
+    expect(mod.shouldMaskAnalytics()).toBe(false);
   });
 
   describe("/results/<token>", () => {
     it("stops on the way in and resumes on the way out", async () => {
-      const mod = await load({ hosted: true });
+      const mod = await load({ hosted: true, content: "full" });
       const client = posthogStub();
       mod.setSessionPrivacy("full");
       mod.syncSessionRecording(client, "/servers");
@@ -363,7 +372,7 @@ describe("syncSessionRecording", () => {
     });
 
     it("never starts on a hard load onto the route, whatever the level", async () => {
-      const mod = await load({ hosted: true });
+      const mod = await load({ hosted: true, content: "full" });
       const client = posthogStub();
       mod.setSessionPrivacy("full");
       mod.syncSessionRecording(client, "/results/secret-token");
@@ -374,7 +383,7 @@ describe("syncSessionRecording", () => {
     });
 
     it("a level change on the route reconfigures but does not start", async () => {
-      const mod = await load({ hosted: true });
+      const mod = await load({ hosted: true, content: "full" });
       const client = posthogStub();
       mod.setSessionPrivacy("full");
       mod.syncSessionRecording(client, "/servers");
@@ -391,12 +400,15 @@ describe("syncSessionRecording", () => {
   });
 
   it("an off answer stops the recorder and keeps analytics masked", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
     client.log.length = 0;
 
+    (await import("../telemetry-transport-policy")).setTelemetryTransportPolicyReader(
+      () => "strict",
+    );
     mod.setSessionPrivacy("off");
     mod.syncSessionRecording(client, "/servers");
     mod.syncSessionRecording(client, "/tools");
@@ -405,14 +417,14 @@ describe("syncSessionRecording", () => {
     expect(mod.shouldMaskAnalytics()).toBe(true);
   });
 
-  it("an off surface keeps unmasked analytics", async () => {
+  it("an unresolved off surface keeps analytics strict", async () => {
     const mod = await load();
     expect(mod.currentSessionPrivacy()).toBe("off");
     expect(mod.shouldMaskAnalytics()).toBe(true);
   });
 
   it("never throws when posthog is unavailable or ad-blocked", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     mod.setSessionPrivacy("full");
     expect(() => mod.syncSessionRecording({}, "/servers")).not.toThrow();
     expect(() =>
@@ -434,7 +446,7 @@ describe("replayFramesToSend", () => {
   });
 
   it("drops the buffer that a full → masked stop flushes", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -455,7 +467,7 @@ describe("replayFramesToSend", () => {
   it("drops frames older than the masked recorder from a later flush", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -475,7 +487,7 @@ describe("replayFramesToSend", () => {
   });
 
   it("passes frames through on the full profile, and refuses a non-array", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const client = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
@@ -487,7 +499,7 @@ describe("replayFramesToSend", () => {
   });
 
   it("reinitializes a new client and drops queued strict replay", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const first = posthogStub();
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(first, "/servers");
@@ -499,12 +511,12 @@ describe("replayFramesToSend", () => {
     expect(next.set_config).toHaveBeenCalledWith(
       expect.objectContaining({
         disable_session_recording: true,
-        autocapture: false,
-        capture_exceptions: false,
-        capture_dead_clicks: false,
-        rageclick: false,
-        disable_surveys: true,
-        enable_heatmaps: false,
+        autocapture: true,
+        capture_exceptions: true,
+        capture_dead_clicks: true,
+        rageclick: true,
+        disable_surveys: false,
+        enable_heatmaps: true,
       }),
     );
     expect(mod.replayFramesToSend([{ timestamp: Date.now() }])).toBeNull();
@@ -535,7 +547,7 @@ describe("filterSentryReplayFrame", () => {
   };
 
   it("passes everything through at full", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     mod.setSessionPrivacy("full");
     expect(mod.filterSentryReplayFrame(consoleFrame)).toBe(consoleFrame);
     expect(mod.filterSentryReplayFrame(spanFrame)).toBe(spanFrame);
@@ -559,7 +571,7 @@ describe("filterSentryReplayFrame", () => {
   });
 
   it("takes the page's text out of click and key frames short of full", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const clickFrame = {
       data: {
         tag: "breadcrumb",
@@ -593,6 +605,9 @@ describe("filterSentryReplayFrame", () => {
     expect(mod.filterSentryReplayFrame(clickFrame)).toBe(clickFrame);
 
     mod.setSessionPrivacy("masked");
+    (await import("../telemetry-transport-policy")).setTelemetryTransportPolicyReader(
+      () => "strict",
+    );
     const payload = mod.filterSentryReplayFrame(clickFrame)?.data
       .payload as any;
     expect(JSON.stringify(payload)).not.toMatch(/acme/i);
@@ -673,26 +688,19 @@ describe("currentSessionPrivacy", () => {
   });
 
   it("starts pending on a recording surface and off elsewhere", async () => {
-    expect((await load({ hosted: true })).currentSessionPrivacy()).toBe(
+    expect((await load({ hosted: true, content: "full" })).currentSessionPrivacy()).toBe(
       "pending",
     );
     vi.unstubAllEnvs();
     expect((await load()).currentSessionPrivacy()).toBe("off");
   });
 
-  it("masks analytics while pending or masked only", async () => {
-    const mod = await load({ hosted: true });
-    expect(mod.shouldMaskAnalytics()).toBe(true);
-    mod.setSessionPrivacy("full");
-    expect(mod.shouldMaskAnalytics()).toBe(false);
-    mod.setSessionPrivacy("masked");
-    expect(mod.shouldMaskAnalytics()).toBe(true);
-  });
+
 });
 
 describe("filterSentryBreadcrumb", () => {
   it("keeps everything at full", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     mod.setSessionPrivacy("full");
     const crumb = { category: "console", message: "Zelda" };
     expect(mod.filterSentryBreadcrumb(crumb)).toBe(crumb);
@@ -749,7 +757,7 @@ describe("remembered replay off", () => {
   });
 
   it("holds off the person it was answered for, and anyone not known yet", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     expect(mod.replayOffRemembered("user_a")).toBe(false);
 
     mod.rememberReplayOff("user_a", true);
@@ -760,23 +768,23 @@ describe("remembered replay off", () => {
   });
 
   it("survives a reload, and a later answer for the same person clears it", async () => {
-    const first = await load({ hosted: true });
+    const first = await load({ hosted: true, content: "full" });
     first.rememberReplayOff("user_a", true);
 
-    const reloaded = await load({ hosted: true });
+    const reloaded = await load({ hosted: true, content: "full" });
     expect(reloaded.replayOffRemembered("user_a")).toBe(true);
     // An answer for someone else leaves it alone.
     reloaded.rememberReplayOff("user_b", false);
     expect(reloaded.replayOffRemembered("user_a")).toBe(true);
     reloaded.rememberReplayOff("user_a", false);
     expect(reloaded.replayOffRemembered("user_a")).toBe(false);
-    expect((await load({ hosted: true })).replayOffRemembered(undefined)).toBe(
+    expect((await load({ hosted: true, content: "full" })).replayOffRemembered(undefined)).toBe(
       false,
     );
   });
 
   it("works from memory when storage throws", async () => {
-    const mod = await load({ hosted: true });
+    const mod = await load({ hosted: true, content: "full" });
     const storage = vi
       .spyOn(Storage.prototype, "getItem")
       .mockImplementation(() => {

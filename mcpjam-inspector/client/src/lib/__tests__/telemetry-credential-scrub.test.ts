@@ -141,7 +141,7 @@ describe("replay callbacks", () => {
 });
 
 describe("sentryTransactionName", () => {
-  it("names credential routes by template; other paths keep their words", async () => {
+  it("names declared routes by template and rejects unknown routes", async () => {
     vi.stubGlobal("__APP_VERSION__", "test");
     vi.stubGlobal("__BUILD_SURFACE__", "local");
     await loadAt("full");
@@ -152,10 +152,11 @@ describe("sentryTransactionName", () => {
     expect(sentryTransactionName(`/user-testing/acme/${SECRET}`)).toBe(
       "/user-testing/:slug/:token",
     );
-    // Names in other paths are the privacy level's to decide: kept at full,
-    // scrubbed on the way out short of it.
+    expect(
+      sentryTransactionName("/p/k17abc0123456789abcdef0123456789/servers/srv_1"),
+    ).toBe("/p/:projectId/servers/:serverId");
     expect(sentryTransactionName("/p/k17abc/servers/srv_1")).toBe(
-      "/p/k17abc/servers/srv_1",
+      "unknown_operation",
     );
     expect(sentryTransactionName(`/servers?code=${SECRET}`)).not.toContain(
       SECRET,
