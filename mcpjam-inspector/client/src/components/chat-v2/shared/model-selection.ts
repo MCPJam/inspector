@@ -54,6 +54,7 @@ import {
   selectionKey,
   validateModelSelection,
   type ModelConnectionRef,
+  type LegacyModelSelection,
   type ModelSelection,
   type ModelSelectionPurpose,
   type RequestedModelSelection,
@@ -122,7 +123,8 @@ function canonicalIdForBareId(provider: string, raw: string): string | null {
     : null;
 }
 
-function isHostedRow(model: ModelDefinition): boolean {
+/** A row MCPJam's own credentials serve (the hosted catalog). */
+export function isHostedRow(model: ModelDefinition): boolean {
   return model.hosted === true || isMCPJamProvidedModelMenuItem(model);
 }
 
@@ -313,13 +315,45 @@ export function storedModelChoice(
 }
 
 /**
+ * The own-key rows a stored legacy selection ("own key only") may run on: the
+ * rows with its id, never a hosted one, narrowed by the provider hint when it
+ * has one. A locked row (an org connection out of credits beside a personal
+ * key) cannot run the model, so enabled rows win when there are any. The
+ * caller decides what more than one candidate means: the hosts page takes
+ * none (an effort pick mints a selection from the row, so it must be the
+ * right one), a compare card takes the first (its picker stores twins
+ * identically, so a pick must still render).
+ */
+export function ownKeyRowsForLegacySelection(
+  selection: LegacyModelSelection,
+  models: readonly ModelDefinition[],
+): ModelDefinition[] {
+  const id = selection.modelId.trim();
+  const hint = selection.provider;
+  const own = models.filter(
+    (model) => String(model.id) === id && !isHostedRow(model),
+  );
+  const named = hint
+    ? own.filter((model) => String(model.provider) === hint)
+    : own;
+  const enabled = named.filter((model) => model.disabled !== true);
+  return enabled.length > 0 ? enabled : named;
+}
+
+/**
  * The picker row a stored choice refers to.
  *
  * With a selection: the row whose own selection has the same `selectionKey`
  * (same source, same connection, same model) — so an id listed both in the
  * hosted catalog and under an org OpenRouter connection resolves to the row
- * that was actually picked. Without one (a legacy row): the row with that id,
- * hosted rows first, exactly as the legacy read did.
+ * that was actually picked. With a stored legacy selection ("own key only"):
+ * the one own-key row with that id (narrowed by the provider hint when it
+ * has one; a disabled row does not count against an enabled one); none when
+ * several qualify, since the legacy fields cannot say which connection ran
+ * it, and none rather than the hosted twin, which would move the model onto
+ * MCPJam credits. With no selection at all (a bare id saved before
+ * selections): the row with that id, hosted rows first, exactly as the
+ * legacy read did.
  *
  * Set `exactSelection` while the organization requires its own keys. A choice
  * must name a saved selection with that same source and connection; no
@@ -327,11 +361,19 @@ export function storedModelChoice(
  * look allowed whenever an org connection lists its id.
  */
 export function findModelForStoredChoice(
-  choice: { modelId: string; selection?: ModelSelection | null },
+  choice: { modelId: string; selection?: RequestedModelSelection | null },
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
   { exactSelection = false }: { exactSelection?: boolean } = {},
 ): ModelDefinition | undefined {
+  const id = choice.modelId.trim();
+  if (choice.selection?.source === "legacy") {
+    // A legacy selection names no connection, so a strict lookup has nothing
+    // to match it against.
+    if (exactSelection) return undefined;
+    const rows = ownKeyRowsForLegacySelection(choice.selection, models);
+    return rows.length === 1 ? rows[0] : undefined;
+  }
   if (choice.selection) {
     const wanted = selectionKey(choice.selection);
     const match = models.find((model) => {
@@ -341,7 +383,6 @@ export function findModelForStoredChoice(
     if (match || exactSelection) return match;
   }
   if (exactSelection) return undefined;
-  const id = choice.modelId.trim();
   return (
     models.find((model) => String(model.id) === id && isHostedRow(model)) ??
     models.find((model) => String(model.id) === id)

@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import {
   verifyGithubCredentialAccess,
   githubExecutionPolicy,
@@ -55,9 +56,7 @@ import {
 // plumbing; re-exported for callers that import it from here.
 export { isUnsafeHostedOutboundUrl };
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export type ResolvedProviderConfig = {
   providerKey: string;
@@ -269,6 +268,7 @@ export async function resolveOrgModelConfig(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...inspectorAiRequestHeaders("resolve"),
         ...(inspectorServiceToken
           ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken }
           : {}),
