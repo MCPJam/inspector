@@ -16,7 +16,8 @@ it("keeps real packaged constructor file/line locations without shipping functio
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@mcpjam/sdk", type: "module" }));
   const bundle = join(packageRoot, "dist/index.js");
   writeFileSync(entry, 'export { EvalTest } from "../src/index.ts"; export { sdkDiagnosticBoundary } from "../src/internal/sentry-boundary.ts";');
-  await build({ entryPoints: [entry], outfile: bundle, bundle: true, format: "esm", platform: "node", packages: "external", loader: { ".md": "text" }, define: { __MCPJAM_SDK_VERSION__: '"1.2.3"' } });
+  await build({ entryPoints: [entry], outfile: bundle, bundle: true, sourcemap: true, format: "esm", platform: "node", packages: "external", loader: { ".md": "text" }, define: { __MCPJAM_SDK_VERSION__: '"1.2.3"' } });
+  execFileSync(join(sdk, "node_modules/.bin/sentry-cli"), ["sourcemaps", "inject", join(packageRoot, "dist")], { stdio: "pipe", timeout: 20000 });
   const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
     import { EvalTest, sdkDiagnosticBoundary } from ${JSON.stringify(pathToFileURL(bundle).href)};
     import { defaultStackParser } from '@sentry/node';
@@ -37,6 +38,13 @@ it("keeps real packaged constructor file/line locations without shipping functio
   expect(kept).toHaveLength(result.count);
   expect(kept.every((frame: { filename: string; lineno: number }) => frame.filename === "dist/index.js" && Number.isInteger(frame.lineno))).toBe(true);
   expect(result.sent[0][1]).toHaveLength(1);
+  const map = JSON.parse(readFileSync(`${bundle}.map`, "utf8"));
+  const debugId = map.debugId ?? map.debug_id;
+  expect(result.sent[0][1][0][1]).toMatchObject({
+    platform: "node",
+    debug_meta: { images: [{ type: "sourcemap", code_file: "dist/index.js", debug_id: debugId }] },
+  });
+  expect(debugId).toMatch(/^[0-9a-f-]{36}$/);
   expect(JSON.stringify(result)).not.toContain("PRIVATE_SENTINEL");
   expect(JSON.stringify(result)).not.toContain('"function"');
   const customer = join(directory, "customer-bundle.mjs");
@@ -50,14 +58,21 @@ it("keeps real packaged constructor file/line locations without shipping functio
   expect(unknown).toContain('"dropped_frames":2');
 }, 30000);
 
-it.each(["import", "require"])("retains owned frames from the actual built package under Node 24 %s", (load) => {
+it.each(["import", "require"])("retains owned frames from the actual built package with Node %s", (load) => {
   const packageRoot = join(directory, load, "node_modules/@mcpjam/sdk");
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
   writeFileSync(join(packageRoot, "package.json"), readFileSync(join(sdk, "package.json")));
   const bundle = join(packageRoot, "dist/index.js");
-  // Test-only export exposes the private final transport without replacing any
-  // generated runtime code or making a network request.
-  writeFileSync(bundle, readFileSync(join(sdk, "dist/index.js"), "utf8") + "\nexport { sdkDiagnosticBoundary as testBoundary };\n");
+  // Keep runtime line positions and the injected debug-ID footer intact while
+  // exposing the private final transport for the test.
+  const builtCode = readFileSync(join(sdk, "dist/index.js"), "utf8");
+  const footer = builtCode.lastIndexOf("\n//# sourceMappingURL=");
+  expect(footer).toBeGreaterThan(0);
+  writeFileSync(bundle, builtCode.slice(0, footer) + "\nexport { sdkDiagnosticBoundary as testBoundary };\n" + builtCode.slice(footer));
+  writeFileSync(`${bundle}.map`, readFileSync(join(sdk, "dist/index.js.map")));
+  execFileSync(join(sdk, "node_modules/.bin/sentry-cli"), ["sourcemaps", "inject", dirname(bundle)], { stdio: "pipe", timeout: 20000 });
+  const map = JSON.parse(readFileSync(`${bundle}.map`, "utf8"));
+  const debugId = map.debugId ?? map.debug_id;
   const program = `
     const sdk = ${load === "import" ? `await import(${JSON.stringify(pathToFileURL(bundle).href)})` : `require(${JSON.stringify(bundle)})`};
     const sentry = ${load === "import" ? "await import('@sentry/node')" : "require('@sentry/node')"};
@@ -75,5 +90,6 @@ it.each(["import", "require"])("retains owned frames from the actual built packa
   const frames = result.sent[0][1][0][1].exception.values[0].stacktrace.frames;
   expect(frames).toHaveLength(result.count);
   expect(frames.every((frame: { filename: string; lineno: number }) => frame.filename === "dist/index.js" && Number.isInteger(frame.lineno))).toBe(true);
+  expect(result.sent[0][1][0][1].debug_meta).toEqual({ images: [{ type: "sourcemap", code_file: "dist/index.js", debug_id: debugId }] });
   expect(JSON.stringify(result)).not.toContain('"function"');
 });
