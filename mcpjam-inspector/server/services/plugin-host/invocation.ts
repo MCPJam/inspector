@@ -4,7 +4,7 @@ import {
 } from "../../../shared/plugin-invocation-receipts.js";
 import { createHash, randomBytes } from "node:crypto";
 import { logger } from "../../utils/logger.js";
-import { scrubLogPayload } from "../../utils/log-scrubber.js";
+import { scrubLogPayload } from "../../../shared/log-scrubber.js";
 import type {
   DurableInvocationReceipt,
   PluginInvocationReceiptPort,
