@@ -21,19 +21,24 @@
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { useMemo } from "react";
-import { ChevronDown, Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   ModelSelector,
   type ModelSelectorExtraOption,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
-import type { ModelWorkload } from "@/components/chat-v2/shared/available-models";
+import {
+  orgKeysDisallowedNotice,
+  savedModelRow,
+  type ModelWorkload,
+} from "@/components/chat-v2/shared/available-models";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
   modelRowKey,
   selectionBesideLegacyId,
+  storedModelChoice,
 } from "@/components/chat-v2/shared/model-selection";
 import {
   modelTargetKey,
@@ -112,19 +117,25 @@ export function ModelsPill({
    */
   workload?: ModelWorkload;
 }) {
-  const { availableModels, modelSelectionsSupported } = useAvailableModels({
-    projectId,
-  });
+  const {
+    availableModels,
+    modelSelectionsSupported,
+    requireOrgKeys,
+    onManageOrgProviders,
+  } = useAvailableModels({ projectId });
   // Per ROW, not per id: the hosted row and an org-connection row of one id
   // run on different keys, and a harness may run one and refuse the other.
+  // Under the organization's key policy a harness runs only on an
+  // organization connection to its own vendor.
   const harnessLockReasons = useMemo(
     () =>
       harnessModelLockReasonsByRow(
         availableModels,
         harnessTargets ?? [],
         purpose,
+        { requireOrgKeys },
       ),
-    [availableModels, harnessTargets, purpose],
+    [availableModels, harnessTargets, purpose, requireOrgKeys],
   );
 
   const targets = value.explicitTargets;
@@ -133,7 +144,8 @@ export function ModelsPill({
     [targets],
   );
   // The row each explicit target refers to: the one its selection was saved
-  // from, else (a legacy pick) the hosted row with that id first.
+  // from, else (a legacy pick) the hosted row with that id first. Under the
+  // policy a saved selection matches only its own source and connection.
   const pickedRows = useMemo(
     () =>
       targets.map((target) => ({
@@ -144,9 +156,10 @@ export function ModelsPill({
           { modelId: target.modelId, selection: target.selection },
           availableModels,
           undefined,
+          { exactSelection: requireOrgKeys },
         ),
       })),
-    [targets, availableModels],
+    [targets, availableModels, requireOrgKeys],
   );
   // Two efforts of one model resolve to one row: the selector lists it once.
   const selectedModels = useMemo(() => {
@@ -160,11 +173,20 @@ export function ModelsPill({
   const staleExplicit = [
     ...new Set(pickedRows.filter(({ row }) => !row).map(({ id }) => id)),
   ];
+  // While the organization requires its own keys, a picked model the list no
+  // longer offers is one the policy does not allow: named from the hosted
+  // catalog, and the trigger warns about it.
+  const disallowedNotice =
+    requireOrgKeys && staleExplicit.length > 0
+      ? orgKeysDisallowedNotice(savedModelRow(staleExplicit[0]!))
+      : undefined;
   const includeDefaults = value.includeClientDefaults;
   const nameForId = (id: string): string => {
     const row = pickedRows.find((picked) => picked.id === id)?.row;
     const listed =
-      row ?? availableModels.find((model) => String(model.id) === id);
+      row ??
+      availableModels.find((model) => String(model.id) === id) ??
+      (requireOrgKeys ? savedModelRow(id) : undefined);
     return (
       (listed && compactModelLabel(listed.name)) || compactModelLabel(id) || id
     );
@@ -175,6 +197,22 @@ export function ModelsPill({
   });
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
+
+  // The target a picked row adds. Under the organization's key policy, an
+  // organization row whose id is bare (`gpt-5` on an org OpenAI connection)
+  // is saved under its canonical id with its org selection: the bare id
+  // alone runs as a legacy id, which the policy refuses (`org_keys_required`).
+  // Every other row keeps its own id, and `syncExplicitTargets` adds the
+  // selection it can carry beside it.
+  const pickedTarget = (model: ModelDefinition): ModelTarget => {
+    if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
+      const choice = storedModelChoice(model, undefined, "evalTarget");
+      if (choice.selection?.source === "org") {
+        return modelTarget(choice.modelId, choice.selection);
+      }
+    }
+    return { modelId: String(model.id) };
+  };
 
   // Every edit fills in the saved selection of a target that has none; the
   // row just picked decides the selection of its new target.
@@ -203,10 +241,24 @@ export function ModelsPill({
       ...value,
       explicitTargets: targets.filter((target) => target.modelId !== modelId),
     });
+  // Only the targets of `modelId` that no row resolves. Under the policy a
+  // saved hosted target can be stale while an org target of the same id is
+  // not, and that one stays.
+  const removeStaleTargets = (modelId: string) => {
+    const stale = new Set(
+      pickedRows
+        .filter(({ id, row }) => id === modelId && !row)
+        .map(({ target }) => target),
+    );
+    emit({
+      ...value,
+      explicitTargets: targets.filter((target) => !stale.has(target)),
+    });
+  };
 
   const addModel = (model: ModelDefinition) => {
-    const modelId = String(model.id);
-    const added: ModelTarget = { modelId };
+    const added = pickedTarget(model);
+    const modelId = added.modelId;
     if (mode === "single") {
       emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
       return;
@@ -215,7 +267,8 @@ export function ModelsPill({
       // Another row with this id was picked: this one takes its place. Every
       // target of the id moves onto the picked row's selection and keeps its
       // own settings, so Sonnet·Low + Sonnet·High stay two targets.
-      const base = selectionBesideLegacyId(model, "evalTarget");
+      const base =
+        added.selection ?? selectionBesideLegacyId(model, "evalTarget");
       const moved = targets
         .filter((target) => target.modelId === modelId)
         .map((target) => {
@@ -244,6 +297,16 @@ export function ModelsPill({
     emit({ ...value, explicitTargets: [...targets, added] }, model);
   };
 
+  // The id a selected row's targets were saved under. An organization row
+  // picked under the policy is saved under its canonical id, not its own.
+  const savedIdOf = (row: ModelDefinition): string => {
+    const key = modelRowKey(row);
+    const saved = pickedRows.find(
+      (picked) => picked.row && modelRowKey(picked.row) === key,
+    );
+    return saved?.id ?? String(row.id);
+  };
+
   // The selector reports the whole next list; one row was added or removed.
   const handleSelectedModelsChange = (next: ModelDefinition[]) => {
     const before = new Set(selectedModels.map(modelRowKey));
@@ -256,7 +319,7 @@ export function ModelsPill({
     const removed = selectedModels.find(
       (model) => !after.has(modelRowKey(model)),
     );
-    if (removed) removeModelId(String(removed.id));
+    if (removed) removeModelId(savedIdOf(removed));
   };
 
   const wouldAddChoice = wouldExceedBudget(budget, { extraChoices: 1 });
@@ -279,7 +342,7 @@ export function ModelsPill({
     mode === "multiple" &&
     !state.selected &&
     // Swapping in another row for a picked id adds no choice.
-    !explicit.includes(String(model.id)) &&
+    !explicit.includes(pickedTarget(model).modelId) &&
     wouldAddChoice &&
     !replaceSoleChoice
       ? capReason
@@ -305,13 +368,16 @@ export function ModelsPill({
       onSelect: () => toggleDefaults(!includeDefaults),
       ...(testId ? { testId: `${testId}-client-defaults` } : {}),
     },
-    // A picked id the catalog no longer lists stays removable.
+    // A picked id the catalog no longer lists (or the organization's policy
+    // no longer allows) stays removable.
     ...staleExplicit.map((id): ModelSelectorExtraOption => ({
       id: `stale:${id}`,
-      label: id,
-      description: "No longer in the catalog",
+      label: requireOrgKeys ? nameForId(id) : id,
+      description: requireOrgKeys
+        ? "Not allowed here. Choose an organization model."
+        : "No longer in the catalog",
       checked: true,
-      onSelect: () => removeModelId(id),
+      onSelect: () => removeStaleTargets(id),
     })),
   ];
 
@@ -324,8 +390,16 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
       >
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : null}
         <span className="min-w-0 flex-1 break-words">
           {[
             ...(includeDefaults
@@ -349,6 +423,7 @@ export function ModelsPill({
         disabled={disabled}
         data-testid={testId}
         aria-label="Models"
+        title={disallowedNotice}
         className={cn(
           "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
           "outline-none transition-colors",
@@ -358,7 +433,15 @@ export function ModelsPill({
           disabled && "cursor-not-allowed opacity-60",
         )}
       >
-        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        {disallowedNotice ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-hidden
+            data-testid="models-pill-org-keys-warning"
+          />
+        ) : (
+          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {triggerLabel}
         </span>
@@ -452,6 +535,8 @@ export function ModelsPill({
       disabled={disabled}
       analyticsLocation="environment_composer"
       workload={workload}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}

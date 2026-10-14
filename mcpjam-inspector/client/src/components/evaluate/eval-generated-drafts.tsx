@@ -525,9 +525,8 @@ function AuthoringDraftSettings({
   draft: GeneratedDraft;
   disabled: boolean;
 }) {
-  const { availableModels } = useAvailableModels({
-    projectId: scope.projectId,
-  });
+  const { availableModels, requireOrgKeys, onManageOrgProviders } =
+    useAvailableModels({ projectId: scope.projectId });
   return (
     <div className="space-y-4">
       <RunIterationControl
@@ -561,6 +560,8 @@ function AuthoringDraftSettings({
         // Drafts store model ids alone, so an effort picked here would be lost.
         effortEditable={false}
         availableModels={availableModels}
+        requireOrgKeys={requireOrgKeys}
+        onManageOrgProviders={onManageOrgProviders}
         value={{
           includeClientDefaults: false,
           // A draft persisted by an older build, or staged from a case that

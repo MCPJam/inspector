@@ -481,6 +481,8 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId: _deletingRunId,
   availableModels,
+  requireOrgKeys = false,
+  onManageOrgProviders,
   route,
   userMap,
   projectId = null,
@@ -510,7 +512,6 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
-  evaluateObserveFirst = false,
   onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
@@ -574,6 +575,13 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -677,8 +685,6 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
-  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
-  evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
@@ -2215,6 +2221,8 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -2224,7 +2232,6 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
-                  observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
                   launchReview={{
                     projectId,
@@ -3235,6 +3242,8 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   judgeAccessory={
                     <JudgeGatePanel
                       suiteId={suite._id}
