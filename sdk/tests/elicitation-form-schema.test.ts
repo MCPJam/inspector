@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { selectElicitationFormSchema } from "../src/mcp-client-manager/elicitation-form-schema.js";
 import {
   MrtrInputValidationError,
+  runInputRequiredOperation,
   validateRoundResponses,
+  type ElicitationFormSchemaSelector,
+  type MrtrLegSender,
   type MrtrOperationState,
 } from "../src/mcp-client-manager/mrtr-driver.js";
 
@@ -123,5 +126,62 @@ describe("validateRoundResponses with a form schema selector", () => {
         throw new Error("refused");
       })
     ).toThrow("refused");
+  });
+});
+
+describe("runInputRequiredOperation with a form schema selector", () => {
+  // One extension form, then the tool's result once a valid answer arrives.
+  const sender = (): MrtrLegSender => {
+    let leg = 0;
+    return async () =>
+      (leg++ === 0
+        ? {
+            resultType: "input_required",
+            inputRequests: {
+              form: {
+                method: "elicitation/create",
+                params: withExtension({ requestedSchema: extended }),
+              },
+            },
+          }
+        : { content: [{ type: "text", text: "done" }] }) as never;
+  };
+  const answerless = async () => ({
+    form: { action: "accept", content: { other: "x" } },
+  });
+  const requiresRefs = (schema: unknown, content: unknown) => {
+    const required =
+      (schema as { required?: string[] }).required ?? ([] as string[]);
+    const missing = required.filter((key) => !(key in (content as object)));
+    return missing.length
+      ? { valid: false, error: `missing ${missing.join(",")}` }
+      : { valid: true };
+  };
+  const run = (selectFormSchema?: ElicitationFormSchemaSelector) =>
+    runInputRequiredOperation({
+      method: "tools/call",
+      params: { name: "t" },
+      sender: sender(),
+      collectInput: answerless,
+      validateContent: requiresRefs,
+      selectFormSchema,
+    });
+
+  it("accepts an in-process answer the empty core schema allows when no selector is set", async () => {
+    await expect(run()).resolves.toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
+  });
+
+  it("refuses that answer against the selected extension schema before the retry", async () => {
+    await expect(
+      run((params) => {
+        const selected = selectElicitationFormSchema(params, {
+          extensionForms: true,
+        });
+        if (selected.kind === "unsupported") throw new Error(selected.reason);
+        return selected.schema;
+      })
+    ).rejects.toThrow(MrtrInputValidationError);
   });
 });

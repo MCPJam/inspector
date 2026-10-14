@@ -634,6 +634,9 @@ export interface RunInputRequiredOptions<TResult = unknown> {
   validateResponse?: MrtrValidateResponse<TResult>;
   /** Strict content validator for accepted elicitation input. */
   validateContent?: ElicitationContentValidator;
+  /** Schema the validator checks a form answer against; defaults to the core
+   *  `requestedSchema`. */
+  selectFormSchema?: ElicitationFormSchemaSelector;
   supportedElicitationModes?: MrtrSupportedModes;
   /** MCPJam-owned round cap; defaults to {@link DEFAULT_MAX_MRTR_ROUNDS}. */
   maxRounds?: number;
@@ -704,6 +707,7 @@ export async function runInputRequiredOperation<TResult = unknown>(
       currentRoundResponses: responses,
       signal: options.signal,
       validateContent: options.validateContent,
+      selectFormSchema: options.selectFormSchema,
       supportedElicitationModes: options.supportedElicitationModes,
     });
   }

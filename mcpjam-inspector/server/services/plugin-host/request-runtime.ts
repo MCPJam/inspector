@@ -6,6 +6,7 @@ import { PluginInvocationSuspension } from "./invocation.js";
 import {
   createOwnedPluginMrtr,
   ownedMrtrFormCapabilities,
+  ownedPluginFormSchema,
   endPluginMrtrFormsDisabled,
 } from "./owned-mrtr.js";
 import {
@@ -765,8 +766,14 @@ export function createPluginRequestRuntime(
                 return collect(args);
               },
               // Kept on a 2026 connection even when the legacy handler's
-              // claim on the same key is withheld there.
-              { extensionClaims: [OPENAI_ELICITATION_EXTENSION] },
+              // claim on the same key is withheld there. The selector only
+              // matters if a collector answers in-process; the owned one
+              // suspends and validates on resume.
+              {
+                extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+                selectFormSchema: (params) =>
+                  ownedPluginFormSchema(params, binding.serverId),
+              },
             );
           await timedPluginStep("mcp-connect", () =>
             created.manager.connectToServer(binding.serverId, target!, {
