@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import ts from "typescript";
 
-// Only tracked first-party source participates; runtime text never adds a name.
-const files = execFileSync("git", ["ls-files", "sdk/src", "mcpjam-inspector"], {
+// First-party source participates; runtime text never adds a name.
+const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "sdk/src", "mcpjam-inspector"], {
   encoding: "utf8",
 })
   .trim()
@@ -20,6 +20,9 @@ const catalogs = {
 };
 const fields = {};
 const events = [];
+const browserRoutes = [];
+const browserMessages = [];
+const slugs = [];
 const diagnosticCodes = [];
 const literal = (node) =>
   ts.isLiteralTypeNode(node) &&
@@ -40,12 +43,9 @@ for (const file of files) {
       const collect = (child) => { if (ts.isStringLiteral(child)) diagnosticCodes.push(child.text); else ts.forEachChild(child, collect); };
       if (node.initializer) collect(node.initializer);
     }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const owner = node.expression.expression.getText(source);
-      const method = node.expression.name.text;
-      const message = node.arguments[0];
-      if ((method === "captureMessage" || (owner === "logger" && ["error", "warn", "info", "debug"].includes(method))) && message && ts.isStringLiteral(message))
-        catalog.messages.push(message.text);
+    if (file === "sdk/src/error-describer/catalog.ts" && ts.isVariableDeclaration(node) && node.name.getText(source) === "ERROR_CATALOG" && node.initializer && ts.isObjectLiteralExpression(node.initializer)) {
+      for (const property of node.initializer.properties)
+        if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.name)) slugs.push(property.name.text);
     }
     if (
       ts.isClassDeclaration(node) &&
@@ -57,21 +57,21 @@ for (const file of files) {
       )
     )
       catalog.errors.push(node.name.text);
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ["get", "post", "put", "patch", "delete", "all", "use"].includes(
-        node.expression.name.text,
-      )
-    ) {
-      const path = node.arguments[0];
-      if (
-        path &&
-        ts.isStringLiteral(path) &&
-        path.text.startsWith("/") &&
-        !path.text.includes("://")
-      )
-        catalog.routes.push(path.text);
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const owner = node.expression.expression.getText(source);
+      const method = node.expression.name.text;
+      const message = node.arguments[0];
+      if ((method === "captureMessage" || (owner === "logger" && ["error", "warn", "info", "debug"].includes(method))) && message && ts.isStringLiteral(message)) {
+        catalog.messages.push(message.text);
+        if (file.includes("/client/") || file.includes("/shared/")) browserMessages.push(message.text);
+      }
+    }
+    if (file.endsWith("/client/src/lib/app-routes.ts") && ts.isObjectLiteralExpression(node)) {
+      const values = Object.fromEntries(node.properties.flatMap((property) =>
+        ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)
+          ? [[property.name.getText(source), property.initializer.text]] : []));
+      if (typeof values.path === "string" && values.scope)
+        browserRoutes.push(`${values.scope === "project" ? "/p/:projectId" : ""}/${values.path}`);
     }
     if (
       file.endsWith("/log-events.ts") &&
@@ -111,21 +111,37 @@ for (const file of files) {
 
 catalogs.inspector.routeEntries = mountedRoutes("mcpjam-inspector/server/app.ts");
 catalogs.inspector.routes = catalogs.inspector.routeEntries.map((entry) => entry.path);
-catalogs.sdk.files.push("dist/index.js");
+const sdkBuild = ts.createSourceFile("sdk/tsup.config.ts", readFileSync("sdk/tsup.config.ts", "utf8"), ts.ScriptTarget.Latest, true);
+const collectSdkEntries = (node) => {
+  if (ts.isPropertyAssignment(node) && node.name.getText(sdkBuild) === "entry" && ts.isArrayLiteralExpression(node.initializer)) {
+    for (const entry of node.initializer.elements) {
+      if (ts.isStringLiteral(entry) && /^src\/.+\.ts$/.test(entry.text))
+        catalogs.sdk.files.push(entry.text.replace(/^src\//, "dist/").replace(/\.ts$/, ".js"));
+    }
+  }
+  ts.forEachChild(node, collectSdkEntries);
+};
+collectSdkEntries(sdkBuild);
 catalogs.inspector.files.push("dist/server/index.js", ".vite/build/main.cjs");
+const diagnosticFields = { code: [...new Set(diagnosticCodes)].sort(), scope: ["user", "organization", "platform"] };
 
 const outputs = {
-  "sdk/src/internal/telemetry-catalog.generated.json": { ...catalogs.sdk, diagnosticFields: { code: [...new Set(diagnosticCodes)].sort() } },
+  "sdk/src/internal/telemetry-catalog.generated.json": { ...catalogs.sdk, slugs, diagnosticFields },
   "mcpjam-inspector/shared/telemetry-catalog.generated.json": {
     ...catalogs.inspector,
     messages: [...catalogs.inspector.messages, ...events],
-    diagnosticFields: { code: [...new Set(diagnosticCodes)].sort() },
+    slugs,
+    diagnosticFields,
     events: [...new Set(events)].sort(),
     fields,
   },
 };
+outputs["mcpjam-inspector/shared/browser-telemetry-catalog.generated.json"] = {
+  files: [], errors: catalogs.inspector.errors, messages: browserMessages, routes: browserRoutes, slugs, diagnosticFields,
+};
+outputs["mcpjam-inspector/shared/browser-telemetry-source-files.generated.json"] = catalogs.inspector.files.filter((file) => /^(client|shared)\//.test(file)).sort();
 for (const [file, catalog] of Object.entries(outputs)) {
-  for (const key of ["files", "routes", "errors", "messages"])
+  if (!Array.isArray(catalog)) for (const key of ["files", "routes", "errors", "messages"])
     catalog[key] = [...new Set(catalog[key])].sort();
   // Compact generated catalogs avoid thousands of mechanically repeated lines.
   const text = `${JSON.stringify(catalog)}\n`;

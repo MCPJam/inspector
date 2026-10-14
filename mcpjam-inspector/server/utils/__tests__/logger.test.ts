@@ -228,14 +228,10 @@ describe("logger", () => {
         ]);
       });
 
-      it("ingests debug logs to Axiom with the shape of their args", () => {
-        // `debug`'s args are whatever the caller had in hand — routinely a
-        // request or a tool result — so Axiom gets their structure only.
+      it("skips uncatalogued debug messages and their arbitrary arguments", () => {
         logger.debug("trace", "arg1", { city: "Lisbon", nights: 3 });
 
-        expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-          expect.objectContaining({ level: "debug", event: "log.unknown", environment: "prod" }),
-        ]);
+        expect(mockIngest).not.toHaveBeenCalled();
       });
 
       it("scrubs free-form context before it reaches Axiom", () => {
