@@ -181,10 +181,12 @@ COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
 # MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
-# under. Hardcoded rather than an ARG: the web image is the only thing this
-# Dockerfile builds. Without it this bundle's events resolve against the npm or
-# desktop artifacts, which share the same bare `release`. See
+# under. Without it this bundle's events resolve against the npm or desktop
+# artifacts, which share the same bare `release`. Railway keeps the `web`
+# default; docker-release.yml passes `local`, because the Docker Hub image
+# uploads no source maps and must not resolve against the hosted app's. See
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
+ARG MCPJAM_BUILD_SURFACE=web
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \
@@ -199,7 +201,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$METICULOUS_RECORDING_TOKEN" ]; then export METICULOUS_RECORDING_TOKEN; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
     if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
-    MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
+    MCPJAM_BUILD_SURFACE="$MCPJAM_BUILD_SURFACE" npm run build:client -w @mcpjam/inspector
 
 ################################################################################
 # Runtime image.
