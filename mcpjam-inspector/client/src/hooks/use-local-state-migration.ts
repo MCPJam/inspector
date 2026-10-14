@@ -6,7 +6,7 @@ import {
 } from "@/lib/local-state-migration";
 import { HOSTED_MODE } from "@/lib/config";
 import { importHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getInitialThemeMode } from "@/lib/theme-utils";
 import { useLogger } from "./use-logger";
 
 /**
@@ -190,9 +190,6 @@ export function useLocalStateMigration({
   const mergeServersIntoExistingProject = useMutation(
     "projects:mergeServersIntoExistingProject" as any,
   );
-  // Each migrated project is seeded with an MCPJam client in the viewer's
-  // theme, as a project created from the sidebar would be.
-  const themeMode = usePreferencesStore((s) => s.themeMode);
   const convex = useConvex();
 
   useEffect(() => {
@@ -248,6 +245,10 @@ export function useLocalStateMigration({
     }
 
     inFlightRef.current = true;
+    // Each migrated project is seeded with an MCPJam client in the viewer's
+    // theme, as a project created from the sidebar would be. Read from
+    // storage: this hook mounts above PreferencesStoreProvider.
+    const themeMode = getInitialThemeMode();
     runLocalStateMigration({
       createProject: (args) => createProject({ ...args, themeMode }),
       ensureDefaultProject: async ({ organizationId: orgId }) => {
@@ -374,7 +375,6 @@ export function useLocalStateMigration({
     createProject,
     ensureDefaultProject,
     mergeServersIntoExistingProject,
-    themeMode,
     convex,
     logger,
     retryTick,

@@ -29,10 +29,8 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: mockUseDbUserReady,
 }));
 
-vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (
-    selector: (state: { themeMode: "light" | "dark" }) => unknown,
-  ) => selector({ themeMode: mockThemeMode.current }),
+vi.mock("@/lib/theme-utils", () => ({
+  getInitialThemeMode: () => mockThemeMode.current,
 }));
 
 function createProject(
@@ -80,6 +78,8 @@ describe("useProjectMutations", () => {
     vi.clearAllMocks();
   });
 
+  // Rendered without PreferencesStoreProvider on purpose: the hook mounts
+  // above it in the app, so it must not read the preferences store.
   it("creates projects with the viewer's theme", async () => {
     const createProject = vi.fn().mockResolvedValue("p1");
     const ensureDefaultProject = vi.fn().mockResolvedValue("p1");
