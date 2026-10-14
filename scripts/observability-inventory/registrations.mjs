@@ -74,7 +74,7 @@ function collectRuntimeCalls(node, context) {
       }
 }
 function collectSurfaceCalls(node, context) {
-  const { backend, repo, root, rel, file, info, add } = context;
+  const { backend, repo, root, rel, file, add } = context;
       if (ts.isCallExpression(node)) {
         const m = method(node), receiver = ts.isPropertyAccessExpression(node.expression) ? rootReceiver(node.expression.expression) : null;
         if (rel.startsWith('cli/src/') && m === 'command') add(repo, root, file, node, 'cli.command', literal(node.arguments[0]) ?? '<dynamic>',
@@ -97,7 +97,7 @@ function collectSurfaceCalls(node, context) {
       }
 }
 function collectSurfaceDeclarations(node, context) {
-  const { backend, repo, root, rel, file, info, add } = context;
+  const { repo, root, rel, file, add } = context;
       if (rel.startsWith('soundcheck/src/app/') && rel.endsWith('/route.ts') && ts.isFunctionDeclaration(node) && node.name && ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'].includes(node.name.text)) {
         add(repo, root, file, node, 'soundcheck.http', node.name.text + ' ' + rel.replace(/^soundcheck\/src\/app/,'').replace(/\/route.ts$/,''));
       }
