@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   EvalIteration,
@@ -7,6 +7,8 @@ import type {
   EvalSuiteRunListItem,
 } from "@/components/evals/types";
 import { CaseRunTimeline } from "../case-workspace/case-run-timeline";
+import { beginCaseLaunch, useCaseLaunches } from "../case-workspace/pending-case-launches";
+beforeEach(() => useCaseLaunches.setState({ launches: [] }));
 const iteration = (
   id: string,
   model: string,
@@ -29,6 +31,50 @@ const chooseFilter = async (filter: "Client" | "Model", option: string) => {
   await user.click(screen.getByRole("option", { name: option, exact: true }));
 };
 describe("CaseRunTimeline", () => {
+  it("sorts newest first independently of status, with stable time ties", () => {
+    const trials = [
+      { ...iteration("old", "model", "pending", 0), createdAt: 1, iterationNumber: 1 },
+      { ...iteration("new-b", "model", "passed", 1000), suiteRunId: "new", createdAt: 3, iterationNumber: 2 },
+      { ...iteration("middle", "model", "failed", 1000), createdAt: 2, iterationNumber: 1 },
+      { ...iteration("new-a", "model", "passed", 1000), suiteRunId: "new", createdAt: 3, iterationNumber: 1 },
+    ];
+    const props = { caseTitle: "Case", selectedIterationId: null, onSelect: vi.fn() };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={trials}>Evidence</CaseRunTimeline>);
+    const labels = () => screen.getAllByTestId("case-run-row").map((row) => row.textContent);
+    expect(labels().map((text) => text?.match(/Passed|Failed|Running/)?.[0])).toEqual(["Passed", "Passed", "Failed", "Running"]);
+    expect(within(screen.getAllByTestId("case-run-row")[0]).getByText("#1")).toBeVisible();
+    const times = screen.getAllByTestId("case-run-time").map((cell) => cell.querySelector("time")?.dateTime);
+    rerender(<CaseRunTimeline {...props} iterations={trials.map((row) => ({ ...row, status: "pending" }))}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-time").map((cell) => cell.querySelector("time")?.dateTime)).toEqual(times);
+  });
+
+  it("shows temporary pending rows without metrics or details, then actual backend status", async () => {
+    const scope = { projectId: "p", suiteId: "s", caseId: "c" };
+    beginCaseLaunch(scope, [{ client: "Claude", hostId: "claude", model: "model" }], 2);
+    const props = { caseTitle: "Case", scope, selectedIterationId: null, onSelect: vi.fn(), hostNamesById: new Map([["claude", "Claude"]]) };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={[]}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    screen.getAllByTestId("case-run-row").forEach((row) => {
+      expect(row).toBeDisabled();
+      expect(row).toHaveTextContent("Pending");
+      expect(within(row).getByTestId("case-run-number")).toHaveTextContent("—");
+    });
+    expect(screen.getByText("0/0")).toBeVisible();
+    await chooseFilter("Client", "Claude");
+    await chooseFilter("Model", "model");
+    const id = useCaseLaunches.getState().launches[0].id;
+    const runs = [{ _id: "run", runGroupId: id, namedHostId: "claude", configSnapshot: {}, effectiveModelId: "model" }] as EvalSuiteRunListItem[];
+    const trial = { ...iteration("real", "model", "pending", 0), suiteRunId: "run", iterationNumber: 1, status: "pending" as const };
+    rerender(<CaseRunTimeline {...props} iterations={[trial]} suiteRuns={runs}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getAllByText("Pending")).toHaveLength(2);
+    rerender(<CaseRunTimeline {...props} iterations={[{ ...trial, status: "running" }]} suiteRuns={runs}>Evidence</CaseRunTimeline>);
+    expect(screen.getByText("Running")).toBeVisible();
+    expect(screen.getByText("Pending")).toBeVisible();
+    act(() => useCaseLaunches.setState({ launches: [] }));
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
+    expect(screen.getByTestId("case-run-row")).toBeEnabled();
+  });
   it("labels recording separately from a run and stops it when closed", async () => {
     const onStopRecording = vi.fn();
     render(
@@ -245,13 +291,13 @@ describe("CaseRunTimeline", () => {
       const time = within(row).getByTestId("case-run-time");
       expect(date.nextElementSibling).toBe(time);
       expect(row.lastElementChild).toBe(time);
-      const timestamp = new Date(trials[index].createdAt);
+      const timestamp = new Date([...trials].sort((a, b) => b.createdAt - a.createdAt)[index].createdAt);
       expect(date).toHaveAttribute("title", timestamp.toLocaleString());
       expect(date).toHaveTextContent(timestamp.toLocaleDateString());
       expect(time).toHaveTextContent(timestamp.toLocaleTimeString());
       expect(date).not.toHaveTextContent(timestamp.toLocaleTimeString());
       expect(time).not.toHaveTextContent(timestamp.toLocaleDateString());
-      expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
+      expect(date.querySelector("time")).toHaveAttribute("datetime", timestamp.toISOString());
       expect(time.querySelector("time")).toHaveAttribute("datetime", timestamp.toISOString());
     }
     await chooseFilter("Client", "ChatGPT");

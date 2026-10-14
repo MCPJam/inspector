@@ -14,6 +14,7 @@ export type CaseLaunchTarget = {
   model: string;
   hostId?: string;
   environmentId?: string;
+  targetIndex?: number;
 };
 export type PendingCaseRow = EvalIteration &
   CaseLaunchTarget & {
@@ -62,7 +63,7 @@ export function beginCaseLaunch(
       ...target,
       _id: `pending:${id}:${targetIndex}:${index}`,
       launchId: id,
-      targetIndex,
+      targetIndex: target.targetIndex ?? targetIndex,
       testCaseId: scope.caseId,
       projectId: scope.projectId,
       createdAt,

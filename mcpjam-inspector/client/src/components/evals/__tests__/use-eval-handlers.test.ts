@@ -431,10 +431,7 @@ describe("useEvalHandlers", () => {
     });
 
     it("narrows a run to one case, and says so in the body", async () => {
-      // "Run test" on the case page. It must be a SUITE run — the judge is
-      // keyed by `suiteRunId` at every surface, so a quick run can never
-      // answer "did it accomplish the goal?" — narrowed to the one case so the
-      // suite's total cap does not reject it.
+      // Case runs need a suite run for judging, narrowed to the selected case.
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       const mockSuite = {
         _id: "suite-run-one",
@@ -444,10 +441,13 @@ describe("useEvalHandlers", () => {
       await act(async () => {
         await result.current.handleRerun(mockSuite as any, {
           caseIds: ["test-case-1"],
+          caseLaunchId: "case-launch",
         });
       });
       const body = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(body.caseIds).toEqual(["test-case-1"]);
+      expect(body.runGroupId).toBe("case-launch");
+      expect(toast.loading).toHaveBeenCalledWith("Starting run…", { id: "case-launch" });
       expect(body.suiteRerun).toBe(true);
       // The payload must agree with what the server will execute; sending the
       // whole suite alongside a narrowing `caseIds` makes the run's own record

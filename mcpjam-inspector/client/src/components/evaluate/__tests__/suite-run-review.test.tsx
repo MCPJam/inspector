@@ -3,6 +3,9 @@ import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteRunReview, selectReviewTargets } from "../suite-run-review";
 import type { EvalSuite, EvalCase } from "../../evals/types";
+import { toast } from "sonner";
+import { useCaseLaunches } from "../case-workspace/pending-case-launches";
+vi.mock("sonner", () => ({ toast: { loading: vi.fn(), error: vi.fn() } }));
 const suite = {
   _id: "suite",
   name: "Checkout",
@@ -23,7 +26,11 @@ const environments = [
 const names = new Map([["claude", "Claude"]]);
 
 describe("suite run review", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    useCaseLaunches.setState({ launches: [] });
+    vi.clearAllMocks();
+  });
 
   it.each([
     [undefined, undefined, 5],
@@ -68,7 +75,7 @@ describe("suite run review", () => {
     expect(screen.queryByText(/runs the whole suite/)).toBeNull();
     expect(screen.getByRole("spinbutton")).toHaveValue(2);
     await user.click(screen.getByRole("button", { name: "Run test case" }));
-    expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ _id: suite._id }), { iterationOverride: 2, throwOnFailure: true });
+    expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ _id: suite._id }), { iterationOverride: 2, throwOnFailure: true, caseLaunchId: expect.any(String) });
     expect(localStorage.getItem("mcpjam:suite-run-iterations:suite")).toBe("9");
   });
 
@@ -133,15 +140,30 @@ describe("suite run review", () => {
     expect(onStart).not.toHaveBeenCalled();
   });
 
-  it("keeps the case sheet open when a launch refuses quota", async () => {
+  it("reports a case launch refusal after closing setup", async () => {
     const onClose = vi.fn();
     render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""
       environments={environments} hostNamesById={names}
       onStart={vi.fn().mockRejectedValue(new Error("Eval iteration limit reached."))}
       onClose={onClose} />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Run test case" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Eval iteration limit reached.");
-    expect(onClose).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Eval iteration limit reached.", { id: expect.any(String) });
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(useCaseLaunches.getState().launches).toEqual([]);
+  });
+
+  it("closes case setup and shows pending rows before startup completes", async () => {
+    let finish!: () => void;
+    const onStart = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const onClose = vi.fn();
+    render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle="Case" initialIterations={2}
+      environments={environments} hostNamesById={names} onStart={onStart} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onStart.mock.invocationCallOrder[0]);
+    expect(useCaseLaunches.getState().launches[0].rows).toHaveLength(4);
+    expect(toast.loading).toHaveBeenCalledOnce();
+    await act(async () => finish());
   });
 
   it("requires a target and never mutates suite defaults", () => {

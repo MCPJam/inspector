@@ -2189,22 +2189,13 @@ export function TestTemplateEditor({
 
   /** Save the current draft before launching a judged, case-scoped run. */
   const [runTestPending, setRunTestPending] = useState(false);
-  /**
-   * `handleSave` closes over `editForm` and is rebuilt every render, so the
-   * copy captured by a memoized callback goes stale the moment the deps stop
-   * changing — which they do as soon as `hasUnsavedChanges` flips true. Run
-   * test then saved the draft as it stood at the FIRST edit and ran that,
-   * while the pane showed the latest. A ref always holds the current one.
-   */
+  // Direct runs use the latest save; a submitted setup captures its own draft.
   const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const runTest = useCallback(
     async (launch?: {
       suite: EvalSuite;
-      options: {
-        iterationOverride: number;
-        ephemeralEnvironment?: boolean;
-        throwOnFailure?: boolean;
-      };
+      options: CaseRunLaunchOptions & { iterationOverride: number };
+      saveBeforeRun?: () => Promise<boolean>;
     }) => {
       const caseId = currentTestCase?._id;
       if (!onRunCase || !caseId || isDraft) return;
@@ -2221,7 +2212,7 @@ export function TestTemplateEditor({
           // A refused save (an unset tool question, an invalid step list) must
           // not launch: the run executes the PERSISTED case, so it would grade
           // a version of the case the author is not looking at.
-          const saved = await handleSaveRef.current?.();
+          const saved = await (launch?.saveBeforeRun ?? handleSaveRef.current)?.();
           if (!saved) {
             if (launch) throw new Error("Save the test case before running.");
             return;
@@ -2817,9 +2808,9 @@ export function TestTemplateEditor({
    * saved case, so a refused save silently ran something the author was not
    * looking at.
    */
-  const handleSave = async (): Promise<boolean> => {
+  const handleSave = async (quiet = false): Promise<boolean> => {
     if (hasInvalidFieldDraft) {
-      toast.error("Complete the highlighted fields before saving.");
+      if (!quiet) toast.error("Complete the highlighted fields before saving.");
       return false;
     }
     if (readOnly) return false;
@@ -2831,12 +2822,12 @@ export function TestTemplateEditor({
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
-      toast.error(simpleToolsBlock);
+      if (!quiet) toast.error(simpleToolsBlock);
       return false;
     }
 
     if (!validateSteps(editForm.steps)) {
-      toast.error(
+      if (!quiet) toast.error(
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
       );
@@ -2866,11 +2857,11 @@ export function TestTemplateEditor({
         has_match_options: savePayload.matchOptions != null,
         has_predicates: savePayload.predicates != null,
       });
-      toast.success("Changes saved");
+      if (!quiet) toast.success("Changes saved");
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to save changes"));
+      if (!quiet) toast.error(getBillingErrorMessage(error, "Failed to save changes"));
       throw error;
     }
   };
@@ -4700,7 +4691,7 @@ export function TestTemplateEditor({
                       }
                       onClose={() => setRunSetupOpen(false)}
                       onStart={(launchSuite, options) =>
-                        runTest({ suite: launchSuite, options })
+                        runTest({ suite: launchSuite, options, saveBeforeRun: () => handleSave(true) })
                       }
                     />
                   )
@@ -5405,6 +5396,7 @@ export function TestTemplateEditor({
                 }
                 history={(evidence) => (
                   <CaseRunTimeline
+                    scope={{ projectId: projectId ?? suite?.projectId ?? "", suiteId, caseId: selectedTestCaseId }}
                     openIterationId={
                       openCompareFromRoute
                         ? null

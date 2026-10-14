@@ -26,7 +26,9 @@ import {
   scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
-import type { EvalCase, EvalSuite } from "../evals/types";
+import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
+import { savedCaseTargets, startCaseReview } from "./case-workspace/case-launch-preview";
+import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
 type ReviewEnvironment = Pick<
@@ -53,11 +55,7 @@ export type SuiteRunReviewProps = {
   onClose: () => void;
   onStart: (
     suite: EvalSuite,
-    options: {
-      iterationOverride: number;
-      ephemeralEnvironment?: boolean;
-      throwOnFailure?: boolean;
-    },
+    options: CaseRunLaunchOptions & { iterationOverride: number },
   ) => unknown;
   onEditSettings?: () => void;
   disabledReason?: string | null;
@@ -178,6 +176,7 @@ export function SuiteRunReview(props: SuiteRunReviewProps) {
 }
 
 export function SuiteRunReviewContent({
+  projectId,
   suite,
   cases,
   caseTitle,
@@ -192,6 +191,7 @@ export function SuiteRunReviewContent({
   matrix,
 }: SuiteRunReviewProps & {
   matrix?: {
+    targets?: CaseLaunchTarget[];
     count: number;
     render: (disabled: boolean) => ReactNode;
     /** Changes whenever the matrix selection does. */
@@ -271,6 +271,13 @@ export function SuiteRunReviewContent({
     )
       return;
     lock.current = true;
+    if (isCaseRun) {
+      const selectedSuite = matrix ? suite : selectReviewTargets(suite, selectedIds);
+      await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart },
+        matrix?.targets ?? savedCaseTargets({ suite: selectedSuite, cases, environments, hostNamesById }), count);
+      lock.current = false;
+      return;
+    }
     setStarting(true);
     setError(null);
     setLaunchProblems([]);
