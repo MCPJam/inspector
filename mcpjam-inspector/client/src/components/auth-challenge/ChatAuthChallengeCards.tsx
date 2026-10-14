@@ -1,3 +1,9 @@
+import {
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  dismissChatAuthRecoveryFailure,
+  useChatAuthRecoveryFailures,
+} from "@/lib/chat-auth-recovery";
+import { Button } from "@mcpjam/design-system/button";
 import { useState } from "react";
 import {
   useAuthChallengeNoticeStore,
@@ -19,16 +25,53 @@ export function ChatAuthChallengeCards({
   toolCallIds: readonly string[];
 }) {
   const cards = useChatAuthChallengeCards(toolCallIds);
+  const recoveryFailures = useChatAuthRecoveryFailures().filter(
+    (item) =>
+      !item.dismissed &&
+      item.toolCallId &&
+      toolCallIds.includes(item.toolCallId),
+  );
   const notices = useAuthChallengeNoticeStore((state) => state.notices);
   const [message, setMessage] = useState<string | null>(null);
   const messageNotices = toolCallIds
     .map((id) => notices[id])
     .filter((notice) => notice !== undefined);
-  if (cards.length === 0 && messageNotices.length === 0 && !message) {
+  if (
+    cards.length === 0 &&
+    messageNotices.length === 0 &&
+    recoveryFailures.length === 0 &&
+    !message
+  ) {
     return null;
   }
   return (
     <div className="space-y-2 pt-3" data-testid="chat-auth-challenge">
+      {recoveryFailures
+        .filter(
+          (failure, index, all) =>
+            all.findIndex((item) => item.toolCallId === failure.toolCallId) ===
+            index,
+        )
+        .map((failure) => (
+          <div
+            key={failure.id}
+            role="alert"
+            className="rounded-lg border border-destructive p-3 text-sm"
+          >
+            <p>{CHAT_AUTH_RECOVERY_MESSAGE}</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                recoveryFailures
+                  .filter((item) => item.toolCallId === failure.toolCallId)
+                  .forEach((item) => dismissChatAuthRecoveryFailure(item.id))
+              }
+            >
+              Dismiss
+            </Button>
+          </div>
+        ))}
       {cards.map((card) => (
         <AuthChallengeCard
           key={card.key}

@@ -39,6 +39,7 @@ import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 
 const ISSUER = "https://as.example";
 const PRM = "https://orders.example/.well-known/oauth-protected-resource/mcp";
+const ATTEMPT = { projectId: "p1", serverId: "s1", surface: "chat", callId: "call1" };
 const OPERATION = { method: "tools/call" as const, operation: "list_orders" };
 
 function signal(
@@ -77,7 +78,7 @@ const createServer = (
 
 function ledgerKeys(): string[] {
   return Object.keys(sessionStorage).filter((key) =>
-    key.startsWith("mcp-auth-challenge-ledger-v1-"),
+    key.startsWith("mcp-auth-challenge-ledger-v2-"),
   );
 }
 
@@ -103,12 +104,12 @@ describe("applyToolCallAuthChallenge", () => {
     sessionStorage.clear();
     readStoredOAuthConfigMock.mockReturnValue({});
     resolveStoredIssuerMock.mockReturnValue(ISSUER);
-    initiateOAuthMock.mockResolvedValue({ success: true });
+    initiateOAuthMock.mockImplementation(async (options) => { await options.onAuthorizationRedirect?.({ state: "default-flow" }); return { success: true }; });
   });
 
   it("presents without side effects: no ledger, no OAuth", async () => {
     const outcome = await applyToolCallAuthChallenge(createServer(), signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: false,
     });
     expect(outcome).toEqual({ kind: "pendingConnect" });
@@ -124,7 +125,7 @@ describe("applyToolCallAuthChallenge", () => {
       const outcome = await applyToolCallAuthChallenge(
         createServer(),
         signal({ effectiveAuth }),
-        { operation: OPERATION, confirmed: true },
+        { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
       );
       expect(outcome.kind).toBe("blocked");
       expect(ledgerKeys()).toEqual([]);
@@ -136,7 +137,7 @@ describe("applyToolCallAuthChallenge", () => {
     const outcome = await applyToolCallAuthChallenge(
       createServer(),
       signal({ effectiveAuth: undefined }),
-      { operation: OPERATION, confirmed: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
     );
     expect(outcome).toMatchObject({ kind: "blocked", reason: "unknown" });
     expect(initiateOAuthMock).not.toHaveBeenCalled();
@@ -144,7 +145,7 @@ describe("applyToolCallAuthChallenge", () => {
 
   it("a confirmed click on a tokenless Auto server signs in despite the client mirror", async () => {
     const outcome = await applyToolCallAuthChallenge(createServer(), signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
     });
     expect(outcome).toMatchObject({
@@ -169,7 +170,7 @@ describe("applyToolCallAuthChallenge", () => {
         oauthTokens: { access_token: "a", refresh_token: "r" } as never,
       }),
       signal({ effectiveAuth: "oauth" }),
-      { operation: OPERATION, confirmed: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
     );
     expect(clearOAuthFlowStateMock).toHaveBeenCalledWith("orders");
     expect(clearOAuthDataMock).not.toHaveBeenCalled();
@@ -183,7 +184,7 @@ describe("applyToolCallAuthChallenge", () => {
         oauthTokens: { access_token: "a" } as never,
       }),
       signal({ effectiveAuth: "oauth" }),
-      { operation: OPERATION, confirmed: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
     );
     expect(outcome).toMatchObject({ scopes: ["profile", "orders:read"] });
   });
@@ -194,7 +195,7 @@ describe("applyToolCallAuthChallenge", () => {
       // Hosted: the grant lives on the server, so there are no browser tokens.
       createServer({ useOAuth: true }),
       signal({ effectiveAuth: "oauth" }),
-      { operation: OPERATION, confirmed: true, existingGrant: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true, existingGrant: true },
     );
     expect(outcome).toMatchObject({ scopes: ["profile", "orders:read"] });
     expect(initiateOAuthMock).toHaveBeenCalledWith(
@@ -206,7 +207,7 @@ describe("applyToolCallAuthChallenge", () => {
     const outcome = await applyToolCallAuthChallenge(
       createServer(),
       signal({ requiredScope: undefined }),
-      { operation: OPERATION, confirmed: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
     );
     expect(outcome).toMatchObject({ kind: "started", scopes: undefined });
     expect(initiateOAuthMock.mock.calls[0][0]).not.toHaveProperty(
@@ -219,7 +220,7 @@ describe("applyToolCallAuthChallenge", () => {
     await applyToolCallAuthChallenge(
       createServer(),
       signal({ resourceMetadataUrl: "http://orders.example/prm" }),
-      { operation: OPERATION, confirmed: true },
+      { operation: OPERATION, attempt: ATTEMPT, confirmed: true },
     );
     expect(initiateOAuthMock.mock.calls[0][0].resourceMetadataUrl).toBe(
       undefined,
@@ -229,12 +230,12 @@ describe("applyToolCallAuthChallenge", () => {
   it("a Back-button re-click retries instead of being refused", async () => {
     const server = createServer();
     await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
     });
     // The user came back without completing sign-in and clicks again.
     const again = await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
     });
     expect(again.kind).toBe("started");
@@ -244,23 +245,23 @@ describe("applyToolCallAuthChallenge", () => {
   it("a repeat challenge after sign-in is permanent for the window", async () => {
     const server = createServer();
     await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
     });
     expect(hasAuthChallengeAwaitingCallback("orders")).toBe(true);
-    expect(markAuthChallengeSignedIn("orders")).toBe(1);
+    expect(markAuthChallengeSignedIn("orders", await authorizationFlowDigest("default-flow"))).toBe(1);
     expect(hasAuthChallengeAwaitingCallback("orders")).toBe(false);
 
     const repeat = await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: false,
     });
     expect(repeat).toEqual({ kind: "permanent" });
 
     // A later success forgets it.
-    resetAuthChallenge(server, OPERATION);
+    resetAuthChallenge(server, OPERATION, ATTEMPT);
     const fresh = await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: false,
     });
     expect(fresh).toEqual({ kind: "pendingConnect" });
@@ -274,7 +275,7 @@ describe("applyToolCallAuthChallenge", () => {
     const server = createServer();
     const flows: Array<{ digest: string }> = [];
     await applyToolCallAuthChallenge(server, signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
       onAuthorizationFlow: (flow) => flows.push(flow),
     });
@@ -292,10 +293,20 @@ describe("applyToolCallAuthChallenge", () => {
     expect(markAuthChallengeSignedIn("orders", digest)).toBe(1);
   });
 
+  it("isolates the same operation across calls, projects and columns", async () => {
+    const server = createServer();
+    await applyToolCallAuthChallenge(server, signal(), { operation: OPERATION, attempt: ATTEMPT, confirmed: true });
+    markAuthChallengeSignedIn("orders", await authorizationFlowDigest("default-flow"));
+    for (const attempt of [{ ...ATTEMPT, callId: "call2" }, { ...ATTEMPT, projectId: "p2" }, { ...ATTEMPT, serverId: "s2" }]) {
+      expect(await applyToolCallAuthChallenge(server, signal(), { operation: OPERATION, attempt, confirmed: false })).toEqual({ kind: "pendingConnect" });
+    }
+    expect(markAuthChallengeSignedIn("orders")).toBe(0);
+  });
+
   it("does not spend the click when OAuth never started", async () => {
     initiateOAuthMock.mockResolvedValue({ success: false, error: "boom" });
     const outcome = await applyToolCallAuthChallenge(createServer(), signal(), {
-      operation: OPERATION,
+      operation: OPERATION, attempt: ATTEMPT,
       confirmed: true,
     });
     expect(outcome).toMatchObject({

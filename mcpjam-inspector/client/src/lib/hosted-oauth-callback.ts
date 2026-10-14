@@ -16,6 +16,7 @@ import {
 } from "@/lib/app-navigation";
 
 export interface HostedOAuthPendingMarker {
+  chatAuthContinuationId?: string;
   connectionIntent?: ConnectionIntent;
   initiatingUserId?: string | null;
   surface: HostedOAuthSurface;
@@ -196,6 +197,7 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
       projectId: typeof parsed.projectId === "string" ? parsed.projectId : null,
       serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
       serverName: parsed.serverName,
+      ...(typeof parsed.chatAuthContinuationId === "string" ? { chatAuthContinuationId: parsed.chatAuthContinuationId } : {}),
       serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
       accessScope:

@@ -36,6 +36,7 @@ import {
   resetAuthChallenge,
   resetToolCallStepUp,
   type ToolCallStepUpOperation,
+  type AuthChallengeAttempt,
 } from "@/state/oauth-orchestrator";
 import {
   findProjectByAnyId,
@@ -52,6 +53,8 @@ import {
 } from "@/lib/scope-step-up-pending";
 import {
   cancelPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  type PendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
 } from "@/lib/scope-step-up-replay";
@@ -86,6 +89,7 @@ export interface ScopeStepUpHostBridge {
   prepareRedirect?: (
     server: ServerWithName,
     connectionIntent: ConnectionIntent | undefined,
+    continuationId?: string,
   ) => void;
 }
 
@@ -206,6 +210,9 @@ type PendingChatStepUp = {
 };
 
 export type DriveScopeStepUpOptions = {
+  directReplay?: PendingDirectScopeStepUpReplay;
+  onFailure?: (reason: "not_redirected" | "failed") => void;
+  continuationId?: string;
   /** The credential the failed call used, when the server reported one. */
   connectionId?: string;
 };
@@ -416,6 +423,7 @@ export function driveChatScopeStepUp(
 export function resetScopeStepUp(
   server: ServerWithName | undefined,
   operation?: ToolCallStepUpOperation,
+  attempt?: AuthChallengeAttempt,
 ): void {
   if (!server) return;
   try {
@@ -423,7 +431,7 @@ export function resetScopeStepUp(
       resetToolCallStepUp(server, operation);
       // The mid-session sign-in attempt for the same operation, too: a
       // success after sign-in means a later challenge is a new one.
-      resetAuthChallenge(server, operation);
+      resetAuthChallenge(server, operation, attempt);
     } else {
       resetToolCallStepUp(server);
     }
@@ -462,25 +470,51 @@ export function driveScopeStepUp(
     // Which credential this sign-in authorizes, recorded on whichever saved
     // call is waiting for it, so the callback replays only onto the very
     // credential the call used.
-    setPendingChatScopeStepUpCredentialBinding(server.name, binding);
-    setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding);
+    const saved =
+      !options?.continuationId ||
+      setPendingChatScopeStepUpCredentialBinding(
+        server.name,
+        binding,
+        options.continuationId,
+      );
+    if (options?.continuationId && !saved)
+      return Promise.reject(
+        new Error("Could not save the pending authorization call."),
+      );
+    if (!options?.continuationId)
+      setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding, options?.directReplay);
     const connectionIntent = connectionIntentForBinding(binding);
     return applyToolCallStepUp(server, stepUp, {
       ...(operation ? { operation } : {}),
       // Hosted: the callback completes against this marker. Without it the
       // hosted callback has no context and the step-up never resumes.
       beforeRedirect: () =>
-        hostBridge?.prepareRedirect?.(server, connectionIntent),
+        options?.continuationId
+          ? hostBridge?.prepareRedirect?.(
+              server,
+              connectionIntent,
+              options.continuationId,
+            )
+          : hostBridge?.prepareRedirect?.(server, connectionIntent),
       // Binds the saved call to THIS flow: only its own callback replays it.
       onAuthorizationFlow: ({ digest }) => {
-        setPendingChatScopeStepUpFlowDigest(server.name, digest);
-        setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest);
+        const saved =
+          !options?.continuationId ||
+          setPendingChatScopeStepUpFlowDigest(
+            server.name,
+            digest,
+            options.continuationId,
+          );
+        if (options?.continuationId && !saved)
+          throw new Error("Could not save the pending authorization flow.");
+        if (!options?.continuationId)
+          setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest, options?.directReplay);
       },
     });
   };
   // Synchronous unless there is a credential whose ownership has to be
   // looked up first; a call that used none needs no lookup.
-  const started =
+  const start = () =>
     options?.connectionId && hostBridge?.resolveCredentialBinding
       ? resolveCredentialBinding(server, options.connectionId).then(authorize)
       : authorize(
@@ -488,6 +522,16 @@ export function driveScopeStepUp(
             ? { kind: "owned", credentialId: options.connectionId }
             : { kind: "none" },
         );
+  let started: ReturnType<typeof start>;
+  try {
+    started = start();
+  } catch (error) {
+    started = Promise.reject(error);
+  }
+  const cleanup = () => {
+    if (options?.directReplay) clearPendingDirectScopeStepUpReplay(options.directReplay);
+    else cancelPendingDirectScopeStepUpReplay(server.name);
+  };
   void Promise.resolve(started)
     .then(
       (outcome) => {
@@ -495,11 +539,13 @@ export function driveScopeStepUp(
         // this step-up; left in place it would replay after an unrelated
         // sign-in.
         if (outcome?.reauthorization?.kind !== "redirect") {
-          cancelPendingDirectScopeStepUpReplay(server.name);
+          cleanup();
+          options?.onFailure?.("not_redirected");
         }
       },
       () => {
-        cancelPendingDirectScopeStepUpReplay(server.name);
+        cleanup();
+        options?.onFailure?.("failed");
         // The operation's own error is already surfaced by the caller, so a
         // failed step-up has nothing further to report to the user.
       },
@@ -526,11 +572,13 @@ export function driveScopeStepUpFromChallenge(
   server: ServerWithName | undefined,
   rawChallenge: unknown,
   operation?: ToolCallStepUpOperation,
+  options?: DriveScopeStepUpOptions,
 ): void {
   driveScopeStepUp(
     server,
     parseInsufficientScopeChallenge(rawChallenge),
     operation,
+    options,
   );
 }
 
@@ -545,14 +593,10 @@ export function driveScopeStepUpFromChallenge(
  */
 export async function runWithScopeStepUp<T>(
   server: ServerWithName | undefined,
-  operationKeyOrOperation:
-    | ToolCallStepUpOperation
-    | (() => Promise<T>),
+  operationKeyOrOperation: ToolCallStepUpOperation | (() => Promise<T>),
   maybeOperation?: () => Promise<T>,
   options?: {
-    beforeStepUp?: (
-      challenge: InsufficientScopeChallenge,
-    ) => void;
+    beforeStepUp?: (challenge: InsufficientScopeChallenge) => void;
     /**
      * A mid-session sign-in challenge (an HTTP 401) on this operation. Only
      * an on-screen call passes it, to present a Connect card; a

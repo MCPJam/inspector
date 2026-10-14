@@ -343,5 +343,24 @@ export function captureSentryMessage(
   message: string,
   context: Parameters<typeof Sentry.captureMessage>[1],
 ): void {
+  if (
+    context &&
+    typeof context === "object" &&
+    "tags" in context &&
+    context.tags?.source === "chat_auth_resume"
+  ) {
+    // Recovery can report on the OAuth callback page. Do not attach the URL
+    // or console/network breadcrumbs (which may contain a code or raw state).
+    Sentry.withScope((scope) => {
+      scope.addEventProcessor((event) => ({
+        ...event,
+        request: undefined,
+        breadcrumbs: [],
+        contexts: undefined,
+      }));
+      Sentry.captureMessage(message, context);
+    });
+    return;
+  }
   Sentry.captureMessage(message, context);
 }

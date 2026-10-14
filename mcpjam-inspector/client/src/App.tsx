@@ -247,7 +247,8 @@ import {
   driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
-import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
+import { cancelPendingChatScopeStepUpForCallback } from "./lib/scope-step-up-pending";
+import { authorizationFlowDigest } from "./lib/oauth/flow-digest";
 import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -3112,10 +3113,8 @@ export default function App() {
       )
         return;
       if (errorMessage && callbackContext.serverName) {
-        markPendingChatScopeStepUpCancelled(
-          callbackContext.serverName,
-          errorMessage,
-        );
+        void authorizationFlowDigest(state).then(digest => cancelPendingChatScopeStepUpForCallback(
+          callbackContext.serverName, errorMessage, digest, callbackContext.chatAuthContinuationId));
       }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({

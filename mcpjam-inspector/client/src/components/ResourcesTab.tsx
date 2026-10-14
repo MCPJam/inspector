@@ -54,10 +54,7 @@ import {
 } from "./auth-challenge/AuthChallengeCard";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -297,8 +294,17 @@ export function ResourcesTab({
     setTemplatesServedFromCache(undefined);
   };
 
-  // Fetch resources and templates on mount
+  const resourceScope = `${window.location.pathname.split("/").slice(0, 3).join("/")}:${serverName}`;
+  const resourceScopeRef = useRef(resourceScope);
+  resourceScopeRef.current = resourceScope;
+  const loadedResourceScopeRef = useRef(resourceScope);
+
+  // Refreshing a list must not erase a result restored by OAuth.
   useEffect(() => {
+    if (loadedResourceScopeRef.current !== resourceScope) {
+      loadedResourceScopeRef.current = resourceScope;
+      resetLoadedResourceState();
+    }
     if (!serverConfig || !serverName || !isServerConnected) {
       resetLoadedResourceState();
       return;
@@ -307,7 +313,7 @@ export function ResourcesTab({
     if (!HOSTED_MODE) {
       fetchTemplates();
     }
-  }, [serverConfig, serverName, isServerConnected]);
+  }, [serverConfig, serverName, isServerConnected, resourceScope]);
 
   useEffect(() => {
     if (HOSTED_MODE && activeTab === "templates") {
@@ -330,10 +336,7 @@ export function ResourcesTab({
       setLoadingMore(true);
     } else {
       setFetchingResources(true);
-      setError("");
       setResources([]);
-      setSelectedResource("");
-      setResourceContent(null);
       setNextCursor(undefined);
       // Clear stale provenance at the start of a non-append (re)fetch so a
       // failed/in-flight refresh cannot keep showing the previous badge.
@@ -354,14 +357,6 @@ export function ResourcesTab({
         setResources((prev) => [...prev, ...serverResources]);
       } else {
         setResources(serverResources);
-        if (serverResources.length === 0) {
-          setSelectedResource("");
-          setResourceContent(null);
-        } else if (
-          !serverResources.some((resource) => resource.uri === selectedResource)
-        ) {
-          setResourceContent(null);
-        }
       }
       // The response body is untyped, so a non-string `nextCursor` is not a
       // cursor and ends the listing. A repeated cursor is NOT an ending: the
@@ -391,11 +386,7 @@ export function ResourcesTab({
     }
 
     setFetchingTemplates(true);
-    setTemplateError("");
     setTemplates([]);
-    setSelectedTemplate("");
-    setTemplateOverrides({});
-    setTemplateContent(null);
     // Clear stale provenance at the start of a template (re)fetch so a
     // failed/in-flight refresh cannot keep showing the previous badge.
     setTemplatesServedFromCache(undefined);
@@ -495,9 +486,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -580,9 +569,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -634,6 +621,7 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
+    const replayScope = resourceScope;
     if (descriptor.target === "template") {
       setSelectedTemplate(descriptor.selection ?? descriptor.uri);
       setTemplateLoading(true);
@@ -645,17 +633,23 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
+        if (resourceScopeRef.current !== replayScope) return;
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {
           setResourceContent(data?.content ?? null);
         }
-        resetScopeStepUp(server, {
-          method: "resources/read",
-          operation: descriptor.uri,
-        });
+        resetScopeStepUp(
+          server,
+          {
+            method: "resources/read",
+            operation: descriptor.uri,
+          },
+          descriptor.authAttempt,
+        );
       })
       .catch((error) => {
+        if (resourceScopeRef.current !== replayScope) return;
         const message = `Authorization finished, but the resource could not be replayed: ${
           error instanceof Error ? error.message : String(error)
         }`;
@@ -666,9 +660,11 @@ export function ResourcesTab({
         }
       })
       .finally(() => {
-        setLoading(false);
-        setTemplateLoading(false);
-        clearPendingDirectScopeStepUpReplay();
+        if (resourceScopeRef.current === replayScope) {
+          setLoading(false);
+          setTemplateLoading(false);
+        }
+        clearPendingDirectScopeStepUpReplay(pending);
       });
   }, [isServerConnected, server, serverName]);
 
@@ -844,9 +840,7 @@ export function ResourcesTab({
                     surface: "resources",
                     serverName,
                     uri,
-                    target: templateUriTemplate
-                      ? "template"
-                      : "resource",
+                    target: templateUriTemplate ? "template" : "resource",
                   },
                 }),
             },
@@ -916,13 +910,11 @@ export function ResourcesTab({
           .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
           .map((r) => ({ uri: r.uri, name: r.name })),
         templateCount: templates.length,
-        templates: templates
-          .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
-          .map((t) => ({
-            name: t.name,
-            uriTemplate: t.uriTemplate,
-            parameters: extractTemplateParameters(t.uriTemplate),
-          })),
+        templates: templates.slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS).map((t) => ({
+          name: t.name,
+          uriTemplate: t.uriTemplate,
+          parameters: extractTemplateParameters(t.uriTemplate),
+        })),
         selectedResource: selectedResource || null,
         selectedTemplate: selectedTemplate || null,
         selectedTemplateParameters: templateParams.map((p) => p.name),

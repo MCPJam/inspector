@@ -1,3 +1,4 @@
+import { useChatAuthRecoveryFailures } from "@/lib/chat-auth-recovery";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,7 @@ import {
   type AuthRequiredEvent,
 } from "@/shared/auth-challenge";
 import { isScopeStepUpDataPart } from "@/shared/scope-step-up";
-import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
+import { listPendingChatScopeStepUps, savePendingChatScopeStepUp, markPendingChatScopeStepUpReady, readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
 
 /**
  * Mid-session sign-in in chat (client): the card arrives with no side
@@ -31,7 +32,8 @@ const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(async () => {}),
   stop: vi.fn(),
   addToolApprovalResponse: vi.fn(),
-  getAccessToken: vi.fn(async () => null),
+  getAccessToken: vi.fn(async (): Promise<string | null> => null),
+  user: undefined as { id: string } | undefined,
   hasToken: vi.fn(() => false),
   getToken: vi.fn(() => ""),
   getOpenRouterSelectedModels: vi.fn(() => []),
@@ -78,6 +80,7 @@ const orchestrator = vi.hoisted(() => ({
 vi.mock("@/state/oauth-orchestrator", () => orchestrator);
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
+vi.mock("@/lib/guest-session", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/guest-session")>(), getGuestBearerToken: vi.fn(async () => null) }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [byokModel]),
@@ -140,12 +143,13 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
+  useAuth: () => ({ getAccessToken: mockState.getAccessToken, user: mockState.user }),
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
   useQuery: () => undefined,
+  useQueries: () => ({}),
   useConvex: () => ({ mutation: mockState.convexMutation }),
 }));
 
@@ -184,7 +188,7 @@ const server = {
   retryCount: 0,
   enabled: true,
 };
-const appState = {
+let appState = {
   servers: { orders: server },
   projects: {},
   activeProjectId: "none",
@@ -238,9 +242,73 @@ describe("useChatSession mid-session sign-in", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    server.connectionStatus = "connected";
+    mockState.user = undefined;
+    mockState.getAccessToken.mockReset().mockResolvedValue(null);
+    mockState.sendMessage.mockReset().mockResolvedValue(undefined);
     orchestrator.applyToolCallAuthChallenge.mockResolvedValue({
       kind: "pendingConnect",
     });
+  });
+
+  it("keeps the pending chat when the same member gets a refreshed token", async () => {
+    mockState.user = { id: "member-1" };
+    mockState.getAccessToken.mockResolvedValue("first-token");
+    const { result, rerender } = await renderChatSession();
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    const originalId = result.current.chatSessionId;
+    act(() =>
+      mockState.chatOnData?.({
+        type: AUTH_REQUIRED_DATA_PART_TYPE,
+        data: authRequiredEvent(),
+        transient: true,
+      }),
+    );
+    mockState.setMessages.mockClear();
+    mockState.user = { id: "member-1" };
+    mockState.getAccessToken.mockResolvedValue("refreshed-token");
+    rerender();
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    expect(result.current.chatSessionId).toBe(originalId);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(readPendingChatScopeStepUp()?.chatSessionId).toBe(originalId);
+  });
+
+  it("resets the chat when the signed-in member changes", async () => {
+    mockState.user = { id: "member-1" };
+    mockState.getAccessToken.mockResolvedValue("first-token");
+    const { result, rerender } = await renderChatSession();
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    const originalId = result.current.chatSessionId;
+    mockState.user = { id: "member-2" };
+    // Identity changes must reset even before the token provider updates.
+    mockState.getAccessToken.mockResolvedValue("first-token");
+    rerender();
+    await waitFor(() =>
+      expect(result.current.chatSessionId).not.toBe(originalId),
+    );
+  });
+
+  it("resets the chat when the member signs out", async () => {
+    mockState.user = { id: "member-1" };
+    mockState.getAccessToken.mockResolvedValue("first-token");
+    const { result, rerender } = await renderChatSession();
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    const originalId = result.current.chatSessionId;
+    mockState.user = undefined;
+    mockState.getAccessToken.mockResolvedValue(null);
+    rerender();
+    await waitFor(() =>
+      expect(result.current.chatSessionId).not.toBe(originalId),
+    );
   });
 
   it("shows the card and saves the marker, with no sign-in started", async () => {
@@ -403,4 +471,163 @@ describe("useChatSession mid-session sign-in", () => {
       ).toEqual([expect.objectContaining({ toolCallId: "call-1" })]),
     );
   });
+  it("keeps another model lane's call when a fresh chat shows its first card", async () => {
+    const first = await renderChatSession();
+    const firstOnData = mockState.chatOnData;
+    const second = await renderChatSession();
+    act(() => {
+      firstOnData?.({ type: AUTH_REQUIRED_DATA_PART_TYPE, data: authRequiredEvent(), transient: true });
+      mockState.chatOnData?.({ type: AUTH_REQUIRED_DATA_PART_TYPE, data: authRequiredEvent({ continuationId: "cont-2", toolCallId: "call-2" }), transient: true });
+    });
+    expect(listPendingChatScopeStepUps()).toHaveLength(2);
+    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.chatSessionId).toBe(first.result.current.chatSessionId);
+    expect(readPendingChatScopeStepUp({ continuationId: "cont-2" })?.chatSessionId).toBe(second.result.current.chatSessionId);
+    await waitFor(() => expect(Object.values(useAuthChallengeCardStore.getState().cards)).toHaveLength(2));
+  });
+
+  function unresolvedMessages() {
+    return [{ id: "assistant-1", role: "assistant", parts: [{ type: "tool-orders__list_orders", toolCallId: "call-1", state: "input-available", input: {} }] }];
+  }
+  async function readyResume() {
+    mockState.messages = unresolvedMessages();
+    const hook = await renderChatSession();
+    act(() => {
+      savePendingChatScopeStepUp({ event: authRequiredEvent() as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      markPendingChatScopeStepUpReady("orders", "cont-1");
+    });
+    return hook;
+  }
+  it("resumes once and cleans up only after the tool result arrives", async () => {
+    mockState.sendMessage.mockImplementation(async () => {
+      mockState.messages = [{ id: "assistant-1", role: "assistant", parts: [{ type: "tool-orders__list_orders", toolCallId: "call-1", state: "output-available", input: {}, output: { content: [] } }] }];
+    });
+    await readyResume();
+    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, { body: { scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" } } });
+  });
+  it("shows a lasting failure when resume and cancellation both fail, without looping", async () => {
+    mockState.sendMessage.mockRejectedValue(new Error("connection lost"));
+    await readyResume();
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    await waitFor(() => expect(notices.result.current).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "resume_failed", toolCallId: "call-1" }),
+      expect.objectContaining({ reason: "cancel_failed", toolCallId: "call-1" }),
+    ])));
+    expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined();
+  });
+  it("does not mistake a finished stream with no tool result for successful recovery", async () => {
+    await readyResume();
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    await waitFor(() => expect(notices.result.current.some(item => item.reason === "resume_incomplete")).toBe(true));
+    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a call already claimed before a reload", async () => {
+    sessionStorage.setItem("mcp-scope-step-up-chat-v1", JSON.stringify({
+      version: 1, phase: "resuming", resumeAttempted: true, event: authRequiredEvent(), serverName: "orders",
+      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
+    }));
+    mockState.messages = unresolvedMessages();
+    await renderChatSession();
+    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, { body: { scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" } } });
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    expect(notices.result.current.some(item => item.reason === "resume_interrupted")).toBe(true);
+  });
+
+  it("fails an ambiguous legacy attempt locally without dispatching either request", async () => {
+    sessionStorage.setItem("mcp-scope-step-up-chat-v1", JSON.stringify({
+      version: 1, phase: "resuming", event: authRequiredEvent(), serverName: "orders",
+      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
+    }));
+    mockState.messages = unresolvedMessages();
+    await renderChatSession();
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    await waitFor(() => expect(notices.result.current.some(item => item.recoveryResult === "ambiguous_legacy_attempt")).toBe(true));
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores an abandoned OAuth card after reload", async () => {
+    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
+      version: 1, phase: "awaiting_oauth", event: authRequiredEvent(), serverName: "orders",
+      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(), flowDigest: "old-flow",
+    }] }));
+    mockState.messages = unresolvedMessages();
+    await renderChatSession();
+    await waitFor(() => expect(Object.values(useAuthChallengeCardStore.getState().cards)).toHaveLength(1));
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+  it("expires abandoned sign-in with one cancellation and a durable notice", async () => {
+    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
+      version: 1, phase: "awaiting_oauth", event: authRequiredEvent({ expiresAt: Date.now() - 1 }), serverName: "orders",
+      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now() - 600000,
+    }] }));
+    mockState.messages = unresolvedMessages();
+    await renderChatSession();
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    await waitFor(() => expect(notices.result.current.some(item => item.reason === "expired")).toBe(true));
+    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+  });
+  it("does not send an interrupted cancellation again after reload", async () => {
+    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
+      version: 1, phase: "cancelling", cancelAttempted: true, event: authRequiredEvent(), serverName: "orders",
+      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
+    }] }));
+    mockState.messages = unresolvedMessages();
+    await renderChatSession();
+    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("waits for the original local server before claiming the resume", async () => {
+    server.connectionStatus = "connecting";
+    mockState.messages = unresolvedMessages();
+    const hook = await renderChatSession();
+    act(() => {
+      savePendingChatScopeStepUp({ event: authRequiredEvent() as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      markPendingChatScopeStepUpReady("orders", "cont-1");
+    });
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.phase).toBe("ready");
+    server.connectionStatus = "connected";
+    appState = { servers: { orders: server }, projects: {}, activeProjectId: "none" } as never;
+    hook.rerender();
+    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalled());
+  });
+
+  it("expires a ready call while its local server is still disconnected", async () => {
+    server.connectionStatus = "connecting";
+    mockState.messages = unresolvedMessages();
+    const hook = await renderChatSession();
+    const now = Date.now();
+    act(() => {
+      savePendingChatScopeStepUp({ event: authRequiredEvent({ expiresAt: now + 1000 }) as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      markPendingChatScopeStepUpReady("orders", "cont-1");
+    });
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 2000);
+    try {
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledTimes(1));
+      expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
+        body: { scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" } },
+      });
+    } finally { clock.mockRestore(); }
+  });
+
+  it("keeps the confirmation before retrying a call that may change data", async () => {
+    mockState.messages = unresolvedMessages();
+    const hook = await renderChatSession();
+    act(() => {
+      savePendingChatScopeStepUp({ event: authRequiredEvent({ readOnly: false }) as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      markPendingChatScopeStepUpReady("orders", "cont-1");
+    });
+    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.phase).toBe("ready");
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
 });

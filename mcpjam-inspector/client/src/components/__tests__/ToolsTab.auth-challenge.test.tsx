@@ -1,3 +1,4 @@
+import { markPendingDirectScopeStepUpReplayReady } from "@/lib/scope-step-up-replay";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
@@ -306,9 +307,119 @@ describe("ToolsTab mid-session sign-in", () => {
       expect(mockResetAuthChallenge).toHaveBeenCalledWith(server, {
         method: "tools/call",
         operation: "list_orders",
-      }),
+      }, undefined),
     );
     expect(mockResetToolCallStepUp).toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps replay success/error visible through config refresh (error=%s)", async (failed) => {
+    sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
+      version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", ...{ method: "tools/call", operation: "list_orders" } },
+      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "list_orders", parameters: {} },
+      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    }));
+    mockListTools.mockResolvedValue({ tools: [{ name: "list_orders", inputSchema: { type: "object", properties: {} } }] });
+    if (failed) mockExecuteToolApi.mockRejectedValue(new Error("replayed-orders-failure"));
+    else mockExecuteToolApi.mockResolvedValue({ status: "completed", result: { content: [{ type: "text", text: "replayed-orders" }] } });
+    const view = render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={server} />);
+    await waitFor(() => expect(mockExecuteToolApi).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText("No selection")).not.toBeInTheDocument());
+    view.rerender(<ToolsTab serverConfig={{ ...serverConfig }} serverName="orders" server={{ ...server }} />);
+    await waitFor(() => expect(mockListTools.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain(failed ? "replayed-orders-failure" : "replayed-orders");
+  });
+
+  it.each([false, true])("restores a second flow and bounds refusal (refuses=%s)", async (refuses) => {
+    const oauthServer = { ...server, useOAuth: true };
+    sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
+      version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },
+      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "cancel_order", parameters: { id: "42" } },
+      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
+      reason: "authorization_required", requiresConfirmation: true,
+    }));
+    mockListTools.mockResolvedValue({ tools: [{ name: "cancel_order", inputSchema: { type: "object", properties: { id: { type: "string" } } } }] });
+    initiateOAuthMock.mockImplementation(async (options) => {
+      await options.onAuthorizationRedirect?.({ state: "second-flow" });
+      return { success: true };
+    });
+    mockExecuteToolApi.mockResolvedValue({ error: "Needs write permission", insufficientScope: { requiredScope: "orders:write" } });
+    const view = render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={oauthServer} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(initiateOAuthMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const pending = JSON.parse(sessionStorage.getItem("mcp-scope-step-up-replay-v1") ?? "null");
+      expect(pending?.phase).toBe("awaiting_oauth");
+      expect(pending?.descriptor.parameters).toEqual({ id: "42" });
+      expect(pending?.requiresConfirmation).toBe(true);
+      expect(pending?.flowDigest).toBeTruthy();
+    });
+    const pending = JSON.parse(sessionStorage.getItem("mcp-scope-step-up-replay-v1")!);
+    view.unmount();
+    markPendingDirectScopeStepUpReplayReady("orders", pending.flowDigest);
+    mockExecuteToolApi.mockResolvedValue(refuses
+      ? { error: "Still needs write permission", insufficientScope: { requiredScope: "orders:write" } }
+      : { status: "completed", result: { content: [{ type: "text", text: "write completed once" }] } });
+    const expectedText = refuses ? "MCPJam couldn’t continue this call after sign-in" : "write completed once";
+    const restored = render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={oauthServer} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(document.body.textContent).toContain(expectedText));
+    expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
+    expect(mockExecuteToolApi).toHaveBeenLastCalledWith("orders", "cancel_order", { id: "42" }, undefined, undefined);
+    restored.rerender(<ToolsTab serverConfig={{ ...serverConfig }} serverName="orders" server={{ ...oauthServer }} />);
+    await waitFor(() => expect(mockListTools.mock.calls.length).toBeGreaterThan(2));
+    expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    expect(document.body.textContent).toContain(expectedText);
+    expect(sessionStorage.getItem("mcp-scope-step-up-replay-v1")).toBeNull();
+    expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("stays on the tool when the next save fails (throws=%s)", async (throws) => {
+    sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
+      version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },
+      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "cancel_order", parameters: { id: "42" } },
+      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    }));
+    mockListTools.mockResolvedValue({ tools: [{ name: "cancel_order", inputSchema: { type: "object", properties: { id: { type: "string" } } } }] });
+    let restoreStorage = () => {};
+    mockExecuteToolApi.mockImplementation(async () => {
+      const original = Storage.prototype.setItem;
+      const storageSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+        if (key === "mcp-scope-step-up-replay-v1") {
+          if (throws) throw new Error("quota");
+          return;
+        }
+        return original.call(this, key, value);
+      });
+      restoreStorage = () => storageSpy.mockRestore();
+      return { error: "Needs write permission", insufficientScope: { requiredScope: "orders:write" } };
+    });
+    try {
+      render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={{ ...server, useOAuth: true }} />);
+      await waitFor(() => expect(document.body.textContent).toContain("MCPJam couldn’t save this call for sign-in"));
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+      expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    } finally { restoreStorage(); }
+  });
+
+  it("keeps inputs and shows an error when confirmation expires before the click", async () => {
+    const now = Date.now();
+    sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
+      version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },
+      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "cancel_order", parameters: { id: "42" } },
+      returnPath: "/", createdAt: now, expiresAt: now + 60000, requiresConfirmation: true,
+    }));
+    mockListTools.mockResolvedValue({ tools: [{ name: "cancel_order", inputSchema: { type: "object", properties: { id: { type: "string" } } } }] });
+    render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={server} />);
+    const button = await screen.findByRole("button", { name: "Run again" });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61000);
+    try {
+      fireEvent.click(button);
+      await waitFor(() => expect(document.body.textContent).toContain("MCPJam couldn’t continue this call after sign-in"));
+      expect(mockExecuteToolApi).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue("42")).toBeInTheDocument();
+    } finally { clock.mockRestore(); }
   });
 
   it("asks before re-running a write tool after sign-in", async () => {

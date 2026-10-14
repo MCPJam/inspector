@@ -26,6 +26,7 @@ import {
   claimPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
+  setPendingDirectScopeStepUpReplayFlowDigest,
   settlePendingDirectScopeStepUpReplayAfterCallback,
 } from "../scope-step-up-replay";
 import type { ServerWithName } from "@/state/app-types";
@@ -121,13 +122,23 @@ describe("hosted step-up redirect", () => {
     const prepareRedirect = vi.fn();
     unregister = registerScopeStepUpHostBridge({ prepareRedirect });
     saveChatStepUp();
-    driveScopeStepUp(server, { requiredScope: "orders:read" });
+    driveScopeStepUp(server, { requiredScope: "orders:read" }, undefined, { continuationId: readPendingChatScopeStepUp()!.event.continuationId });
     await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
     // A call that used no credential: the classic first-credential flow.
-    expect(prepareRedirect).toHaveBeenCalledWith(server, undefined);
+    expect(prepareRedirect).toHaveBeenCalledWith(server, undefined, readPendingChatScopeStepUp()!.event.continuationId);
     expect(readPendingChatScopeStepUp()?.credentialBinding).toEqual({
       kind: "none",
     });
+  });
+
+  it("does not bind a direct sign-in to another pending chat call", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({ prepareRedirect });
+    saveChatStepUp();
+    driveScopeStepUp(server, { requiredScope: "orders:read" });
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    expect(readPendingChatScopeStepUp()?.credentialBinding).toBeUndefined();
+    expect(readPendingChatScopeStepUp()?.flowDigest).toBeUndefined();
   });
 
   it("reauthorizes an owned credential in place", async () => {
@@ -230,8 +241,9 @@ describe("settling the pending stores on the callback", () => {
         },
       });
     save();
+    setPendingDirectScopeStepUpReplayFlowDigest("orders", "flow");
     expect(
-      settlePendingDirectScopeStepUpReplayAfterCallback("orders", "c9"),
+      settlePendingDirectScopeStepUpReplayAfterCallback("orders", "c9", "flow"),
     ).toBeUndefined();
     expect(
       claimPendingDirectScopeStepUpReplay({
@@ -241,12 +253,13 @@ describe("settling the pending stores on the callback", () => {
     ).toBeDefined();
 
     save();
+    setPendingDirectScopeStepUpReplayFlowDigest("orders", "flow");
     setPendingDirectScopeStepUpReplayCredentialBinding("orders", {
       kind: "shared",
       credentialId: "c1",
     });
     expect(
-      settlePendingDirectScopeStepUpReplayAfterCallback("orders", "mine"),
+      settlePendingDirectScopeStepUpReplayAfterCallback("orders", "mine", "flow"),
     ).toBe(SIGNED_IN_WITH_OWN_ACCOUNT_MESSAGE);
     expect(sessionStorage.getItem("mcp-scope-step-up-replay-v1")).toBeNull();
   });

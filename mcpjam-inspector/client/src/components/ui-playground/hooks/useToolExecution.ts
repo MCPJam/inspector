@@ -6,6 +6,7 @@
  * execution state for chat injection.
  */
 
+import type { AuthChallengeAttempt } from "@/state/oauth-orchestrator";
 import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
@@ -92,8 +93,7 @@ export interface UseToolExecutionOptions {
  * with a synthetic alias.
  */
 export type SelectedToolRef =
-  | { kind: "server"; name: string }
-  | { kind: "app"; alias: string };
+  { kind: "server"; name: string } | { kind: "app"; alias: string };
 
 /**
  * Classify a flat tool handle (server name or app alias) by consulting the
@@ -104,7 +104,7 @@ export type SelectedToolRef =
  * current classification once, not a reactive subscription.
  */
 export function classifySelectedTool(
-  name: string | null
+  name: string | null,
 ): SelectedToolRef | null {
   if (!name) return null;
   const aliasEntry = useAppToolsRegistry.getState().aliases.get(name);
@@ -120,10 +120,10 @@ export interface UseToolExecutionReturn {
   pendingExecution: PendingExecution | null;
   clearPendingExecution: () => void;
   executeTool: (
-    options?: ExecuteToolInvocationOptions
+    options?: ExecuteToolInvocationOptions,
   ) => Promise<ExecuteToolInvocationResult>;
   injectToolResult: (
-    options: InjectToolResultOptions
+    options: InjectToolResultOptions,
   ) => Promise<CompletedToolInvocationResult>;
 }
 
@@ -139,6 +139,7 @@ export interface ExecuteToolInvocationOptions {
   serverName?: string;
   /** Internal: the one post-OAuth replay must never start another redirect. */
   scopeStepUpReplay?: boolean;
+  authAttempt?: AuthChallengeAttempt;
   /**
    * The call comes from an inspector command or an agent, not a click. It
    * never offers sign-in: a challenge is reported to the caller instead.
@@ -188,7 +189,7 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
 
 function resolveDirectModelOutputForToolResult(
   result: unknown,
-  policy: McpModelVisibleToolResultPolicy
+  policy: McpModelVisibleToolResultPolicy,
 ): unknown | undefined {
   try {
     return mcpCallToolResultToModelOutput(result as never, policy);
@@ -200,7 +201,7 @@ function resolveDirectModelOutputForToolResult(
 async function resolveModelOutputForToolResult(
   result: unknown,
   serverId: string | undefined,
-  policy: McpModelVisibleToolResultPolicy
+  policy: McpModelVisibleToolResultPolicy,
 ): Promise<unknown | undefined> {
   if (serverId) {
     let linkedReadFailed = false;
@@ -218,7 +219,7 @@ async function resolveModelOutputForToolResult(
                 throw error;
               }
             },
-          }
+          },
         );
       return linkedReadFailed
         ? resolveDirectModelOutputForToolResult(result, policy)
@@ -257,13 +258,21 @@ export function useToolExecution({
   // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
   const sharedAppState = useOptionalSharedAppState();
   const resetStepUpOnSuccess = useCallback(
-    (name: string | undefined, toolName: string) => {
+    (
+      name: string | undefined,
+      toolName: string,
+      attempt?: AuthChallengeAttempt,
+    ) => {
       const liveServer = name ? sharedAppState?.servers[name] : undefined;
-      resetScopeStepUp(liveServer, {
-        method: "tools/call",
-        operation: toolName,
-      });
-      if (liveServer) clearAuthChallengeCards(liveServer.name);
+      resetScopeStepUp(
+        liveServer,
+        {
+          method: "tools/call",
+          operation: toolName,
+        },
+        attempt,
+      );
+      if (liveServer) clearAuthChallengeCards(liveServer.name, attempt);
     },
     [sharedAppState],
   );
@@ -284,8 +293,7 @@ export function useToolExecution({
         return false;
       }
       const annotations = tools?.[toolName]?.annotations as
-        | { readOnlyHint?: unknown }
-        | undefined;
+        { readOnlyHint?: unknown } | undefined;
       void presentAuthChallenge({
         server: sharedAppState?.servers[name],
         signal,
@@ -323,15 +331,10 @@ export function useToolExecution({
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
       const replayServer = name ? sharedAppState?.servers[name] : undefined;
-      if (
-        name &&
-        isActionableStepUpChallenge(challenge)
-      ) {
+      if (name && isActionableStepUpChallenge(challenge)) {
         savePendingDirectScopeStepUpReplay({
           operation: {
-            resourceUrl: String(
-              (replayServer?.config as any)?.url ?? name,
-            ),
+            resourceUrl: String((replayServer?.config as any)?.url ?? name),
             method: "tools/call",
             operation: toolName,
           },
@@ -345,16 +348,16 @@ export function useToolExecution({
           // A call that may change something asks "Run again?" after the
           // re-authorization instead of replaying its saved arguments.
           requiresConfirmation:
-            (tools?.[toolName]?.annotations as
-              | { readOnlyHint?: unknown }
-              | undefined)?.readOnlyHint !== true,
+            (
+              tools?.[toolName]?.annotations as
+                { readOnlyHint?: unknown } | undefined
+            )?.readOnlyHint !== true,
         });
       }
-      driveScopeStepUpFromChallenge(
-        replayServer,
-        challenge,
-        { method: "tools/call", operation: toolName },
-      );
+      driveScopeStepUpFromChallenge(replayServer, challenge, {
+        method: "tools/call",
+        operation: toolName,
+      });
     },
     [sharedAppState, tools],
   );
@@ -366,7 +369,7 @@ export function useToolExecution({
       result: unknown,
       toolCallId?: string,
       serverId?: string,
-      modelOutput?: unknown
+      modelOutput?: unknown,
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -395,12 +398,12 @@ export function useToolExecution({
         ...(toolCallId ? { toolCallId } : {}),
       });
     },
-    [setToolOutput, setToolResponseMetadata, toolsMetadata]
+    [setToolOutput, setToolResponseMetadata, toolsMetadata],
   );
 
   const executeTool = useCallback(
     async (
-      options?: ExecuteToolInvocationOptions
+      options?: ExecuteToolInvocationOptions,
     ): Promise<ExecuteToolInvocationResult> => {
       const effectiveToolName = options?.toolName ?? selectedTool;
       const effectiveFormFields = options?.formFields ?? formFields;
@@ -447,7 +450,7 @@ export function useToolExecution({
         const response = await executeToolApi(
           effectiveServerName,
           effectiveToolName,
-          params
+          params,
         );
 
         if ("error" in response) {
@@ -518,7 +521,7 @@ export function useToolExecution({
         const modelOutput = await resolveModelOutputForToolResult(
           result,
           effectiveServerName,
-          { modelVisibleMcpToolResults }
+          { modelVisibleMcpToolResults },
         );
         storeCompletedToolResult(
           effectiveToolName,
@@ -526,7 +529,7 @@ export function useToolExecution({
           result,
           undefined,
           effectiveServerName,
-          modelOutput
+          modelOutput,
         );
 
         // Log successful tool execution
@@ -550,7 +553,11 @@ export function useToolExecution({
             );
           }
         } else {
-          resetStepUpOnSuccess(effectiveServerName, effectiveToolName);
+          resetStepUpOnSuccess(
+            effectiveServerName,
+            effectiveToolName,
+            options?.authAttempt,
+          );
         }
 
         return {
@@ -599,7 +606,7 @@ export function useToolExecution({
       driveStepUpFromResponse,
       presentAuthChallengeFromResponse,
       resetStepUpOnSuccess,
-    ]
+    ],
   );
 
   useEffect(() => {
@@ -634,14 +641,15 @@ export function useToolExecution({
               toolName: descriptor.toolName,
               parameters: descriptor.parameters,
               scopeStepUpReplay: true,
+              authAttempt: descriptor.authAttempt,
             }).finally(() => {
-              clearPendingDirectScopeStepUpReplay();
+              clearPendingDirectScopeStepUpReplay(claimed);
             });
           },
         },
         cancel: {
           label: "Not now",
-          onClick: () => clearPendingDirectScopeStepUpReplay(),
+          onClick: () => clearPendingDirectScopeStepUpReplay(waiting),
         },
       });
       return;
@@ -657,8 +665,9 @@ export function useToolExecution({
       toolName: descriptor.toolName,
       parameters: descriptor.parameters,
       scopeStepUpReplay: true,
+      authAttempt: descriptor.authAttempt,
     }).finally(() => {
-      clearPendingDirectScopeStepUpReplay();
+      clearPendingDirectScopeStepUpReplay(pending);
     });
   }, [executeTool, serverName, sharedAppState]);
 
@@ -673,7 +682,7 @@ export function useToolExecution({
       const modelOutput = await resolveModelOutputForToolResult(
         result,
         undefined,
-        { modelVisibleMcpToolResults }
+        { modelVisibleMcpToolResults },
       );
       storeCompletedToolResult(
         toolName,
@@ -681,7 +690,7 @@ export function useToolExecution({
         result,
         toolCallId,
         undefined,
-        modelOutput
+        modelOutput,
       );
 
       return {
@@ -692,11 +701,7 @@ export function useToolExecution({
         response: { status: "completed", result },
       };
     },
-    [
-      setExecutionError,
-      storeCompletedToolResult,
-      modelVisibleMcpToolResults,
-    ]
+    [setExecutionError, storeCompletedToolResult, modelVisibleMcpToolResults],
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
@@ -731,7 +736,7 @@ interface ExecuteAppToolArgs {
     result: unknown,
     toolCallId?: string,
     serverId?: string,
-    modelOutput?: unknown
+    modelOutput?: unknown,
   ) => void;
   modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
 }
@@ -807,7 +812,7 @@ async function executeAppTool({
     const modelOutput = await resolveModelOutputForToolResult(
       raw,
       entry.instance.serverId,
-      { modelVisibleMcpToolResults }
+      { modelVisibleMcpToolResults },
     );
 
     // Store the full untouched CallToolResult — the playground inspector
@@ -819,7 +824,7 @@ async function executeAppTool({
       raw,
       undefined,
       entry.instance.serverId,
-      modelOutput
+      modelOutput,
     );
 
     recordAppToolInvocation(
@@ -833,7 +838,7 @@ async function executeAppTool({
         input: params,
         raw,
       },
-      useTrafficLogStore.getState().addLog
+      useTrafficLogStore.getState().addLog,
     );
 
     track("app_builder_tool_executed", {

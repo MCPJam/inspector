@@ -1,3 +1,8 @@
+import {
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  recordChatAuthRecoveryFailure,
+} from "@/lib/chat-auth-recovery";
+import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
 /**
  * Mid-session sign-in ("lazy authentication") lifecycle on direct surfaces:
  * the one place that decides what a sign-in challenge on a Tools, Playground,
@@ -27,6 +32,7 @@ import {
   type ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
 import {
+  type AuthChallengeAttempt,
   applyToolCallAuthChallenge,
   hasAuthChallengeAwaitingCallback,
   markAuthChallengeSignedIn,
@@ -34,7 +40,8 @@ import {
 } from "@/state/oauth-orchestrator";
 import type { ServerWithName } from "@/state/app-types";
 import {
-  cancelPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  type PendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
@@ -91,7 +98,9 @@ export interface AuthChallengeCard {
   /** Hosted: the credential the failed call used. */
   connectionId?: string;
   /** Chat: called once the click is accepted, before the redirect. */
-  onConnect?: () => void;
+  onConnect?: () => PendingWriteResult;
+  continuationId?: string;
+  attempt?: AuthChallengeAttempt;
   /** Chat: the suspended tool call this card belongs to. */
   toolCallId?: string;
   /** Chat: the server entry resolved when the part arrived. */
@@ -266,6 +275,25 @@ export function authChallengeErrorMessage(serverName: string): string {
  * Decide what a sign-in challenge on one call becomes. No side effects beyond
  * showing a card: nothing is saved and nothing navigates.
  */
+function callAttempt(
+  server: ServerWithName,
+  surface: string,
+  callId: string,
+  projectId?: string | null,
+  chatSessionId?: string,
+): AuthChallengeAttempt {
+  return {
+    projectId:
+      projectId ??
+      window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ??
+      "local",
+    serverId: server.name,
+    surface,
+    callId,
+    ...(chatSessionId ? { chatSessionId } : {}),
+  };
+}
+
 export async function presentAuthChallenge(input: {
   server: ServerWithName | undefined;
   signal: AuthChallengeSignal | undefined;
@@ -277,7 +305,8 @@ export async function presentAuthChallenge(input: {
   schemes?: ToolSecuritySchemeResolution;
   replay?: DirectScopeStepUpReplayDescriptor;
   connectionId?: string;
-  onConnect?: () => void;
+  onConnect?: () => PendingWriteResult;
+  continuationId?: string;
 }): Promise<AuthChallengePresentation> {
   const { server, signal } = input;
   if (!server || !signal || signal.source === "http_403_insufficient_scope") {
@@ -303,9 +332,14 @@ export async function presentAuthChallenge(input: {
     };
   }
 
+  const attempt =
+    input.replay?.authAttempt ??
+    callAttempt(server, input.surface, crypto.randomUUID());
+  if (input.replay) input.replay.authAttempt = attempt;
   const origin = mcpServerOrigin(server);
   const outcome = await applyToolCallAuthChallenge(server, signal, {
     operation: input.operation,
+    attempt,
     confirmed: false,
   });
   if (outcome.kind === "blocked") {
@@ -334,7 +368,8 @@ export async function presentAuthChallenge(input: {
   }
 
   const card: AuthChallengeCard = {
-    key: cardKey(server.name, origin),
+    key: JSON.stringify(attempt),
+    attempt,
     serverName: server.name,
     serverOrigin: origin,
     surface: input.surface,
@@ -349,6 +384,7 @@ export async function presentAuthChallenge(input: {
       : {}),
     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     ...(input.onConnect ? { onConnect: input.onConnect } : {}),
+    ...(input.continuationId ? { continuationId: input.continuationId } : {}),
   };
   useAuthChallengeCardStore.getState().show(card);
   track("auth_challenge_card_shown", {
@@ -391,6 +427,18 @@ export async function connectAuthChallenge(
     action: card.action,
   });
 
+  if (card.onConnect) {
+    const prepared = card.onConnect();
+    if (!prepared.ok)
+      return {
+        kind: "failed",
+        message:
+          prepared.reason === "storage"
+            ? "MCPJam couldn’t save this call for sign-in. Please try again."
+            : CHAT_AUTH_RECOVERY_MESSAGE,
+      };
+  }
+
   // The binding is resolved before anything is saved: a hosted credential
   // that is not this user's is never replaced, and its call is not replayed.
   const bridge = getScopeStepUpHostBridge();
@@ -415,29 +463,47 @@ export async function connectAuthChallenge(
   );
   // A sign-in that never redirected has no callback to settle the saved call,
   // which would otherwise wait for an unrelated later sign-in.
+  let pendingReplay: PendingDirectScopeStepUpReplay | undefined;
   const dropSavedReplay = () => {
-    if (savedReplay) cancelPendingDirectScopeStepUpReplay(server.name);
+    if (pendingReplay) clearPendingDirectScopeStepUpReplay(pendingReplay);
   };
   if (savedReplay && card.replay) {
-    savePendingDirectScopeStepUpReplay({
-      operation: {
-        resourceUrl: String(
-          (server.config as { url?: unknown })?.url ?? server.name,
-        ),
-        method: card.operation.method,
-        operation: card.operation.operation,
-      },
-      descriptor: card.replay,
-      reason: "authorization_required",
-      requiresConfirmation: !card.readOnly,
-    });
-    setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding);
+    try {
+      pendingReplay = savePendingDirectScopeStepUpReplay({
+        operation: {
+          resourceUrl: String(
+            (server.config as { url?: unknown })?.url ?? server.name,
+          ),
+          method: card.operation.method,
+          operation: card.operation.operation,
+        },
+        descriptor: card.replay,
+        reason: "authorization_required",
+        requiresConfirmation: !card.readOnly,
+      });
+      setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding, pendingReplay);
+    } catch {
+      dropSavedReplay();
+      recordChatAuthRecoveryFailure("save_failed", {
+        toolCallId: card.attempt?.callId,
+        projectId: card.attempt?.projectId,
+        serverName: server.name,
+        storageOutcome: "failed",
+      });
+      return { kind: "failed", message: "MCPJam couldn’t save this call for sign-in. Please try again." };
+    }
   }
-  card.onConnect?.();
   // The chat marker (moved to `awaiting_oauth` by `onConnect`) records the
   // same binding, so its callback settles onto the right credential too.
-  setPendingChatScopeStepUpCredentialBinding(server.name, binding);
-  useAuthChallengeCardStore.getState().remove(card.key);
+  const bound =
+    !card.continuationId ||
+    setPendingChatScopeStepUpCredentialBinding(
+      server.name,
+      binding,
+      card.continuationId,
+    );
+  if (card.continuationId && !bound)
+    return { kind: "failed", message: CHAT_AUTH_RECOVERY_MESSAGE };
   // A chat redirect waits for the streaming turn to end and persist: leaving
   // mid-stream would lose the transcript holding the suspended tool call.
   if (card.surface === "chat") await whenChatTurnsSettle();
@@ -451,12 +517,29 @@ export async function connectAuthChallenge(
       (await bridge?.hasExistingGrant?.(server).catch(() => false)) === true;
     const outcome = await applyToolCallAuthChallenge(server, card.signal, {
       operation: card.operation,
+      attempt: card.attempt,
       confirmed: true,
       existingGrant,
-      beforeRedirect: () => bridge?.prepareRedirect?.(server, connectionIntent),
+      beforeRedirect: () =>
+        card.continuationId
+          ? bridge?.prepareRedirect?.(
+              server,
+              connectionIntent,
+              card.continuationId,
+            )
+          : bridge?.prepareRedirect?.(server, connectionIntent),
       onAuthorizationFlow: ({ digest }) => {
-        setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest);
-        setPendingChatScopeStepUpFlowDigest(server.name, digest);
+        if (savedReplay)
+          setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest, pendingReplay);
+        const saved =
+          !card.continuationId ||
+          setPendingChatScopeStepUpFlowDigest(
+            server.name,
+            digest,
+            card.continuationId,
+          );
+        if (card.continuationId && !saved)
+          throw new Error(CHAT_AUTH_RECOVERY_MESSAGE);
       },
     });
     if (
@@ -479,6 +562,7 @@ export async function connectAuthChallenge(
       });
       return { kind: "failed", message: reauthorization.error };
     }
+    useAuthChallengeCardStore.getState().remove(card.key);
     return expired ? { kind: "expired" } : { kind: "started" };
   } catch (error) {
     dropSavedReplay();
@@ -505,11 +589,24 @@ export function dismissAuthChallenge(card: AuthChallengeCard): void {
   });
 }
 
-/** Drop a server's card without remembering anything (the call succeeded). */
-export function clearAuthChallengeCards(serverName: string): void {
+/** Successful recovery only clears the card for that exact call. */
+export function clearAuthChallengeCards(
+  serverName: string,
+  attempt?: AuthChallengeAttempt,
+): void {
+  if (!attempt) return;
   const { cards, remove } = useAuthChallengeCardStore.getState();
   for (const card of Object.values(cards)) {
-    if (card.serverName === serverName) remove(card.key);
+    if (
+      card.serverName === serverName &&
+      card.attempt &&
+      card.attempt.projectId === attempt.projectId &&
+      card.attempt.serverId === attempt.serverId &&
+      card.attempt.surface === attempt.surface &&
+      card.attempt.callId === attempt.callId &&
+      card.attempt.chatSessionId === attempt.chatSessionId
+    )
+      remove(card.key);
   }
 }
 
@@ -525,7 +622,11 @@ export function clearAuthChallengeCards(serverName: string): void {
  */
 export async function settleSignInCallback(
   serverName: string,
-  callback: { state?: string | null; credentialId?: string },
+  callback: {
+    state?: string | null;
+    credentialId?: string;
+    continuationId?: string;
+  },
 ): Promise<string | undefined> {
   // Compared by digest: the saved calls recorded the flow's digest, never its
   // `state`.
@@ -541,16 +642,20 @@ export async function settleSignInCallback(
     clearAuthChallengeDismissed(serverName);
     track("auth_challenge_completed", { location: "oauth_callback" });
   }
-  settlePendingChatScopeStepUpAfterCallback(
+  const chatSettlement = settlePendingChatScopeStepUpAfterCallback(
+    serverName,
+    callback.credentialId,
+    digest,
+    callback.continuationId,
+  );
+  const directMessage = settlePendingDirectScopeStepUpReplayAfterCallback(
     serverName,
     callback.credentialId,
     digest,
   );
-  return settlePendingDirectScopeStepUpReplayAfterCallback(
-    serverName,
-    callback.credentialId,
-    digest,
-  );
+  return chatSettlement.kind === "failed"
+    ? chatSettlement.message
+    : directMessage;
 }
 
 /** A callback for `serverName` failed; record it if a sign-in was waiting. */
@@ -595,7 +700,10 @@ export const useAuthChallengeNoticeStore = create<AuthChallengeNoticeState>(
 export async function presentChatAuthRequired(input: {
   server: ServerWithName | undefined;
   event: AuthRequiredEvent;
-  onConnect?: () => void;
+  projectId?: string | null;
+  chatSessionId?: string;
+  onConnect?: () => PendingWriteResult;
+  continuationId?: string;
 }): Promise<AuthChallengePresentation> {
   const { server, event } = input;
   if (!server) return { kind: "ignored" };
@@ -616,7 +724,15 @@ export async function presentChatAuthRequired(input: {
       hasErrorParams: false,
     },
   };
+  const attempt = callAttempt(
+    server,
+    "chat",
+    event.continuationId ?? event.toolCallId,
+    input.projectId,
+    input.chatSessionId,
+  );
   const outcome = await applyToolCallAuthChallenge(server, signal, {
+    attempt,
     operation: event.operation,
     confirmed: false,
   });
@@ -639,7 +755,8 @@ export async function presentChatAuthRequired(input: {
     };
   }
   const card: AuthChallengeCard = {
-    key: cardKey(server.name, origin),
+    key: JSON.stringify(attempt),
+    attempt,
     serverName: server.name,
     serverOrigin: origin,
     surface: "chat",
@@ -656,6 +773,7 @@ export async function presentChatAuthRequired(input: {
     server,
     ...(event.connectionId ? { connectionId: event.connectionId } : {}),
     ...(input.onConnect ? { onConnect: input.onConnect } : {}),
+    ...(input.continuationId ? { continuationId: input.continuationId } : {}),
   };
   useAuthChallengeCardStore.getState().show(card);
   track("auth_challenge_card_shown", {

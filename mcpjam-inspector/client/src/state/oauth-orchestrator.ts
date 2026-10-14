@@ -56,12 +56,13 @@ export type OAuthReauthRequired = {
   normalized: NormalizedError;
   oauthTrace?: OAuthTrace;
 };
-export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
+export type OAuthError = {
+  kind: "error";
+  error: string;
+  oauthTrace?: OAuthTrace;
+};
 export type OAuthResult =
-  | OAuthReady
-  | OAuthRedirect
-  | OAuthReauthRequired
-  | OAuthError;
+  OAuthReady | OAuthRedirect | OAuthReauthRequired | OAuthError;
 
 function buildOAuthReauthRequired(
   serverName: string,
@@ -85,9 +86,7 @@ function buildOAuthReauthRequired(
 }
 
 function parseOAuthScopes(scopes?: string | string[]): string[] | undefined {
-  const parsed = Array.isArray(scopes)
-    ? scopes
-    : scopes?.split(/[,\s]+/);
+  const parsed = Array.isArray(scopes) ? scopes : scopes?.split(/[,\s]+/);
   const normalized = parsed?.map((scope) => scope.trim()).filter(Boolean);
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
@@ -143,7 +142,9 @@ function readStoredClientInfo(serverName: string): {
   }
 }
 
-function normalizeHeaders(headers: unknown): Record<string, string> | undefined {
+function normalizeHeaders(
+  headers: unknown,
+): Record<string, string> | undefined {
   if (!headers) return undefined;
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
@@ -332,7 +333,9 @@ export async function ensureAuthorizedForReconnect(
      */
     forceInteractiveFlow?: boolean;
     /** See `MCPOAuthOptions.onAuthorizationRedirect`. */
-    onAuthorizationRedirect?: (flow: { state?: string }) => void | Promise<void>;
+    onAuthorizationRedirect?: (flow: {
+      state?: string;
+    }) => void | Promise<void>;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -702,12 +705,7 @@ export function resolveInsufficientScopeStepUp(
     // a subsequent step-up unions from the widened base, and record the
     // attempt so the next cross-request challenge is bounded.
     persistRequestedScopes(serverName, issuer, scopes);
-    writeStepUpAttempts(
-      serverName,
-      issuer,
-      attempt + 1,
-      input.operationKey,
-    );
+    writeStepUpAttempts(serverName, issuer, attempt + 1, input.operationKey);
   }
 
   return { action, scopes, attempt };
@@ -776,9 +774,7 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
   const fromConfig = (server.config as any)?.url?.toString?.();
   if (fromConfig) return fromConfig;
   try {
-    return (
-      localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined
-    );
+    return localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined;
   } catch {
     return undefined;
   }
@@ -814,9 +810,7 @@ function validResourceMetadataUrlHint(
   return undefined;
 }
 
-function readOriginalOAuthScopes(
-  server: ServerWithName,
-): string[] | undefined {
+function readOriginalOAuthScopes(server: ServerWithName): string[] | undefined {
   // Mirror buildReconnectOAuthOptions' scope precedence: the flow profile's
   // scopes, else the stored OAuth config's scopes. These are the scopes the
   // ORIGINAL grant requested — the base the step-up union must not drop.
@@ -979,12 +973,7 @@ export async function applyToolCallStepUp(
       onAuthorizationRedirect: flowDigestHook(options?.onAuthorizationFlow),
     });
   } catch (error) {
-    writeStepUpAttempts(
-      server.name,
-      issuer,
-      decision.attempt,
-      operationKey,
-    );
+    writeStepUpAttempts(server.name, issuer, decision.attempt, operationKey);
     writePendingStepUp(server.name, issuer, false, operationKey);
     throw error;
   }
@@ -1010,12 +999,7 @@ export async function applyToolCallStepUp(
     reauthorization.kind === "error" ||
     reauthorization.kind === "reauth_required"
   ) {
-    writeStepUpAttempts(
-      server.name,
-      issuer,
-      decision.attempt,
-      operationKey,
-    );
+    writeStepUpAttempts(server.name, issuer, decision.attempt, operationKey);
     writePendingStepUp(server.name, issuer, false, operationKey);
   }
 
@@ -1037,7 +1021,10 @@ export function resetToolCallStepUp(
   operation?: ToolCallStepUpOperation,
 ): void {
   const serverUrl = readServerUrlForStepUp(server);
-  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  const issuer = resolveStoredIssuer(
+    server.name,
+    readServerUrlForStepUp(server),
+  );
   resetInsufficientScopeStepUp(
     server.name,
     issuer,
@@ -1069,7 +1056,7 @@ export function resetToolCallStepUp(
 //   3. TOKENS KEPT until the callback succeeds, so abandoning Connect does not
 //      break every other tool on an already-authorized server.
 
-const AUTH_CHALLENGE_LEDGER_PREFIX = "mcp-auth-challenge-ledger-v1-";
+const AUTH_CHALLENGE_LEDGER_PREFIX = "mcp-auth-challenge-ledger-v2-";
 
 /**
  * One sign-in attempt per operation per live window.
@@ -1080,9 +1067,30 @@ const AUTH_CHALLENGE_LEDGER_PREFIX = "mcp-auth-challenge-ledger-v1-";
  * - `signed_in`: a callback completed for this server since the click. A
  *   challenge now is a repeat after sign-in, and is permanent for this window.
  */
+export interface AuthChallengeAttempt {
+  projectId: string;
+  serverId: string;
+  surface: string;
+  callId: string;
+  chatSessionId?: string;
+}
+function hasAuthAttemptIdentity(value: unknown): value is AuthChallengeAttempt {
+  if (!value || typeof value !== "object") return false;
+  const attempt = value as Partial<AuthChallengeAttempt>;
+  return [
+    attempt.projectId,
+    attempt.serverId,
+    attempt.surface,
+    attempt.callId,
+  ].every((value) => typeof value === "string" && value.length > 0);
+}
+type AuthChallengeOperation = StepUpOperationKey & {
+  attempt?: AuthChallengeAttempt;
+};
+
 type AuthChallengeLedgerEntry = {
   serverName: string;
-  operation: StepUpOperationKey;
+  operation: AuthChallengeOperation;
   phase: "awaiting_callback" | "signed_in";
   /**
    * A digest of the authorization request's `state`, once the redirect
@@ -1107,14 +1115,14 @@ function flowDigestHook(
   };
 }
 
-function authChallengeLedgerKey(operation: StepUpOperationKey): string {
+function authChallengeLedgerKey(operation: AuthChallengeOperation): string {
   return `${AUTH_CHALLENGE_LEDGER_PREFIX}${encodeURIComponent(
-    serializeStepUpOperationKey(normalizeStepUpOperationKey(operation)),
+    JSON.stringify([normalizeStepUpOperationKey(operation), operation.attempt]),
   )}`;
 }
 
 function readAuthChallengeLedger(
-  operation: StepUpOperationKey,
+  operation: AuthChallengeOperation,
 ): AuthChallengeLedgerEntry | undefined {
   try {
     const store = stepUpAttemptsStore();
@@ -1126,7 +1134,7 @@ function readAuthChallengeLedger(
       typeof entry.serverName !== "string" ||
       (entry.phase !== "awaiting_callback" && entry.phase !== "signed_in") ||
       typeof entry.expiresAt !== "number" ||
-      !entry.operation ||
+      !hasAuthAttemptIdentity(entry.operation?.attempt) ||
       entry.expiresAt <= Date.now()
     ) {
       store?.removeItem(key);
@@ -1150,7 +1158,7 @@ function writeAuthChallengeLedger(entry: AuthChallengeLedgerEntry): void {
   }
 }
 
-function clearAuthChallengeLedger(operation: StepUpOperationKey): void {
+function clearAuthChallengeLedger(operation: AuthChallengeOperation): void {
   try {
     stepUpAttemptsStore()?.removeItem(authChallengeLedgerKey(operation));
   } catch {
@@ -1161,8 +1169,10 @@ function clearAuthChallengeLedger(operation: StepUpOperationKey): void {
 function authChallengeOperationKey(
   server: ServerWithName,
   operation: ToolCallStepUpOperation,
-): StepUpOperationKey {
+  attempt?: AuthChallengeAttempt,
+): AuthChallengeOperation {
   return {
+    attempt,
     resourceUrl: canonicalizeStepUpResourceUrl(
       readServerUrlForStepUp(server) ?? "",
     ),
@@ -1172,11 +1182,7 @@ function authChallengeOperationKey(
 }
 
 function forEachAuthChallengeLedgerEntry(
-  visit: (
-    entry: AuthChallengeLedgerEntry,
-    key: string,
-    store: Storage,
-  ) => void,
+  visit: (entry: AuthChallengeLedgerEntry, key: string, store: Storage) => void,
 ): void {
   const store = stepUpAttemptsStore();
   if (!store) return;
@@ -1192,7 +1198,11 @@ function forEachAuthChallengeLedgerEntry(
       store.removeItem(key);
       continue;
     }
-    if (typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()) {
+    if (
+      !hasAuthAttemptIdentity(entry.operation?.attempt) ||
+      typeof entry.expiresAt !== "number" ||
+      entry.expiresAt <= Date.now()
+    ) {
       store.removeItem(key);
       continue;
     }
@@ -1205,9 +1215,8 @@ function forEachAuthChallengeLedgerEntry(
  * to `signed_in`, so a repeat challenge on the same call is permanent.
  * Returns how many attempts it completed.
  *
- * When the callback's flow digest is known, only the attempt that started
- * that flow completes. An attempt that recorded no digest (the redirect never
- * reported a `state`) completes on any callback for the server.
+ * Only the attempt with the exact callback digest completes. Missing or
+ * legacy flow identity cannot authorize a retry.
  */
 export function markAuthChallengeSignedIn(
   serverName: string,
@@ -1215,6 +1224,7 @@ export function markAuthChallengeSignedIn(
 ): number {
   let completed = 0;
   try {
+    if (!callbackDigest) return 0;
     forEachAuthChallengeLedgerEntry((entry, key, store) => {
       if (
         entry.serverName !== serverName ||
@@ -1222,11 +1232,7 @@ export function markAuthChallengeSignedIn(
       ) {
         return;
       }
-      if (
-        callbackDigest &&
-        entry.flowDigest &&
-        entry.flowDigest !== callbackDigest
-      ) {
+      if (!entry.flowDigest || entry.flowDigest !== callbackDigest) {
         return;
       }
       store.setItem(key, JSON.stringify({ ...entry, phase: "signed_in" }));
@@ -1260,8 +1266,12 @@ export function hasAuthChallengeAwaitingCallback(serverName: string): boolean {
 export function resetAuthChallenge(
   server: ServerWithName,
   operation: ToolCallStepUpOperation,
+  attempt?: AuthChallengeAttempt,
 ): void {
-  clearAuthChallengeLedger(authChallengeOperationKey(server, operation));
+  if (attempt)
+    clearAuthChallengeLedger(
+      authChallengeOperationKey(server, operation, attempt),
+    );
 }
 
 export type AuthChallengeGate =
@@ -1336,6 +1346,7 @@ export async function applyToolCallAuthChallenge(
   signal: AuthChallengeSignal,
   options: {
     operation: ToolCallStepUpOperation;
+    attempt?: AuthChallengeAttempt;
     confirmed: boolean;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     /** Told the digest of the flow's `state`; see `authorizationFlowDigest`. */
@@ -1351,8 +1362,14 @@ export async function applyToolCallAuthChallenge(
   const gate = gateAuthChallenge(signal.effectiveAuth);
   if (gate.kind === "blocked") return gate;
 
-  const operationKey = authChallengeOperationKey(server, options.operation);
-  const ledger = readAuthChallengeLedger(operationKey);
+  const operationKey = authChallengeOperationKey(
+    server,
+    options.operation,
+    options.attempt,
+  );
+  const ledger = options.attempt
+    ? readAuthChallengeLedger(operationKey)
+    : undefined;
   if (ledger?.phase === "signed_in") return { kind: "permanent" };
   if (!options.confirmed) return { kind: "pendingConnect" };
 
@@ -1384,7 +1401,10 @@ export async function applyToolCallAuthChallenge(
 
   writeAuthChallengeLedger({
     serverName: server.name,
-    operation: normalizeStepUpOperationKey(operationKey),
+    operation: {
+      ...normalizeStepUpOperationKey(operationKey),
+      attempt: options.attempt,
+    },
     phase: "awaiting_callback",
     expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
   });

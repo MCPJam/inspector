@@ -36,6 +36,7 @@ vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 import {
   AUTH_CHALLENGE_DISMISSED_MESSAGE,
   connectAuthChallenge,
+  clearAuthChallengeCards,
   dismissAuthChallenge,
   presentAuthChallenge,
   presentWidgetAuthChallenge,
@@ -150,6 +151,36 @@ describe("auth challenge lifecycle", () => {
 
   afterEach(() => {
     unregisterProfile();
+  });
+
+  it("successful cleanup only removes the exact call's card", async () => {
+    const first = await presentCard({
+      replay: {
+        ...REPLAY,
+        authAttempt: {
+          projectId: "p1",
+          serverId: "orders",
+          surface: "tools",
+          callId: "a",
+        },
+      },
+    });
+    const other = await presentCard({
+      replay: {
+        ...REPLAY,
+        authAttempt: {
+          projectId: "p2",
+          serverId: "orders",
+          surface: "tools",
+          callId: "b",
+        },
+      },
+    });
+    clearAuthChallengeCards(server.name, first.attempt);
+    expect(
+      useAuthChallengeCardStore.getState().cards[first.key],
+    ).toBeUndefined();
+    expect(useAuthChallengeCardStore.getState().cards[other.key]).toBeDefined();
   });
 
   describe("presenting", () => {
@@ -301,6 +332,18 @@ describe("auth challenge lifecycle", () => {
   });
 
   describe("connecting", () => {
+    it("keeps the card and never opens OAuth when its pending save fails", async () => {
+      const card = await presentCard();
+      card.onConnect = () => ({ ok: false, reason: "storage" });
+      const result = await connectAuthChallenge(card, server, {
+        isTrusted: true,
+      });
+      expect(result.kind).toBe("failed");
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+      expect(
+        useAuthChallengeCardStore.getState().cards[card.key],
+      ).toBeDefined();
+    });
     it("refuses a click that is not a trusted user gesture", async () => {
       const card = await presentCard();
       const result = await connectAuthChallenge(card, server, {
@@ -333,7 +376,7 @@ describe("auth challenge lifecycle", () => {
       expect(
         await settleSignInCallback("orders", { state: "flow-other" }),
       ).toMatch(/not retried/);
-      expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
+      expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
     });
 
     it("replays after its own callback", async () => {
@@ -460,6 +503,7 @@ describe("auth challenge lifecycle", () => {
         surface: "tools",
         operation: OPERATION,
         readOnly: true,
+        replay: card.replay,
       });
       expect(repeat).toMatchObject({ kind: "notice", reason: "permanent" });
     });

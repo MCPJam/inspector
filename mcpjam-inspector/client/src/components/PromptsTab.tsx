@@ -40,10 +40,7 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -374,13 +371,7 @@ export function PromptsTab({
         }
       }
     },
-    [
-      selectedPrompt,
-      serverName,
-      isServerConnected,
-      buildParameters,
-      server,
-    ],
+    [selectedPrompt, serverName, isServerConnected, buildParameters, server],
   );
 
   useEffect(() => {
@@ -401,10 +392,14 @@ export function PromptsTab({
     )
       .then((data) => {
         setPromptContent(data.content);
-        resetScopeStepUp(server, {
-          method: "prompts/get",
-          operation: descriptor.promptName,
-        });
+        resetScopeStepUp(
+          server,
+          {
+            method: "prompts/get",
+            operation: descriptor.promptName,
+          },
+          descriptor.authAttempt,
+        );
       })
       .catch((error) => {
         setError(
@@ -415,7 +410,7 @@ export function PromptsTab({
       })
       .finally(() => {
         setLoading(false);
-        clearPendingDirectScopeStepUpReplay();
+        clearPendingDirectScopeStepUpReplay(pending);
       });
   }, [isServerConnected, server, serverName]);
 

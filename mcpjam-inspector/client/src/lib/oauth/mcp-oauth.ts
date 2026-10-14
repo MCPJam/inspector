@@ -2334,6 +2334,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     localStorage.setItem(OAUTH_PENDING_STORAGE_KEY, this.serverName);
     // Store the current route to restore after OAuth callback.
     const returnTarget = captureCurrentReturnPath();
+    ((globalThis as unknown as { __qaLog?: (...a: unknown[]) => void }).__qaLog ?? console.info)("[qa-oauth-return] saving before sign-in", { returnTarget, href: window.location.href, server: this.serverName }); // QA-BB260-TEMP
     if (returnTarget) {
       // Key name is retained for in-flight migration compatibility; values are
       // now path targets.

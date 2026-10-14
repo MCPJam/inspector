@@ -1,3 +1,4 @@
+import type { AuthChallengeAttempt } from "@/state/oauth-orchestrator";
 import {
   SCOPE_STEP_UP_LIVE_TTL_MS,
   type StepUpOperationKey,
@@ -10,7 +11,9 @@ import {
 
 const PENDING_DIRECT_REPLAY_KEY = "mcp-scope-step-up-replay-v1";
 
-export type DirectScopeStepUpReplayDescriptor =
+export type DirectScopeStepUpReplayDescriptor = {
+  authAttempt?: AuthChallengeAttempt;
+} & (
   | {
       kind: "tool";
       surface: "tools" | "playground";
@@ -35,10 +38,14 @@ export type DirectScopeStepUpReplayDescriptor =
       serverName: string;
       promptName: string;
       arguments: Record<string, string>;
-    };
+    }
+);
 
 export type PendingDirectScopeStepUpReplay = {
   version: 1;
+  callId?: string;
+  generation?: number;
+  projectId?: string;
   phase: "awaiting_oauth" | "ready" | "replaying";
   operation: StepUpOperationKey;
   descriptor: DirectScopeStepUpReplayDescriptor;
@@ -72,6 +79,9 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
     const value = JSON.parse(raw) as Partial<PendingDirectScopeStepUpReplay>;
     if (
       value.version !== 1 ||
+      (value.callId !== undefined && (typeof value.callId !== "string" || !value.callId)) ||
+      (value.generation !== undefined && (!Number.isSafeInteger(value.generation) || value.generation < 1)) ||
+      (value.projectId !== undefined && typeof value.projectId !== "string") ||
       (value.phase !== "awaiting_oauth" &&
         value.phase !== "ready" &&
         value.phase !== "replaying") ||
@@ -98,13 +108,15 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
     }
     return value as PendingDirectScopeStepUpReplay;
   } catch {
-    sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
     return undefined;
   }
 }
 
 function write(value: PendingDirectScopeStepUpReplay): void {
-  sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, JSON.stringify(value));
+  const raw = JSON.stringify(value);
+  sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, raw);
+  if (sessionStorage.getItem(PENDING_DIRECT_REPLAY_KEY) !== raw)
+    throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
 }
 
 export function savePendingDirectScopeStepUpReplay(input: {
@@ -112,28 +124,51 @@ export function savePendingDirectScopeStepUpReplay(input: {
   descriptor: DirectScopeStepUpReplayDescriptor;
   reason?: "authorization_required";
   requiresConfirmation?: boolean;
-}): void {
+  previous?: PendingDirectScopeStepUpReplay;
+}): PendingDirectScopeStepUpReplay {
   const now = Date.now();
-  write({
+  const previous = input.previous;
+  if (previous) {
+    const current = readStored();
+    if (
+      !current ||
+      !sameGeneration(current, previous) ||
+      current.phase !== "replaying"
+    )
+      throw new Error("This call is no longer waiting for sign-in. Please try again.");
+  }
+  const value: PendingDirectScopeStepUpReplay = {
     version: 1,
+    callId:
+      previous?.callId ?? input.descriptor.authAttempt?.callId ?? crypto.randomUUID(),
+    generation: (previous?.generation ?? 0) + 1,
+    projectId:
+      previous?.projectId ?? input.descriptor.authAttempt?.projectId ??
+      (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local"),
     phase: "awaiting_oauth",
     operation: input.operation,
     descriptor: input.descriptor,
     returnPath:
+      previous?.returnPath ??
       window.location.pathname + window.location.search + window.location.hash,
-    createdAt: now,
-    expiresAt: now + SCOPE_STEP_UP_LIVE_TTL_MS,
+    createdAt: previous?.createdAt ?? now,
+    expiresAt: previous?.expiresAt ?? now + SCOPE_STEP_UP_LIVE_TTL_MS,
     ...(input.reason ? { reason: input.reason } : {}),
     ...(input.requiresConfirmation ? { requiresConfirmation: true } : {}),
-  });
+  };
+  write(value);
+  return value;
 }
 
 /** Bind the saved call to the authorization flow it waits on. */
 export function setPendingDirectScopeStepUpReplayFlowDigest(
   serverName: string,
   flowDigest: string,
+  expected?: PendingDirectScopeStepUpReplay,
 ): void {
   const pending = readStored();
+  if (expected && (!pending || !sameGeneration(pending, expected)))
+    throw new Error("The pending authorization call changed.");
   if (
     !pending ||
     pending.phase !== "awaiting_oauth" ||
@@ -151,8 +186,11 @@ export const SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE =
 export function setPendingDirectScopeStepUpReplayCredentialBinding(
   serverName: string,
   binding: StepUpCredentialBinding,
+  expected?: PendingDirectScopeStepUpReplay,
 ): void {
   const pending = readStored();
+  if (expected && (!pending || !sameGeneration(pending, expected)))
+    throw new Error("The pending authorization call changed.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
   write({ ...pending, credentialBinding: binding });
 }
@@ -169,15 +207,19 @@ export function settlePendingDirectScopeStepUpReplayAfterCallback(
   callbackDigest?: string,
 ): string | undefined {
   const pending = readStored();
-  if (!pending || pending.descriptor.serverName !== serverName) return undefined;
+  if (
+    !pending ||
+    pending.phase !== "awaiting_oauth" ||
+    pending.descriptor.serverName !== serverName
+  )
+    return undefined;
   // Bound to its flow: a callback for a different authorization request (an
   // older tab, a second Connect) must not replay this call's saved arguments.
   if (
-    pending.flowDigest &&
-    callbackDigest &&
+    !pending.flowDigest ||
+    !callbackDigest ||
     pending.flowDigest !== callbackDigest
   ) {
-    sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
     return SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE;
   }
   const settled = settleStepUpCredential(
@@ -197,13 +239,17 @@ export function markPendingDirectScopeStepUpReplayReady(
   callbackDigest?: string,
 ): void {
   const pending = readStored();
-  if (!pending || pending.descriptor.serverName !== serverName) return;
   if (
-    pending.flowDigest &&
-    callbackDigest &&
+    !pending ||
+    pending.phase !== "awaiting_oauth" ||
+    pending.descriptor.serverName !== serverName
+  )
+    return;
+  if (
+    !pending.flowDigest ||
+    !callbackDigest ||
     pending.flowDigest !== callbackDigest
   ) {
-    sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
     return;
   }
   write({ ...pending, phase: "ready" });
@@ -211,8 +257,7 @@ export function markPendingDirectScopeStepUpReplayReady(
 
 /** The saved call, without claiming it (for a "Run again?" prompt). */
 export function peekPendingDirectScopeStepUpReplay():
-  | PendingDirectScopeStepUpReplay
-  | undefined {
+  PendingDirectScopeStepUpReplay | undefined {
   return readStored();
 }
 
@@ -237,6 +282,11 @@ export function claimPendingDirectScopeStepUpReplay(input: {
   if (
     !pending ||
     pending.phase !== "ready" ||
+    (pending.projectId !== undefined && pending.projectId !==
+      (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local")) ||
+    (pending.descriptor.authAttempt &&
+      pending.descriptor.authAttempt.projectId !==
+        (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local")) ||
     pending.descriptor.serverName !== input.serverName ||
     pending.descriptor.surface !== input.surface
   ) {
@@ -246,6 +296,25 @@ export function claimPendingDirectScopeStepUpReplay(input: {
   return pending;
 }
 
-export function clearPendingDirectScopeStepUpReplay(): void {
+export function clearPendingDirectScopeStepUpReplay(
+  expected?: PendingDirectScopeStepUpReplay,
+): void {
+  if (expected) {
+    const current = readStored();
+    if (
+      !current ||
+      !sameGeneration(current, expected)
+    )
+      return;
+  }
   sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
+}
+
+function sameGeneration(
+  a: PendingDirectScopeStepUpReplay,
+  b: PendingDirectScopeStepUpReplay,
+): boolean {
+  return a.callId === b.callId && a.generation === b.generation &&
+    a.createdAt === b.createdAt &&
+    JSON.stringify(a.descriptor.authAttempt) === JSON.stringify(b.descriptor.authAttempt);
 }
