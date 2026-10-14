@@ -27,7 +27,10 @@ import {
   type RunPreflightState,
 } from "./suite-run-preflight";
 import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
-import { savedCaseTargets, startCaseReview } from "./case-workspace/case-launch-preview";
+import {
+  savedCaseTargets,
+  startCaseReview,
+} from "./case-workspace/case-launch-preview";
 import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
@@ -281,11 +284,31 @@ export function SuiteRunReviewContent({
     lock.current = true;
     if (isCaseRun) {
       try {
-        const selectedSuite = matrix ? suite : selectReviewTargets(suite, selectedIds);
-        await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart, saveBeforeRun },
-          matrix?.targets ?? savedCaseTargets({ suite: selectedSuite, cases, environments, hostNamesById }), count);
+        const selectedSuite = matrix
+          ? suite
+          : selectReviewTargets(suite, selectedIds);
+        await startCaseReview(
+          {
+            projectId,
+            suite: selectedSuite,
+            cases,
+            onClose,
+            onStart,
+            saveBeforeRun,
+          },
+          matrix?.targets ??
+            savedCaseTargets({
+              suite: selectedSuite,
+              cases,
+              environments,
+              hostNamesById,
+            }),
+          count,
+        );
       } catch (failure) {
-        setError(convexErrMessage(failure, "Could not prepare this run. Try again."));
+        setError(
+          convexErrMessage(failure, "Could not prepare this run. Try again."),
+        );
       } finally {
         lock.current = false;
       }

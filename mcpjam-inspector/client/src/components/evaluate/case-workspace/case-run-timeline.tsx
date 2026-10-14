@@ -40,7 +40,11 @@ import type {
   EvalSuiteRun,
   EvalSuiteRunListItem,
 } from "@/components/evals/types";
-import { isPendingCaseRow, usePendingCaseRows, type CaseLaunchScope } from "./pending-case-launches";
+import {
+  isPendingCaseRow,
+  usePendingCaseRows,
+  type CaseLaunchScope,
+} from "./pending-case-launches";
 
 const UNKNOWN_MODEL = "Unknown model";
 const ALL_FILTER = "__all__";
@@ -95,7 +99,10 @@ export function CaseRunTimeline({
   children: ReactNode;
 }) {
   const pendingRows = usePendingCaseRows(scope, savedIterations, suiteRuns);
-  const iterations = useMemo(() => [...savedIterations, ...pendingRows], [savedIterations, pendingRows]);
+  const iterations = useMemo(
+    () => [...savedIterations, ...pendingRows],
+    [savedIterations, pendingRows],
+  );
   const [clientFilter, setClientFilter] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -111,7 +118,11 @@ export function CaseRunTimeline({
       new Map(
         iterations.map((it) => {
           const run = suiteRuns.find((run) => run._id === it.suiteRunId);
-          const recordedClient = isPendingCaseRow(it) ? it.client : run ? runHostLabel(run, hostNamesById) : null;
+          const recordedClient = isPendingCaseRow(it)
+            ? it.client
+            : run
+              ? runHostLabel(run, hostNamesById)
+              : null;
           const snapshotStyle = (
             it.testCaseSnapshot as
               { hostConfigOverride?: { hostStyle?: unknown } } | undefined
@@ -136,7 +147,9 @@ export function CaseRunTimeline({
             {
               // The TARGET (`targetKey`; the bare model id when default), so
               // Sonnet at Low and at High remain separate model options.
-              model: isPendingCaseRow(it) ? it.model : runIterationTargetKey(run, it) || UNKNOWN_MODEL,
+              model: isPendingCaseRow(it)
+                ? it.model
+                : runIterationTargetKey(run, it) || UNKNOWN_MODEL,
               client,
             },
           ];
@@ -188,7 +201,8 @@ export function CaseRunTimeline({
           (a, b) =>
             b.createdAt - a.createdAt ||
             (a.suiteRunId ?? "").localeCompare(b.suiteRunId ?? "") ||
-            a.iterationNumber - b.iterationNumber || a._id.localeCompare(b._id),
+            a.iterationNumber - b.iterationNumber ||
+            a._id.localeCompare(b._id),
         ),
     [iterations, runMetadata, selectedClient, selectedModel],
   );
@@ -243,8 +257,8 @@ export function CaseRunTimeline({
             : selected?.status === "pending"
               ? "Pending"
               : live || result === "pending"
-              ? "Running"
-              : "No verdict");
+                ? "Running"
+                : "No verdict");
   // Number batches, not their individual model/iteration rows.
   const orderedRunIds = [
     ...new Set(
@@ -426,7 +440,12 @@ export function CaseRunTimeline({
           </div>
           {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
             const temporary = Boolean(it && isPendingCaseRow(it));
-            const result = it?.status === "pending" || it?.status === "running" ? "pending" : it ? computeIterationResult(it) : "pending";
+            const result =
+              it?.status === "pending" || it?.status === "running"
+                ? "pending"
+                : it
+                  ? computeIterationResult(it)
+                  : "pending";
             const { client, model: recordedModel } = it
               ? runMetadata.get(it._id)!
               : {
@@ -509,7 +528,7 @@ export function CaseRunTimeline({
                             ? "Stopped"
                             : it?.status === "pending"
                               ? "Pending"
-                            : "Running"}
+                              : "Running"}
                   </span>
                   <span className="min-w-0 truncate tabular-nums text-muted-foreground">
                     {/* Same reading the P50/P95 cards above are built from,

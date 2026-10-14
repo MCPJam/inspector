@@ -439,7 +439,8 @@ export function ConfiguredSuiteRunReview(
     projectId,
   });
   const { capable, pending } = useEvalComposeCapable(projectId);
-  // Until the probe answers, block cells the browser cannot copy losslessly.
+  // Until the probe answers, plan as an older backend would: a cell the
+  // browser can't copy stays blocked rather than being composed lossily.
   const capabilities = useEnvironmentCapabilities(projectId);
   const lossless = capabilities?.environmentDerivation === true;
   const ensure = useEnsureAdhocEnvironments();
@@ -524,7 +525,10 @@ export function ConfiguredSuiteRunReview(
       (capabilities !== undefined &&
         capabilities.ephemeralEnvironmentLaunch !== true) ||
       suite.projectId !== projectId);
-  // Preflight covers the chosen cells, their templates, and the server group.
+  // Every branch below renders through the content, which shows these. They
+  // cover what this run launches: the matrix's cells (and the setup a new
+  // cell copies), the saved environment it runs in, or, for a suite without
+  // environments, the server group picked here.
   const props = {
     ...reviewProps,
     preflight: useSuiteRunPreflight({
@@ -609,6 +613,8 @@ export function ConfiguredSuiteRunReview(
         );
       }
     }
+    // One-run cells never touch the suite: derived ones are built from
+    // their stored source, composed ones from their stack.
     const derived = missing.filter((item) => item.derive);
     const composed = missing.filter((item) => !item.derive);
     const derivedRows = await inEnvironmentBatches(
@@ -635,7 +641,10 @@ export function ConfiguredSuiteRunReview(
       throw new Error(
         "Could not resolve the selected clients and models. Try again.",
       );
-    resolveCaseLaunchEnvironments(options.caseLaunchId, environmentIds.filter((id): id is string => Boolean(id)));
+    resolveCaseLaunchEnvironments(
+      options.caseLaunchId,
+      environmentIds.filter((id): id is string => Boolean(id)),
+    );
     await props.onStart(
       {
         ...suite,
@@ -667,8 +676,20 @@ export function ConfiguredSuiteRunReview(
       {...props}
       disabledReason={blocked}
       matrix={{
-        targets: (runInSaved ? savedEnvironment ? [savedEnvironment] : [] : plannedPreflight(plan, environments).targets).map((target, index) => ({
-          ...caseLaunchTarget(target, props.hostNamesById, hosts.find((host) => host.hostId === target.hostId)?.modelId), environmentId: runInSaved ? savedEnvironment?.environmentId : plan[index].environmentId,
+        targets: (runInSaved
+          ? savedEnvironment
+            ? [savedEnvironment]
+            : []
+          : plannedPreflight(plan, environments).targets
+        ).map((target, index) => ({
+          ...caseLaunchTarget(
+            target,
+            props.hostNamesById,
+            hosts.find((host) => host.hostId === target.hostId)?.modelId,
+          ),
+          environmentId: runInSaved
+            ? savedEnvironment?.environmentId
+            : plan[index].environmentId,
         })),
         count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
         signature: JSON.stringify([selections, group, runInSaved, savedId]),

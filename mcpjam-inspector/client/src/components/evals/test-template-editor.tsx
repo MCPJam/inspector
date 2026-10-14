@@ -103,7 +103,11 @@ import {
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { CASE_SAVE_FAILURE_MESSAGE, refuseCaseSave, refuseInvalidCaseSave } from "./case-save-feedback";
+import {
+  CASE_SAVE_FAILURE_MESSAGE,
+  refuseCaseSave,
+  refuseInvalidCaseSave,
+} from "./case-save-feedback";
 import type { ModelDefinition } from "@/shared/types";
 import {
   allModelsOutOfCredits,
@@ -2814,7 +2818,10 @@ export function TestTemplateEditor({
    */
   const handleSave = async (quiet = false): Promise<boolean> => {
     if (hasInvalidFieldDraft)
-      return refuseCaseSave("Complete the highlighted fields before saving.", quiet);
+      return refuseCaseSave(
+        "Complete the highlighted fields before saving.",
+        quiet,
+      );
     if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
@@ -2829,7 +2836,9 @@ export function TestTemplateEditor({
 
     if (!validateSteps(editForm.steps)) {
       return refuseInvalidCaseSave(
-        getStepsBlockReason(editForm.steps) ?? "Fix the test configuration before saving.", quiet,
+        getStepsBlockReason(editForm.steps) ??
+          "Fix the test configuration before saving.",
+        quiet,
       );
     }
 
@@ -2860,7 +2869,10 @@ export function TestTemplateEditor({
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      refuseCaseSave(getBillingErrorMessage(error, CASE_SAVE_FAILURE_MESSAGE), quiet);
+      refuseCaseSave(
+        getBillingErrorMessage(error, CASE_SAVE_FAILURE_MESSAGE),
+        quiet,
+      );
       throw error;
     }
   };
@@ -5398,7 +5410,11 @@ export function TestTemplateEditor({
                 }
                 history={(evidence) => (
                   <CaseRunTimeline
-                    scope={{ projectId: projectId ?? suite?.projectId ?? "", suiteId, caseId: selectedTestCaseId }}
+                    scope={{
+                      projectId: projectId ?? suite?.projectId ?? "",
+                      suiteId,
+                      caseId: selectedTestCaseId,
+                    }}
                     openIterationId={
                       openCompareFromRoute
                         ? null
