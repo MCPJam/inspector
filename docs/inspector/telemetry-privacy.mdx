@@ -25,7 +25,7 @@ Every browser session runs at one of three privacy levels. The level decides wha
 | Hosted, a share link to a published study                                                        | `off`    |
 | An organization with session replay off is in view, or the person belongs to one                | `off`    |
 | Desktop app                                                                                      | `masked` |
-| Hosted, anything the backend cannot verify as non-private (a private organization in view, membership of one, a visitor with no session) | `masked` |
+| Hosted, anything the backend cannot verify as non-private (a private organization in view, membership of one, a visitor with no session) | `off`    |
 | Hosted, a context the backend verifies as non-private                                            | `full`   |
 
 The MCPJam backend decides the level for the organizations and projects in view, and the analytics proxy checks it again for every event it forwards. The level fails closed: nothing is recorded until the backend has answered, and a navigation records `masked` until the new page's answer arrives and the page has loaded.
