@@ -1,5 +1,5 @@
 /**
- * OpenAI extension keys are pinned to mcp-extensions 93a30a92 / 0.1.0.
+ * OpenAI extension keys follow @openai/mcp-extensions 0.2.0.
  * This module owns advertisement AND dispatch admission. It is browser-safe;
  * official schema adapters and existing authorization services are injected.
  */
