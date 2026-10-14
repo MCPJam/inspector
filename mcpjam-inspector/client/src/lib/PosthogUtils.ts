@@ -2,12 +2,8 @@ import type { CaptureResult } from "posthog-js";
 import { POSTHOG_PROJECT_KEY } from "../../../shared/posthog-project";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
 import {
-  POSTHOG_URL_PROPERTIES,
-  scrubTelemetryEvent,
   scrubTelemetryValue,
 } from "../../../shared/credential-urls";
-import { scrubRrwebCredentials } from "./rrweb-credential-scrub";
-import { getLastFailedRequest } from "./failed-request-tracker";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
@@ -17,7 +13,6 @@ import { stampPostHogEvent } from "./telemetry-context";
 import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
-  scrubNamesFromUrl,
   shouldMaskAnalytics,
 } from "./session-privacy";
 
@@ -98,80 +93,6 @@ const SERVER_EVALUATED_FLAG_OPTIONS = {
   advanced_disable_feature_flags_on_first_load: true,
 } as const;
 
-// What browsers say when a request never got a response. Matched exactly so
-// our own errors like "Failed to fetch tools" don't get tagged.
-const NETWORK_FAILURE_MESSAGES = new Set([
-  "Load failed", // Safari
-  "Failed to fetch", // Chrome
-  "NetworkError when attempting to fetch resource.", // Firefox
-]);
-
-// posthog-js reports error-like objects that aren't real Errors as
-// "'TypeError' captured as exception with message: 'Load failed'".
-const POSTHOG_WRAPPED_TYPE_ERROR =
-  /^'TypeError' captured as exception with message: '([\s\S]*)'$/;
-
-// fetch only ever fails with a TypeError, so other error types never count.
-function isNetworkFailure(exception: { type?: unknown; value: string }) {
-  const wrapped = POSTHOG_WRAPPED_TYPE_ERROR.exec(exception.value);
-  const message = wrapped
-    ? wrapped[1]
-    : exception.type === "TypeError"
-      ? exception.value
-      : undefined;
-  if (message === undefined) return false;
-  return (
-    NETWORK_FAILURE_MESSAGES.has(message) ||
-    // Newer Chrome adds the host: "Failed to fetch (example.com)".
-    (message.startsWith("Failed to fetch (") && message.endsWith(")"))
-  );
-}
-
-// The exception fires right after the request fails; anything older is
-// probably a different request.
-const FAILED_REQUEST_MAX_AGE_MS = 10_000;
-
-// Name the request behind a bare "Load failed" exception. See
-// lib/failed-request-tracker.ts.
-function attachFailedRequest(properties: Record<string, any>): void {
-  const exceptions = properties.$exception_list;
-  const hasNetworkFailure =
-    Array.isArray(exceptions) &&
-    exceptions.some(
-      (exception) =>
-        typeof exception?.value === "string" && isNetworkFailure(exception),
-    );
-  if (!hasNetworkFailure) return;
-
-  const failed = getLastFailedRequest();
-  if (!failed) return;
-  const ageMs = Date.now() - failed.at;
-  if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
-
-  const target = scrubSensitiveUrl(failed.target);
-  properties.failed_request = `${failed.method} ${
-    shouldMaskAnalytics() ? scrubNamesFromUrl(target) : target
-  }`;
-  properties.failed_request_age_ms = ageMs;
-}
-
-export function sanitizeAnalyticsProperties(
-  properties: Record<string, any>,
-  eventName?: string,
-): Record<string, any> {
-  // Short of a resolved `full` privacy level, names come out of URLs too
-  // (lib/session-privacy.ts), on top of the credential redaction below.
-  const maskNames = shouldMaskAnalytics();
-  for (const key of POSTHOG_URL_PROPERTIES) {
-    if (typeof properties[key] === "string") {
-      properties[key] = scrubSensitiveUrl(properties[key]);
-      if (maskNames) properties[key] = scrubNamesFromUrl(properties[key]);
-    }
-  }
-  if (eventName === "$exception") attachFailedRequest(properties);
-  return properties;
-}
-
 /** The parts of a posthog-js instance whose stored state is scrubbed. */
 interface PostHogPersistenceLike {
   props?: Record<string, unknown>;
@@ -219,59 +140,6 @@ export function scrubPostHogPersistence(
     } catch {
       // Storage refused the write; nothing else to do here.
     }
-  }
-}
-
-/**
- * The single `before_send` pass: every credential out of everything an event
- * carries — its properties (URL properties, `$elements_chain`,
- * `$external_click_url`, web vitals, `$$heatmap` data keyed by URL, exception
- * text), `$set` and `$set_once` — via the shared walker
- * (`scrubTelemetryEvent`), after the URL properties have had their names
- * masked where the privacy level asks for it.
- *
- * `properties.token` is the project key and is never touched: ingestion
- * rejects an event without it.
- *
- * Fail closed. When the walker cannot finish, the URL-bearing fields go and
- * the rest is scrubbed; when even that fails, the event is dropped (`null`).
- * A `$snapshot` batch is walked event by event (`scrubRrwebCredentials`) and
- * dropped whole if any part of it is not understood.
- */
-export function scrubCaptureEvent(
-  event: CaptureResult | null,
-): CaptureResult | null {
-  scrubPostHogPersistence();
-  if (!event) return event;
-  try {
-    const properties: Record<string, any> = { ...(event.properties ?? {}) };
-    if (event.event === "$snapshot") {
-      const snapshot = scrubRrwebCredentials(properties.$snapshot_data);
-      if (snapshot === null) return null;
-      const { $snapshot_data: _omit, ...rest } = properties;
-      const scrubbedRest = scrubTelemetryEvent(rest, {
-        preserveTopLevelKeys: ["token"],
-      });
-      if (scrubbedRest === null) return null;
-      return {
-        ...event,
-        properties: { ...scrubbedRest, $snapshot_data: snapshot },
-      };
-    }
-    sanitizeAnalyticsProperties(properties, event.event);
-    const scrubbedProperties = scrubTelemetryEvent(properties, {
-      preserveTopLevelKeys: ["token"],
-    });
-    if (scrubbedProperties === null) return null;
-    const { properties: _properties, ...envelope } = event;
-    const scrubbedEnvelope = scrubTelemetryEvent(envelope);
-    if (scrubbedEnvelope === null) return null;
-    return {
-      ...scrubbedEnvelope,
-      properties: scrubbedProperties,
-    } as CaptureResult;
-  } catch {
-    return null;
   }
 }
 
@@ -363,10 +231,7 @@ export const options = {
   before_send: [
     dropInjectedScriptException,
     stampPostHogEvent,
-    (event: CaptureResult | null) => {
-      scrubPostHogPersistence();
-      return event;
-    },
+    (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
   ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.
@@ -520,10 +385,7 @@ export const getPostHogOptions = (
         before_send: [
           dropInjectedScriptException,
           stampPostHogEvent,
-          (event: CaptureResult | null) => {
-            scrubPostHogPersistence();
-            return event;
-          },
+    (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
         ],
         disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.

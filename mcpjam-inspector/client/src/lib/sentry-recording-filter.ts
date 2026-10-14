@@ -182,7 +182,7 @@ export async function filterReplayRecordingPayload(
 type EnvelopeItem = [Record<string, unknown>, unknown];
 type Envelope = [unknown, EnvelopeItem[]];
 
-async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
+export async function filterRecordingEnvelope(envelope: Envelope): Promise<Envelope> {
   const [headers, items] = envelope;
   if (!items.some(([header]) => header?.type === "replay_recording")) {
     return envelope;
@@ -219,7 +219,7 @@ export function withRecordingFilter<T extends TransportLike>(transport: T): T {
   return {
     ...transport,
     send: async (envelope: Envelope) =>
-      await transport.send((await filterEnvelope(envelope)) as never),
+      await transport.send((await filterRecordingEnvelope(envelope)) as never),
     flush: (timeout?: number) => transport.flush(timeout),
   } as T;
 }
