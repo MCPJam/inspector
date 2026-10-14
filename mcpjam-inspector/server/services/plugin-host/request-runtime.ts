@@ -5,6 +5,8 @@ import { isLocalPluginFormFileTarget } from "./form-files.js";
 import { PluginInvocationSuspension } from "./invocation.js";
 import {
   createOwnedPluginMrtr,
+  ownedMrtrFormCapabilities,
+  ownedPluginFormSchema,
   endPluginMrtrFormsDisabled,
 } from "./owned-mrtr.js";
 import {
@@ -40,7 +42,10 @@ import {
   type PluginExtensionCapabilities,
   type ResolvedPluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
-import type { MrtrInputCollector } from "@mcpjam/sdk";
+import {
+  OPENAI_ELICITATION_EXTENSION,
+  type MrtrInputCollector,
+} from "@mcpjam/sdk";
 import {
   OPENAI_LEGACY_FORM_EXTENSION,
   OPENAI_LEGACY_FORM_METHOD,
@@ -577,13 +582,13 @@ export function createPluginRequestRuntime(
             })
           : undefined;
     }
-    const clientCapabilities = {
-      ...ownedLegacyFormCapabilities(
-        capabilities.clientCapabilities(),
-        legacyForms ? { binding: true } : undefined,
-      ),
-      ...(modernForms ? { elicitation: { form: {} } } : {}),
-    };
+    const legacyCapabilities = ownedLegacyFormCapabilities(
+      capabilities.clientCapabilities(),
+      legacyForms ? { binding: true } : undefined,
+    );
+    const clientCapabilities = modernForms
+      ? ownedMrtrFormCapabilities(legacyCapabilities)
+      : legacyCapabilities;
     const key = pluginBindingDigest([
       "plugin-connection-v1",
       admission.actorId,
@@ -759,6 +764,15 @@ export function createPluginRequestRuntime(
                   | undefined;
                 if (!collect) return Promise.reject(denied());
                 return collect(args);
+              },
+              // Kept on a 2026 connection even when the legacy handler's
+              // claim on the same key is withheld there. The selector only
+              // matters if a collector answers in-process; the owned one
+              // suspends and validates on resume.
+              {
+                extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+                selectFormSchema: (params) =>
+                  ownedPluginFormSchema(params, binding.serverId),
               },
             );
           await timedPluginStep("mcp-connect", () =>
