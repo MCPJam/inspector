@@ -10,6 +10,13 @@ read `.github/pull_request_template.md` and fill in every section. Where a
 section does not apply, use the exact text that section's comment gives
 ("Nothing", "Nothing applicable", or "None: …").
 
+Fill **Task, spec and plan** before you write code, not after. The Kestral task
+is what you were asked to do, the spec is what was agreed, and the plan is how
+you intend to do it; a PR that cannot name all three is usually a PR nobody
+asked for. Where one genuinely does not apply, write `None: <reason>` — a
+one-line fix, a revert and a dependency bump are all legitimate reasons. A
+non-blocking check comments when a line is empty or still a placeholder.
+
 ## Code quality contract
 
 These rules bind every change, human or agent. Agents write most of the code

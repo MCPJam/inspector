@@ -1,0 +1,114 @@
+name: PR Links
+
+# Advisory only. Reads the PR body for the three "Task, spec and plan" lines and
+# leaves one comment naming any that are empty or still a placeholder. It never
+# fails, is never a required check, and nothing here blocks a merge: 61 of 144
+# open PRs already fail a required check, so a sixth gate would deepen the
+# backlog rather than raise the floor. Promote it only once the fill rate is
+# high — the same ratchet logic the rest of the repo uses.
+#
+# `pull_request`, not `pull_request_target`: a fork's token is read-only, so a
+# fork PR gets no comment. That is the accepted trade. `pull_request_target`
+# would run with this repo's write token against a PR we do not control, and no
+# advisory nudge is worth that.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-links-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: PR Links
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // One marker so the job edits its own comment instead of adding a
+            // new one on every push. Keep the string stable.
+            const MARKER = '<!-- pr-links-advisory -->';
+            const FIELDS = ['Kestral task', 'Spec', 'Plan'];
+            const body = context.payload.pull_request.body || '';
+
+            // A line counts as filled when something survives stripping the
+            // template's own HTML comment. "None: <reason>" counts; a bare
+            // "None" does not, because the reason is the point.
+            const missing = [];
+            for (const name of FIELDS) {
+              const re = new RegExp(
+                `^[-*]\\s*\\*\\*${name}:\\*\\*(.*)$`,
+                'mi',
+              );
+              const m = body.match(re);
+              if (!m) {
+                missing.push(`\`${name}\` — line is not in the description`);
+                continue;
+              }
+              const value = m[1].replace(/<!--[\s\S]*?-->/g, '').trim();
+              if (!value) {
+                missing.push(`\`${name}\` — empty, or still the placeholder`);
+              } else if (/^none$/i.test(value)) {
+                missing.push(`\`${name}\` — says "None" with no reason after it`);
+              }
+            }
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+            const existing = comments.find((c) => c.body.includes(MARKER));
+
+            if (!missing.length) {
+              // Collapse to a one-liner rather than deleting, so the history of
+              // "this was flagged and then fixed" stays on the PR.
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: `${MARKER}\n✅ Task, spec and plan are all filled in.`,
+                });
+              }
+              core.info('All three fields are filled.');
+              return;
+            }
+
+            const text = [
+              MARKER,
+              '**Task, spec and plan**',
+              '',
+              'This is advisory — it does not block the merge.',
+              '',
+              ...missing.map((m) => `- ${m}`),
+              '',
+              'Edit the description to add them. Where one genuinely does not ' +
+                'apply — a one-line fix, a revert, a dependency bump — write ' +
+                '`None: <reason>` and this comment will clear.',
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: text,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: text,
+              });
+            }
+            core.info(`Flagged ${missing.length} field(s).`);

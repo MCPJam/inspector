@@ -1,3 +1,13 @@
+## Task, spec and plan
+
+<!-- All three lines stay. Where one genuinely does not apply — a one-line fix, a
+revert, a dependency bump — write `None: <reason>` rather than deleting the line.
+A non-blocking check comments when a line is empty or still a placeholder. -->
+
+- **Kestral task:** <!-- https://app.kestral.ai/workspace/yhNILB2/task/… or None: <reason> -->
+- **Spec:** <!-- link to the spec this implements, or None: <reason> -->
+- **Plan:** <!-- link, or 3 to 6 bullets of the approach you agreed before writing code, or None: <reason> -->
+
 ## User story
 
 <!-- Who this is for and what they can do after it merges. Name a specific persona: "hosted evals user", "self-hosted admin", "on-call engineer", not "the user". -->
