@@ -2190,13 +2190,18 @@ export function TestTemplateEditor({
 
   /** Save the current draft before launching a judged, case-scoped run. */
   const [runTestPending, setRunTestPending] = useState(false);
-  // Direct runs use the latest save; a submitted setup captures its own draft.
+  /**
+   * `handleSave` closes over `editForm` and is rebuilt every render, so the
+   * copy captured by a memoized callback goes stale the moment the deps stop
+   * changing — which they do as soon as `hasUnsavedChanges` flips true. Run
+   * test then saved the draft as it stood at the FIRST edit and ran that,
+   * while the pane showed the latest. A ref always holds the current one.
+   */
   const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const runTest = useCallback(
     async (launch?: {
       suite: EvalSuite;
       options: CaseRunLaunchOptions & { iterationOverride: number };
-      saveBeforeRun?: () => Promise<boolean>;
     }) => {
       const caseId = currentTestCase?._id;
       if (!onRunCase || !caseId || isDraft) return;
@@ -2209,15 +2214,13 @@ export function TestTemplateEditor({
         throw new Error(evalRunsDisabledReason);
       setRunTestPending(true);
       try {
-        if (hasUnsavedChanges) {
-          // A refused save (an unset tool question, an invalid step list) must
-          // not launch: the run executes the PERSISTED case, so it would grade
-          // a version of the case the author is not looking at.
-          const saved = await (launch?.saveBeforeRun ?? handleSaveRef.current)?.();
-          if (!saved) {
-            if (launch) throw new Error(CASE_SAVE_FAILURE_MESSAGE);
-            return;
-          }
+        // A submitted setup sheet saved its draft before closing. A direct run
+        // saves here: a refused save (an unset tool question, an invalid step
+        // list) must not launch, because the run executes the PERSISTED case
+        // and would grade a version of the case the author is not looking at.
+        if (hasUnsavedChanges && !launch) {
+          const saved = await handleSaveRef.current?.();
+          if (!saved) return;
         }
         await onRunCase(caseId, {
           iterationOverride,
@@ -4687,7 +4690,10 @@ export function TestTemplateEditor({
                       }
                       onClose={() => setRunSetupOpen(false)}
                       onStart={(launchSuite, options) =>
-                        runTest({ suite: launchSuite, options, saveBeforeRun: () => handleSave(true) })
+                        runTest({ suite: launchSuite, options })
+                      }
+                      saveBeforeRun={
+                        hasUnsavedChanges ? () => handleSave(true) : undefined
                       }
                     />
                   )

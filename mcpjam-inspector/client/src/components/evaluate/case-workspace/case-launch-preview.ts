@@ -5,6 +5,7 @@ import { modelTarget, modelTargetKey } from "@/lib/model-target";
 import { isModelFree } from "@/shared/steps";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { SuiteRunReviewProps } from "../suite-run-review";
+import { CASE_SAVE_FAILURE_MESSAGE } from "../../evals/case-save-feedback";
 import {
   beginCaseLaunch,
   finishCaseLaunch,
@@ -88,7 +89,7 @@ export function savedCaseTargets(
 export async function startCaseReview(
   props: Pick<
     SuiteRunReviewProps,
-    "projectId" | "suite" | "cases" | "onClose" | "onStart"
+    "projectId" | "suite" | "cases" | "onClose" | "onStart" | "saveBeforeRun"
   >,
   targets: CaseLaunchTarget[],
   count: number,
@@ -105,6 +106,10 @@ export async function startCaseReview(
       count,
     );
     props.onClose();
+    // The run executes the persisted case, so the draft is saved before any
+    // preparation; a refused save launches nothing.
+    if (props.saveBeforeRun && !(await props.saveBeforeRun()))
+      throw new Error(CASE_SAVE_FAILURE_MESSAGE);
     await props.onStart(props.suite, {
       iterationOverride: count,
       throwOnFailure: true,

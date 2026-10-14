@@ -101,6 +101,39 @@ it("reports preparation or save errors through the submission toast after closin
   expect(useCaseLaunches.getState().launches).toEqual([]);
 });
 
+it("saves the clicked draft after closing and before any launch work", async () => {
+  const onClose = vi.fn();
+  const saveBeforeRun = vi.fn(async () => true);
+  const onStart = vi.fn(async () => {});
+  await startCaseReview(
+    { ...props, onClose, onStart, saveBeforeRun },
+    savedCaseTargets(props),
+    1,
+  );
+  expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(
+    saveBeforeRun.mock.invocationCallOrder[0],
+  );
+  expect(saveBeforeRun.mock.invocationCallOrder[0]).toBeLessThan(
+    onStart.mock.invocationCallOrder[0],
+  );
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("launches nothing when the save is refused", async () => {
+  const onStart = vi.fn();
+  await startCaseReview(
+    { ...props, onClose: vi.fn(), onStart, saveBeforeRun: async () => false },
+    savedCaseTargets(props),
+    1,
+  );
+  expect(onStart).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+    CASE_SAVE_FAILURE_MESSAGE,
+    { id: vi.mocked(toast.loading).mock.calls[0][1]?.id },
+  );
+  expect(useCaseLaunches.getState().launches).toEqual([]);
+});
+
 it("does not invent model variants for a model-free case", () => {
   const modelFree = [
     {

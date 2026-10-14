@@ -57,6 +57,13 @@ export type SuiteRunReviewProps = {
     suite: EvalSuite,
     options: CaseRunLaunchOptions & { iterationOverride: number },
   ) => unknown;
+  /**
+   * Persists the case draft as it stood when Start was clicked, before any
+   * launch preparation; `false` refuses the launch. Preparing a matrix run
+   * takes several round trips, so saving afterwards would overwrite an edit
+   * made in between.
+   */
+  saveBeforeRun?: () => Promise<boolean>;
   onEditSettings?: () => void;
   disabledReason?: string | null;
   preflight?: RunPreflightState;
@@ -185,6 +192,7 @@ export function SuiteRunReviewContent({
   hostNamesById,
   onClose,
   onStart,
+  saveBeforeRun,
   onEditSettings,
   disabledReason: blockedReason,
   preflight,
@@ -274,7 +282,7 @@ export function SuiteRunReviewContent({
     if (isCaseRun) {
       try {
         const selectedSuite = matrix ? suite : selectReviewTargets(suite, selectedIds);
-        await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart },
+        await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart, saveBeforeRun },
           matrix?.targets ?? savedCaseTargets({ suite: selectedSuite, cases, environments, hostNamesById }), count);
       } catch (failure) {
         setError(convexErrMessage(failure, "Could not prepare this run. Try again."));
