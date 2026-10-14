@@ -1,3 +1,4 @@
+import { RecordedActionFields } from "./recorded-action-fields";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -30,6 +31,8 @@ type LocatorBy = "testId" | "role" | "text" | "css";
 const STEP_KIND_LABELS: Record<ScriptedStep["kind"], string> = {
   click: "Click",
   type: "Type",
+  select: "Choose option",
+  scrollTo: "Scroll to position",
   key: "Key",
   scroll: "Scroll",
   wait: "Wait",
@@ -74,6 +77,10 @@ function defaultStep(kind: ScriptedStep["kind"]): ScriptedStep {
       return { kind: "click", target: { testId: "" } };
     case "type":
       return { kind: "type", target: { testId: "" }, text: "" };
+    case "select":
+      return { kind: "select", target: { testId: "" }, values: [""] };
+    case "scrollTo":
+      return { kind: "scrollTo", target: { testId: "" }, x: 0, y: 0 };
     case "key":
       return { kind: "key", key: "" };
     case "scroll":
@@ -257,6 +264,9 @@ function StepBody({
   onChange: (next: ScriptedStep) => void;
 }) {
   switch (step.kind) {
+    case "select":
+    case "scrollTo":
+      return <RecordedActionFields value={step} onChange={onChange} />;
     case "click":
       return (
         <div className="flex flex-col gap-1.5">

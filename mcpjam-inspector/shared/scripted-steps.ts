@@ -81,7 +81,9 @@ export const scriptedStepSchema = z.discriminatedUnion("kind", [
     target: elementLocatorSchema,
     text: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
   }),
-  z.object({ kind: z.literal("key"), key: z.string().min(1) }),
+  z.object({ kind: z.literal("key"), key: z.string().min(1), target: elementLocatorSchema.optional() }),
+  z.object({ kind: z.literal("select"), target: elementLocatorSchema, values: z.array(z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS)) }),
+  z.object({ kind: z.literal("scrollTo"), target: elementLocatorSchema, x: z.number().finite(), y: z.number().finite() }),
   z.object({
     kind: z.literal("scroll"),
     direction: z.enum(["up", "down"]),
@@ -157,9 +159,11 @@ export function isStepComplete(step: ScriptedStep): boolean {
   switch (step.kind) {
     case "click":
     case "type":
+    case "select":
+    case "scrollTo":
       return isLocatorComplete(step.target);
     case "key":
-      return trimmedField(step.key).length > 0;
+      return trimmedField(step.key).length > 0 && (step.target === undefined || isLocatorComplete(step.target));
     case "scroll":
     case "wait":
       return true;

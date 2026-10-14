@@ -1,3 +1,4 @@
+import { RecordedActionFields } from "./recorded-action-fields";
 import { PAPER_FIELD_STYLES } from "./paper-field-styles";
 /**
  * Per-kind step field editors, shared by the two surfaces that author steps.
@@ -171,6 +172,8 @@ export function summarizeStep(
 export const INTERACT_ACTION_KINDS = [
   "click",
   "type",
+  "select",
+  "scrollTo",
   "key",
   "scroll",
   "wait",
@@ -184,6 +187,10 @@ export function defaultInteractAction(
       return { kind: "click", target: { testId: "" } };
     case "type":
       return { kind: "type", target: { testId: "" }, text: "" };
+    case "select":
+      return { kind: "select", target: { testId: "" }, values: [""] };
+    case "scrollTo":
+      return { kind: "scrollTo", target: { testId: "" }, x: 0, y: 0 };
     case "key":
       return { kind: "key", key: "" };
     case "scroll":
@@ -208,7 +215,7 @@ export function InteractActionFields({
   const labelClass = "text-sm font-medium leading-[18px]";
   const fieldClass = paper ? "h-9 text-sm md:text-sm" : "h-7 text-[11px]";
   const targetFields =
-    value.kind === "click" || value.kind === "type" ? (
+    value.kind === "click" || value.kind === "type" || (value.kind === "key" && value.target) ? (
       <div className={paper ? "space-y-1.5" : undefined}>
         {paper ? <div className={labelClass}>Target</div> : null}
         <div
@@ -221,7 +228,7 @@ export function InteractActionFields({
           }
         >
           <LocatorFields
-            value={value.target}
+            value={value.target!}
             onChange={(target) => onChange({ ...value, target })}
             readOnly={readOnly}
           />
@@ -266,11 +273,12 @@ export function InteractActionFields({
               value={k}
               className={paper ? "text-sm" : "text-[11px]"}
             >
-              {k === "key" ? "Keyboard key" : k}
+              {k === "key" ? "Keyboard key" : k === "select" ? "Choose option" : k === "scrollTo" ? "Scroll to position" : k}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
+      {value.kind === "select" || value.kind === "scrollTo" ? <RecordedActionFields value={value} onChange={onChange} readOnly={readOnly} /> : null}
       {value.kind === "click" ? (
         <div className={paper ? "space-y-2" : "flex flex-col gap-1.5"}>
           {targetFields}
@@ -334,6 +342,7 @@ export function InteractActionFields({
               Key
             </Label>
           ) : null}
+          {targetFields}
           <Input
             id={`${id}-key`}
             aria-label="Key"
