@@ -23,6 +23,7 @@ type MockSentryScope = {
 
 type MockSentryClient = {
   init: jest.Mock;
+  on: jest.Mock;
 };
 
 type MockSentryModule = {
@@ -66,6 +67,7 @@ function createMockSentryModule(): {
   const scope = createScope();
   const client: MockSentryClient = {
     init: jest.fn(),
+    on: jest.fn(),
   };
 
   const module: MockSentryModule = {

@@ -1,11 +1,16 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useElectronOAuth } from "../useElectronOAuth";
+import {
+  readOAuthCallbackParams,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 const navigate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({ navigateApp: navigate }));
 let callback: (url: string) => void;
 beforeEach(() => {
   vi.clearAllMocks();
+  resetOAuthCallbackInboxForTests();
   window.isElectron = true;
   window.electronAPI = {
     oauth: {
@@ -25,11 +30,19 @@ describe("Electron MCP return", () => {
         "mcpjam://oauth/callback?flow=mcp&code=test&state=electron_mcp%3Aone&iss=issuer",
       ),
     );
-    expect(navigate).toHaveBeenCalledWith(
-      "/oauth/callback?code=test&state=electron_mcp%3Aone&iss=issuer",
-      { replace: true, unscoped: true },
-    );
+    // Only the marker reaches the address bar; the answer waits in the inbox
+    // for the callback readers (`lib/oauth-callback-inbox.ts`).
+    expect(navigate).toHaveBeenCalledWith("/oauth/callback?oauth_pending=1", {
+      replace: true,
+      unscoped: true,
+    });
+    expect(JSON.stringify(navigate.mock.calls)).not.toContain("code=test");
     expect(window.location.href).toBe(before);
+    window.history.replaceState({}, "", "/oauth/callback?oauth_pending=1");
+    expect(readOAuthCallbackParams()?.toString()).toBe(
+      "code=test&state=electron_mcp%3Aone&iss=issuer",
+    );
+    window.history.replaceState({}, "", before);
   });
   it("handles cancellation and ignores debugger and untrusted protocol URLs", () => {
     const { unmount } = renderHook(useElectronOAuth);

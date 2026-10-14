@@ -377,4 +377,13 @@ describe("hosted-mode partition", () => {
     const res = await app.request("/api/mcp/models/");
     expect(res.status).toBe(410);
   });
+
+  it("serves the published egress list without authentication", async () => {
+    const res = await app.request("/egress-ips.json");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    const data = await res.json();
+    expect(data.mcp_servers.ipv4.length).toBeGreaterThan(0);
+    expect(data.authorization_servers.ipv4.length).toBeGreaterThan(0);
+  });
 });

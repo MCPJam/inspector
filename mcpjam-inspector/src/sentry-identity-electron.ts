@@ -7,11 +7,16 @@ import {
 import {
   parseSentryActor,
   SENTRY_ACTOR_CHANNEL,
+  SENTRY_DISABLED_CHANNEL,
+  telemetryOptedOut,
 } from "../shared/sentry-identity.js";
 
 export function installDesktopSentryIdentity() {
   let trusted: BrowserWindow | undefined;
   let origin: string | undefined;
+  const isTrusted = (event: { sender: unknown; senderFrame: { url: string } | null }) =>
+    !!trusted && !trusted.isDestroyed() && event.sender === trusted.webContents &&
+    event.senderFrame === trusted.webContents.mainFrame && new URL(event.senderFrame.url).origin === origin;
   const reset = () => publish(null);
   function publish(actor: Parameters<typeof setDesktopSentryActor>[0]) {
     const identity = setDesktopSentryActor(actor);
@@ -21,17 +26,20 @@ export function installDesktopSentryIdentity() {
   ipcMain.on(SENTRY_ACTOR_CHANNEL, (event, value: unknown) => {
     try {
       if (
-        !trusted ||
-        trusted.isDestroyed() ||
-        event.sender !== trusted.webContents ||
-        event.senderFrame !== trusted.webContents.mainFrame ||
-        new URL(event.senderFrame.url).origin !== origin
+        !isTrusted(event)
       )
         return;
       const actor = parseSentryActor(value);
       if (actor !== undefined) publish(actor);
     } catch {
       /* Malformed messages and destroyed frames are ignored. */
+    }
+  });
+  ipcMain.handle(SENTRY_DISABLED_CHANNEL, (event) => {
+    try {
+      return !isTrusted(event) || telemetryOptedOut(process.env.DO_NOT_TRACK, process.env.MCPJAM_TELEMETRY_DISABLED);
+    } catch {
+      return true;
     }
   });
   return {

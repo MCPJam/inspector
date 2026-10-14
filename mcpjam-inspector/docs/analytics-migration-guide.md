@@ -51,8 +51,8 @@ example: three calls converted, no test coupling.
 
 ## Special cases (do last / discuss first)
 
-- **Dynamic event names** — `logger-view.tsx:365`,
-  `shared/ClientContextHeader.tsx:151`, `MultiHostPicker.tsx:212` wrap
+- **Dynamic event names** — `logger-view.tsx:365` and
+  `shared/ClientContextHeader.tsx:151` wrap
   `useCallback((event, props) => …)` with a runtime event string. `track()`
   needs a statically-known name, so these need the names hoisted to constants
   or a small typed dispatcher. Not a straight swap.

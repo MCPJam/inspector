@@ -8,6 +8,7 @@
  * Nothing is written until Create & launch. After launch, Run swarm shows the
  * live persona × client matrix; leaving keeps runs going on Overview.
  */
+import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
@@ -134,6 +135,7 @@ import { cn } from "@/lib/utils";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import {
   preflightSwarmTargets,
+  resolveSwarmEnvironment,
   missingSwarmModelMessage,
   SwarmTargetPreflightError,
 } from "./swarm-target-preflight";
@@ -358,6 +360,12 @@ async function runWithConcurrency<T>(
 }
 
 function errorMessageOf(err: unknown, fallback: string): string {
+  // The org's AI key policy refused it: name every dependency that can't run
+  // on the organization's providers, not only the first. A refusal with no
+  // list (generation, until it runs on organization keys) reads as the
+  // shared copy for its code.
+  const refused = aiLaunchRefusalSentence(err);
+  if (refused) return refused;
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
@@ -483,7 +491,10 @@ export function NewSwarmCreateFlow({
   const navigate = useAppNavigate();
   const [preflightModelFailure, setPreflightModelFailure] =
     useState<SwarmTargetPreflightError | null>(null);
-  const resolveComposerTargets = useComposerResolver(projectId);
+  const resolveComposerTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+    allowEmptyServerSelection: false,
+  });
   const { user: workOsUser } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -760,7 +771,9 @@ export function NewSwarmCreateFlow({
       hosts,
       preferredHostId: previewedHostId,
       preferredEnvironmentId: previewedEnvironmentId,
-      serverAttachments,
+      serverAttachments: serverAttachments.filter(
+        (group) => group.serverIds.length > 0,
+      ),
       environmentsEnabled,
     });
     // Latch only once something was actually seeded. Latching first meant a
@@ -876,18 +889,12 @@ export function NewSwarmCreateFlow({
     (!composeMode && targetState.environmentIds.length > 0) ||
     (composeMode && targetState.stack.hostIds.length > 0);
 
-  /**
-   * Cloud targets need cloud-reachable servers; local Claude Code targets
-   * can use this machine's servers. An empty selection still fails resolution
-   * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
-   * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
-   * failure in front of the pickers that fix it. `null` = nothing measurable is
-   * wrong; the resolver stays the backstop for what we cannot see.
-   */
+  // Explicit groups need servers the selected execution venue can reach.
   const serverReadiness = useCloudServerReadiness({
     projectId,
     state: targetState,
     environments: envList,
+    requireServerSelection: true,
   });
   const serverBlock = describeCloudServerBlock(serverReadiness);
   // An explicit override can run a legacy client without a default, but an
@@ -1121,10 +1128,7 @@ export function NewSwarmCreateFlow({
         targets: resolved.environments,
         hosts,
         resolve: (environmentId) =>
-          convex.query(
-            "projectEnvironments:resolveEnvironmentForLaunch" as any,
-            { projectId, environmentId },
-          ),
+          resolveSwarmEnvironment(convex, projectId, environmentId),
       });
     } catch (error) {
       if (

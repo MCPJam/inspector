@@ -103,39 +103,47 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function runCase(
+  selection: ModelSelection,
+  extra: Partial<Parameters<typeof runEvalSuiteWithAiSdk>[0]> = {},
+) {
+  return runEvalSuiteWithAiSdk({
+    suiteId: "suite-1",
+    runId: null,
+    config: {
+      tests: [
+        {
+          title: "Case",
+          query: "Hello",
+          model: MODEL,
+          provider: "anthropic",
+          selection,
+          runs: 1,
+          testCaseId: "case-1",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+        },
+      ],
+      environment: { servers: ["srv-1"] },
+    },
+    modelApiKeys: {},
+    convexClient: convexClient(),
+    convexHttpUrl: "https://example.convex.site",
+    convexAuthToken: "token",
+    mcpClientManager: manager(),
+    testCaseId: "case-1",
+    orgModelConfigTarget: { projectId: "project-1" },
+    harnessRuntimeVenue: "local",
+    suiteHostConfig: { harness: "claude-code" },
+    ...extra,
+  } as Parameters<typeof runEvalSuiteWithAiSdk>[0]);
+}
+
 describe("an org-key harness eval case", () => {
   it("hands the turn the saved org selection on the harness host", async () => {
-    await runEvalSuiteWithAiSdk({
-      suiteId: "suite-1",
-      runId: null,
-      config: {
-        tests: [
-          {
-            title: "Case",
-            query: "Hello",
-            model: MODEL,
-            provider: "anthropic",
-            selection: ORG_ANTHROPIC,
-            runs: 1,
-            testCaseId: "case-1",
-            expectedToolCalls: [],
-            promptTurns: [
-              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-            ],
-          },
-        ],
-        environment: { servers: ["srv-1"] },
-      },
-      modelApiKeys: {},
-      convexClient: convexClient(),
-      convexHttpUrl: "https://example.convex.site",
-      convexAuthToken: "token",
-      mcpClientManager: manager(),
-      testCaseId: "case-1",
-      orgModelConfigTarget: { projectId: "project-1" },
-      harnessRuntimeVenue: "local",
-      suiteHostConfig: { harness: "claude-code" },
-    } as Parameters<typeof runEvalSuiteWithAiSdk>[0]);
+    await runCase(ORG_ANTHROPIC);
 
     expect(localVenue.prepare).toHaveBeenCalledTimes(1);
     expect(assistantTurn).toHaveBeenCalledTimes(1);
@@ -144,5 +152,70 @@ describe("an org-key harness eval case", () => {
       modelSelection: ORG_ANTHROPIC,
       harnessExecutionTarget: TARGET,
     });
+  });
+});
+
+/**
+ * "Use your keys for all AI features": the organization's own key is the only
+ * key a turn may run on. A harness on its matching vendor's org connection
+ * still runs; a harness on an MCPJam-provided model never starts a lease.
+ */
+describe("a harness eval case when the organization requires its own keys", () => {
+  const STRICT_ORG_CONFIG = {
+    providers: [
+      {
+        providerKey: "anthropic",
+        exportDenied: true,
+        exportDeniedCode: "org_keys_required",
+        // The backend's verdict on the connection; the runner only reads it.
+        policyEligibility: { eligible: true },
+      },
+    ],
+    aiKeyPolicy: { requireOrgKeys: true },
+  };
+
+  it("still runs Claude Code on the organization's Anthropic connection", async () => {
+    await runCase(ORG_ANTHROPIC, { orgModelConfig: STRICT_ORG_CONFIG });
+
+    expect(assistantTurn).toHaveBeenCalledTimes(1);
+    expect(assistantTurn.mock.calls[0]![0]).toMatchObject({
+      harness: "claude-code",
+      modelSelection: ORG_ANTHROPIC,
+    });
+  });
+
+  it("refuses an Anthropic connection the backend calls ineligible before any lease or turn", async () => {
+    await runCase(ORG_ANTHROPIC, {
+      orgModelConfig: {
+        ...STRICT_ORG_CONFIG,
+        providers: [
+          {
+            ...STRICT_ORG_CONFIG.providers[0]!,
+            policyEligibility: {
+              eligible: false,
+              code: "org_keys_required" as const,
+            },
+          },
+        ],
+      },
+    }).catch(() => undefined);
+
+    expect(localVenue.prepare).not.toHaveBeenCalled();
+    expect(assistantTurn).not.toHaveBeenCalled();
+  });
+
+  it("refuses an MCPJam-provided model before any lease or turn", async () => {
+    const hosted: ModelSelection = {
+      modelId: MODEL,
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+    };
+    // The refusal is recorded on the case; the run itself does not throw it.
+    await runCase(hosted, { orgModelConfig: STRICT_ORG_CONFIG }).catch(
+      () => undefined,
+    );
+
+    expect(localVenue.prepare).not.toHaveBeenCalled();
+    expect(assistantTurn).not.toHaveBeenCalled();
   });
 });
