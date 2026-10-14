@@ -506,7 +506,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify evaluator publication ordering
-        run: node --test .github/scripts/publish-evaluators-first.test.mjs
+        run: node --test .github/scripts/publish-evaluators-first.test.mjs .github/scripts/sdk-sourcemaps.test.mjs
 
       - name: Build evaluators
         run: npm run build -w @mcpjam/evaluators
@@ -706,17 +706,6 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
-      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
-      # below, overwriting these injected debug ids in the packed tarball. That
-      # is a pre-existing bug (it predates this job split) and is tracked
-      # separately — the real fix is to inject inside the sdk's own prepack.
-      # Left in place so behavior matches what shipped before.
-      - name: Inject SDK sourcemap debug ids
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npm run sentry:inject -w @mcpjam/sdk
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
       - name: Publish evaluator dependency first
         if: fromJSON(needs.preflight.outputs.publish_evaluators)
         run: node .github/scripts/publish-evaluators-first.mjs
@@ -732,6 +721,8 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
+          # npm's SDK prepack injects after its prepublish rebuild. No build or
+          # injection may run between packing and uploading these same files.
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
             --release="@mcpjam/sdk@${version}" \
