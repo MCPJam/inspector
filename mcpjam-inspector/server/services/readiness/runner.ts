@@ -343,7 +343,7 @@ export async function runDirectoryReadiness(
       enteredUrl: options.target,
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
-      headers: options.headers,
+      headers: options.mcpHeaders,
       // Threaded IN, not merely checked between steps — see the OpenAI branch.
       signal: options.signal,
       now: options.now,
