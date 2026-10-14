@@ -19,6 +19,21 @@ describe("strict log boundary", () => {
   });
 
 
+  it("retains catalogued source messages while dropping runtime text", () => {
+    const message = "[host-runtime-config] network error";
+    expect(catalog.messages).toContain(message);
+    expect(buildLegacyLogRow(message, {}, new Error("PRIVATE_SENTINEL"))).toMatchObject({
+      event: expect.stringMatching(/^log\.[0-9a-f]{16}$/), message,
+    });
+    const injected = buildLegacyLogRow(`${message} PRIVATE_SENTINEL`, {});
+    expect(injected.event).toBe("log.unknown");
+    expect(injected).not.toHaveProperty("message");
+  });
+
+  it("retains the typed unattested-IP containment signal", () => {
+    expect(buildStrictLogRow("llm_spend_unattested_ip_pooled", { environment: "prod" }))
+      .toMatchObject({ event: "llm_spend_unattested_ip_pooled", environment: "prod" });
+  });
   it("marks an internally minted Inspector canary route", () => {
     expect(
       buildStrictLogRow(
