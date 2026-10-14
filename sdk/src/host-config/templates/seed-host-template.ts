@@ -2005,12 +2005,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
-          // ASSUMED, not probed: Codex's real `ui/initialize` hostInfo has
-          // not been captured. The version is OpenAI's documented minimum
-          // desktop build for the DevDay 2026 extensions (mcp-extensions
-          // patterns.md), which Apps such as Bits & Bolts check before
-          // enabling themselves; the name follows this host's `userAgent`.
-          // Replace both with a host-probe capture.
+          // The name is probed: the last capture reported `chatgpt`
+          // 26.825.32147 (the backend catalog's `codex` row). The version is
+          // ASSUMED, a deliberate bump past that capture to OpenAI's
+          // documented minimum desktop build for the DevDay 2026 extensions
+          // (mcp-extensions patterns.md), which Apps such as Bits & Bolts
+          // check before enabling themselves. Replace it with a newer
+          // host-probe capture.
           uiInitialize: {
             hostInfo: { name: "chatgpt", version: "26.928.20710" },
           },
