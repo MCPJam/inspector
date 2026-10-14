@@ -77,7 +77,7 @@ export function pluginEntrypointDiagnostics(
         "warning",
         "PLUGIN_ENTRYPOINT_UNRECOGNIZED",
         "Entrypoint declaration ignored",
-        'Some `_meta["openai/ui"].entrypoints` items are not a global, thread or file entrypoint (for example the removed `type: "settings"`), so MCPJam ignored them. The tools\' other entrypoints still work. Declare structured settings with the `openai/settings` server capability instead.',
+        'Some `_meta["openai/ui"].entrypoints` items aren\'t a valid global, thread or file entrypoint, so MCPJam ignored them. The tools\' other entrypoints still work. Fix each ignored item, or remove it if it is the retired `type: "settings"` (declare structured settings with the `openai/settings` server capability instead).',
         { tools: names.slice(0, 16) },
       ),
       serverId,
