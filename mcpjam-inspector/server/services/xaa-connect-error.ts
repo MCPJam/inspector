@@ -38,7 +38,7 @@ function extractRejectionDetail(message: string): string | undefined {
     status ? `HTTP ${status}` : undefined,
     detail ? asClause(detail) : undefined,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" — ") : undefined;
+  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 const CREDENTIAL_REFUSAL_KEYS = [
@@ -87,6 +87,8 @@ export function toXaaConnectFailure(
   let code: ErrorCode = ErrorCode.INTERNAL_ERROR;
   let reason: XaaConnectFailureReason =
     XaaConnectFailureReason.HANDSHAKE_FAILED;
+  // The authorization server's own HTTP status, when it answered at all.
+  let authorizationServerStatus: number | undefined;
   let message =
     `Server "${name}" couldn't complete its enterprise authorization handshake` +
     ` — try again, and check the server's auth settings if it keeps failing.`;
@@ -137,11 +139,19 @@ export function toXaaConnectFailure(
     status = routeError.status;
     code = routeError.code;
     reason = XaaConnectFailureReason.AUTHORIZATION_REJECTED;
+    const answered = routeError.details?.status;
+    if (
+      typeof answered === "number" &&
+      Number.isInteger(answered) &&
+      answered >= 100 &&
+      answered <= 599
+    ) {
+      authorizationServerStatus = answered;
+    }
     const detail = extractRejectionDetail(raw);
     message =
       `The authorization server for "${name}" rejected MCPJam's access request` +
-      `${detail ? ` (${detail})` : ""} — check the server's XAA client` +
-      ` credentials and issuer in its auth settings.`;
+      `${detail ? ` (${detail})` : ""}. Check the server's auth settings.`;
   } else if (routeError?.code === ErrorCode.VALIDATION_ERROR) {
     status = 400;
     code = ErrorCode.VALIDATION_ERROR;
@@ -154,6 +164,12 @@ export function toXaaConnectFailure(
   const framed = new WebRouteError(status, code, message, {
     ...(refusal ?? {}),
     reason,
+    // Structured, so a caller deciding "will this fail again?" never has to
+    // read the status back out of the sentence (which carries the server's
+    // name, and is capped when stored).
+    ...(authorizationServerStatus !== undefined
+      ? { authorizationServerStatus }
+      : {}),
     serverId: target.serverId,
     serverName: target.serverName,
     ...(target.serverUrl ? { serverUrl: target.serverUrl } : {}),

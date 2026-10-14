@@ -9,6 +9,10 @@ name: Slop Ratchet
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Judges the PR's diff and labels, which the queue's merge commit lacks. The
+  # verdict on the PR stands; in the queue the job is skipped, which satisfies
+  # the required check.
+  merge_group:
 
 permissions:
   contents: read
@@ -20,7 +24,10 @@ concurrency:
 jobs:
   ratchet:
     name: Slop Ratchet
-    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
       # The PR merge commit and its first parent, the base it merges into, are
