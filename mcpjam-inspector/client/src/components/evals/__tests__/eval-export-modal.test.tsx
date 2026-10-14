@@ -231,12 +231,12 @@ describe("EvalExportModal", () => {
 
     expect(mockExportServerApi).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
-    await screen.findByText("Unable to prepare the agent prompt");
+    await screen.findByText("Agent prompt failed. Retry below.");
     expect(
       screen.getByText(/MCP server returned HTTP 404/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Check the MCP server URL and connection/),
+      screen.getByText(/For connection errors, check the MCP server URL/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: "Prompt for agent" }),
@@ -250,7 +250,7 @@ describe("EvalExportModal", () => {
 
     await user.click(screen.getByRole("tab", { name: "SDK code" }));
     expect(
-      screen.queryByText("Unable to prepare the agent prompt"),
+      screen.queryByText("Agent prompt failed. Retry below."),
     ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
@@ -285,7 +285,7 @@ describe("EvalExportModal", () => {
       }),
     );
     expect(
-      screen.queryByText("Unable to prepare the agent prompt"),
+      screen.queryByText("Agent prompt failed. Retry below."),
     ).not.toBeInTheDocument();
     expect(mockDownloadTextFile).toHaveBeenCalledTimes(1);
   });
@@ -295,7 +295,7 @@ describe("EvalExportModal", () => {
     const user = userEvent.setup();
     renderWithProviders(<EvalExportModal {...baseProps} serverEntries={{}} />);
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
-    await screen.findByText("Unable to prepare the agent prompt");
+    await screen.findByText("Agent prompt failed. Retry below.");
     await user.click(screen.getByRole("tab", { name: "SDK code" }));
     expect(
       screen.getByText("Local server details are incomplete"),
@@ -312,4 +312,32 @@ describe("EvalExportModal", () => {
     );
     expect(mockExportServerApi).toHaveBeenCalledTimes(1);
   });
+
+  it.each([{ servers: [] }, { servers: ["weather", "calendar"] }])(
+    "returns to SDK code if the prompt's single-server requirement changes to $servers",
+    async ({ servers }) => {
+      const user = userEvent.setup();
+      const { rerender } = renderWithProviders(
+        <EvalExportModal {...baseProps} />,
+      );
+      await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+      await screen.findByText(/MCP Server Brief: weather/);
+
+      rerender(
+        <EvalExportModal
+          {...baseProps}
+          suite={{ ...baseProps.suite, environment: { servers } }}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("tab", { name: "SDK code" })).toHaveAttribute(
+          "aria-selected",
+          "true",
+        ),
+      );
+      expect(screen.getByRole("tab", { name: "Prompt for agent" })).toBeDisabled();
+      expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+    },
+  );
 });

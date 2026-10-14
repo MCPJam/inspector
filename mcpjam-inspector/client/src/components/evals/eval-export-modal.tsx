@@ -162,6 +162,7 @@ export function EvalExportModal({
     }
 
     if (!singleServerId) {
+      setActiveTab("sdk");
       setAgentPromptState({ status: "idle", prompt: null, error: null });
       return;
     }
@@ -370,12 +371,11 @@ export function EvalExportModal({
               {agentPromptState.status === "error" ? (
                 <Alert className="border-border/70 bg-muted/40">
                   <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Unable to prepare the agent prompt</AlertTitle>
+                  <AlertTitle>Agent prompt failed. Retry below.</AlertTitle>
                   <AlertDescription>
                     <p>
-                      Check the MCP server URL and connection, then retry. You
-                      can still export the saved cases from the SDK code tab
-                      without connecting to the server.
+                      For connection errors, check the MCP server URL. You can
+                      still export saved cases from the SDK code tab.
                     </p>
                     <p className="mt-2">{agentPromptState.error}</p>
                     <Button
