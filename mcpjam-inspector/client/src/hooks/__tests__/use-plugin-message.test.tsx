@@ -267,7 +267,7 @@ describe("owned app message dispatch", () => {
     expect(await pending).toBe(false);
     expect(f.send).not.toHaveBeenCalled();
   });
-  it("refuses draft send:false without sending or beginning a new chat", async () => {
+  it("refuses a draft where the host places none, without sending or beginning a new chat", async () => {
     const f = fixture();
     const view = renderHook(() => usePluginMessage(f));
     const value = {
@@ -277,9 +277,9 @@ describe("owned app message dispatch", () => {
         _meta: { "openai/message": { send: false } },
       },
     };
-    await expect(
-      view.result.current.send(value as never, () => true),
-    ).rejects.toThrow();
+    await act(async () =>
+      expect(await view.result.current.send(value, () => true)).toBe(false),
+    );
     expect(f.send).not.toHaveBeenCalled();
     expect(f.prepareNew).not.toHaveBeenCalled();
   });

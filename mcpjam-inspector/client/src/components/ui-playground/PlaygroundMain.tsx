@@ -19,6 +19,7 @@ import {
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import type { PluginMessageIntent } from "@/shared/plugin-message";
 import {
@@ -315,6 +316,7 @@ import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-cl
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
+  getAppDraftInteractivity,
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
@@ -3418,7 +3420,17 @@ export function PlaygroundMain({
   //   completed turns is a follow-up.
   // ------------------------------------------------------------------------
 
+  const appMessageDraft = useAppMessageDraft(
+    JSON.stringify([
+      currentUserForSender?._id,
+      convexProjectId,
+      previewedHostId,
+      chatSessionId,
+    ]),
+    { input: composer.input, setInput: composer.setInput, setFileAttachments },
+  );
   const hasUnsavedDraft =
+    appMessageDraft.items.length > 0 ||
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
@@ -3473,7 +3485,8 @@ export function PlaygroundMain({
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
     setModelContextQueue([]);
-  }, [composer, fileAttachments]);
+    appMessageDraft.clear();
+  }, [composer, fileAttachments, appMessageDraft.clear]);
 
   const cancelPendingHistorySelection = useCallback(() => {
     historySelectionRequestIdRef.current += 1;
@@ -4841,6 +4854,21 @@ export function PlaygroundMain({
       pluginActionInteractivity.composerDisabled ||
       pluginActionInteractivity.sendBlocked ||
       isStreaming,
+    ...getAppDraftInteractivity({
+      readOnly:
+        !extensionScope ||
+        isCompareMode ||
+        apiSessionViewOnly ||
+        disableChatInput ||
+        !pluginExtensions.capabilities.messages,
+      transitioning:
+        isEnvironmentTargetPending ||
+        loadingHistorySessionId !== null ||
+        restoringTarget !== null,
+      sendInFlight: isPreparingServerForSend,
+      isStreamingActive,
+    }),
+    draft: appMessageDraft.place,
     gates: [
       async () => !conversationSendBlockedRef.current,
       ensureSelectedServerReadyForChat,
@@ -5460,6 +5488,7 @@ export function PlaygroundMain({
   // composer that visibly holds an attached skill.
   const composerHasContent =
     composerMentions.selections.length > 0 ||
+    appMessageDraft.items.length > 0 ||
     threadApps.contextAttachments.length > 0 ||
     ownedModelWorkspace.attachments.length > 0 ||
     composer.input.trim().length > 0 ||
@@ -5560,6 +5589,14 @@ export function PlaygroundMain({
     ) as UIMessage[];
     const prependMessages = [...promptMessages, ...skillMessages];
 
+    // A compare grid has no place for an App's draft items; leaving compare
+    // mode sends them with this chat.
+    if (isCompareMode && appMessageDraft.items.length > 0) {
+      toast.error(
+        "Items an App added can't go to a comparison. Remove them or leave compare mode.",
+      );
+      return false;
+    }
     if (isCompareMode) {
       // Each card prepends the same messages to its own thread.
       queueBroadcastRequest({
@@ -5588,9 +5625,11 @@ export function PlaygroundMain({
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
+        extraParts: appMessageDraft.parts,
       });
       if (!sent) return false;
       composerMentions.clear();
+      appMessageDraft.clear();
       setModelContextQueue([]);
     }
 
@@ -5606,6 +5645,9 @@ export function PlaygroundMain({
     composerHasContent,
     composerMentions.selections,
     composerMentions.clear,
+    appMessageDraft.items.length,
+    appMessageDraft.parts,
+    appMessageDraft.clear,
     mcpPromptResults,
     skillResults,
     fileAttachments,
@@ -6275,6 +6317,7 @@ export function PlaygroundMain({
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
     contextAttachments: [
       ...composerMentions.contextAttachments,
+      ...appMessageDraft.contextAttachments,
       ...threadApps.contextAttachments,
       ...ownedModelWorkspace.attachments,
     ],

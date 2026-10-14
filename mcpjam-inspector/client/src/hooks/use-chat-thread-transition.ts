@@ -53,10 +53,7 @@ export function useChatThreadTransition(options: {
         return Promise.resolve(null);
       const start = current.current;
       return new Promise((resolve) => {
-        const timer = setTimeout(
-          () => active.finish(null),
-          start.timeoutMs ?? 10000,
-        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const active = {
           source: start.threadId,
           owner: start.ownerScope,
@@ -86,6 +83,14 @@ export function useChatThreadTransition(options: {
               if (!accepted) active.finish(null);
               else {
                 active.accepted = true;
+                // The bound covers publishing the new chat, never the person
+                // deciding in the discard-draft dialog: a timeout there would
+                // let a later "Discard" reset the chat after the action had
+                // already given up its payload.
+                timer = setTimeout(
+                  () => active.finish(null),
+                  start.timeoutMs ?? 10000,
+                );
                 settle();
               }
             },
