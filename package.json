@@ -17,6 +17,8 @@
     "vitest"
   ],
   "scripts": {
+    "telemetry:generate": "node scripts/generate-telemetry-catalogs.mjs",
+    "telemetry:check": "node scripts/generate-telemetry-catalogs.mjs --check",
     "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\"",
     "build": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/vitest && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
@@ -82,6 +84,12 @@
     "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
     "external-editor": {
       "tmp": "^0.2.6"
+    },
+    "global-agent": "^4.1.3",
+    "gray-matter": {
+      "js-yaml": {
+        "argparse": "^2.0.1"
+      }
     }
   }
 }

@@ -270,7 +270,10 @@ export function useJourneyRunCostEstimate({
    */
   configKey?: string;
 }): RunCostEstimateState {
-  const args = useMemo(() => (journeyId ? { journeyId } : null), [journeyId]);
+  const args = useMemo(
+    () => (journeyId ? { journeyId, kind: "swarm" } : null),
+    [journeyId],
+  );
   return useFetchOnOpenEstimate({
     enabled: enabled && Boolean(journeyId),
     queryName: RUN_COST_ESTIMATE_QUERIES.journey,

@@ -20,12 +20,9 @@ import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 export function useComposerResolver(
   rawProjectId: string,
   options: {
-    /**
-     * Eval surfaces pass `true`: see `resolveComposerEnvironments`. Swarms and
-     * User Testing leave it off — their targets fall back to the client's own
-     * servers.
-     */
+    /** Explicit selection is required for eval and swarm targets. */
     requireServerAttachment?: boolean;
+    allowEmptyServerSelection?: boolean;
     /**
      * User Testing passes `true`: its participants are not the composer, so a
      * Cursor client's key has to be project-shared to reach them.
@@ -47,6 +44,7 @@ export function useComposerResolver(
   const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
   const requireServerAttachment = options.requireServerAttachment === true;
+  const allowEmptyServerSelection = options.allowEmptyServerSelection !== false;
   // Read at resolve time, per client with explicit model picks, so a pair the
   // client's harness cannot run is skipped (and reported) instead of minted.
   const loadHostHarness = useHostHarnessLoader();
@@ -69,6 +67,7 @@ export function useComposerResolver(
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
         requireServerAttachment,
+        allowEmptyServerSelection,
         loadHostHarness,
         modelSelectionsEnabled: modelSelectionsEnabled === true,
         projectSecrets,
@@ -83,6 +82,7 @@ export function useComposerResolver(
       modelSelectionsEnabled,
       projectId,
       requireServerAttachment,
+      allowEmptyServerSelection,
       sandboxImagesEnabled,
       skillsEnabled,
     ],

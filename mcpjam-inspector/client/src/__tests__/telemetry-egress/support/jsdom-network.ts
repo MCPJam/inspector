@@ -31,7 +31,8 @@ export interface ScriptResponse {
 
 export interface NetworkStub {
   requests: CapturedRequest[];
-  /** Resolves once every recorded body (Blobs are async) has been read. */
+  keepaliveRequests: Set<CapturedRequest>;
+  /** Resolves once every recorded body and response has completed. */
   settle(): Promise<void>;
   /** Requests recorded since `mark`. */
   since(mark: number): CapturedRequest[];
@@ -76,9 +77,12 @@ function headersOf(init: HeadersInit | undefined): Record<string, string> {
 }
 
 export function installNetworkStub(
-  respond: (request: CapturedRequest) => StubResponse | ScriptResponse | null,
+  respond: (request: CapturedRequest) =>
+    | StubResponse | ScriptResponse | null
+    | Promise<StubResponse | ScriptResponse | null>,
 ): NetworkStub {
   const requests: CapturedRequest[] = [];
+  const keepaliveRequests = new Set<CapturedRequest>();
   const pending: Promise<unknown>[] = [];
   const win = window as unknown as Record<string, unknown>;
   const original = {
@@ -115,6 +119,12 @@ export function installNetworkStub(
     });
   };
 
+  const reply = (entry: CapturedRequest) => {
+    const response = Promise.resolve(respond(entry));
+    pending.push(response);
+    return response;
+  };
+
   const stubFetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -134,7 +144,8 @@ export function installNetworkStub(
       { ...headersOf(request?.headers), ...headersOf(init?.headers) },
       body,
     );
-    return toResponse(respond(entry));
+    if (init?.keepalive ?? request?.keepalive) keepaliveRequests.add(entry);
+    return toResponse(await reply(entry));
   };
 
   class StubXMLHttpRequest {
@@ -168,8 +179,8 @@ export function installNetworkStub(
     abort() {}
     send(body?: unknown) {
       void record(this.url, this.method, "xhr", this.headers, body).then(
-        (entry) => {
-          const answer = respond(entry);
+        async (entry) => {
+          const answer = await reply(entry);
           const plain = answer && !("run" in answer) ? answer : null;
           this.status = plain?.status ?? (answer ? 200 : 404);
           this.responseText = plain?.body ?? "{}";
@@ -189,7 +200,7 @@ export function installNetworkStub(
       "sendBeacon",
       {},
       data ?? null,
-    );
+    ).then(reply);
     return true;
   };
 
@@ -198,8 +209,8 @@ export function installNetworkStub(
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => {
         if (!(node instanceof HTMLScriptElement) || !node.src) return;
-        void record(node.src, "GET", "script", {}, null).then((entry) => {
-          const answer = respond(entry);
+        void record(node.src, "GET", "script", {}, null).then(async (entry) => {
+          const answer = await reply(entry);
           if (answer && "run" in answer) {
             answer.run();
             node.dispatchEvent(new Event("load"));
@@ -225,6 +236,7 @@ export function installNetworkStub(
 
   return {
     requests,
+    keepaliveRequests,
     async settle() {
       // Bodies can be read late (Blobs); new requests can be recorded while
       // waiting, so loop until nothing is pending.

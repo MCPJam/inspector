@@ -46,7 +46,7 @@ import { postLocalUsage } from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
-import { buildLocalExecutionRecord } from "./local-execution-record.js";
+import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
@@ -123,6 +123,7 @@ export interface ResolveTurnRuntimeArgs {
    * requested selection. A `local` or legacy one is never sent.
    */
   modelSelection?: RequestedModelSelection;
+  modelSelectionOrigin?: "backfill";
   /**
    * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
    * backend holds credits against it. Sent on that rail ONLY, and never to a
@@ -243,10 +244,12 @@ export async function resolveTurnRuntime(
     // Same validation + build the SSE/headless local handlers run. Each
     // provider attempt (every step, every retry) asks the backend first.
     assertOrgModelAllowed(orgRuntime.provider, modelId);
+    const attempts: LocalExecutionAttempt[] = [];
     const llmModel = admitEachLocalOrgAttempt(
       buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId),
       orgRuntime.admission,
       modelId,
+      attempts,
     );
 
     // The inspector calls the provider, so the effort is applied here, as
@@ -302,6 +305,8 @@ export async function resolveTurnRuntime(
       // checks it against its own resolution of the same selection.
       const execution = buildLocalExecutionRecord({
         selection: orgSelection,
+        attempts,
+        origin: args.modelSelectionOrigin,
         providerKey,
         wireModelId: modelId,
         effectiveSettings: {
@@ -349,7 +354,7 @@ export async function resolveTurnRuntime(
         serverIds: args.serverIds,
         journeyRunId: args.attribution?.journeyRunId,
         ...(orgSelection && execution
-          ? { modelSelection: orgSelection, execution }
+          ? { modelSelection: orgSelection, modelSelectionOrigin: args.modelSelectionOrigin, execution }
           : {}),
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
@@ -441,13 +446,14 @@ export async function resolveTurnRuntime(
             ...(outputCeiling !== undefined
               ? { maxOutputTokens: outputCeiling }
               : {}),
-            ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(hostedSelection ? { modelSelection: hostedSelection, modelSelectionOrigin: args.modelSelectionOrigin } : {}),
             ...(topLevelEffort ?? {}),
           }
         : undefined;
     return {
       runtime: {
         kind: "hosted",
+        modelSelectionOrigin: args.modelSelectionOrigin,
         // `runAssistantTurn`'s default endpoint. The old MCPJam branch did NOT
         // set endpointPath; `resolvedEndpointPath = endpointPath ?? "/stream"`
         // makes passing "/stream" explicitly byte-identical on the wire.
@@ -485,6 +491,7 @@ export async function resolveTurnRuntime(
   return {
     runtime: {
       kind: "hosted",
+      modelSelectionOrigin: args.modelSelectionOrigin,
       endpointPath: "/stream/org",
       // Byte-match `handleHostedOrgChatModel`: caller fields first, then the
       // sibling fields (providerKey, serverIds) that own the hosted contract.
@@ -492,7 +499,7 @@ export async function resolveTurnRuntime(
         ...(args.extraBodyFields ?? {}),
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
-        ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        ...(orgSelection ? { modelSelection: orgSelection, modelSelectionOrigin: args.modelSelectionOrigin } : {}),
         // `/stream/org` maps the effort per org provider (and refuses one it
         // cannot map), reading the selection's; a per-run effort the selection
         // does not carry rides as the top-level field, which wins over it.

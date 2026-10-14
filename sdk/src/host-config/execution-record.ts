@@ -37,6 +37,11 @@ import {
   type RequestedModelSelection,
 } from "./model-selection.js";
 
+export type RecordedRequestedModelSelection = RequestedModelSelection & {
+  origin?: "backfill" | "platform";
+  ownKeyOnly?: true;
+};
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 /** Which rail served (or was meant to serve) the call. */
@@ -91,7 +96,7 @@ export type ExecutionDeviation = {
 
 export type ExecutionRecord = {
   /** `source: "legacy"` ⇒ the stored choice had no source; it was inferred. */
-  requested: RequestedModelSelection;
+  requested: RecordedRequestedModelSelection;
   resolved: {
     rail: ExecutionRail;
     wireModelId: string;
@@ -139,36 +144,44 @@ function finiteNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-function readRequested(value: unknown): RequestedModelSelection | undefined {
+function readRequested(value: unknown): RecordedRequestedModelSelection | undefined {
   if (!isRecord(value)) return undefined;
+  const { origin, ownKeyOnly, ...selection } = value;
+  if (origin !== undefined && origin !== "backfill" && origin !== "platform") return undefined;
+  if (ownKeyOnly !== undefined && (ownKeyOnly !== true || value.source !== "legacy")) return undefined;
+  const markers: Pick<RecordedRequestedModelSelection, "origin" | "ownKeyOnly"> = {
+    ...(origin ? { origin } : {}),
+    ...(ownKeyOnly ? { ownKeyOnly: true } : {}),
+  };
   if (value.source === "legacy") {
     const modelId = nonEmptyString(value.modelId);
-    return modelId ? { source: "legacy", modelId } : undefined;
+    return modelId ? { source: "legacy", modelId, ...markers } : undefined;
   }
-  if (!isModelSelection(value)) return undefined;
-  const connectionRef = readConnectionRef(value.connectionRef);
+  if (!isModelSelection(selection)) return undefined;
+  const connectionRef = readConnectionRef(selection.connectionRef);
   return {
-    modelId: value.modelId,
-    source: value.source,
+    ...markers,
+    modelId: selection.modelId,
+    source: selection.source,
     ...(connectionRef ? { connectionRef } : {}),
-    ...(value.nativeModelId !== undefined
-      ? { nativeModelId: value.nativeModelId }
+    ...(selection.nativeModelId !== undefined
+      ? { nativeModelId: selection.nativeModelId }
       : {}),
-    ...(value.settings
+    ...(selection.settings
       ? {
           settings: {
-            ...(value.settings.reasoningEffort !== undefined
-              ? { reasoningEffort: value.settings.reasoningEffort }
+            ...(selection.settings.reasoningEffort !== undefined
+              ? { reasoningEffort: selection.settings.reasoningEffort }
               : {}),
-            ...(value.settings.temperature !== undefined
-              ? { temperature: value.settings.temperature }
+            ...(selection.settings.temperature !== undefined
+              ? { temperature: selection.settings.temperature }
               : {}),
           },
         }
       : {}),
     fallback: {
-      provider: value.fallback.provider,
-      model: value.fallback.model,
+      provider: selection.fallback.provider,
+      model: selection.fallback.model,
     },
   };
 }
