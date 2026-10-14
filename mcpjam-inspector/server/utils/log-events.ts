@@ -509,6 +509,17 @@ export type RequestEventMap = {
 };
 
 export type SystemEventMap = {
+  telemetry_canary: Record<string, never>;
+  llm_spend_unattested_ip_pooled: Record<string, never>;
+  "harness.timing": {
+    harnessId?: "claude-code" | "codex" | "cursor";
+    harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
+    harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
+    harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
+    harnessTurn?: "failed";
+  };
+  "harness.bootstrap": Record<string, never>;
+  "harness.turn.failed": Record<string, never>;
   /**
    * A chunk the backend streamed that the browser's AI SDK would reject, so
    * the stream handler dropped it instead of forwarding it. Forwarded, one
@@ -619,6 +630,12 @@ export type SystemEventMap = {
     privacyUnresolved: number;
     /** Replay events the policy did not allow, dropped from forwarded requests. */
     privacyReplayDropped: number;
+    /** Requests refused because an event or metric could not be shown clean. */
+    scrubDrops: number;
+    /** Replay events dropped: they carried a credential URL. */
+    replayCredentialDrops: number;
+    /** Replay events dropped: their nested data could not be decoded. */
+    replayUndecodableDrops: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };
