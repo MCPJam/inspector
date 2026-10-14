@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { createStackParser, nodeStackLineParser } from "@sentry/core";
@@ -53,8 +53,12 @@ async function buildServer(name: string, banner: string): Promise<string> {
   mkdirSync(join(root, "server"), { recursive: true });
   for (const [file, text] of Object.entries(FIXTURE))
     writeFileSync(join(root, "server", file), text);
-  const entry = ["index.ts", "harness-install-cli.ts"].map((file) =>
-    join(root, "server", file).split(sep).join("/"),
+  // Explicit entries avoid glob rewriting when Windows temp uses another drive.
+  const entry = Object.fromEntries(
+    ["index", "harness-install-cli"].map((name) => [
+      name,
+      join(root, "server", `${name}.ts`),
+    ]),
   );
   await build({
     ...config,
