@@ -40,6 +40,42 @@ Electron main installs the same final boundary for its embedded server. Its
 transport sends reconstructed envelopes directly; raw offline events and
 minidumps are not persisted for later vendor delivery.
 
+## Source maps
+
+`build:server` emits one file per entry (`dist/server/index.js` and
+`harness-install-cli.js`), then `scripts/server-sourcemaps.mjs` injects a debug
+ID into each and verifies it against its map. A missing, stale or mismatched
+map, or any extra output, fails the build. With `SENTRY_AUTH_TOKEN` it uploads
+those same files to `mcpjam-gh/inspector-server`, with the package version as
+`release`, `MCPJAM_BUILD_SURFACE` as `dist` and `app:///dist/server` as the URL
+prefix. The bundle reports the same release and `dist` (both baked in by
+`server/tsup.config.ts`), names its frames `app:///dist/server/index.js`, and
+sends the injected ID as `debug_meta`. The npm build (`release.yml`) and the
+Railway image upload. The Docker Hub image (`dist` `local`) has no token and
+uploads nothing. Neither the npm tarball nor the images ship the maps. The
+desktop app runs the server inside Electron main, mapped by `forge.config.ts`.
+
+The build log, and the step summary in Actions, says `[server-sourcemaps]
+uploaded <file> <debug id>, ...` or `[server-sourcemaps] NOT uploaded`. Only the
+first counts, and only Sentry can say the artifacts were stored.
+
+**Two-build check (local, no token):** `npm run test -w @mcpjam/inspector --
+server/__tests__/server-sourcemaps.test.ts` builds a fixture twice through
+`server/tsup.config.ts`, the second shifted by a banner, and checks that each
+build's transport `debug_meta` names its own map, that the thrown frame maps
+to the same source line in both, and that a shifted, mismatched, missing or
+uninjected map fails. For the real bundle, run `npm run build:server` twice
+with different `MCPJAM_BUILD_SURFACE` values and compare the printed IDs.
+
+**Staging acceptance (operator):** deploy two staging builds that differ only by
+a harmless bundle offset, with a token. A build log without the `uploaded` line
+fails acceptance. Find both debug IDs under the project's Settings → Source
+Maps → Artifact Bundles. Send the same controlled server error from each build
+and record both event IDs: each event's frame must resolve to the same
+`server/` file and line with no processing error, and both must land in one
+issue (record its ID). Then send a different controlled error, which must open
+a different issue.
+
 ## Process-level handlers
 
 | Signal              | Capture                                           | Log                                     |

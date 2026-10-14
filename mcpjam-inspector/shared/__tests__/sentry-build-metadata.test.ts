@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createStackParser, nodeStackLineParser } from "@sentry/core";
 import { expect, it } from "vitest";
 import { sentryBuildMetadata } from "../sentry-build-metadata";
 
@@ -27,4 +28,20 @@ it("binds map IDs only to fixed package files and recognizes Electron's normaliz
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+it("owns the path Sentry parses from a Windows ESM frame, and only under the verified root", () => {
+  const parse = createStackParser(nodeStackLineParser());
+  const frame = (url: string) =>
+    parse(`Error: x\n    at fail (${url}:12:7)`)[0]?.filename ?? "";
+  const owned = frame("file:///C:/Program%20Files/MCPJam/dist/server/index.js");
+  const customer = frame("file:///C:/Users/me/app/dist/server/index.js");
+  expect(owned).toBe("C:/Program Files/MCPJam/dist/server/index.js");
+  const { frameAliases } = sentryBuildMetadata(
+    "C:\\Program Files\\MCPJam",
+    ["dist/server/index.js"],
+    true,
+  );
+  expect(frameAliases[owned]).toBe("dist/server/index.js");
+  expect(frameAliases[customer]).toBeUndefined();
 });

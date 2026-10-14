@@ -83,7 +83,8 @@ export function isSentryBuildSurface(
 }
 
 /**
- * The surfaces `client/vite.config.ts` may stamp, via `MCPJAM_BUILD_SURFACE`.
+ * The surfaces `client/vite.config.ts` (and `server/tsup.config.ts`, built in
+ * the same jobs) may stamp, via `MCPJAM_BUILD_SURFACE`.
  *
  * Narrower than `SENTRY_BUILD_SURFACES` because that config only ever builds
  * `dist/client`. The Electron renderer is built by `vite.renderer.config.mts`,

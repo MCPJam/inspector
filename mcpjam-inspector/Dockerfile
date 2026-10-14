@@ -108,7 +108,8 @@ ARG METICULOUS_RECORDING_TOKEN
 # release, and without it every hosted prod stack trace stays minified
 # (`index-<hash>.js:8:117100`) while Sentry falls back to scraping the asset
 # URL, which the SPA answers with index.html. Absent, the plugin warns and
-# skips the upload, so local and desktop builds are unaffected.
+# skips the upload, so local and desktop builds are unaffected. `build:server`
+# reads it the same way for the server's maps.
 #
 # ARG, and not a BuildKit secret mount, because Railway builds this image and
 # does not support `--mount=type=secret`: declaring an ARG of the same name as
@@ -178,8 +179,6 @@ COPY chat-ui ./chat-ui
 COPY widget-react ./widget-react
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
-RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
-    npm run build:server -w @mcpjam/inspector
 # MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
 # under. Without it this bundle's events resolve against the npm or desktop
 # artifacts, which share the same bare `release`. Railway keeps the `web`
@@ -187,6 +186,12 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # uploads no source maps and must not resolve against the hosted app's. See
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 ARG MCPJAM_BUILD_SURFACE=web
+# The server bakes in the same `dist`. `build:server` injects and verifies its
+# debug IDs and, given SENTRY_AUTH_TOKEN, uploads its maps; the maps then stay
+# out of the image, as they stay out of the npm tarball.
+RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
+    npm run build:server -w @mcpjam/inspector && \
+    rm mcpjam-inspector/dist/server/*.map
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \

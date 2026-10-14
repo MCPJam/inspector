@@ -11,6 +11,17 @@ describe("server diagnostics during rollout", () => {
       expect(strictServerSentryOptions().environment).toBe(environment);
     },
   );
+  it("reports the baked build surface its maps were uploaded under, and no other", () => {
+    const event = { message: "process.uncaught_exception" };
+    vi.stubEnv("MCPJAM_BUILD_SURFACE", "npm");
+    expect(
+      rebuildSentryEvent(event, strictServerSentryOptions()),
+    ).toMatchObject({ dist: "npm" });
+    vi.stubEnv("MCPJAM_BUILD_SURFACE", "bogus");
+    expect(
+      rebuildSentryEvent(event, strictServerSentryOptions()),
+    ).not.toHaveProperty("dist");
+  });
   it("provides the generated event and literal message catalog at the boundary", () => {
     const options = strictServerSentryOptions();
     for (const message of [

@@ -543,7 +543,9 @@ jobs:
           # so a token alone would not have been enough.) The upload itself is
           # best-effort: the plugin reports upload failures without failing the
           # build, and Sentry being down must not fail a release. The assert
-          # below is what is allowed to.
+          # below is what is allowed to. `build:server` injects, verifies and
+          # uploads the server's maps from this same env and writes the outcome
+          # to the step summary (mcpjam-inspector/scripts/server-sourcemaps.mjs).
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MCPJAM_BUILD_SURFACE: npm
 
