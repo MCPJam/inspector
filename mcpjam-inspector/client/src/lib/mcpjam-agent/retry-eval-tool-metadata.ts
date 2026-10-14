@@ -43,6 +43,6 @@ export async function retryEvalToolMetadata({
   );
   if (unauthorized.length)
     throw new Error(
-      "Server authorization is required. Open Servers to check the connection and retry.",
+      "Server authorization is required. Open Servers to check its authentication settings and retry.",
     );
 }
