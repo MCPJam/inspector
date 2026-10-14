@@ -81,16 +81,13 @@ const SERVER_ASSERTED_ORIGINS = new Set([
   "ambiguous",
 ]);
 
-/** Keep a quoted upstream body from bloating the event. */
-const MAX_EXTRA_CHARS = 1000;
-
 /**
  * Synthetic, STABLE message for the reported error.
  *
  * Not cosmetic. `BROWSER_IGNORE_ERRORS` drops `"Failed to fetch"`,
  * `"Load failed"`, and `/^AbortError/` BY MESSAGE, and those are exactly the
  * strings a failed chat request arrives with — reporting the raw message would
- * mean reporting nothing. The real message is preserved in `extra.rawMessage`.
+ * mean reporting nothing. Only the classified code is sent.
  *
  * It is also what makes Sentry grouping useful: every 502 on this path becomes
  * one issue instead of one issue per upstream body.
@@ -116,12 +113,12 @@ const STREAM_PROTOCOL_ERROR = "chat_stream_protocol_error";
 
 /**
  * What a rejected chunk looked like, without its values. The error's message
- * embeds the whole chunk, and a chunk carries model output — so the type and
- * field names go to Sentry, never the message.
+ * embeds the whole chunk, and a chunk carries model output — so only an approved type and
+ * a field count go to Sentry, never the message or arbitrary field names.
  */
 function rejectedChunkShape(error: TypeValidationError): {
   chunkType: string;
-  fields: string[];
+  fieldCount: number;
 } {
   const value = error.value;
   const record =
@@ -129,9 +126,22 @@ function rejectedChunkShape(error: TypeValidationError): {
       ? (value as Record<string, unknown>)
       : {};
   return {
-    chunkType:
-      typeof record.type === "string" ? record.type.slice(0, 64) : typeof value,
-    fields: Object.keys(record).slice(0, 20),
+    chunkType: [
+      "text-start",
+      "text-delta",
+      "text-end",
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-end",
+      "tool-input-start",
+      "tool-input-delta",
+      "tool-input-end",
+      "finish",
+      "error",
+    ].includes(String(record.type))
+      ? String(record.type)
+      : "unknown",
+    fieldCount: Math.min(Object.keys(record).length, 1000),
   };
 }
 
@@ -248,17 +258,18 @@ export function reportChatFailure(
   reportCaught(synthetic, {
     source: isRequestFailure ? "chat_request_failed" : "chat_stream_error",
     extra: {
-      // `normalized.rawMessage`, NOT `error.message`. The describer has
-      // already redacted bearer tokens, OAuth secrets, and provider keys —
-      // and the raw text here is an upstream RESPONSE BODY, which is exactly
-      // the kind of thing that carries them.
-      rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
+      code: normalized.slug,
+      provider: "unknown",
       slug: normalized.slug,
       origin,
       ...(meta
         ? {
             httpStatus: meta.status,
-            ...(meta.contentType ? { contentType: meta.contentType } : {}),
+            ...(["application/json", "text/event-stream", "text/html"].includes(
+              meta.contentType?.split(";", 1)[0] ?? "",
+            )
+              ? { contentType: meta.contentType?.split(";", 1)[0] }
+              : {}),
             ...(meta.requestId ? { requestId: meta.requestId } : {}),
           }
         : {}),
@@ -298,8 +309,7 @@ function reportAgentChatFailure(
     },
     fingerprint: agentFingerprint(resolvedFacts),
     extra: {
-      // Redacted by the describer; see the Playground branch above.
-      rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
+      provider: "unknown",
       slug: normalized.slug,
       ...(facts.code ? { code: facts.code } : {}),
       ...(facts.reason ? { reason: facts.reason } : {}),
@@ -308,7 +318,11 @@ function reportAgentChatFailure(
       ...(meta
         ? {
             httpStatus: meta.status,
-            ...(meta.contentType ? { contentType: meta.contentType } : {}),
+            ...(["application/json", "text/event-stream", "text/html"].includes(
+              meta.contentType?.split(";", 1)[0] ?? "",
+            )
+              ? { contentType: meta.contentType?.split(";", 1)[0] }
+              : {}),
             ...(meta.requestId ? { requestId: meta.requestId } : {}),
           }
         : {}),

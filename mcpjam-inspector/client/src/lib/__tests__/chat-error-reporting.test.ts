@@ -54,7 +54,8 @@ describe("reportChatFailure", () => {
     const [error, options] = reportCaught.mock.calls[0]!;
     expect((error as Error).message).not.toContain("Failed to fetch");
     // The real message is still recoverable for debugging.
-    expect(options.extra.rawMessage).toBe("Failed to fetch");
+    expect(options.extra).not.toHaveProperty("rawMessage");
+    expect(options.extra.provider).toBe("unknown");
   });
 
   it("reports a stream chunk the AI SDK rejected as its own issue, without the chunk's values", () => {
@@ -82,8 +83,8 @@ describe("reportChatFailure", () => {
     expect((reported as Error).message).toBe("chat_stream_protocol_error");
     expect(options.source).toBe("chat_stream_protocol_error");
     expect(options.extra).toEqual({
-      chunkType: "custom",
-      fields: ["type", "kind", "providerMetadata"],
+      chunkType: "unknown",
+      fieldCount: 3,
       origin: "mcpjam",
       requestId: "req_p1",
     });
@@ -131,7 +132,10 @@ describe("reportChatFailure", () => {
     // failure this exists to catch. The STATUS closes that gap, the same way
     // the server's `describeBackendStreamFailure` does.
     expect(
-      reportChatFailure(new Error("<html>502</html>"), { ok: false, status: 502 }),
+      reportChatFailure(new Error("<html>502</html>"), {
+        ok: false,
+        status: 502,
+      }),
     ).toBe(true);
     expect(reportCaught.mock.calls[0]![1].extra.origin).toBe("mcpjam");
   });
@@ -178,18 +182,21 @@ describe("reportChatFailure", () => {
     // `reportCaught`'s Sentry leg is ungated, so the gate has to be here.
     isErrorCaptureSurface.mockReturnValue(false);
 
-    expect(reportChatFailure(new Error("boom"), { ok: false, status: 502 })).toBe(
-      false,
-    );
+    expect(
+      reportChatFailure(new Error("boom"), { ok: false, status: 502 }),
+    ).toBe(false);
     expect(reportCaught).not.toHaveBeenCalled();
   });
 
   it("truncates a huge upstream body instead of shipping it whole", () => {
-    reportChatFailure(new Error("x".repeat(50_000)), { ok: false, status: 502 });
+    reportChatFailure(new Error("x".repeat(50_000)), {
+      ok: false,
+      status: 502,
+    });
 
-
-    const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
-    expect(rawMessage.length).toBeLessThanOrEqual(1000);
+    expect(reportCaught.mock.calls[0]![1].extra).not.toHaveProperty(
+      "rawMessage",
+    );
   });
 
   it("does not report a failure the catalog blames on the user", () => {
@@ -229,8 +236,12 @@ describe("reportChatFailure", () => {
       { ok: false, status: 502 },
     );
 
-    const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
-    expect(rawMessage).not.toContain("sk-abcdefghijklmnop");
+    expect(JSON.stringify(reportCaught.mock.calls[0]![1])).not.toContain(
+      "sk-abcdefghijklmnop",
+    );
+    expect(reportCaught.mock.calls[0]![1].extra).not.toHaveProperty(
+      "rawMessage",
+    );
   });
 
   it("does not copy the original stack, which would smuggle the message back", () => {
@@ -310,10 +321,14 @@ describe("reportChatFailure — Ask MCPJam mode", () => {
   });
 
   it("keeps the synthetic message, which the ignore-list cannot swallow", () => {
-    reportChatFailure(new Error("Failed to fetch"), null, agent({
-      source: "fetch_rejected",
-      pageClass: "routine",
-    }));
+    reportChatFailure(
+      new Error("Failed to fetch"),
+      null,
+      agent({
+        source: "fetch_rejected",
+        pageClass: "routine",
+      }),
+    );
 
     const [error, options] = reportCaught.mock.calls[0]!;
     expect((error as Error).message).not.toContain("Failed to fetch");
