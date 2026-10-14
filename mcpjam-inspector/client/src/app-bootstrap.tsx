@@ -84,7 +84,6 @@ import {
   WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
-// Initialize Sentry before React mounts
 initSentry();
 
 // After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own

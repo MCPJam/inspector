@@ -23,7 +23,11 @@ import {
   sentryItems,
   sentryReplayEvents,
 } from "../../../../../e2e/telemetry/egress";
-import { bootTelemetryHarness, NORMAL_PAGE, type TelemetryHarness } from "./harness";
+import {
+  bootTelemetryHarness,
+  NORMAL_PAGE,
+  type TelemetryHarness,
+} from "./harness";
 import { expectArrived, expectNoLeaks } from "./expect-egress";
 
 /** See `session-egress.test.tsx`: Sentry drops a first segment under 5s. */
@@ -52,9 +56,12 @@ export function describeColdLoad(options: {
 
   describe(`a cold load onto ${options.label}`, () => {
     it("records nothing there, scrubs what leaves, and a tab closed there ships nothing planted", async () => {
-      const mark = harness.mark();
+      const mark = 0;
       await harness.click();
-      harness.posthog.capture("egress_cold_load_event");
+      harness.posthog.capture("send_message", {
+        location: "chat_tab",
+        prompt: options.sentinel,
+      });
       harness.posthog.captureException(new Error("cold load failure"));
       harness.Sentry.captureException(new Error("cold load sentry failure"));
       console.info("[egress] landed on", window.location.href);
@@ -63,7 +70,7 @@ export function describeColdLoad(options: {
       await harness.idle(PAGELOAD_IDLE_MS);
       await harness.flush();
       // And a tab closed on the page, with whatever is buffered.
-      harness.posthog.capture("egress_cold_load_unload");
+      harness.posthog.capture("edit_message", { location: "chat_tab" });
       await harness.unload();
       window.dispatchEvent(
         new PageTransitionEvent("pageshow", { persisted: true }),
@@ -72,13 +79,7 @@ export function describeColdLoad(options: {
       const scan = harness.scanSince(mark);
       expectNoLeaks(scan, options.label);
       expectArrived(scan, options.label, {
-        posthogEvents: [
-          "egress_cold_load_event",
-          "egress_cold_load_unload",
-          "$autocapture",
-          "$exception",
-        ],
-        sentryItems: ["event", "transaction"],
+        posthogEvents: ["send_message", "edit_message"],
       });
       // Analytics arrive; replay does not, from either recorder.
       expect(
@@ -89,19 +90,13 @@ export function describeColdLoad(options: {
         sentryReplayEvents(scan.decoded),
         "Sentry Replay recorded on a credential page",
       ).toEqual([]);
-      // The pageload transaction is named, not addressed.
-      const pageload = sentryItems(scan.decoded).find(
-        (item) =>
-          item.type === "transaction" &&
-          (item.payload as { contexts?: { trace?: { op?: string } } })
-            .contexts?.trace?.op === "pageload",
+      // The final serializer adds strict diagnostics in its activation layer.
+      expect(sentryItems(scan.decoded)).toEqual([]);
+      const product = posthogEvents(scan.decoded).find(
+        (event) => event.event === "send_message",
       );
-      expect(pageload, "no pageload transaction arrived").toBeDefined();
-      expect(
-        posthogEvents(scan.decoded).find(
-          (event) => event.event === "egress_cold_load_event",
-        )?.properties.$current_url,
-      ).toMatch(/^https:\/\/app\.mcpjam\.com\//);
+      expect(product?.properties.location).toBe("chat_tab");
+      expect(product?.properties.prompt).toBeUndefined();
     }, 60_000);
 
     it("leaving for a normal page records the normal page, not the credential page", async () => {

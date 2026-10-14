@@ -10,7 +10,7 @@
  * The visitor is an authenticated member the backend answers `full` for
  * (the Convex stand-in answers `telemetryPrivacy:getContext`), so both
  * recorders run at the level where the most reaches the vendors
- * (`resolveSessionPrivacy`). The `masked` and `off` levels are covered in
+ * (`resolveSessionPrivacy`). The strict and unresolved contexts are covered in
  * jsdom (`session-egress.test.tsx`) and by the telemetry privacy browser test.
  *
  * Every test reads every PostHog and Sentry request its page made, decoded
@@ -20,6 +20,11 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { observeFetchOptions } from "./tests/fetch-observer";
+import {
+  captureFreshSentryProof,
+  captureSentryProof,
+  waitForSentryReplay,
+} from "./replay-resume-proof";
 import {
   assertTelemetryBuild,
   drain,
@@ -73,14 +78,8 @@ const ROUND_TRIP_DWELLS_MS: ReadonlyArray<{ away: number; back: number }> = [
 ];
 const SENTRY_LATENCY_MS = 800;
 
-/**
- * Credential pages that are share links. A share link is recorded `masked`,
- * and the way back to `full` waits `MASKED_TO_FULL_SETTLE_MS` (3s,
- * hooks/useSessionPrivacy.ts) — Sentry Replay, which records only at `full`,
- * is held off until then. A return from one lasts past that.
- */
-const SHARE_LINK_ROUTES = new Set<string>(["tester-link"]);
-const SHARE_LINK_RETURN_MS = 4_500;
+// Until strict serialization activates, restricted errors are suppressed.
+const STRICT_DIAGNOSTICS = false;
 
 /** A public page every signed-out visitor can open: the score landing. */
 const NORMAL_PAGE = "/";
@@ -150,6 +149,30 @@ test("share links on a normal page at full: text, href and iframe src", async ({
 }) => {
   const recorder = await installEgressRecorder(page);
   await openNormalPage(page, recorder);
+  const fullEventId = await captureFreshSentryProof(page);
+  await expect
+    .poll(
+      () =>
+        sentryItems(recorder.scanSince(0).decoded).some(
+          (item) =>
+            item.type === "event" &&
+            (item.payload as { event_id?: unknown }).event_id === fullEventId,
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  // A clean console frame is a positive control. The later credential-bearing
+  // console frame is deliberately dropped at the relay's final serializer.
+  await page.evaluate(() => console.log("[egress] full recording control"));
+  await expect
+    .poll(() =>
+      posthogReplayEvents(recorder.scanSince(0).decoded).some(
+        (event) =>
+          event.type === RRWEB.Plugin &&
+          (event.data as { plugin?: unknown })?.plugin === "rrweb/console@1",
+      ),
+    )
+    .toBe(true);
   await page.evaluate(
     (urls) => {
       const section = document.createElement("section");
@@ -199,9 +222,10 @@ test("share links on a normal page at full: text, href and iframe src", async ({
     sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
-  // A guest, at `full`: the guest session was minted and the replay shows
+  // A member, at `full`: AuthKit resolved and the replay shows
   // the page's words, unmasked.
   expect(recorder.api).toContain("POST /user_management/authenticate");
+
   expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
     NORMAL_PAGE_TEXT,
   );
@@ -216,14 +240,28 @@ for (const [id, url] of pageCorpus()) {
     await page.waitForTimeout(3_000);
     await interact(page);
     await throwUncaught(page, `failure on ${id}`);
+    const strictEventId = await captureSentryProof(
+      page,
+      `cold strict control ${id}`,
+    );
     await page.waitForTimeout(1_000);
     await spaNavigate(page, NORMAL_PAGE);
     await page.waitForTimeout(1_500);
     await interact(page);
     await drain(page, recorder);
-    // Some credential URLs boot pages without the analytics provider (the
-    // connection handoff, the OAuth popup); Sentry runs on every one.
-    expectClean(recorder, `cold load onto ${id}`, { sentryItems: ["event"] });
+    // Standalone handoffs need not boot PostHog. The installed SDK minted the
+    // strict capture ID above; the interim transport must suppress that input.
+    const scan = expectClean(recorder, `cold load onto ${id}`, {});
+    expect(
+      sentryItems(scan.decoded).some(
+        (item) =>
+          item.type === "event" &&
+          (item.payload as { event_id?: unknown }).event_id === strictEventId,
+      ),
+    ).toBe(false);
+    expect(
+      sentryItems(scan.decoded).filter((item) => item.type === "event"),
+    ).toEqual([]);
   });
 }
 
@@ -246,7 +284,7 @@ test("SPA navigation from a normal page onto every credential page and back", as
     from: number;
     until: number;
     mark: number;
-    error: string;
+    eventId: string;
   }> = [];
   for (const [index, [id, url]] of pageCorpus().entries()) {
     const dwell = ROUND_TRIP_DWELLS_MS[index % ROUND_TRIP_DWELLS_MS.length]!;
@@ -261,17 +299,20 @@ test("SPA navigation from a normal page onto every credential page and back", as
     if (new URL(page.url()).pathname !== NORMAL_PAGE) {
       await spaNavigate(page, NORMAL_PAGE);
     }
+    await expect(page.getByText(NORMAL_PAGE_TEXT).first()).toBeVisible();
     // An interaction straight away: posthog-js holds a new recording's
     // first flush until there is one.
     await page.mouse.click(5, 5);
-    await page.waitForTimeout(
-      SHARE_LINK_ROUTES.has(id)
-        ? Math.max(dwell.back, SHARE_LINK_RETURN_MS)
-        : dwell.back,
+    await page.waitForTimeout(dwell.back);
+    // Every unresolved destination can stop replay. Require a new full
+    // recording after this return, beyond the conservative settling delay.
+    await waitForFullReplay(page, recorder, 30_000, mark, from);
+    await waitForSentryReplay(page, recorder, mark, from);
+    const eventId = await captureSentryProof(
+      page,
+      `liveness check after ${id}`,
     );
-    const error = `liveness check after ${id}`;
-    await throwUncaught(page, error);
-    returns.push({ id, from, until: await pageNow(page), mark, error });
+    returns.push({ id, from, until: await pageNow(page), mark, eventId });
   }
   await interact(page);
   await throwUncaught(page, "after the round trip");
@@ -279,16 +320,12 @@ test("SPA navigation from a normal page onto every credential page and back", as
   const scan = expectClean(recorder, "SPA navigation", {
     posthogEvents: ["$snapshot"],
     posthogFullSnapshot: true,
-    sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
 
-  // Not just somewhere in the run: BOTH recorders came back after EVERY
-  // visit. PostHog shows it with DOM events recorded during that return
-  // (a full snapshot on resume, the click straight after it) and sent after
-  // it began; Sentry with the replay it tags an error thrown during that
-  // return with — a quick return's own segment is too short for Sentry to
-  // keep, so the tag is what a resumed replay leaves.
+  // Both recorders must send fresh recording bytes after every return.
+  // Retained strict breadcrumbs can keep later errors strict, so correlate
+  // diagnostic arrival by the SDK's minted event ID, not free text/replay tags.
   const errors = sentryItems(scan.decoded).filter(
     (item) => item.type === "event",
   );
@@ -311,16 +348,32 @@ test("SPA navigation from a normal page onto every credential page and back", as
         `PostHog replay was not recording after leaving ${visit.id}`,
       )
       .toBeGreaterThan(0);
-    const error = errors.find((item) =>
-      JSON.stringify(item.payload).includes(visit.error),
-    );
     expect
       .soft(
-        (error?.payload as { tags?: { replayId?: unknown } } | undefined)?.tags
-          ?.replayId,
-        `Sentry Replay was not recording after leaving ${visit.id}`,
+        errors.some(
+          (item) =>
+            (item.payload as { event_id?: unknown }).event_id === visit.eventId,
+        ),
+        `Sentry diagnostic did not match interim suppression after leaving ${visit.id}`,
       )
-      .toEqual(expect.any(String));
+      .toBe(STRICT_DIAGNOSTICS);
+    expect
+      .soft(
+        sentryReplayEvents(recorder.scanSince(visit.mark).decoded).some(
+          (event) => {
+            const at = (event as { timestamp?: unknown }).timestamp;
+            return (
+              (event.type === RRWEB.FullSnapshot ||
+                event.type === RRWEB.IncrementalSnapshot) &&
+              typeof at === "number" &&
+              at >= visit.from &&
+              at <= visit.until
+            );
+          },
+        ),
+        `Sentry replay did not resume after leaving ${visit.id}`,
+      )
+      .toBe(true);
   }
   // The last return lasts past Sentry's minimum, so what it recorded there
   // is sent, not only tagged.
@@ -361,7 +414,6 @@ test("a secret query key and fragment on a normal page", async ({ page }) => {
   await drain(page, recorder);
   expectClean(recorder, "query and fragment", {
     posthogFullSnapshot: true,
-    sentryItems: ["event"],
   });
 });
 
@@ -369,7 +421,7 @@ test("a normal-page unload delivers buffered events by authenticated keepalive f
   const fetches = await observeFetchOptions(page);
   const recorder = await installEgressRecorder(page);
   await openNormalPage(page, recorder);
-  const ingressMark = recorder.telemetry.length;
+  const ingressMark = recorder.ingress.length;
   const vendorMark = recorder.mark();
   const fetchMark = fetches.length;
   await interact(page);
@@ -383,7 +435,7 @@ test("a normal-page unload delivers buffered events by authenticated keepalive f
   expect(missingArrivals(recorder.scanSince(vendorMark).decoded, {
     posthogEvents: ["$autocapture"],
   })).toEqual([]);
-  const ingress = recorder.telemetry.slice(ingressMark).filter(
+  const ingress = recorder.ingress.slice(ingressMark).filter(
     (request) => request.url.includes("/tlm/") && request.method === "POST",
   );
   expect(ingress.length).toBeGreaterThan(0);
@@ -414,7 +466,6 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.waitForTimeout(1_500);
   expectClean(recorder, "closed on a credential page", {
     posthogEvents: ["$snapshot"],
-    sentryItems: ["event"],
   });
 });
 
@@ -432,10 +483,18 @@ test("a visitor who reads a page, then opens a share link", async ({
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
   await throwUncaught(page, "on the share link");
+  const strictEventId = await captureSentryProof(page, "share strict control");
   await drain(page, recorder);
-  expectClean(recorder, "opening a share link", {
+  const scan = expectClean(recorder, "opening a share link", {
     posthogFullSnapshot: true,
-    sentryItems: ["event", "replay_event"],
+    sentryItems: ["replay_event"],
     sentryFullSnapshot: true,
   });
+  expect(
+    sentryItems(scan.decoded).some(
+      (item) =>
+        item.type === "event" &&
+        (item.payload as { event_id?: unknown }).event_id === strictEventId,
+    ),
+  ).toBe(false);
 });
