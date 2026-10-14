@@ -208,18 +208,3 @@ export async function filterRecordingEnvelope(envelope: Envelope): Promise<Envel
   }
   return [headers, filtered];
 }
-
-interface TransportLike {
-  send(envelope: never): PromiseLike<unknown>;
-  flush(timeout?: number): PromiseLike<boolean>;
-}
-
-/** A Sentry transport whose replay recordings pass through the filter. */
-export function withRecordingFilter<T extends TransportLike>(transport: T): T {
-  return {
-    ...transport,
-    send: async (envelope: Envelope) =>
-      await transport.send((await filterRecordingEnvelope(envelope)) as never),
-    flush: (timeout?: number) => transport.flush(timeout),
-  } as T;
-}

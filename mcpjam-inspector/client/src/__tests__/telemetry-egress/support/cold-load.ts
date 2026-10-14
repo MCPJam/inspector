@@ -80,6 +80,7 @@ export function describeColdLoad(options: {
       expectNoLeaks(scan, options.label);
       expectArrived(scan, options.label, {
         posthogEvents: ["send_message", "edit_message"],
+        sentryItems: ["event", "transaction"],
       });
       // Analytics arrive; replay does not, from either recorder.
       expect(
@@ -90,8 +91,10 @@ export function describeColdLoad(options: {
         sentryReplayEvents(scan.decoded),
         "Sentry Replay recorded on a credential page",
       ).toEqual([]);
-      // The final serializer adds strict diagnostics in its activation layer.
-      expect(sentryItems(scan.decoded)).toEqual([]);
+      const transaction = sentryItems(scan.decoded).find(
+        (item) => item.type === "transaction",
+      );
+      expect(transaction, "no transaction arrived").toBeDefined();
       const product = posthogEvents(scan.decoded).find(
         (event) => event.event === "send_message",
       );

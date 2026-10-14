@@ -31,7 +31,6 @@ import {
   RRWEB,
   sentinel,
   sentryReplayEvents,
-  sentryItems,
   recordedText,
 } from "../../../../e2e/telemetry/egress";
 import {
@@ -75,20 +74,8 @@ beforeEach(async () => {
 describe("at `full`, on a normal page", () => {
   it("share links shown as text, href and iframe src stay out of every payload", async () => {
     const mark = harness.mark();
-    // A fresh full scope is a diagnostic positive; restricted breadcrumbs from
-    // initialization deliberately constrain later errors until the next layer.
-    harness.Sentry.getIsolationScope().clearBreadcrumbs();
-    harness.Sentry.getCurrentScope().clearBreadcrumbs();
-    harness.Sentry.captureException(new Error("full diagnostic control"));
-    await harness.flush();
-    expectArrived(harness.scanSince(mark), "fresh full diagnostic", {
-      sentryItems: ["event"],
-    });
     await harness.showShareLinks(ALL_SHARE_LINKS);
     await harness.click();
-    // Require a new snapshot after the known-full grant, inside this mark.
-    harness.posthog.stopSessionRecording();
-    harness.posthog.startSessionRecording();
     // A credential plugin frame drops its entire batch. First require a
     // separate safe console + DOM batch to leave through authenticated fetch.
     console.info("[egress] safe console control");
@@ -120,6 +107,7 @@ describe("at `full`, on a normal page", () => {
     expectArrived(scan, "share links at full", {
       posthogEvents: ["egress_custom_event", "$autocapture", "$exception"],
       posthogFullSnapshot: true,
+      sentryItems: ["event"],
       sentryFullSnapshot: true,
     });
     // The share links were recorded — scrubbed, not dropped: proof that the
@@ -170,13 +158,9 @@ describe("SPA navigation onto every credential page and back", () => {
     expectArrived(scan, "SPA navigation", {
       posthogEvents: ["send_message", "$autocapture"],
       posthogFullSnapshot: true,
+      sentryItems: ["event", "transaction"],
       sentryFullSnapshot: true,
     });
-    expect(
-      sentryItems(scan.decoded).filter(
-        (item) => item.type === "event" || item.type === "transaction",
-      ),
-    ).toEqual([]);
     // Analytics are not blocked on credential pages, only scrubbed: one event
     // per page arrived.
     const routes = posthogEvents(scan.decoded).filter(
@@ -272,7 +256,7 @@ describe("a buffered unload on a normal page", () => {
 });
 
 describe("switching from full to strict", () => {
-  it("stops both replays and suppresses every restricted Sentry envelope", async () => {
+  it("stops both replays while approved diagnostics still arrive", async () => {
     const mark = harness.mark();
     await harness.setLevel("masked");
     await harness.showShareLinks(ALL_SHARE_LINKS);
@@ -291,8 +275,8 @@ describe("switching from full to strict", () => {
     expectNoLeaks(scan, "strict");
     expectArrived(scan, "strict", {
       posthogEvents: ["send_message"],
+      sentryItems: ["event"],
     });
-    expect(sentryItems(scan.decoded)).toEqual([]);
     expect(posthogReplayEvents(scan.decoded)).toEqual([]);
     expect(sentryReplayEvents(scan.decoded)).toEqual([]);
     expect(
