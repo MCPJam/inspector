@@ -84,6 +84,14 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      - name: Verify telemetry catalogs
+        run: |
+          npm run telemetry:check
+          node --test scripts/__tests__/telemetry-route-catalog.test.mjs
+
+      - name: Verify SDK source-map packing and artifact smoke
+        run: node --test .github/scripts/sdk-sourcemaps.test.mjs
+
       - name: Verify DESIGN.md and mirrored token surfaces are in sync
         run: npm run design:check
 

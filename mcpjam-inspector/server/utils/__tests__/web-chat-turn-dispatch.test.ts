@@ -265,7 +265,7 @@ describe("streamWebChatTurn model dispatch", () => {
     "refuses a harness turn on a BYOK model (%o) instead of emulating",
     async (model) => {
       await expect(streamWebChatTurn(args(model) as never)).rejects.toThrow(
-        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/,
+        /This host runs the claude-code harness, which isn't available: the Claude Code harness requires a supported model and an eligible Anthropic connection/,
       );
       expect(handlers.hostedOrg).not.toHaveBeenCalled();
       expect(handlers.localOrg).not.toHaveBeenCalled();
@@ -378,7 +378,7 @@ describe("streamWebChatTurn model dispatch", () => {
             { routingSelection: orgSel("openai/gpt-5") },
           ) as never,
         ),
-      ).rejects.toThrow(/organization's Anthropic key/);
+      ).rejects.toThrow(/eligible Anthropic connection/);
       expect(handlers.mcpjamFree).not.toHaveBeenCalled();
       expect(handlers.hostedOrg).not.toHaveBeenCalled();
     });

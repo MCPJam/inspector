@@ -247,6 +247,25 @@ describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
       expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
     }
   });
+
+  it("words a rejected sign-in for every registration type", () => {
+    expect(
+      humanizeSwarmAttemptError(undefined, "xaa_authorization_rejected")
+        .message,
+    ).toBe(
+      "The authorization server rejected MCPJam's access request. Check the server's auth settings.",
+    );
+  });
+
+  it("keeps a throttled sign-in's stored sentence under its sign-in code", () => {
+    const stored =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    const info = humanizeSwarmAttemptError(stored, "xaa_authorization_rejected");
+
+    expect(info.message).toBe(stored);
+    expect(info.code).toBe("xaa_authorization_rejected");
+    expect(info.rerunnable).toBeUndefined();
+  });
 });
 
 describe("isAccountLimit", () => {

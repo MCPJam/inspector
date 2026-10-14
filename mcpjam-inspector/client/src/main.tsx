@@ -1,5 +1,5 @@
-// Must stay the first import; OAuth modules retain window.fetch at load time.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,

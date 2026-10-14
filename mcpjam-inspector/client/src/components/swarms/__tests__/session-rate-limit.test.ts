@@ -361,6 +361,26 @@ describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
     ).not.toBe("swarm/ai_refused");
   });
 
+  it("does not blame the AI provider for a throttled server sign-in", () => {
+    const stored =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    const card = describeSwarmAttemptFailure(
+      stored,
+      "xaa_authorization_rejected",
+      "Your provider",
+    );
+
+    expect(card.oneLine).toBe(stored);
+    expect(card.oneLine).not.toMatch(/rate-limited this key|switch models/i);
+    expect(card.slug).toBe("swarm/attempt_failed");
+    // Nothing on the card is the provider-quota entry's.
+    expect([...card.likelyCauses, ...card.nextSteps].join(" ")).not.toMatch(
+      /provider|plan|quota|rate limit/i,
+    );
+    expect(card.nextSteps).toContain("Check the server's auth settings.");
+    expect(card.docsAnchor).not.toBe(ERROR_CATALOG["provider/quota"].docsAnchor);
+  });
+
   it("offers another run for a transient refusal", () => {
     expect(
       describeSwarmAttemptFailure("busy", "provider_unavailable", "OpenAI"),

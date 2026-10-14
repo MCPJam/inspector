@@ -410,6 +410,7 @@ export interface WebChatTurnPrepareInputs {
    * hosted-list check, unchanged.
    */
   routingSelection?: RequestedModelSelection;
+  routingSelectionOrigin?: "backfill";
   systemPrompt?: string;
   temperature?: number;
   /**
@@ -1282,7 +1283,7 @@ export async function streamWebChatTurn(
       `This host runs the ${persist.harness} harness, which isn't available: ` +
         `${
           refusal?.reason ??
-          "the harness only runs MCPJam-provided models — pick one on this host to run the real runtime"
+          "choose a supported model and an eligible connection for this harness"
         }.`,
     );
   }
@@ -1348,9 +1349,8 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
-        // What the session records for this turn: the selection it ran,
-        // effort included (last turn wins, like its modelId).
-        modelSelection: ranTurnSelection({
+        // Backfill origin cannot be stored on a session selection.
+        modelSelection: prepare.routingSelectionOrigin ? undefined : ranTurnSelection({
           selection: prepare.routingSelection,
           model: prepare.modelDefinition,
           reasoningEffort: prepare.reasoningEffort,
@@ -1555,19 +1555,13 @@ export async function streamWebChatTurn(
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
     if (orgRuntime.runtimeLocation === "local") {
-      // The local runtime cannot resume a server-executed approval, and it
-      // refuses a WHOLE turn that advertises one. The workspace operations
-      // that pause for approval (MJ-008) would therefore take every other tool
-      // down with them; they are withheld here instead — refused, not run
-      // unasked.
+      // Withhold approval tools because the local runtime cannot resume them.
       if (localTools.removed.length > 0) {
         logger.warn(
           "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",
           { toolNames: localTools.removed },
         );
       }
-      // The inspector calls the provider on this runtime, so the effort is
-      // applied here as provider options, or refused before any spend.
       const localEffort = directChatEffort({
         providerKey: orgRuntime.provider.providerKey,
         modelId,
@@ -1584,6 +1578,9 @@ export async function streamWebChatTurn(
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         admission: orgRuntime.admission,
+        modelSelection: prepare.routingSelection?.source === "org" ? prepare.routingSelection : undefined,
+        modelSelectionOrigin: prepare.routingSelectionOrigin,
+        reasoningEffort: prepare.reasoningEffort,
         ...(historyPresentation ? { historyPresentation } : {}),
         failureReporter,
         projectId: persist.projectId,
@@ -1634,7 +1631,7 @@ export async function streamWebChatTurn(
       providerKey: orgRuntime.providerKey,
       modelId,
       ...(prepare.routingSelection?.source === "org"
-        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const } }
+        ? { modelSelection: { ...prepare.routingSelection, source: "org" as const }, modelSelectionOrigin: prepare.routingSelectionOrigin }
         : {}),
       ...(typeof prepare.modelDefinition.nativeModelId === "string"
         ? { nativeModelId: prepare.modelDefinition.nativeModelId }
@@ -1784,7 +1781,7 @@ export async function streamWebChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
-      ? { modelSelection: forwardableSelection(prepare.routingSelection) }
+      ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }
       : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
