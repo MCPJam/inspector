@@ -334,6 +334,11 @@ export {
 } from "./task-lifecycle-adapters.js";
 // Node-only (Ajv compiles via `new Function`); not re-exported from browser.
 export { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
+export {
+  OPENAI_ELICITATION_EXTENSION,
+  selectElicitationFormSchema,
+  type ElicitationFormSchemaSelection,
+} from "./elicitation-form-schema.js";
 
 // `input_required` driver — routes a task's embedded elicitation / roots /
 // sampling requests through the SAME trust rules as the standalone path.
@@ -539,6 +544,7 @@ export type {
   MrtrInputCollector,
   MrtrValidateResponse,
   ElicitationContentValidator,
+  ElicitationFormSchemaSelector,
   RunInputRequiredOptions,
   InputRequiredResult,
   InputRequests,

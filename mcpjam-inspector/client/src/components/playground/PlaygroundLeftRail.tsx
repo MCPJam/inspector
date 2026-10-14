@@ -139,6 +139,7 @@ function SessionsBody() {
       }}
       beforeResetChatAfterArchiveAll={bridge.beforeResetChatAfterArchiveAll}
       onArchiveAllComplete={bridge.onArchiveAllComplete}
+      onArchiveAllSettled={bridge.onArchiveAllSettled}
       onSessionAction={bridge.onSessionAction}
     />
   );
