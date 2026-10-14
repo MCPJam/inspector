@@ -1060,7 +1060,11 @@ describe("useEvalHandlers", () => {
           : createFetchResponse({ message: "Unavailable" }, 500);
       });
       const launchId = beginCaseLaunch(
-        { projectId: "project-1", suiteId: "suite-partial", caseId: "test-case-1" },
+        {
+          projectId: "project-1",
+          suiteId: "suite-partial",
+          caseId: "test-case-1",
+        },
         [
           { hostId: "host-a", client: "Host A", model: "gpt-4" },
           { hostId: "host-b", client: "Host B", model: "gpt-4" },
@@ -1069,12 +1073,20 @@ describe("useEvalHandlers", () => {
       );
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
-        await result.current.handleRerun({
-          _id: "suite-partial", name: "Suite", environment: { servers: ["server-1"] },
-          hostAttachments: ["host-a", "host-b"].map(namedHostId => ({
-            namedHostId, hostName: namedHostId, enabledOptionalServerIds: [], resolvedServerNames: ["server-1"],
-          })),
-        } as any, { caseIds: ["test-case-1"], caseLaunchId: launchId });
+        await result.current.handleRerun(
+          {
+            _id: "suite-partial",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+            hostAttachments: ["host-a", "host-b"].map((namedHostId) => ({
+              namedHostId,
+              hostName: namedHostId,
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-1"],
+            })),
+          } as any,
+          { caseIds: ["test-case-1"], caseLaunchId: launchId },
+        );
       });
       const [launch] = useCaseLaunches.getState().launches;
       expect(launch.runIds).toEqual({ 0: "new-a" });
