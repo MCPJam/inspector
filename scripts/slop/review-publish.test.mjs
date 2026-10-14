@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitIn, itemMarker, phaseMarker } from "./review-common.mjs";
@@ -168,7 +168,7 @@ test("autofix edits go through git objects, so a symlink in the PR cannot redire
     request: github.request, runGit: ctx.git, push: () => {}, identity, commitUrl: String,
   });
   assert.equal(outcome.autofixed, 0);
-  assert.equal(execFileSync("cat", [outside], { encoding: "utf8" }), "secret\n");
+  assert.equal(readFileSync(outside, "utf8"), "secret\n");
 });
 
 test("suggestion fences grow past backticks in the replacement", () => {
