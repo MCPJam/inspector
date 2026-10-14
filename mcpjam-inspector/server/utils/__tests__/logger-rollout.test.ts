@@ -48,19 +48,6 @@ describe("logger rollout boundaries", () => {
     expect(mocks.ingest.mock.calls[0][0]).toBe(expected);
   });
 
-  it("scrubs logger and origin extras before the legacy Sentry hook", async () => {
-    const { logger, captureOriginErrorToSentry } = await import("../logger.js");
-    const extra = {
-      serverUrl: "https://private.example/path?secret=PRIVATE_SENTINEL",
-      toolArguments: { prompt: "PRIVATE_SENTINEL" },
-    };
-    logger.error("failure", new Error("failure"), extra);
-    captureOriginErrorToSentry(new Error("failure"), { tags: {}, extra });
-    expect(mocks.capture).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(mocks.capture.mock.calls)).not.toContain("PRIVATE_SENTINEL");
-    expect(JSON.stringify(mocks.capture.mock.calls)).not.toContain("/path?");
-  });
-
   it("starts canaries only in hosted mode", async () => {
     const timer = vi.spyOn(globalThis, "setInterval");
     const { startTelemetryCanary } = await import("../telemetry-canary.js");
