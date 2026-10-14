@@ -4708,7 +4708,7 @@ export default function App() {
   // Telemetry privacy for what is in view: the same three organizations
   // billing reads, plus the active project, resolved by the backend through
   // this actor's own access (`telemetryPrivacy:getContext`). The most
-  // restrictive context wins; anything it cannot verify is masked and
+  // restrictive context wins; anything it cannot verify is strict and
   // id-only.
   const telemetryOrganizationIds = [
     routeScopedOrganizationId,
@@ -4720,8 +4720,7 @@ export default function App() {
   const telemetryPrivacy = useTelemetryPrivacyContext({
     // Every surface asks: identity applies wherever analytics run, even
     // where replay is off.
-    enabled: true,
-    actor: telemetryActor,
+    enabled: true, actor: telemetryActor, sharedLink: isScenarioChatRoute,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
@@ -4732,7 +4731,7 @@ export default function App() {
   useLayoutEffect(() => {
     setTelemetryCaptureContext({
       projectIds: telemetryProjectIds,
-      organizationIds: telemetryOrganizationIds,
+      organizationIds: telemetryOrganizationIds, sharedLink: isScenarioChatRoute,
     });
   });
   // Names follow an affirmative answer for THIS actor only; an answer for
@@ -4749,7 +4748,7 @@ export default function App() {
   // `off` is also remembered per person, so someone last answered `off` stays
   // unrecorded while the next answer is slow, failing or not asked yet.
   const answeredRecording = telemetryPrivacy.answered
-    ? telemetryPrivacy.policy?.recording
+    ? telemetryPrivacy.policy?.content === "strict" ? "off" : telemetryPrivacy.policy?.recording
     : undefined;
   useEffect(() => {
     if (answeredRecording !== undefined) {
@@ -4762,7 +4761,7 @@ export default function App() {
   // The session privacy level (lib/session-privacy.ts) for both recorders.
   // Full replay needs the backend to have verified a non-private context and
   // the destination to have finished loading; until it answers, nothing
-  // records, and after a navigation, recording carries on masked.
+  // records, and after a navigation, recording stays stopped.
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),

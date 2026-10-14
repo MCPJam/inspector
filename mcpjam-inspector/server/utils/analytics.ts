@@ -1,3 +1,4 @@
+import { POSTHOG_PROJECT_KEY } from "../../shared/posthog-project.js";
 import { PostHog } from "posthog-node";
 import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
@@ -41,8 +42,7 @@ import { HOSTED_MODE } from "../config.js";
 // Public project token — same one shipped in the client bundle
 // (client/src/lib/PosthogUtils.ts); it can only ingest, not read. The /relay
 // proxy forwards requests for this project only.
-export const POSTHOG_PROJECT_KEY =
-  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+export { POSTHOG_PROJECT_KEY } from "../../shared/posthog-project.js";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for

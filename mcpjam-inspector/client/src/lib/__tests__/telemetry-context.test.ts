@@ -21,7 +21,10 @@ afterEach(() => {
 });
 
 describe("the identity grant", () => {
-  beforeEach(() => setTelemetryActor("user_A"));
+  beforeEach(() => {
+    setTelemetryActor("user_A");
+    setSessionPrivacy("full");
+  });
 
   it("is withheld until the backend answers full for the current actor", () => {
     expect(telemetryNamesAllowed()).toBe(false);
@@ -68,11 +71,15 @@ describe("stampPostHogEvent", () => {
       properties: { token: "t" },
     });
     expect(
-      decodeCaptureContext(event.properties?.[TELEMETRY_CONTEXT_PROPERTY]),
+      decodeCaptureContext(
+        (event.properties as Record<string, unknown>)?.[
+          TELEMETRY_CONTEXT_PROPERTY
+        ],
+      ),
     ).toEqual({
       projectIds: ["proj_1"],
       organizationIds: ["org_1"],
-      policy: { recording: "full", identity: "full" },
+      policy: { recording: "full", identity: "full", content: "full" },
     });
   });
 
@@ -82,43 +89,58 @@ describe("stampPostHogEvent", () => {
       projectIds: [],
       organizationIds: ["org_private"],
     });
-    const captured = stampPostHogEvent({ event: "x", properties: {} });
+    const captured = stampPostHogEvent({
+      event: "send_message",
+      properties: {},
+    });
     setSessionPrivacy("full");
     setTelemetryCaptureContext({
       projectIds: [],
       organizationIds: ["org_public"],
     });
     expect(
-      decodeCaptureContext(captured.properties?.[TELEMETRY_CONTEXT_PROPERTY]),
+      decodeCaptureContext(
+        (captured.properties as Record<string, unknown>)?.[
+          TELEMETRY_CONTEXT_PROPERTY
+        ],
+      ),
     ).toMatchObject({
       organizationIds: ["org_private"],
-      policy: { recording: "masked" },
+      policy: { recording: "off", content: "strict" },
     });
   });
 
-  it("labels pending as masked and an ungranted actor as id-only", () => {
+  it("labels pending as off and an ungranted actor as id-only", () => {
     setSessionPrivacy("pending");
-    const event = stampPostHogEvent({ event: "x", properties: {} });
-    expect(event.properties?.[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
-      r: "masked",
+    const event = stampPostHogEvent({ event: "send_message", properties: {} });
+    expect(
+      (event.properties as Record<string, unknown>)?.[
+        TELEMETRY_CONTEXT_PROPERTY
+      ],
+    ).toMatchObject({
+      r: "off",
       i: "id_only",
     });
   });
 
-  it("keeps names off an event captured while id-only", () => {
+  it("stamps id-only without rebuilding person payload before the relay", () => {
     const event = stampPostHogEvent({
       event: "$identify",
       $set: { email: "e@example.com", name: "N", deployment: "hosted" },
       $set_once: { first_name: "F" },
       properties: { $set: { last_name: "L" }, $set_once: { occupation: "O" } },
     });
-    expect(event.$set).toEqual({ deployment: "hosted" });
-    expect(event.$set_once).toEqual({});
-    expect(event.properties?.$set).toEqual({});
-    expect(event.properties?.$set_once).toEqual({});
+    expect(event?.$set?.email).toBe("e@example.com");
+    expect(event?.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({ i: "id_only", c: "strict" });
   });
 
-  it("removes the relay bearer from the replay's $posthog_config", () => {
+  it("leaves recording credential serialization to the final relay", () => {
+    setTelemetryActor("user_A");
+    setSessionPrivacy("full");
+    setTelemetryCaptureContext({
+      projectIds: ["project_1"],
+      organizationIds: [],
+    });
     const event = stampPostHogEvent({
       event: "$snapshot",
       properties: {
@@ -140,10 +162,8 @@ describe("stampPostHogEvent", () => {
         ],
       },
     });
-    expect(JSON.stringify(event)).not.toContain("secret");
-    expect(
-      (event.properties?.$snapshot_data as any[])[1].data.payload.config,
-    ).toEqual({ api_host: "/tlm" });
+    expect(JSON.stringify(event)).toContain("Bearer secret");
+    expect(event?.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({ c: "full" });
   });
 
   it("drops a $snapshot whose frames it cannot vouch for", () => {
@@ -157,22 +177,59 @@ describe("stampPostHogEvent", () => {
     ).toBeNull();
   });
 
+  it("stamps pending captures without rebuilding and keeps the strict stamp when the view relaxes", () => {
+    setSessionPrivacy("pending");
+    const event = stampPostHogEvent({
+      event: "send_message",
+      properties: {
+        location: "chat_tab",
+        multi_model_count: 2,
+        prompt: "SENTINEL",
+        $device_id: "SENTINEL",
+      },
+    });
+    expect(event).toMatchObject({
+      event: "send_message",
+      properties: { multi_model_count: 2 },
+    });
+    expect(JSON.stringify(event)).toContain("SENTINEL");
+    setSessionPrivacy("full");
+    expect(
+      decodeCaptureContext(
+        (event?.properties as Record<string, unknown>)?.[
+          TELEMETRY_CONTEXT_PROPERTY
+        ],
+      )?.policy.content,
+    ).toBe("strict");
+    expect(
+      stampPostHogEvent({ event: "$snapshot", properties: {} })?.properties[TELEMETRY_CONTEXT_PROPERTY],
+    ).toMatchObject({ c: "strict" });
+  });
+
   it("passes a dropped event through", () => {
     expect(stampPostHogEvent(null)).toBeNull();
   });
 
-  it("reports the policy in effect", () => {
-    setSessionPrivacy("masked");
-    expect(currentTelemetryCaptureContext().policy.recording).toBe("masked");
-    setSessionPrivacy("pending");
-    expect(currentTelemetryCaptureContext().policy.recording).toBe("masked");
-    setSessionPrivacy("full");
-    expect(currentTelemetryCaptureContext().policy.recording).toBe("full");
-  });
-
-  it("claims no restriction on an off surface, leaving it to the backend", () => {
-    setSessionPrivacy("off");
-    expect(currentTelemetryCaptureContext().policy.recording).toBe("full");
+  it("keeps unresolved, empty, anonymous and share contexts strict", () => {
+    for (const level of ["masked", "pending", "off", "full"] as const) {
+      setSessionPrivacy(level);
+      expect(currentTelemetryCaptureContext().policy).toMatchObject({
+        recording: "off",
+        content: "strict",
+      });
+    }
+    setTelemetryActor("user_A");
+    setTelemetryCaptureContext({
+      projectIds: ["project_1"],
+      organizationIds: [],
+    });
+    expect(currentTelemetryCaptureContext().policy.content).toBe("full");
+    setTelemetryCaptureContext({
+      projectIds: ["project_1"],
+      organizationIds: [],
+      sharedLink: true,
+    });
+    expect(currentTelemetryCaptureContext().policy.content).toBe("strict");
   });
 
   it("labels replay off as off on a recording surface", async () => {

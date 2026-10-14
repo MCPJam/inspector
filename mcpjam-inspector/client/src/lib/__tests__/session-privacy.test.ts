@@ -1,3 +1,4 @@
+import { posthogStub } from "./fixtures/posthog-stub";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionPrivacyInputs } from "../session-privacy";
 
@@ -27,26 +28,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
 });
-
-/**
- * posthog-js stand-in. `log` records every call in order, so a test can prove
- * the recorder stopped BEFORE its profile changed.
- */
-function posthogStub() {
-  const log: string[] = [];
-  let profile: unknown;
-  const client = {
-    log,
-    profile: () => profile,
-    startSessionRecording: vi.fn(() => log.push("start")),
-    stopSessionRecording: vi.fn(() => log.push("stop")),
-    set_config: vi.fn((config: Record<string, unknown>) => {
-      profile = config.session_recording;
-      log.push(`config:${config.mask_all_text === true ? "masked" : "full"}`);
-    }),
-  };
-  return client;
-}
 
 describe("resolveSessionPrivacy", () => {
   const base: SessionPrivacyInputs = {
@@ -84,11 +65,11 @@ describe("resolveSessionPrivacy", () => {
         surface: "desktop",
         recording: undefined,
       }),
-    ).toBe("pending");
+    ).toBe("off");
     for (const recording of ["full", "masked"] as const) {
       expect(
         resolveSessionPrivacy({ ...base, surface: "desktop", recording }),
-      ).toBe("masked");
+      ).toBe("off");
     }
   });
 
@@ -277,7 +258,7 @@ describe("profiles", () => {
       expect(masked).not.toHaveProperty(field);
     }
     // The recorded page URL goes through the same callback as `{ name }`.
-    expect(maskReplayRequest({ name: "/servers/acme" }).name).toBe(
+    expect(maskReplayRequest({ name: "/servers/acme" })?.name).toBe(
       "/servers/[name]",
     );
   });
@@ -288,7 +269,7 @@ describe("syncSessionRecording", () => {
     const mod = await load();
     const client = posthogStub();
     mod.syncSessionRecording(client, "/servers");
-    expect(client.log).toEqual([]);
+    expect(client.log).toEqual(["config:masked"]);
   });
 
   it("holds the recorder off while pending, with the masked profile in place", async () => {
@@ -323,7 +304,7 @@ describe("syncSessionRecording", () => {
     mod.setSessionPrivacy("masked");
     mod.syncSessionRecording(client, "/servers");
 
-    expect(client.log).toEqual(["stop", "config:masked", "start"]);
+    expect(client.log).toEqual(["stop", "config:masked"]);
     expect(client.profile()).toBe(mod.MASKED_SESSION_RECORDING_OPTIONS);
   });
 
@@ -337,7 +318,7 @@ describe("syncSessionRecording", () => {
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
 
-    expect(client.log).toEqual(["stop", "config:full", "start"]);
+    expect(client.log).toEqual(["config:full", "start"]);
   });
 
   it("does not restart on an ordinary navigation", async () => {
@@ -405,7 +386,7 @@ describe("syncSessionRecording", () => {
       expect(client.log).toEqual(["config:masked"]);
 
       mod.syncSessionRecording(client, "/servers");
-      expect(client.log).toEqual(["config:masked", "start"]);
+      expect(client.log).toEqual(["config:masked"]);
     });
   });
 
@@ -427,7 +408,7 @@ describe("syncSessionRecording", () => {
   it("an off surface keeps unmasked analytics", async () => {
     const mod = await load();
     expect(mod.currentSessionPrivacy()).toBe("off");
-    expect(mod.shouldMaskAnalytics()).toBe(false);
+    expect(mod.shouldMaskAnalytics()).toBe(true);
   });
 
   it("never throws when posthog is unavailable or ad-blocked", async () => {
@@ -490,7 +471,7 @@ describe("replayFramesToSend", () => {
         { timestamp: 5_000 },
         { timestamp: 5_001 },
       ]),
-    ).toEqual([{ timestamp: 5_000 }, { timestamp: 5_001 }]);
+    ).toBeNull();
   });
 
   it("passes frames through on the full profile, and refuses a non-array", async () => {
@@ -499,27 +480,34 @@ describe("replayFramesToSend", () => {
     mod.setSessionPrivacy("full");
     mod.syncSessionRecording(client, "/servers");
 
-    const frames = [{ timestamp: 1 }];
-    expect(mod.replayFramesToSend(frames)).toBe(frames);
+    const frames = [{ timestamp: Date.now() + 1 }];
+    expect(mod.replayFramesToSend(frames)).toEqual(frames);
+    expect(mod.replayFramesToSend([{ timestamp: 1 }])).toBeNull();
     expect(mod.replayFramesToSend("not frames")).toBeNull();
   });
 
-  it("keeps what a masked → full stop flushes: it was recorded masked", async () => {
+  it("reinitializes a new client and drops queued strict replay", async () => {
     const mod = await load({ hosted: true });
-    const client = posthogStub();
-    mod.setSessionPrivacy("masked");
-    mod.syncSessionRecording(client, "/servers");
-    let flushed: unknown[] | null | undefined;
-    const frames = [{ timestamp: Date.now() + 1 }];
-    client.stopSessionRecording.mockImplementation(() => {
-      flushed = mod.replayFramesToSend(frames);
-      return client.log.push("stop");
-    });
-
+    const first = posthogStub();
     mod.setSessionPrivacy("full");
-    mod.syncSessionRecording(client, "/servers");
-
-    expect(flushed).toEqual(frames);
+    mod.syncSessionRecording(first, "/servers");
+    mod.setSessionPrivacy("pending");
+    const next = posthogStub();
+    mod.syncSessionRecording(next, "/servers");
+    expect(first.stopSessionRecording).toHaveBeenCalledOnce();
+    expect(next.startSessionRecording).not.toHaveBeenCalled();
+    expect(next.set_config).toHaveBeenCalledWith(
+      expect.objectContaining({
+        disable_session_recording: true,
+        autocapture: false,
+        capture_exceptions: false,
+        capture_dead_clicks: false,
+        rageclick: false,
+        disable_surveys: true,
+        enable_heatmaps: false,
+      }),
+    );
+    expect(mod.replayFramesToSend([{ timestamp: Date.now() }])).toBeNull();
   });
 });
 

@@ -182,7 +182,7 @@ export async function filterReplayRecordingPayload(
 type EnvelopeItem = [Record<string, unknown>, unknown];
 type Envelope = [unknown, EnvelopeItem[]];
 
-async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
+export async function filterRecordingEnvelope(envelope: Envelope): Promise<Envelope> {
   const [headers, items] = envelope;
   if (!items.some(([header]) => header?.type === "replay_recording")) {
     return envelope;
@@ -207,19 +207,4 @@ async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
     ]);
   }
   return [headers, filtered];
-}
-
-interface TransportLike {
-  send(envelope: never): PromiseLike<unknown>;
-  flush(timeout?: number): PromiseLike<boolean>;
-}
-
-/** A Sentry transport whose replay recordings pass through the filter. */
-export function withRecordingFilter<T extends TransportLike>(transport: T): T {
-  return {
-    ...transport,
-    send: async (envelope: Envelope) =>
-      await transport.send((await filterEnvelope(envelope)) as never),
-    flush: (timeout?: number) => transport.flush(timeout),
-  } as T;
 }

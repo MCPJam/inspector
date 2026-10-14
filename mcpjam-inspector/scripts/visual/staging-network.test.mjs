@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { POSTHOG_PROJECT_KEY } from "../../shared/posthog-project.ts";
 import {
   ANALYTICS_CONSENT_KEY,
   describeConvexFrame,
@@ -116,6 +117,13 @@ test("the declined analytics consent names the app's PostHog project", () => {
     new URL("../../client/src/lib/PosthogUtils.ts", import.meta.url),
     "utf8",
   );
-  const token = /VITE_PUBLIC_POSTHOG_KEY =\s*"([^"]+)"/.exec(source)?.[1];
-  assert.equal(ANALYTICS_CONSENT_KEY, `__ph_opt_in_out_${token}`);
+  assert.match(
+    source,
+    /import \{ POSTHOG_PROJECT_KEY \} from "\.\.\/\.\.\/\.\.\/shared\/posthog-project"/,
+  );
+  assert.match(
+    source,
+    /getPostHogKey\s*=\s*\(\)\s*=>\s*POSTHOG_PROJECT_KEY\b/,
+  );
+  assert.equal(ANALYTICS_CONSENT_KEY, `__ph_opt_in_out_${POSTHOG_PROJECT_KEY}`);
 });
