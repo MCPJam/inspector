@@ -351,6 +351,7 @@ export function getPageviewCaptureOptions(
 
 export const options = {
   api_host: getPostHogApiHost(),
+  disable_beacon: true,
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
   ui_host: "https://us.posthog.com",
   ...getPostHogBootstrap(),
@@ -485,6 +486,7 @@ export const getPostHogOptions = (
         // Same relay host as the enabled branch, so dev-mode requests are not
         // ad-blocked either.
         api_host: getPostHogApiHost(),
+        disable_beacon: true,
         ui_host: "https://us.posthog.com",
         ...getPostHogBootstrap(serverFlags),
         ...getPageviewCaptureOptions(),

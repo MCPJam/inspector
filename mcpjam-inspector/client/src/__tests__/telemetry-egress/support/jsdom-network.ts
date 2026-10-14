@@ -31,6 +31,7 @@ export interface ScriptResponse {
 
 export interface NetworkStub {
   requests: CapturedRequest[];
+  keepaliveRequests: Set<CapturedRequest>;
   /** Resolves once every recorded body (Blobs are async) has been read. */
   settle(): Promise<void>;
   /** Requests recorded since `mark`. */
@@ -79,6 +80,7 @@ export function installNetworkStub(
   respond: (request: CapturedRequest) => StubResponse | ScriptResponse | null,
 ): NetworkStub {
   const requests: CapturedRequest[] = [];
+  const keepaliveRequests = new Set<CapturedRequest>();
   const pending: Promise<unknown>[] = [];
   const win = window as unknown as Record<string, unknown>;
   const original = {
@@ -134,6 +136,7 @@ export function installNetworkStub(
       { ...headersOf(request?.headers), ...headersOf(init?.headers) },
       body,
     );
+    if (init?.keepalive ?? request?.keepalive) keepaliveRequests.add(entry);
     return toResponse(respond(entry));
   };
 
@@ -225,6 +228,7 @@ export function installNetworkStub(
 
   return {
     requests,
+    keepaliveRequests,
     async settle() {
       // Bodies can be read late (Blobs); new requests can be recorded while
       // waiting, so loop until nothing is pending.

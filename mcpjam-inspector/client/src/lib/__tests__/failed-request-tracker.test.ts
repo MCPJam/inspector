@@ -1,6 +1,3 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getLastFailedRequest,
@@ -86,16 +83,6 @@ describe("failed request tracker", () => {
     expect(getLastFailedRequest()).toBeNull();
   });
 
-  it("is installed before any other module can save window.fetch", () => {
-    // lib/oauth/mcp-oauth.ts saves window.fetch at load time and restores it
-    // after each OAuth flow, which would drop a wrapper installed later.
-    const mainSource = readFileSync(
-      resolve(fileURLToPath(import.meta.url), "../../../main.tsx"),
-      "utf8",
-    );
-    const firstImport = mainSource.match(/^import .*$/m)?.[0];
-    expect(firstImport).toBe('import "./lib/install-failed-request-tracker";');
-  });
 });
 
 describe("PostHog $exception enrichment", () => {

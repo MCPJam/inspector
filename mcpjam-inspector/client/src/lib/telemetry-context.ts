@@ -21,6 +21,7 @@
  *     (`resetTelemetryIdentity`). Sentry's scope (`sentry-identity.ts`) and
  *     PostHog's identify both read it.
  */
+import { setTelemetryTransportPolicyReader } from "./telemetry-transport-policy";
 import {
   encodeCaptureContext,
   stripPostHogConfigHeaders,
@@ -32,6 +33,7 @@ import {
 } from "../../../shared/telemetry-privacy";
 import {
   currentSessionPrivacy,
+  isCredentialBearingPath,
   recordingSurface,
   replayFramesToSend,
 } from "./session-privacy";
@@ -119,7 +121,11 @@ export function subscribeTelemetryIdentity(listener: () => void): () => void {
 
 // ── Capture context ────────────────────────────────────────────────────
 
-let contextIds: { projectIds: string[]; organizationIds: string[] } = {
+let contextIds: {
+  projectIds: string[];
+  organizationIds: string[];
+  sharedLink?: boolean;
+} = {
   projectIds: [],
   organizationIds: [],
 };
@@ -128,12 +134,26 @@ let contextIds: { projectIds: string[]; organizationIds: string[] } = {
 export function setTelemetryCaptureContext(ids: {
   projectIds: ReadonlyArray<string | null | undefined>;
   organizationIds: ReadonlyArray<string | null | undefined>;
+  sharedLink?: boolean;
 }): void {
   contextIds = {
+    sharedLink: ids.sharedLink,
     projectIds: ids.projectIds.filter((id): id is string => !!id),
     organizationIds: ids.organizationIds.filter((id): id is string => !!id),
   };
 }
+
+setTelemetryTransportPolicyReader(() =>
+  currentActorId &&
+  typeof window !== "undefined" &&
+  !window.isElectron &&
+  currentSessionPrivacy() === "full" &&
+  !contextIds.sharedLink &&
+  !isCredentialBearingPath() &&
+  contextIds.projectIds.length + contextIds.organizationIds.length > 0
+    ? currentTelemetryCaptureContext().policy.content
+    : "strict",
+);
 
 /**
  * The context an event captured right now is captured under. The label says

@@ -3,7 +3,7 @@
  * Chromium. Same corpus, same decoding, same two-sided assertions as the
  * jsdom harness (`client/src/__tests__/telemetry-egress/`), on what jsdom
  * cannot run: real layout for rrweb, PostHog's network capture (resource
- * timing), Sentry's compression worker, real `sendBeacon` on unload, real
+ * timing), Sentry's compression worker, real keepalive fetch on unload, real
  * `popstate`, and the app's own pages and boot paths instead of a stand-in
  * page.
  *
@@ -19,6 +19,7 @@
  * arrived, so a run that observed nothing cannot pass.
  */
 import { expect, test, type Page } from "@playwright/test";
+import { observeFetchOptions } from "./tests/fetch-observer";
 import {
   assertTelemetryBuild,
   drain,
@@ -364,6 +365,41 @@ test("a secret query key and fragment on a normal page", async ({ page }) => {
   });
 });
 
+test("a normal-page unload delivers buffered events by authenticated keepalive fetch", async ({ page }) => {
+  const fetches = await observeFetchOptions(page);
+  const recorder = await installEgressRecorder(page);
+  await openNormalPage(page, recorder);
+  const ingressMark = recorder.telemetry.length;
+  const vendorMark = recorder.mark();
+  const fetchMark = fetches.length;
+  await interact(page);
+  await fireUnloadFlush(page);
+  await page.goto("about:blank");
+  await page.waitForTimeout(1_500);
+  expectClean(recorder, "normal-page unload", {
+    posthogEvents: ["$autocapture"],
+    posthogFullSnapshot: true,
+  });
+  expect(missingArrivals(recorder.scanSince(vendorMark).decoded, {
+    posthogEvents: ["$autocapture"],
+  })).toEqual([]);
+  const ingress = recorder.telemetry.slice(ingressMark).filter(
+    (request) => request.url.includes("/tlm/") && request.method === "POST",
+  );
+  expect(ingress.length).toBeGreaterThan(0);
+  for (const request of ingress) {
+    expect(request.transport).toBe("fetch");
+    expect(request.headers.authorization).toMatch(/^Bearer \S+$/);
+    expect(request.headers["x-mcpjam-telemetry-policy"]).toBe("full");
+  }
+  expect(
+    fetches.slice(fetchMark).some((request) =>
+      request.url.includes("/tlm/") && request.keepalive &&
+      request.authenticated && request.policy === "full",
+    ),
+  ).toBe(true);
+});
+
 test("a tab closed on a credential page ships nothing planted", async ({
   page,
 }) => {
@@ -372,24 +408,14 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.waitForTimeout(2_500);
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
-  // Only long enough for both SDKs to take the error. A longer wait let
-  // PostHog's 3s request-queue timer empty the queue first now and then,
-  // leaving the unload flush nothing to send.
   await throwUncaught(page, "just before closing", 20);
-  // No waiting: the tab goes with PostHog's queue and replay buffer full.
-  // Its unload flush runs first from the live page, so the beacon it sends
-  // is one the route can read (`fireUnloadFlush`).
   await fireUnloadFlush(page);
   await page.goto("about:blank");
   await page.waitForTimeout(1_500);
-  const scan = expectClean(recorder, "closed on a credential page", {
+  expectClean(recorder, "closed on a credential page", {
     posthogEvents: ["$snapshot"],
     sentryItems: ["event"],
   });
-  expect(
-    scan.decoded.some((entry) => entry.request.transport === "ping"),
-    "the unload flush must leave by sendBeacon",
-  ).toBe(true);
 });
 
 test("a visitor who reads a page, then opens a share link", async ({
