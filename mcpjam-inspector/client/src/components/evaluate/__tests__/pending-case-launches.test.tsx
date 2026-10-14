@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { modelEffortTargetKey } from "@/lib/eval-target-key";
 import type { EvalIteration, EvalSuiteRunListItem } from "../../evals/types";
 import {
   beginCaseLaunch,
@@ -121,17 +122,91 @@ describe("pending case launches", () => {
     expect(result.current).toHaveLength(3);
   });
 
-  it("does not replace another launch or another effort of the same model", () => {
+  it("does not replace an iteration from another launch", () => {
+    beginCaseLaunch(scope, [targets[0]], 1);
+    const { result } = renderHook(() =>
+      usePendingCaseRows(
+        scope,
+        [realRow("other")],
+        [run("other", "another-launch", "env-a")],
+      ),
+    );
+    expect(result.current).toHaveLength(1);
+  });
+
+  it("does not replace another effort of the same model", () => {
     const id = beginCaseLaunch(
       scope,
-      [{ ...targets[0], model: "model\u0000high" }],
+      [{ ...targets[0], model: modelEffortTargetKey("model", "high") }],
       1,
     );
     const { result } = renderHook(() =>
       usePendingCaseRows(
         scope,
         [realRow("a")],
-        [run("a", id, "env-a"), run("b", "other", "env-a")],
+        [
+          {
+            ...run("a", id, "env-a"),
+            targetKey: modelEffortTargetKey("model", "low"),
+          },
+        ],
+      ),
+    );
+    expect(result.current).toHaveLength(1);
+  });
+  it("does not replace another case's iteration in the accepted run", async () => {
+    const id = beginCaseLaunch(scope, [targets[0]], 1);
+    await trackCaseLaunchTarget(id, 0, Promise.resolve({ runId: "a" }));
+    const { result } = renderHook(() =>
+      usePendingCaseRows(
+        scope,
+        [{ ...realRow("a"), testCaseId: "another-case" }],
+        [run("a", id, "env-a")],
+      ),
+    );
+    expect(result.current).toHaveLength(1);
+  });
+
+  it("keeps indistinguishable targets until each response identifies its run", async () => {
+    const id = beginCaseLaunch(scope, [targets[0], targets[0]], 1);
+    const { result } = renderHook(() =>
+      usePendingCaseRows(scope, [realRow("a")], [run("a", id, "env-a")]),
+    );
+    expect(result.current).toHaveLength(2);
+    await act(() =>
+      trackCaseLaunchTarget(id, 0, Promise.resolve({ runId: "a" })),
+    );
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].targetIndex).toBe(1);
+    await act(() =>
+      trackCaseLaunchTarget(id, 1, Promise.resolve({ runId: "b" })),
+    );
+    expect(result.current).toHaveLength(1);
+  });
+
+  it.each(["completed", "failed", "cancelled", "timed_out"] as const)(
+    "clears an accepted %s run with no matching iterations",
+    async (status) => {
+      const id = beginCaseLaunch(scope, [targets[0]], 1);
+      await trackCaseLaunchTarget(id, 0, Promise.resolve({ runId: "a" }));
+      finishCaseLaunch(id);
+      const { result } = renderHook(() =>
+        usePendingCaseRows(scope, [], [{ ...run("a", id, "env-a"), status }]),
+      );
+      expect(result.current).toHaveLength(0);
+      expect(useCaseLaunches.getState().launches).toHaveLength(0);
+    },
+  );
+
+  it("keeps accepted grading runs pending until iterations arrive", async () => {
+    const id = beginCaseLaunch(scope, [targets[0]], 1);
+    await trackCaseLaunchTarget(id, 0, Promise.resolve({ runId: "a" }));
+    finishCaseLaunch(id);
+    const { result } = renderHook(() =>
+      usePendingCaseRows(
+        scope,
+        [],
+        [{ ...run("a", id, "env-a"), status: "grading" }],
       ),
     );
     expect(result.current).toHaveLength(1);

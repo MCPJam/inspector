@@ -26,6 +26,7 @@ type CaseLaunch = CaseLaunchScope & {
   id: string;
   starting: boolean;
   rows: PendingCaseRow[];
+  runIds: Record<number, string>;
 };
 export const useCaseLaunches = create<{ launches: CaseLaunch[] }>(() => ({
   launches: [],
@@ -78,7 +79,7 @@ export function beginCaseLaunch(
     })),
   );
   useCaseLaunches.setState(({ launches }) => ({
-    launches: [...launches, { ...scope, id, starting: true, rows }],
+    launches: [...launches, { ...scope, id, starting: true, rows, runIds: {} }],
   }));
   toast.loading("Starting run…", { id });
   return id;
@@ -98,7 +99,9 @@ export function resolveCaseLaunchEnvironments(
     }));
 }
 
-export async function trackCaseLaunchTarget<T extends { runId?: string }>(
+type CaseLaunchResponse = { runId?: string };
+
+export async function trackCaseLaunchTarget<T extends CaseLaunchResponse>(
   id: string | undefined,
   targetIndex: number,
   request: Promise<T>,
@@ -108,6 +111,9 @@ export async function trackCaseLaunchTarget<T extends { runId?: string }>(
     if (id)
       update(id, (launch) => ({
         ...launch,
+        runIds: response.runId
+          ? { ...launch.runIds, [targetIndex]: response.runId }
+          : launch.runIds,
         rows: launch.rows.flatMap((row) =>
           row.targetIndex !== targetIndex
             ? [row]
@@ -139,8 +145,18 @@ export function caseRowArrived(
   row: PendingCaseRow,
   iterations: EvalIteration[],
   runs: EvalSuiteRunListItem[],
+  siblings: PendingCaseRow[] = [],
+  runIds: Readonly<Record<number, string>> = {},
 ) {
   return iterations.some((iteration) => {
+    if (
+      !row.suiteRunId &&
+      Object.entries(runIds).some(
+        ([target, id]) =>
+          id === iteration.suiteRunId && Number(target) !== row.targetIndex,
+      )
+    )
+      return false;
     const run = runs.find((run) => run._id === iteration.suiteRunId);
     const sameRun = row.suiteRunId
       ? row.suiteRunId === iteration.suiteRunId
@@ -151,6 +167,13 @@ export function caseRowArrived(
           : (run.namedHostId ?? "") === (row.hostId ?? ""));
     return (
       sameRun &&
+      iteration.testCaseId === row.testCaseId &&
+      (row.suiteRunId ||
+        !siblings.some(
+          (other) =>
+            other.targetIndex !== row.targetIndex &&
+            caseRowArrived(other, [iteration], runs, [], runIds),
+        )) &&
       iteration.iterationNumber === row.iterationNumber &&
       (row.clientDefault ||
         row.model === "Client default" ||
@@ -182,10 +205,25 @@ export function usePendingCaseRows(
     () =>
       new Set(
         rows
-          .filter((row) => caseRowArrived(row, iterations, runs))
+          .filter((row) => {
+            const acceptedRun = runs.find((run) => run._id === row.suiteRunId);
+            return (
+              (acceptedRun &&
+                ["completed", "failed", "cancelled", "timed_out"].includes(
+                  acceptedRun.status,
+                )) ||
+              caseRowArrived(
+                row,
+                iterations,
+                runs,
+                rows,
+                launches.find((launch) => launch.id === row.launchId)?.runIds,
+              )
+            );
+          })
           .map((row) => row._id),
       ),
-    [rows, iterations, runs],
+    [rows, iterations, runs, launches],
   );
   useEffect(() => {
     if (!arrived.size) return;
