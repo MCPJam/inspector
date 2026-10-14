@@ -266,9 +266,7 @@ export function SwarmFindingsTab({
           recommendation={recommendation}
           narration={waveProse}
           launchReason={launchReason}
-          footnotes={
-            journeyFindings ? wireFindingsFootnotes(journeyFindings) : []
-          }
+          footnotes={wireFindingsFootnotes(journeyFindings)}
         />
       </div>
     );
