@@ -103,6 +103,7 @@ import {
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { refuseCaseSave } from "./case-save-feedback";
 import type { ModelDefinition } from "@/shared/types";
 import {
   allModelsOutOfCredits,
@@ -2809,10 +2810,8 @@ export function TestTemplateEditor({
    * looking at.
    */
   const handleSave = async (quiet = false): Promise<boolean> => {
-    if (hasInvalidFieldDraft) {
-      if (!quiet) toast.error("Complete the highlighted fields before saving.");
-      return false;
-    }
+    if (hasInvalidFieldDraft)
+      return refuseCaseSave("Complete the highlighted fields before saving.", quiet);
     if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
@@ -2822,16 +2821,13 @@ export function TestTemplateEditor({
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
-      if (!quiet) toast.error(simpleToolsBlock);
-      return false;
+      return refuseCaseSave(simpleToolsBlock, quiet);
     }
 
     if (!validateSteps(editForm.steps)) {
-      if (!quiet) toast.error(
-        getStepsBlockReason(editForm.steps) ??
-          "Fix the test configuration before saving.",
+      return refuseCaseSave(
+        getStepsBlockReason(editForm.steps) ?? "Fix the test configuration before saving.", quiet,
       );
-      return false;
     }
 
     try {
@@ -2861,7 +2857,7 @@ export function TestTemplateEditor({
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      if (!quiet) toast.error(getBillingErrorMessage(error, "Failed to save changes"));
+      refuseCaseSave(getBillingErrorMessage(error, "Failed to save changes"), quiet);
       throw error;
     }
   };

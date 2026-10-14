@@ -1,5 +1,8 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { ConvexError } from "convex/values";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { refuseCaseSave } from "../../evals/case-save-feedback";
 import type { EvalCase, EvalSuite } from "../../evals/types";
 import {
   caseLaunchTarget,
@@ -12,7 +15,9 @@ import {
   useCaseLaunches,
 } from "../case-workspace/pending-case-launches";
 
-vi.mock("sonner", () => ({ toast: { loading: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { loading: vi.fn(), error: vi.fn(), success: vi.fn() },
+}));
 const suite = {
   _id: "suite",
   projectId: "project",
@@ -106,4 +111,97 @@ it("does not invent model variants for a model-free case", () => {
     "Client default",
     "Client default",
   ]);
+});
+
+it.each([
+  "Complete the highlighted fields before saving.",
+  "Add a user turn before this assertion.",
+  getBillingErrorMessage(
+    new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+    "Failed to save changes",
+  ),
+])(
+  "keeps the specific quiet-save reason in one post-close toast: %s",
+  async (message) => {
+    const onClose = vi.fn();
+    await startCaseReview(
+      {
+        ...props,
+        onClose,
+        onStart: async () => {
+          expect(onClose).toHaveBeenCalledOnce();
+          refuseCaseSave(message, true);
+        },
+      },
+      savedCaseTargets(props),
+      1,
+    );
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith(message, {
+      id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
+    });
+    expect(useCaseLaunches.getState().launches).toEqual([]);
+  },
+);
+
+it("reports direct save refusals without throwing", () => {
+  expect(refuseCaseSave("Fix this field.", false)).toBe(false);
+  expect(toast.error).toHaveBeenCalledExactlyOnceWith("Fix this field.");
+});
+
+it("settles the startup toast on success", async () => {
+  await startCaseReview(
+    {
+      ...props,
+      onClose: vi.fn(),
+      onStart: async (_suite, options) => {
+        toast.success("Run started.", { id: options?.caseLaunchId });
+      },
+    },
+    savedCaseTargets(props),
+    1,
+  );
+  expect(toast.success).toHaveBeenCalledExactlyOnceWith("Run started.", {
+    id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
+  });
+  expect(useCaseLaunches.getState().launches[0].starting).toBe(false);
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("keeps accepted placeholders after partial failure and settles the same toast", async () => {
+  await startCaseReview(
+    {
+      ...props,
+      onClose: vi.fn(),
+      onStart: async (_suite, options) => {
+        await trackCaseLaunchTarget(
+          options?.caseLaunchId,
+          0,
+          Promise.resolve({ runId: "accepted" }),
+        );
+        await expect(
+          trackCaseLaunchTarget(
+            options?.caseLaunchId,
+            1,
+            Promise.reject(new Error("Offline")),
+          ),
+        ).rejects.toThrow("Offline");
+        toast.error("One client could not start.", {
+          id: options?.caseLaunchId,
+        });
+      },
+    },
+    savedCaseTargets(props),
+    1,
+  );
+  expect(
+    useCaseLaunches
+      .getState()
+      .launches[0].rows.every((row) => row.suiteRunId === "accepted"),
+  ).toBe(true);
+  expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+    "One client could not start.",
+    {
+      id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
+    },
+  );
 });

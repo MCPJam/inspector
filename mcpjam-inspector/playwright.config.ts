@@ -34,6 +34,7 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
+  globalSetup: deployedBaseUrl ? undefined : "./e2e/smoke-guest-setup.ts",
   // Visual captures and these two specs run under their own configs.
   // local-access.spec.ts needs a browser that
   // has NOT been handed the access key seeded below, and a local server, so it
@@ -48,17 +49,7 @@ export default defineConfig({
     baseURL,
     ...(!deployedBaseUrl
       ? {
-          storageState: {
-            cookies: [],
-            origins: [
-              {
-                origin: new URL(baseURL).origin,
-                localStorage: [
-                  { name: "mcpjam.local-access", value: testSessionToken },
-                ],
-              },
-            ],
-          },
+          storageState: fileURLToPath(new URL("./test-results/smoke-guest.json", import.meta.url)),
           // A local boot must never reach production; see e2e/community-backend.ts.
           launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }

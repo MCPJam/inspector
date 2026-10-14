@@ -272,10 +272,15 @@ export function SuiteRunReviewContent({
       return;
     lock.current = true;
     if (isCaseRun) {
-      const selectedSuite = matrix ? suite : selectReviewTargets(suite, selectedIds);
-      await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart },
-        matrix?.targets ?? savedCaseTargets({ suite: selectedSuite, cases, environments, hostNamesById }), count);
-      lock.current = false;
+      try {
+        const selectedSuite = matrix ? suite : selectReviewTargets(suite, selectedIds);
+        await startCaseReview({ projectId, suite: selectedSuite, cases, onClose, onStart },
+          matrix?.targets ?? savedCaseTargets({ suite: selectedSuite, cases, environments, hostNamesById }), count);
+      } catch (failure) {
+        setError(convexErrMessage(failure, "Could not prepare this run. Try again."));
+      } finally {
+        lock.current = false;
+      }
       return;
     }
     setStarting(true);

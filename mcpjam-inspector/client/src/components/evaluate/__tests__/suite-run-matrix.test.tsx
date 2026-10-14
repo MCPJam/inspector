@@ -1275,7 +1275,7 @@ it("uses the same ephemeral matrix for a single case across clients", async () =
   fireEvent.click(screen.getByRole("button", { name: "Run test case" }));
   await waitFor(() => expect(onStart).toHaveBeenCalledWith(
     expect.objectContaining({ environmentIds: ["env", "second-client-env"] }),
-    { iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true },
+    { iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true, caseLaunchId: expect.any(String) },
   ));
   expect(mutation).toHaveBeenCalledWith("projectEnvironments:deriveEnvironments", {
     projectId: "project", derivations: [expect.objectContaining({

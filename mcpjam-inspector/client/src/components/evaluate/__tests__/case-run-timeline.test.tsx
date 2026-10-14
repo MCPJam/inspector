@@ -64,7 +64,7 @@ describe("CaseRunTimeline", () => {
     await chooseFilter("Model", "model");
     const id = useCaseLaunches.getState().launches[0].id;
     const runs = [{ _id: "run", runGroupId: id, namedHostId: "claude", configSnapshot: {}, effectiveModelId: "model" }] as EvalSuiteRunListItem[];
-    const trial = { ...iteration("real", "model", "pending", 0), suiteRunId: "run", iterationNumber: 1, status: "pending" as const };
+    const trial = { ...iteration("real", "model", "pending", 0), testCaseId: scope.caseId, suiteRunId: "run", iterationNumber: 1, status: "pending" as const };
     rerender(<CaseRunTimeline {...props} iterations={[trial]} suiteRuns={runs}>Evidence</CaseRunTimeline>);
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
     expect(screen.getAllByText("Pending")).toHaveLength(2);
