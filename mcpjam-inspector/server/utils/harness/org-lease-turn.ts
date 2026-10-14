@@ -1,3 +1,4 @@
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
 /**
  * A harness turn's lease wiring for the key it runs on, built once at the top
  * of `runHarnessTurn` from the turn's saved selection. The turn reserves its
@@ -56,6 +57,7 @@ export class OrgLeaseTurn {
   /** MCPJam's model proxy; on the org's key it serves a first-party provider. */
   readonly brokeredEndpoint: ModelEndpointOwnership;
   private readonly selection: OrgHarnessSelection | undefined;
+  private readonly requestedSelection: ModelSelection | undefined;
   /** The selection a reserve, start or local-prepare body carries. */
   private readonly selectionField: { modelSelection?: OrgHarnessSelection };
   private readonly profile: string | undefined;
@@ -79,6 +81,10 @@ export class OrgLeaseTurn {
     >,
   ) {
     this.selection = orgHarnessSelection(options.modelSelection);
+    this.requestedSelection =
+      options.modelSelection?.source === "hosted"
+        ? options.modelSelection
+        : this.selection;
     this.profile = this.selection
       ? harnessOrgUpstream(options.harness ?? "")?.profile
       : undefined;
@@ -90,6 +96,22 @@ export class OrgLeaseTurn {
     this.selectionField = this.selection
       ? { modelSelection: this.selection }
       : {};
+  }
+
+  private requestedSelectionField(reasoningEffort?: ModelReasoningEffort) {
+    if (!this.requestedSelection) return {};
+    return {
+      modelSelection:
+        reasoningEffort === undefined
+          ? this.requestedSelection
+          : {
+              ...this.requestedSelection,
+              settings: {
+                ...this.requestedSelection.settings,
+                reasoningEffort,
+              },
+            },
+    };
   }
 
   /** The turn's canonical model id. */
@@ -155,7 +177,7 @@ export class OrgLeaseTurn {
   ) {
     const broker = await startHarnessModelBroker({
       ...args,
-      ...this.selectionField,
+      ...this.requestedSelectionField(args.reasoningEffort),
       ...(this.selection && this.preparedRevision
         ? { expectedCredentialRevision: this.preparedRevision }
         : {}),
@@ -183,7 +205,11 @@ export class OrgLeaseTurn {
   ) {
     const preparation = await prepareLocalOnOrgKey({
       prepare: (sessionId) =>
-        prepareLocalHarnessTurn({ ...args, sessionId, ...this.selectionField }),
+        prepareLocalHarnessTurn({
+          ...args,
+          sessionId,
+          ...this.requestedSelectionField(args.reasoningEffort),
+        }),
       sessionId: local.sessionId,
       onOrgKey: Boolean(this.selection),
       resumes: Boolean(local.eligibility?.resume),

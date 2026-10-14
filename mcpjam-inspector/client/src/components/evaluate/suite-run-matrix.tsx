@@ -382,9 +382,18 @@ export function planRunMatrix(
 
 /**
  * What a planned run launches, for the preflight: each cell's environment
- * (or the one a new cell copies) and each cell's client and model.
+ * (or the one a new cell copies) and each cell's client and model, with the
+ * model's saved selection. A new cell carries the pick's own selection; a
+ * cell that reuses an environment carries that environment's, when the
+ * caller passes `environments`.
  */
-export function plannedPreflight(plan: readonly PlannedCombination[]) {
+export function plannedPreflight(
+  plan: readonly PlannedCombination[],
+  environments: readonly Pick<
+    ProjectEnvironmentView,
+    "environmentId" | "modelId" | "modelSelection"
+  >[] = [],
+) {
   const launched = new Set(
     plan.flatMap((item) => (item.environmentId ? [item.environmentId] : [])),
   );
@@ -398,10 +407,23 @@ export function plannedPreflight(plan: readonly PlannedCombination[]) {
   return {
     environmentIds: [...new Set([...launched, ...copied])],
     templateOnlyIds: [...copied].filter((id) => !launched.has(id)),
-    targets: plan.map(({ stack }) => ({
-      hostId: stack.hostId,
-      ...(stack.modelId ? { modelId: stack.modelId } : {}),
-    })),
+    targets: plan.map(({ stack, environmentId }) => {
+      const reused = environmentId
+        ? environments.find((item) => item.environmentId === environmentId)
+        : undefined;
+      const modelSelection =
+        stack.modelSelection ??
+        (reused?.modelSelection &&
+        reused.modelId &&
+        reused.modelId === stack.modelId
+          ? reused.modelSelection
+          : undefined);
+      return {
+        hostId: stack.hostId,
+        ...(stack.modelId ? { modelId: stack.modelId } : {}),
+        ...(stack.modelId && modelSelection ? { modelSelection } : {}),
+      };
+    }),
   };
 }
 
@@ -510,7 +532,7 @@ export function ConfiguredSuiteRunReview(
     preflight: useSuiteRunPreflight({
       ...reviewProps,
       ...(!withoutSetups
-        ? { planned: plannedPreflight(plan) }
+        ? { planned: plannedPreflight(plan, environments) }
         : (!capable && !pending) || ownLaunch
           ? {}
           : runInSaved
@@ -527,6 +549,12 @@ export function ConfiguredSuiteRunReview(
                           ...(savedEnvironment.modelId
                             ? { modelId: savedEnvironment.modelId }
                             : {}),
+                          ...(savedEnvironment.modelId &&
+                          savedEnvironment.modelSelection
+                            ? {
+                                modelSelection: savedEnvironment.modelSelection,
+                              }
+                            : {}),
                         },
                       ]
                     : [],
@@ -534,7 +562,7 @@ export function ConfiguredSuiteRunReview(
               }
             : {
                 planned: {
-                  ...plannedPreflight(plan),
+                  ...plannedPreflight(plan, environments),
                   serverRefs: (
                     groups.find((row) => row._id === group)
                       ?.resolvedServerNames ?? []

@@ -145,14 +145,14 @@ describe("requestLogContextMiddleware", () => {
     expect(res.headers.get("x-request-id")).toBeTruthy();
   });
 
-  it("uses x-request-id from incoming request if provided", async () => {
+  it("mints x-request-id independently of a caller supplied identifier", async () => {
     const app = createTestApp();
     app.get("/api/web/test", (c) => c.json({ ok: true }));
 
     const res = await app.request("/api/web/test", {
       headers: { "x-request-id": "my-custom-id" },
     });
-    expect(res.headers.get("x-request-id")).toBe("my-custom-id");
+    expect(res.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("rejects an inbound x-request-id that is too short", async () => {

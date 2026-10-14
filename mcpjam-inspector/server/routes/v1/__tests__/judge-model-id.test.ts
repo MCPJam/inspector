@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   canonicalJudgeModelId,
+  canonicalJudgeModelIdForSelection,
   judgeModelIdSchema,
+  judgeRunOverride,
 } from "../judge-model-id.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -86,5 +88,63 @@ describe("judgeModelIdSchema", () => {
   it("refuses a blank id instead of storing one", () => {
     expect(judgeModelIdSchema.safeParse("   ").success).toBe(false);
     expect(judgeModelIdSchema.safeParse("").success).toBe(false);
+  });
+});
+
+describe("canonicalJudgeModelIdForSelection", () => {
+  it("normalizes a hosted judge, or a bare id with no selection", () => {
+    expect(canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`)).toBe(HAIKU);
+    expect(
+      canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`, {
+        source: "hosted",
+      }),
+    ).toBe(HAIKU);
+  });
+
+  it("never rewrites an organization (BYOK) judge — judges are not hosted-only", () => {
+    expect(
+      canonicalJudgeModelIdForSelection(` ${HAIKU} `, { source: "org" }),
+    ).toBe(HAIKU);
+    // Left as sent, so the selection mismatch check names the contradiction.
+    expect(
+      canonicalJudgeModelIdForSelection(`mcpjam/${HAIKU}`, { source: "org" }),
+    ).toBe(`mcpjam/${HAIKU}`);
+  });
+});
+
+describe("judgeRunOverride", () => {
+  const hosted = { source: "hosted", modelId: HAIKU };
+  const org = { source: "org", modelId: "llama3" };
+
+  it("keeps only the fields the caller sent", () => {
+    expect(judgeRunOverride(undefined, undefined)).toEqual({});
+    expect(judgeRunOverride(`mcpjam/${HAIKU}`, undefined)).toEqual({
+      judgeModel: HAIKU,
+    });
+    expect(judgeRunOverride(undefined, org)).toEqual({ judgeSelection: org });
+  });
+
+  it("normalizes a hosted judge beside its selection, and leaves an org judge as sent", () => {
+    expect(judgeRunOverride(`mcpjam/${HAIKU}`, hosted)).toEqual({
+      judgeModel: HAIKU,
+      judgeSelection: hosted,
+    });
+    expect(judgeRunOverride(" llama3 ", org)).toEqual({
+      judgeModel: "llama3",
+      judgeSelection: org,
+    });
+  });
+
+  it("refuses a selection that names another model", () => {
+    expect(() => judgeRunOverride(`mcpjam/${HAIKU}`, org)).toThrow(
+      `modelSelection.modelId (llama3) does not match model (mcpjam/${HAIKU}).`,
+    );
+    let caught: unknown;
+    try {
+      judgeRunOverride(MINI, hosted);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ status: 400 });
   });
 });

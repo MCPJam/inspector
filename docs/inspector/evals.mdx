@@ -35,20 +35,21 @@ Click **New case** in the suite header (or in the empty-state screen when no cas
 
 The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
 
-**Left column — the case form**
+**Left column — the case spine**
 
-Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It has four sections:
+Every case opens in the spine, however it was authored — in the app, through the CLI, or from an SDK suite file. The spine is a flat, ordered list of steps. Each step is one of:
 
-- **User asks** — the prompt the model receives.
-- **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
-- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Checks by stage** section uses.
-- **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
+- **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
+- **Interact** — a widget interaction (click, typing) recorded against a live widget.
+- **Assert** — an assertion that grades the case.
 
-**Scorers**
+Below the step list, an **Expected outcome** field holds the goal sentence the judge grades against.
 
-One list, one **Add assertion** menu. Each row says what it checks, who wrote it, and what a miss does:
+**Assertions**
 
-- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
+Use **Add assertion or action** to add an assertion, a second prompt, or an interact step. Each assertion row says what it checks, who wrote it, and what a miss does:
+
+- **Route** — answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
 - **This case** — an assertion you added here. It is graded once, over the finished transcript.
 - **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Checks by stage** settings.
@@ -64,16 +65,14 @@ Because a failing required assertion halts the run, an assertion written as a st
 The answer here is what marks a case negative — never an inference from its steps:
 
 - **A named tool** — the case must take that route.
-- **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the form says so.
-- **Any route** — the case names no route and is graded by its scorers. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+- **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the spine says so.
+- **Any route** — the case names no route and is graded by its assertions. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
 
 A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without an assertion, a goal sentence, or a named tool, it would pass vacuously.
 
-**Judge · Goal completion**
+**Expected outcome**
 
-The card shows which model grades this case, against what threshold, how many suite criteria also apply, and whether the judge runs automatically or on request. All of that is the suite's; **Edit in suite settings** goes there.
-
-What the case owns is the goal sentence, and the hint under it says what the judge will actually grade against:
+The **Expected outcome** field below the step list holds the goal sentence the judge grades against. The hint under it says what the judge will actually grade against:
 
 - A **goal sentence** — the judge grades against it, and the suite's criteria still apply.
 - **No sentence, but a route** — the judge grades against the expected route.
@@ -82,13 +81,9 @@ What the case owns is the goal sentence, and the hint under it says what the jud
 
 **Skip the judge for this case** turns the judge off for this case only. It applies to the next saved run.
 
-**Also in this case**
+**Saving and running**
 
-A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
-
-**Steps**
-
-**Steps** (top right of the column) swaps the form for the flat, ordered step list, in the same workspace with the same trial on the right. **Back to form** returns.
+Save and Run are disabled while any JSON field in the case (such as tool arguments) holds invalid JSON. The field is highlighted and a tooltip explains what to fix. Correct the field to re-enable both buttons.
 
 **Right column — the selected trial**
 
@@ -150,9 +145,13 @@ When attachments are present, a note is automatically prepended to the case's fi
 
 If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
 
-Click **Start recording** in the *In the app* section of the case form. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+<Note>
+  The **Start recording** button is only shown when recording is enabled for your account.
+</Note>
 
-Recorded interact steps and widget assertions appear in the **In the app** section in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
+Click **Start recording** in the case spine. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+
+Recorded interact steps appear in the spine in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
@@ -280,6 +279,7 @@ Rubric checks ask each of the suite's grading criteria on its own, as a yes or n
 - **Uncertain is not a pass.** A criterion answered with a probability of yes from 0.4 up to 0.6 shows as **Uncertain** on the trial scorecard, beside its value. The stored row still passes at 0.5 or more.
 - **Wording is identity.** Editing a criterion's or question's wording, options, levels or pass line starts a new rubric-check row, so a baseline comparison shows the old row removed and the new one added.
 - **App only, for now.** Rubric-check settings are edited in the app, and the API refuses `settings.judge.rubricChecks`. The criteria they ask come from `settings.judge.rubric`, which the API does accept.
+- **Grading instructions via API or CLI.** The suite settings page shows only the judge model picker. Grading instructions (`settings.judge.rubric`) are set via the API or CLI; any stored value still applies to runs.
 
 Each answer appears on the trial scorecard under User value, after the goal judge, and under **Score rows** as `judge:rubricChecks:c:<criterion id>` or `judge:rubricChecks:q:<question id>`.
 

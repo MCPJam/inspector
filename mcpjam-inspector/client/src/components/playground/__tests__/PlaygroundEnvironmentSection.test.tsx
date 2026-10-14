@@ -1,34 +1,22 @@
 /**
- * Playground Environments section + the host-picker wrapper that hosts it
- * (Project Environments — Phase 2.5).
+ * Playground Environments section.
  *
  * Covers the parts that are UI decisions rather than state decisions (the
  * override tri-state itself lives in `use-playground-environment.test.tsx`):
- * the modified/reset affordances, the skill-delivery honesty notice, and the
- * mutual exclusion between environment mode and multi-host comparison.
+ * the modified/reset affordances and the skill-delivery honesty notice.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockFlagValue, mockTrack, mockMultiHostPicker } = vi.hoisted(() => ({
+const { mockFlagValue, mockTrack } = vi.hoisted(() => ({
   mockFlagValue: { value: true as boolean | undefined },
   mockTrack: vi.fn(),
-  mockMultiHostPicker: vi.fn(() => <div data-testid="multi-host-picker" />),
 }));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mockFlagValue.value,
 }));
 vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
-vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-}));
-vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({ hosts: [], isLoading: false }),
-}));
-vi.mock("@/hooks/use-previewed-client-id", () => ({
-  usePreviewedHostId: () => [null, vi.fn()] as const,
-}));
 // The plugin selector reads the selected row's pins straight from Convex so it
 // can report a pinned version the preview could not resolve.
 vi.mock("@/hooks/usePluginImportApi", () => ({
@@ -55,12 +43,8 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { environments: "/environments", playground: "/playground" },
 }));
-vi.mock("@/components/hosts/MultiHostPicker", () => ({
-  MultiHostPicker: mockMultiHostPicker,
-}));
 
 import { PlaygroundEnvironmentSection } from "../PlaygroundEnvironmentSection";
-import { PlaygroundHostPicker } from "../PlaygroundHostPicker";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
 function environmentState(
@@ -229,51 +213,5 @@ describe("PlaygroundEnvironmentSection", () => {
     );
     fireEvent.click(screen.getByTestId("playground-environment-clear"));
     expect(clearEnvironment).toHaveBeenCalled();
-  });
-});
-
-describe("PlaygroundHostPicker — environment mode is exclusive with comparison", () => {
-  const hostProps = {
-    projectId: "proj_1",
-    selectedHostIds: ["host_1"],
-    multiHostEnabled: false,
-    onSelectedHostIdsChange: vi.fn(),
-    onMultiHostEnabledChange: vi.fn(),
-    onPromoteLead: vi.fn(),
-  };
-
-  it("keeps the comparison picker when no environment is selected", () => {
-    render(
-      <PlaygroundHostPicker
-        {...hostProps}
-        environment={environmentState({
-          isEnvironmentMode: false,
-          environmentId: null,
-          preview: null,
-          executionTarget: undefined,
-        })}
-      />,
-    );
-    expect(screen.getByTestId("multi-host-picker")).toBeTruthy();
-  });
-
-  it("withdraws the comparison picker while an environment is active", () => {
-    // An environment resolves to ONE host; a comparison grid driven from it
-    // would either duplicate a column or run hosts the environment never named.
-    render(
-      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />,
-    );
-    expect(screen.queryByTestId("multi-host-picker")).toBeNull();
-    expect(screen.getByTestId("playground-environment-section")).toBeTruthy();
-  });
-
-  it("hides the Environments section entirely when the flag is off", () => {
-    mockFlagValue.value = false;
-    render(
-      <PlaygroundHostPicker {...hostProps} environment={environmentState()} />,
-    );
-    expect(screen.queryByTestId("playground-environment-section")).toBeNull();
-    // …and the ordinary host controls are back.
-    expect(screen.getByTestId("multi-host-picker")).toBeTruthy();
   });
 });

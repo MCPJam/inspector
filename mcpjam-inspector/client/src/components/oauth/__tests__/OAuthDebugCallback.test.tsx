@@ -1,14 +1,20 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import OAuthDebugCallback, {
   buildElectronDebugCallbackUrl,
 } from "../OAuthDebugCallback";
+import {
+  captureOAuthCallbackFromUrl,
+  readOAuthCallbackParams,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 
 describe("OAuthDebugCallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.isElectron = false;
     window.name = "";
+    resetOAuthCallbackInboxForTests();
     window.history.replaceState(
       {},
       "",
@@ -22,11 +28,22 @@ describe("OAuthDebugCallback", () => {
     );
   });
 
+  it("builds the Electron deep link from the inbox once the URL is scrubbed", () => {
+    captureOAuthCallbackFromUrl();
+    expect(window.location.search).toBe("?oauth_pending=1");
+    expect(buildElectronDebugCallbackUrl()).toBe(
+      "mcpjam://oauth/callback?flow=debug&code=test-code&state=test-state",
+    );
+  });
+
   describe("popup callback message", () => {
     const postMessage = vi.fn();
 
     beforeEach(() => {
       window.name = "oauth_authorization_test";
+      // The popup closes itself 100ms after posting. A close that lands in
+      // the next test tears down jsdom's window under it.
+      vi.spyOn(window, "close").mockImplementation(() => undefined);
       Object.defineProperty(window, "opener", {
         configurable: true,
         value: { postMessage, closed: false },
@@ -59,6 +76,39 @@ describe("OAuthDebugCallback", () => {
       });
       expect(message.iss).toBeUndefined();
       expect(message.iss).not.toBeNull();
+    });
+
+    it("sends the inbox's answer after main.tsx scrubbed the URL, then consumes it", async () => {
+      window.history.replaceState(
+        {},
+        "",
+        "/oauth/callback/debug?code=inbox-code&state=inbox-state&iss=" +
+          encodeURIComponent("https://auth.example.com"),
+      );
+      captureOAuthCallbackFromUrl();
+      expect(window.location.href).not.toContain("inbox-code");
+
+      render(<OAuthDebugCallback />);
+
+      await waitFor(() => expect(postMessage).toHaveBeenCalled());
+      expect(postMessage.mock.calls[0][0]).toMatchObject({
+        type: "OAUTH_CALLBACK",
+        code: "inbox-code",
+        state: "inbox-state",
+        iss: "https://auth.example.com",
+      });
+      // Handed to the opener; the code was never written to storage.
+      expect(readOAuthCallbackParams()).toBeNull();
+      expect(
+        Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+      ).not.toContain("inbox-code");
+      // And the card still says it worked, rather than re-reading an empty
+      // inbox as "Missing code or error in response".
+      expect(
+        await screen.findByText("Authorization code sent successfully!"),
+      ).toBeTruthy();
     });
 
     it("forwards a present iss verbatim", async () => {
