@@ -5,7 +5,11 @@ import {
 } from "../evaluate/suite-run-review";
 import { useSelectedRun } from "./use-selected-run";
 import type { EvalSuiteRunListItem } from "./types";
-import { useServerActionsOptional } from "@/state/server-actions-context";
+import {
+  useServerActionsOptional,
+  type ServerActions,
+} from "@/state/server-actions-context";
+import { retryEvalToolMetadata } from "@/lib/mcpjam-agent/retry-eval-tool-metadata";
 import {
   loadEvalToolMetadata,
   readEvalToolMetadata,
@@ -257,7 +261,6 @@ import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { buildCaseChatHandoff } from "@/lib/eval-chat-handoff";
 import { EvalLiveChatPanel } from "./eval-live-chat-panel";
-import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { formatMcpConnectServerPrompt } from "@/lib/mcp-server-display-name";
 import {
   formatEnsureServersReadyError,
@@ -464,10 +467,7 @@ interface TestTemplateEditorProps {
    */
   isDirectGuest?: boolean;
   /** When set, Run will call this to connect suite MCP servers before starting (playground / desktop). */
-  ensureServersReady?: (
-    serverNames: string[],
-    options?: { allowInteractiveOAuthFlow?: boolean },
-  ) => Promise<EnsureServersReadyResult>;
+  ensureServersReady?: ServerActions["ensureServersReady"];
   projectServers?: RemoteServer[];
   /**
    * Called after an unsaved draft case is persisted for the first time, with the
@@ -1850,47 +1850,16 @@ export function TestTemplateEditor({
     [projectId],
   );
   const retryToolsMetadata = useCallback(
-    async (serverId?: string) => {
-      const ids = serverId ? [serverId] : metadataTarget.serverIds;
-      const failed = readEvalToolMetadata(metadataTarget).servers.filter(
-        (server) =>
-          ids.includes(server.serverId) && server.action === "reconnect",
-      );
-      // One server still needing authorization must not stop the others from
-      // refreshing; it is reported after they reload.
-      const unauthorized: string[] = [];
-      for (const server of failed) {
-        const name =
-          projectServers?.find((candidate) => candidate._id === server.serverId)
-            ?.name ?? server.serverId;
-        if (serverActions) {
-          try {
-            await serverActions.reconnectServer(name);
-          } catch {
-            /* The interactive path below can renew authorization. */
-          }
-        }
-        if (ensureServersReady) {
-          const result = await ensureServersReady([name], {
-            allowInteractiveOAuthFlow: true,
-          });
-          if (!result.readyServerNames.includes(name))
-            unauthorized.push(server.serverId);
-        }
-      }
-      await loadEvalToolMetadata(
-        {
-          ...metadataTarget,
-          serverIds: ids.filter((id) => !unauthorized.includes(id)),
-        },
-        loadServerMetadata,
-        true,
-      );
-      if (unauthorized.length)
-        throw new Error(
-          "Server authorization is required. Check the connection and retry.",
-        );
-    },
+    (serverId?: string) =>
+      retryEvalToolMetadata({
+        target: metadataTarget,
+        load: loadServerMetadata,
+        ensureServersReady:
+          ensureServersReady ?? serverActions?.ensureServersReady,
+        resolveName: (id) =>
+          projectServers?.find((server) => server._id === id)?.name ?? id,
+        serverId,
+      }),
     [
       metadataTarget,
       loadServerMetadata,

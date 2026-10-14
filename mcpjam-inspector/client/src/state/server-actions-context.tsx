@@ -1,5 +1,8 @@
 import { createContext, useContext } from "react";
-import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
+import type {
+  EnsureServersReadyOptions,
+  EnsureServersReadyResult,
+} from "@/hooks/use-server-state";
 
 export interface ServerActions {
   /**
@@ -10,6 +13,7 @@ export interface ServerActions {
    */
   ensureServersReady: (
     serverNames: string[],
+    options?: EnsureServersReadyOptions,
   ) => Promise<EnsureServersReadyResult>;
   /**
    * Flip a server's runtime state to "disconnected" WITHOUT going through

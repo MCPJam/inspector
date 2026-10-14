@@ -853,6 +853,11 @@ export interface EnsureServersReadyResult {
   reauthServerNames: string[];
 }
 
+export interface EnsureServersReadyOptions {
+  allowInteractiveOAuthFlow?: boolean;
+  forceReconnect?: boolean;
+}
+
 /**
  * The ONLY channel by which secrets travel from form data to persistence.
  *
@@ -6248,7 +6253,7 @@ export function useServerState({
   const ensureServersReady = useCallback(
     async (
       serverNames: string[],
-      options?: { allowInteractiveOAuthFlow?: boolean },
+      options?: EnsureServersReadyOptions,
     ): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
@@ -6275,9 +6280,7 @@ export function useServerState({
         return serverRef;
       };
 
-      // Multiple refs (e.g. hosted id and display name) can collapse to the
-      // same project server. Group by resolved key so we only kick off one
-      // reconnect per real server and avoid spurious "stale op" failures.
+      // Group aliases so each real server reconnects once.
       type RefGroup = { resolvedKey: string; refs: string[] };
       const groupsByKey = new Map<string, RefGroup>();
       const orderedKeys: string[] = [];
@@ -6308,7 +6311,9 @@ export function useServerState({
               ] as const;
             }
 
-            if (server.connectionStatus === "connected") {
+            if (
+              server.connectionStatus === "connected" && !options?.forceReconnect
+            ) {
               return [resolvedKey, { status: "connected" }] as const;
             }
 
@@ -6339,13 +6344,7 @@ export function useServerState({
               suppressErrors: true,
             });
 
-            // "superseded" means a newer connect op took the pin mid-flight
-            // (e.g. the host-switch recycle racing a send). That op — not this
-            // one — drives the server to its final state, so returning
-            // superseded here would leave the server in NO bucket: not ready,
-            // not failed. Callers that gate on `readyServerNames` (the chat
-            // send path) then refuse to send even though the server is about
-            // to be connected. Follow the newer op to its real outcome.
+            // Follow a newer connect op so callers can gate on its final outcome.
             if (outcome.status === "superseded") {
               return [
                 resolvedKey,

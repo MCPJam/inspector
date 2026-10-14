@@ -31,6 +31,11 @@ vi.mock("@/lib/apis/eval-authoring-api", async (original) => ({
   })),
 }));
 const started = vi.mocked(authoringRequest);
+const { ensureReady } = vi.hoisted(() => ({ ensureReady: vi.fn() }));
+vi.mock("@/state/server-actions-context", async (original) => ({
+  ...(await original<object>()),
+  useServerActionsOptional: () => ({ ensureServersReady: ensureReady }),
+}));
 /** The options a start carried, which is all these tests assert about it. */
 function startedOptions(call: number) {
   return (started.mock.calls[call][0] as { input: { options?: unknown } }).input
@@ -57,6 +62,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   started.mockClear();
+  ensureReady.mockReset();
   useEvalGeneration.setState({ suites: {} });
 });
 afterEach(() => vi.useRealTimers());
@@ -250,4 +256,85 @@ it("explains a model-limit refusal instead of echoing its raw body", () => {
   expect(
     screen.getByRole("button", { name: "Retry generation" }),
   ).toBeEnabled();
+});
+
+it("authorizes before retrying generation when discovery needs OAuth", async () => {
+  const unregister = registerEvalSuite(target, {
+    read: () => ({}),
+    save: vi.fn(),
+  });
+  seed(
+    "error",
+    [],
+    'Server "excalidraw" requires OAuth authentication. Please complete the OAuth flow first.',
+  );
+  ensureReady.mockResolvedValue({
+    readyServerNames: ["excalidraw"],
+    reauthServerNames: [],
+    failedServerNames: [],
+    missingServerNames: [],
+  });
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} />,
+  );
+  expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+  await act(async () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize excalidraw" }),
+    ),
+  );
+  expect(ensureReady).toHaveBeenCalledWith(["excalidraw"], {
+    allowInteractiveOAuthFlow: true,
+    forceReconnect: true,
+  });
+  expect(started).toHaveBeenCalledTimes(1);
+  unregister();
+});
+
+it("keeps the OAuth error and does not restart generation while sign-in is pending", async () => {
+  seed(
+    "error",
+    [],
+    'Server "excalidraw" requires OAuth authentication. Please complete the OAuth flow first.',
+  );
+  ensureReady.mockResolvedValue({
+    readyServerNames: [],
+    reauthServerNames: ["excalidraw"],
+    failedServerNames: [],
+    missingServerNames: [],
+  });
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} />,
+  );
+  await act(async () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize excalidraw" }),
+    ),
+  );
+  expect(
+    screen.getByText("Complete sign-in, then retry generation."),
+  ).toBeVisible();
+  expect(started).not.toHaveBeenCalled();
+});
+
+it("offers server settings and does not restart generation when authorization fails", async () => {
+  seed(
+    "error",
+    [],
+    'Server "excalidraw" requires OAuth authentication. Please complete the OAuth flow first.',
+  );
+  ensureReady.mockRejectedValue(new Error("Consent failed"));
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} />,
+  );
+  await act(async () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize excalidraw" }),
+    ),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Open Servers to check its authentication settings.",
+  );
+  expect(screen.getByRole("button", { name: "Open Servers" })).toBeEnabled();
+  expect(started).not.toHaveBeenCalled();
 });
