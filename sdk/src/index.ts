@@ -43,9 +43,7 @@ export type {
   HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
-// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
-// uses these internally; they are public so the CLI and the conformance
-// runner judge tool declarations with the SAME walk the wire does.
+// SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
   classifyMcpHeader,
@@ -1998,3 +1996,5 @@ export type {
   ConnectionRoutingSnapshot,
   ConnectionToolMetadata,
 } from "./mcp-client-manager/multi-connection-tools.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";

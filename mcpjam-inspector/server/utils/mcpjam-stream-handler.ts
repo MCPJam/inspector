@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
@@ -3738,15 +3739,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     clientIp,
     onLiveTextDelta,
   } = ctx;
-  // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
-  // produced, omit the header so Convex uses its cookie-only guest fallback
-  // instead of pooling unrelated guests in a shared unknown-IP bucket.
+  // Hash IPs server-side; absent hashes keep the per-cookie guest fallback.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const convexHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...(authHeader ? { authorization: authHeader } : {}),
     ...(extraHeaders ?? {}),
+    ...inspectorAiRequestHeaders("stream"),
   };
   for (const header of Object.keys(convexHeaders)) {
     if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {

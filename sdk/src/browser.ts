@@ -59,9 +59,7 @@ export type {
 } from "./directory-readiness/observations.js";
 
 /**
- * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
- * ("that apps result graded a different server") without holding the adapters
- * themselves — those read raw tool `_meta` a browser has no business seeing.
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation ("that apps result graded a different server") without holding the adapters themselves — those read raw tool `_meta` a browser has no business seeing.
  */
 export {
   EVIDENCE_REUSE_REFUSALS,
@@ -1206,3 +1204,5 @@ export type {
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";
