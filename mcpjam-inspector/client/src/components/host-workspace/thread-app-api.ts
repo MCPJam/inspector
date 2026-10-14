@@ -227,7 +227,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     },
     context: async (
       instanceToken: string,
-      action: "update" | "read" | "remove",
+      action: "update" | "read" | "remove-all",
       request: Record<string, unknown>,
       signal: AbortSignal,
     ) => {

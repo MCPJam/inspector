@@ -65,6 +65,8 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: "@mcpjam/sdk/public-api", replacement: path.resolve(rootDir, "../sdk/src/public-api/index.ts") },
+      { find: "@mcpjam/sdk/internal/telemetry", replacement: path.resolve(rootDir, "../sdk/src/internal/telemetry.ts") },
       {
         find: "@mcpjam/sdk/host-compat",
         replacement: path.resolve(rootDir, "../sdk/src/host-compat/index.ts"),

@@ -19,12 +19,11 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import {
-  isMCPJamProvidedModelMenuItem,
-  type OrgVisibleConfig,
-} from "@/components/chat-v2/shared/model-helpers";
+import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import {
   findModelForStoredChoice,
+  isHostedRow,
+  ownKeyRowsForLegacySelection,
   modelRowKey,
   modelSelectionFromDefinition,
 } from "@/components/chat-v2/shared/model-selection";
@@ -60,10 +59,6 @@ export type CompareCard = {
   label: string;
 };
 
-function isHostedRow(model: ModelDefinition): boolean {
-  return isMCPJamProvidedModelMenuItem(model);
-}
-
 /**
  * The selection a picked row is stored as: its own selection, or — for an
  * own-key row with no canonical id (`grok-3`) — the legacy own-key form with
@@ -89,6 +84,13 @@ export function compareSelectionForRow(
  * A hosted selection only resolves to a hosted row and an own-key selection
  * (org, local, stored legacy) only to an own-key row: a card never silently
  * changes who pays.
+ *
+ * A stored legacy card resolves to the first enabled own-key row for its id
+ * and provider hint (`ownKeyRowsForLegacySelection`), not to exactly one as
+ * the hosts page requires: `compareSelectionForRow` stores two own-key rows
+ * that share provider and id identically, so a pick of either must still
+ * render a card, and both run on the user's own key. The hosts page can
+ * re-pick into a canonical selection; a compare pick cannot.
  */
 export function resolveCompareSelectionRow(
   selection: RequestedModelSelection,
@@ -96,12 +98,7 @@ export function resolveCompareSelectionRow(
   orgConfig: OrgVisibleConfig | undefined,
 ): ModelDefinition | undefined {
   if (isLegacySelection(selection)) {
-    const own = models.filter(
-      (model) => String(model.id) === selection.modelId && !isHostedRow(model),
-    );
-    return selection.provider
-      ? own.find((model) => String(model.provider) === selection.provider)
-      : own[0];
+    return ownKeyRowsForLegacySelection(selection, models)[0];
   }
   const row = findModelForStoredChoice(
     { modelId: selection.modelId, selection },

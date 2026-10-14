@@ -1,3 +1,4 @@
+import { defaultFallbackForPurpose, type ModelSelection } from "@mcpjam/sdk/browser";
 /**
  * Ask MCPJam's pinned model and per-turn step ceiling.
  *
@@ -72,3 +73,7 @@ export const MCPJAM_AGENT_MODEL_DEFINITION: ModelDefinition = {
 /** The body field that ASKS the backend to bill MCPJam. Only honoured for a
  *  signed-in user, on their own login, and only for this model. */
 export const MCPJAM_AGENT_BILLING_FEATURE = "mcpjam_agent";
+
+export const MCPJAM_AGENT_MODEL_SELECTION: ModelSelection = {
+  source: "hosted", modelId: MCPJAM_AGENT_MODEL, fallback: defaultFallbackForPurpose("chat"),
+};

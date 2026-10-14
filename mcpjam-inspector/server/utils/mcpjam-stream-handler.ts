@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
@@ -926,6 +927,7 @@ export interface MCPJamHandlerOptions {
    * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
    */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -3737,15 +3739,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     clientIp,
     onLiveTextDelta,
   } = ctx;
-  // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
-  // produced, omit the header so Convex uses its cookie-only guest fallback
-  // instead of pooling unrelated guests in a shared unknown-IP bucket.
+  // Hash IPs server-side; absent hashes keep the per-cookie guest fallback.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const convexHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...(authHeader ? { authorization: authHeader } : {}),
     ...(extraHeaders ?? {}),
+    ...inspectorAiRequestHeaders("stream"),
   };
   for (const header of Object.keys(convexHeaders)) {
     if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {
@@ -4942,9 +4942,7 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
-  // The turn's effort rides every per-step hosted body as the top-level field
-  // (which the backend prefers over a forwarded selection's). Set last so a
-  // caller-supplied extra field cannot contradict the typed one.
+  // Typed settings and origin are authoritative on every step.
   const extraBodyFields = {
     ...callerExtraBodyFields,
     ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
@@ -4952,6 +4950,7 @@ export async function runChatEngineLoop(
       options.modelSelection ?? callerExtraBodyFields?.modelSelection,
       { id: modelId, provider },
       endpointPath ?? "/stream",
+      options.modelSelectionOrigin,
     ),
   };
   // One typed route.operation.failed per turn, whatever combination of the

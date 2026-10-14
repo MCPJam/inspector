@@ -14,6 +14,7 @@
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import models from "../routes/mcp/models.js";
 import { buildHealthMeta } from "../utils/health-payload.js";
+import hostedEgressIps from "../hosted-egress-ips.json" with { type: "json" };
 
 /**
  * /api/mcp paths that remain reachable in hosted mode.
@@ -100,4 +101,11 @@ export function mountHostedOpenRoutes(app: Hono): void {
     })
   );
   app.route("/api/mcp/models", models);
+  // The machine-readable twin of docs/hosted/network.mdx. Hosted only: a
+  // local or self-hosted install connects from its own network, so serving
+  // this list there would publish addresses that install doesn't use.
+  app.get("/egress-ips.json", (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(hostedEgressIps);
+  });
 }

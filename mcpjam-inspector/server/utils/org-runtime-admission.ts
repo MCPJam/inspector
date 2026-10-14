@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 /**
  * The runtime resolver's request to `/stream/org/resolve`, its 60 s cache,
  * and the per-attempt admission a local-runtime model asks before every
@@ -162,6 +163,7 @@ export async function requestOrgProviderRuntime(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...inspectorAiRequestHeaders("resolve"),
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({

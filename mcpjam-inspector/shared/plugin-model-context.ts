@@ -28,10 +28,15 @@ export type PluginModelContext = {
   structuredContent?: Record<string, unknown>;
 };
 
+const contextCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 export const pluginContextSnapshotSchema = z
   .strictObject({
     revision: z.number().int().nonnegative(),
-    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    sequence: contextCount,
     state: z
       .strictObject({
         updateId: z.string().min(1).max(128),
@@ -39,12 +44,40 @@ export const pluginContextSnapshotSchema = z
         structuredContent: z.record(z.string(), z.unknown()).optional(),
       })
       .nullable(),
+    // Removal state, omitted while it is the default (not held, nothing
+    // removed or attached yet). `held`: the person removed this App's context
+    // and its own updates are refused until they use the App again.
+    // `cursor` counts removals and user attaches; `removedAt` and
+    // `attachedAt` are its value at the last of each, so a remove-all retry
+    // can tell what happened after the state it was based on.
+    held: z.literal(true).optional(),
+    cursor: contextCount.optional(),
+    removedAt: contextCount.optional(),
+    attachedAt: contextCount.optional(),
   })
+  .refine((value) => value.sequence <= value.revision, "Invalid context cursor")
   .refine(
-    (value) => value.sequence <= value.revision,
-    "Invalid context cursor",
+    (value) =>
+      (value.removedAt ?? 0) <= (value.cursor ?? 0) &&
+      (value.attachedAt ?? 0) <= (value.cursor ?? 0),
+    "Invalid context removal cursor",
   );
 export type PluginContextSnapshot = z.infer<typeof pluginContextSnapshotSchema>;
+
+/** What a remove-all did. Only `applied` changed anything:
+ * - `applied`: this operation cleared the context and set the hold.
+ * - `in-effect`: a removal made after the request's basis still holds.
+ * - `superseded`: that removal was applied, then the person attached again;
+ *   their newer context is kept.
+ * - `stale`: the removal never landed and the person attached after its
+ *   basis; nothing was erased, so they must review and remove again. */
+export const pluginContextRemoveAllResultSchema = z.strictObject({
+  outcome: z.enum(["applied", "in-effect", "superseded", "stale"]),
+  snapshot: pluginContextSnapshotSchema,
+});
+export type PluginContextRemoveAllResult = z.infer<
+  typeof pluginContextRemoveAllResultSchema
+>;
 
 type InlinePluginContent =
   | { type: "text"; text: string }
