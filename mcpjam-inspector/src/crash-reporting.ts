@@ -181,7 +181,7 @@ export function crashReportingIntegrations(
 ): { name: string }[] {
   return [
     ...defaults.filter(
-      (i) => i.name !== "ChildProcess" && i.name !== "OnUncaughtException",
+      (i) => !["ChildProcess", "OnUncaughtException", "SentryMinidump"].includes(i.name),
     ),
     Sentry.childProcessIntegration(childProcessIntegrationOptions()),
     // Forced exit, for the same reason as the server: Sentry only terminates

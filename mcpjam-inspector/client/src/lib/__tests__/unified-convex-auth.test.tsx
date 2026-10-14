@@ -31,6 +31,7 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: mockState.forceRefreshGuestSessionOrThrow,
   markGuestActivated: mockState.markGuestActivated,
   getGuestSessionRefusal: mockState.getGuestSessionRefusal,
+  subscribeGuestSessionChanges: () => () => {},
 }));
 
 describe("useUnifiedConvexAuth", () => {
@@ -449,6 +450,35 @@ describe("useUnifiedConvexAuth", () => {
       expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(
         1,
       );
+    });
+
+    it("stops a forced refresh at a 429 refusal without retrying or reporting", async () => {
+      // A refused refresh resolves null with the refusal recorded, which the
+      // ladder treats as terminal: no second request into the same 429 and
+      // no report.
+      mockState.getCachedGuestSession.mockReturnValue(session);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
+      const result = await mountGuest();
+      mockState.forceRefreshGuestSessionOrThrow.mockImplementation(async () => {
+        mockState.getGuestSessionRefusal.mockReturnValue({
+          until: Date.now() + 45_000,
+        });
+        return null;
+      });
+
+      let token: string | null = "unset";
+      await act(async () => {
+        token = await result.current.fetchAccessToken({
+          forceRefreshToken: true,
+        });
+      });
+
+      expect(token).toBeNull();
+      expect(mockState.forceRefreshGuestSessionOrThrow).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(mockState.reportCaught).not.toHaveBeenCalled();
+      expect(useSessionRefreshStore.getState().kind).not.toBe("transient");
     });
 
     it("retries a transient WorkOS network failure", async () => {
