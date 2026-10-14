@@ -388,6 +388,8 @@ export function deriveSwarmFindingsModelFromWire({
             lead?.reportExcerpt?.actual ??
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
+              : lead?.verdictSeen === "passed" || lead?.verdictSeen === "failed"
+              ? SWARM_FINDING_DISPOSITION_LABELS[disposition]
               : "No session evidence available."),
         },
         defaultStage: diagnosisStage ?? "value",
