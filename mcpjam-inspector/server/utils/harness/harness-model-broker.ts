@@ -1,3 +1,4 @@
+import { inspectorAiRequestHeaders } from "../ai-request-headers.js";
 /**
  * Header-broker start/revoke client — the ONLY harness credential delivery
  * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
@@ -19,7 +20,7 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
 import {
   orgLeaseUpstreamFrom,
-  orgSelectionField,
+  leaseSelectionField,
   orgBindingUnconfirmed,
   type HarnessOrgLeaseUpstream,
 } from "./harness-org-lease.js";
@@ -215,6 +216,7 @@ export async function startHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -229,7 +231,7 @@ export async function startHarnessModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
         ...(args.modelSelection?.source === "org" &&
         args.expectedCredentialRevision
           ? { expectedCredentialRevision: args.expectedCredentialRevision }
@@ -348,6 +350,7 @@ export async function registerLocalInstance(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -428,6 +431,7 @@ export async function startLoopbackModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -451,7 +455,7 @@ export async function startLoopbackModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
@@ -552,6 +556,7 @@ export async function revokeHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -633,6 +638,7 @@ export async function reserveHarnessBox(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -646,7 +652,7 @@ export async function reserveHarnessBox(args: {
         runId: args.runId,
         // An org selection is resolved HERE, before the box installs
         // anything: a disabled or mismatched connection fails early.
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       signal: args.signal,
     });
@@ -706,6 +712,7 @@ export async function renewHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -765,6 +772,7 @@ export async function releaseHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({

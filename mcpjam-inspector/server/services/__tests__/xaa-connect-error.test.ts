@@ -148,10 +148,32 @@ describe("toXaaConnectFailure", () => {
       reason: XaaConnectFailureReason.AUTHORIZATION_REJECTED,
     });
     expect(framed.message).toContain("Billing MCP");
-    expect(framed.message).toContain(
-      "HTTP 401 — invalid_client: unknown client"
+    expect(framed.message).toBe(
+      'The authorization server for "Billing MCP" rejected MCPJam\'s access request (HTTP 401, invalid_client: unknown client). Check the server\'s auth settings.'
     );
     expect(framed.message).not.toContain("https://");
+  });
+
+  it("words a throttled token request the same way, with no em dash or registration-specific advice", () => {
+    const framed = toXaaConnectFailure(
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "XAA token exchange (jwt-bearer grant) was rejected by the authorization server at https://as.example.com/oauth/token (HTTP 429)",
+        { status: 429 }
+      ),
+      target
+    );
+
+    expect(framed.details).toMatchObject({
+      reason: XaaConnectFailureReason.AUTHORIZATION_REJECTED,
+    });
+    expect(framed.message).toBe(
+      'The authorization server for "Billing MCP" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.'
+    );
+    expect(framed.details).toMatchObject({ authorizationServerStatus: 429 });
+    expect(framed.message).not.toContain("—");
+    expect(framed.message).not.toMatch(/client credentials|issuer/);
   });
 
   it("frames an unclassifiable failure instead of leaking it raw", () => {

@@ -5,6 +5,7 @@ const broker = vi.hoisted(() => ({
   reserveHarnessBox: vi.fn(),
   startHarnessModelBroker: vi.fn(),
   failedTurnEvidence: vi.fn(),
+  prepareLocalHarnessTurn: vi.fn(),
 }));
 
 vi.mock("../harness-model-broker.js", () => ({
@@ -13,6 +14,10 @@ vi.mock("../harness-model-broker.js", () => ({
 }));
 vi.mock("../harness-org-lease.js", () => ({
   failedTurnEvidence: broker.failedTurnEvidence,
+}));
+
+vi.mock("../local/local-turn.js", () => ({
+  prepareLocalHarnessTurn: broker.prepareLocalHarnessTurn,
 }));
 
 import { OrgLeaseTurn } from "../org-lease-turn";
@@ -64,6 +69,10 @@ beforeEach(() => {
   broker.reserveHarnessBox.mockReset();
   broker.startHarnessModelBroker.mockReset();
   broker.failedTurnEvidence.mockReset();
+  broker.prepareLocalHarnessTurn.mockReset();
+  broker.prepareLocalHarnessTurn.mockResolvedValue({
+    ok: true, prepared: { brokerRunId: "run_1", orgUpstream: ORG_UPSTREAM },
+  });
   broker.reserveHarnessBox.mockResolvedValue({
     ok: true,
     credentialRevision: "rev_b",
@@ -77,8 +86,12 @@ beforeEach(() => {
 });
 
 describe("OrgLeaseTurn on MCPJam's key", () => {
-  it("answers the hosted defaults", async () => {
-    const org = turn();
+  it.each([undefined, {
+    modelId: "anthropic/claude-sonnet-4.5", source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    settings: { reasoningEffort: "high" as const },
+  }])("keeps a hosted selection out of the org credential lease: %j", async (selection) => {
+    const org = turn(selection);
     expect(org.modelId("gpt-5-nano", "openai")).toBe("openai/gpt-5-nano");
     expect(org.brokeredEndpoint).toBe("platform");
     expect(org.fingerprint()).toEqual({});
@@ -87,7 +100,7 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
       "modelSelection",
     );
     const startBody = broker.startHarnessModelBroker.mock.calls[0]![0];
-    expect(startBody).not.toHaveProperty("modelSelection");
+    expect(startBody.modelSelection).toEqual(selection);
     expect(startBody).not.toHaveProperty("expectedCredentialRevision");
     expect(org.runtimeField()).toEqual({});
     expect(org.commitState({ a: 1 })).toEqual({ a: 1 });
@@ -209,4 +222,85 @@ describe("OrgLeaseTurn on the organization's key", () => {
       turnStartedAt: expect.any(Number),
     });
   });
+});
+
+describe("applied harness effort", () => {
+  const hosted: ModelSelection = {
+    source: "hosted",
+    modelId: ORG_SELECTION.modelId,
+    fallback: { provider: "none", model: "none" },
+  };
+  it.each([hosted, ORG_SELECTION])(
+    "forwards the cloud override on $source",
+    async (base) => {
+      const selection: ModelSelection = {
+        ...base,
+        settings: { reasoningEffort: "high", temperature: 0.2 },
+      };
+      await turn(selection).start({
+        box: BOX,
+        harnessId: "claude-code",
+        modelId: selection.modelId,
+        runId: "run_1",
+        bearer: "Bearer t",
+        reasoningEffort: "low",
+      });
+      expect(broker.startHarnessModelBroker.mock.calls[0]![0]).toMatchObject({
+        reasoningEffort: "low",
+        modelSelection: {
+          ...selection,
+          settings: { reasoningEffort: "low", temperature: 0.2 },
+        },
+      });
+      expect(selection.settings?.reasoningEffort).toBe("high");
+    },
+  );
+  it.each([hosted, ORG_SELECTION])(
+    "forwards the local override on $source",
+    async (base) => {
+      const selection: ModelSelection = {
+        ...base,
+        settings: { reasoningEffort: "high", temperature: 0.2 },
+      };
+      await turn(selection).prepareLocal(
+        {
+          harnessId: "claude-code",
+          modelId: selection.modelId,
+          runId: "run_1",
+          projectId: "p1",
+          bearer: "Bearer t",
+          reasoningEffort: "low",
+          actor: {
+            isGuest: false,
+            isScenarioSession: false,
+            isJourneySession: false,
+          },
+          target: {
+            kind: "local-native",
+            workspaceGrantId: "workspace",
+            runtimeId: "runtime",
+            machineId: "machine",
+            permissionProfile: "read-only",
+            policyVersion: "1",
+            grantToken: "fixture",
+            actingUserId: "user",
+          },
+        },
+        {
+          sessionId: "local-1",
+          eligibility: undefined,
+          continuity: undefined,
+          isApprovalResume: false,
+        },
+      );
+      expect(broker.prepareLocalHarnessTurn.mock.calls[0]![0]).toMatchObject({
+        reasoningEffort: "low",
+        modelSelection: {
+          ...selection,
+          settings: { reasoningEffort: "low", temperature: 0.2 },
+        },
+      });
+      expect(selection.settings?.reasoningEffort).toBe("high");
+    },
+  );
 });
