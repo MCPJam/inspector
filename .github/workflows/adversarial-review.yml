@@ -1,18 +1,39 @@
 name: Adversarial Review
 
+# The PR review pipeline. Phases run in order, and a phase is acted on only
+# once every phase before it passed:
+#
+#   1. ci       Tests, Build and Test
+#   2. quality  PR Size, UI Copy Review, Slop Ratchet
+#   3. review   Claude's adversarial review (scripts/slop/adversarial-review.md)
+#
+# The first failing phase, or the review once all checks pass, is triaged.
+# Each piece of feedback becomes one of:
+#   - autofix: a trivial fix the bot commits and pushes to the PR branch
+#   - suggest: a one-click GitHub suggestion for a person to accept or dismiss
+#   - discuss: an inline comment with the issue, its risks and options
+#
+# Autofix commits are pushed with the MCPJam bot's app token, so CI runs on
+# them and the pipeline starts over. The review does not run again on a bot
+# commit, and after two bot commits in a row the bot only suggests.
+#
+# Every step that holds a secret runs scripts/slop from the default branch.
+# The PR's own files are only read from git, never executed or checked out
+# into a path that is written.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_run:
+    workflows: [Tests, Build and Test, PR Size, UI Copy Review, Slop Ratchet]
+    types: [completed]
 
 permissions:
   contents: read
 
-concurrency:
-  group: adversarial-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
@@ -22,41 +43,107 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24.14.0"
-      - run: node --test scripts/slop/adversarial-review.test.mjs
+      - run: node --test scripts/slop/adversarial-review.test.mjs scripts/slop/review-*.test.mjs
 
-  review:
-    # Forks cannot read the API key. Drafts are reviewed when marked ready.
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+  pipeline:
+    # workflow_run: a phase workflow finished for a PR from this repository.
+    # Forks cannot read the secrets, and Dependabot PRs get only Dependabot's.
+    # pull_request: a draft was marked ready after its checks already ran.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.actor.login != 'dependabot[bot]') ||
+      (github.event_name == 'pull_request' &&
+        github.event.action == 'ready_for_review' &&
+        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
+    timeout-minutes: 20
+    # Each phase workflow's completion starts a run for the same commit. They
+    # queue instead of cancelling, and the gate's marker check makes the
+    # later ones exit.
+    concurrency:
+      group: review-pipeline-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
-      pull-requests: write
+      actions: read # job logs of the failed phase
+      checks: read # check-run annotations
+      pull-requests: read
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || github.event.pull_request.number }}
+      STATE_DIR: ${{ runner.temp }}/review-pipeline
+      REPO_DIR: pr
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the reviewer from the default branch
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 2
-          persist-credentials: false
-      # Only base-branch code runs with credentials; PR blobs are review data.
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: .reviewer
           sparse-checkout: |
             scripts/slop
           persist-credentials: false
+
       - uses: actions/setup-node@v7
         with:
           node-version: "24.14.0"
-      - name: Review this PR with Claude Sonnet 5.5
+
+      - name: Pick the phase to act on
+        id: gate
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [ ! -f .reviewer/scripts/slop/adversarial-review.mjs ]; then
-            echo "::notice::The reviewer must merge into the base branch before it can review PRs."
+          if [ ! -f .reviewer/scripts/slop/review-gate.mjs ]; then
+            echo "::notice::The review pipeline must merge into the default branch before it can run."
             exit 0
           fi
-          node .reviewer/scripts/slop/adversarial-review.mjs
+          node .reviewer/scripts/slop/review-gate.mjs
+
+      # The PR's commits as git data for the scripts to read. Nothing from
+      # this checkout is run.
+      - name: Fetch the PR head and its merge base
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          path: pr
+          persist-credentials: false
+      - if: steps.gate.outputs.proceed == 'true'
+        env:
+          MERGE_BASE: ${{ steps.gate.outputs.base }}
+        run: git -C pr fetch --no-tags --depth=1 origin "$MERGE_BASE"
+
+      - name: Collect the phase feedback
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Only the review phase calls Claude here.
+          ANTHROPIC_API_KEY: ${{ steps.gate.outputs.phase == 'review' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: node .reviewer/scripts/slop/review-feedback.mjs
+
+      - name: Triage into autofix, suggest and discuss
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node .reviewer/scripts/slop/review-triage.mjs
+
+      # Pushes made with GITHUB_TOKEN start no workflows, so CI would never
+      # check the bot's commits. The app token does start them. It is minted
+      # only after triage, in a step that never sees the API key.
+      - name: Get a bot token
+        id: app-token
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push autofixes and post the review
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: node .reviewer/scripts/slop/review-publish.mjs
