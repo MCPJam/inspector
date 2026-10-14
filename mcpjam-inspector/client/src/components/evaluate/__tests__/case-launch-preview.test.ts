@@ -2,7 +2,11 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { refuseCaseSave } from "../../evals/case-save-feedback";
+import {
+  CASE_SAVE_FAILURE_MESSAGE,
+  refuseCaseSave,
+  refuseInvalidCaseSave,
+} from "../../evals/case-save-feedback";
 import type { EvalCase, EvalSuite } from "../../evals/types";
 import {
   caseLaunchTarget,
@@ -77,7 +81,7 @@ it("removes every model of a failed legacy host without removing another host", 
 it("reports preparation or save errors through the submission toast after closing", async () => {
   const onClose = vi.fn();
   const onStart = vi.fn(async () => {
-    throw new Error("Save the test case before running.");
+    throw new Error(CASE_SAVE_FAILURE_MESSAGE);
   });
   await startCaseReview(
     { ...props, onClose, onStart },
@@ -91,7 +95,7 @@ it("reports preparation or save errors through the submission toast after closin
   const id = vi.mocked(toast.loading).mock.calls[0][1]?.id;
   expect(id).toEqual(expect.any(String));
   expect(toast.error).toHaveBeenCalledExactlyOnceWith(
-    "Save the test case before running.",
+    "We couldn’t save this test. Check its settings and try again.",
     { id },
   );
   expect(useCaseLaunches.getState().launches).toEqual([]);
@@ -146,6 +150,60 @@ it.each([
 it("reports direct save refusals without throwing", () => {
   expect(refuseCaseSave("Fix this field.", false)).toBe(false);
   expect(toast.error).toHaveBeenCalledExactlyOnceWith("Fix this field.");
+});
+
+it.each([
+  "Choose whether this test uses tools.",
+  "Add a user turn before this assertion.",
+])(
+  "uses the agreed save message for invalid startup settings: %s",
+  async (reason) => {
+    await startCaseReview(
+      {
+        ...props,
+        onClose: vi.fn(),
+        onStart: async () => {
+          refuseInvalidCaseSave(reason, true);
+        },
+      },
+      savedCaseTargets(props),
+      1,
+    );
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+      "We couldn’t save this test. Check its settings and try again.",
+      { id: vi.mocked(toast.loading).mock.calls[0][1]?.id },
+    );
+  },
+);
+
+it("uses the save fallback for a save error without a readable message", async () => {
+  await startCaseReview(
+    {
+      ...props,
+      onClose: vi.fn(),
+      onStart: async () => {
+        refuseCaseSave(
+          getBillingErrorMessage(new Error(""), CASE_SAVE_FAILURE_MESSAGE),
+          true,
+        );
+      },
+    },
+    savedCaseTargets(props),
+    1,
+  );
+  expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+    "We couldn’t save this test. Check its settings and try again.",
+    { id: vi.mocked(toast.loading).mock.calls[0][1]?.id },
+  );
+});
+
+it("keeps detailed validation feedback for a direct save", () => {
+  expect(
+    refuseInvalidCaseSave("Choose whether this test uses tools.", false),
+  ).toBe(false);
+  expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+    "Choose whether this test uses tools.",
+  );
 });
 
 it("settles the startup toast on success", async () => {

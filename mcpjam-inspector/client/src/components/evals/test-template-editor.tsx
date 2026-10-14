@@ -103,7 +103,7 @@ import {
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { refuseCaseSave } from "./case-save-feedback";
+import { CASE_SAVE_FAILURE_MESSAGE, refuseCaseSave, refuseInvalidCaseSave } from "./case-save-feedback";
 import type { ModelDefinition } from "@/shared/types";
 import {
   allModelsOutOfCredits,
@@ -2215,7 +2215,7 @@ export function TestTemplateEditor({
           // a version of the case the author is not looking at.
           const saved = await (launch?.saveBeforeRun ?? handleSaveRef.current)?.();
           if (!saved) {
-            if (launch) throw new Error("Save the test case before running.");
+            if (launch) throw new Error(CASE_SAVE_FAILURE_MESSAGE);
             return;
           }
         }
@@ -2821,11 +2821,11 @@ export function TestTemplateEditor({
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
-      return refuseCaseSave(simpleToolsBlock, quiet);
+      return refuseInvalidCaseSave(simpleToolsBlock, quiet);
     }
 
     if (!validateSteps(editForm.steps)) {
-      return refuseCaseSave(
+      return refuseInvalidCaseSave(
         getStepsBlockReason(editForm.steps) ?? "Fix the test configuration before saving.", quiet,
       );
     }
@@ -2857,7 +2857,7 @@ export function TestTemplateEditor({
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      refuseCaseSave(getBillingErrorMessage(error, "Failed to save changes"), quiet);
+      refuseCaseSave(getBillingErrorMessage(error, CASE_SAVE_FAILURE_MESSAGE), quiet);
       throw error;
     }
   };
