@@ -221,7 +221,7 @@ describe("HTTP 404 connection guidance", () => {
     const manager = new MCPClientManager({});
     try {
       await expect(manager.connectToServer("missing", { url, disableSseFallback })).rejects.toThrow(
-        `Server returned HTTP 404 at ${url}. Check the MCP endpoint and server logs.`,
+        `MCP server "missing" returned HTTP 404 at ${url}. Check the MCP endpoint and server logs.`,
       );
     } finally {
       await manager.disconnectAllServers();

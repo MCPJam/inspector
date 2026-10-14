@@ -2,18 +2,18 @@ import { connectionErrorMessage } from "../src/mcp-client-manager/connection-err
 
 const url = new URL("http://user:secret@localhost:8082/mcp?key=secret#token");
 const fallback = "Original transport details";
-const message = (...errors: unknown[]) => connectionErrorMessage(url, errors, fallback);
+const message = (...errors: unknown[]) => connectionErrorMessage("weather", url, errors, fallback);
 
 describe("connection failure messages", () => {
   it("explains a nested connection refusal without exposing URL credentials", () => {
     const cause = Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
     expect(message(new TypeError("fetch failed", { cause }))).toBe(
-      "Couldn't reach the server at http://localhost:8082/mcp: connection refused (ECONNREFUSED). Check that it's running and that the host and port are correct.",
+      "Couldn't reach MCP server \"weather\" at http://localhost:8082/mcp: connection refused (ECONNREFUSED). Check that it's running and that the host and port are correct.",
     );
   });
   it.each(["code", "status", "statusCode"])("recognizes a 404 in %s without guessing its cause", (field) => {
     expect(message({ [field]: 404 })).toBe(
-      "Server returned HTTP 404 at http://localhost:8082/mcp. Check the MCP endpoint and server logs.",
+      "MCP server \"weather\" returned HTTP 404 at http://localhost:8082/mcp. Check the MCP endpoint and server logs.",
     );
   });
   it("recognizes an era-negotiation wrapper", () => {
