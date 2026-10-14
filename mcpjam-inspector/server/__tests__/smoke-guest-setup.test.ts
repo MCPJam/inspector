@@ -1,7 +1,9 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { FullConfig } from "@playwright/test";
 import { chmod, rm } from "node:fs/promises";
-import smokeGuestSetup from "../../e2e/smoke-guest-setup";
+import smokeGuestSetup, {
+  smokeGuestStorageFile,
+} from "../../e2e/smoke-guest-setup";
 
 const client = vi.hoisted(() => ({
   post: vi.fn(),
@@ -26,6 +28,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("PLAYWRIGHT_BASE_URL", "");
   vi.stubEnv("MCPJAM_SESSION_TOKEN", "local-access");
+  vi.stubEnv("MCPJAM_E2E_GUEST_STATE_FILE", "");
   newContext.mockResolvedValue(client);
   client.post.mockResolvedValue({ ok: () => true });
   client.storageState.mockResolvedValue(undefined);
@@ -83,4 +86,11 @@ it("leaves deployed target authentication unchanged", async () => {
   vi.stubEnv("PLAYWRIGHT_BASE_URL", "https://staging.example.test");
   await smokeGuestSetup(config);
   expect(newContext).not.toHaveBeenCalled();
+});
+
+it("inherits the same private file path in workers with different process IDs", () => {
+  const parent = smokeGuestStorageFile(123);
+  expect(parent).toContain("mcpjam-smoke-guest-123.json");
+  expect(smokeGuestStorageFile(456)).toBe(parent);
+  expect(process.env.MCPJAM_E2E_GUEST_STATE_FILE).toBe(parent);
 });

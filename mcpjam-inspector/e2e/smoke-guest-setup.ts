@@ -1,5 +1,16 @@
 import { request, type FullConfig } from "@playwright/test";
 import { chmod, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/** Inherited by workers when they reload the config in their own process. */
+export function smokeGuestStorageFile(pid = process.pid) {
+  const key = "MCPJAM_E2E_GUEST_STATE_FILE";
+  return (process.env[key] ||= join(
+    tmpdir(),
+    `mcpjam-smoke-guest-${pid}.json`,
+  ));
+}
 
 /** Fresh browser contexts reuse one guest cookie instead of minting per test. */
 export default async function smokeGuestSetup(config: FullConfig) {
