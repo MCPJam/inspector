@@ -285,9 +285,9 @@ export function applyEventPolicy(
   actorId?: string,
 ): unknown {
   if (policy.content === "strict") {
-    const strict = rebuildStrictPostHogEvent(event, actorId);
-    return strict && isRecord(event)
-      ? { ...strict, ...relayEventMetadata(event) }
+    const rebuilt = rebuildStrictPostHogEvent(event, actorId);
+    return rebuilt && isRecord(event)
+      ? { ...rebuilt, ...relayEventMetadata(event) }
       : null;
   }
   if (!isRecord(event)) return null;
@@ -323,7 +323,7 @@ export function applyEventPolicy(
     properties.$geoip_disable = true;
   }
 
-  if (policy.recording !== "full") {
+  if (policy.recording === "masked") {
     Object.assign(properties, restrictProperties(properties, 0, false));
     // posthog-js puts `$initial_*` person properties in the event's own
     // `$set_once`, outside `properties`.
@@ -358,4 +358,12 @@ export function restrictPoliciesAtSend(
           mostRestrictivePolicy(policy, CONSERVATIVE_TELEMETRY_POLICY),
         ),
       };
+}
+
+/** A mixed batch cannot use the relay's address as a full row's client location. */
+export function disableEventGeoip(event: Record<string, unknown>): void {
+  const properties = isRecord(event.properties) ? { ...event.properties } : {};
+  delete properties.$ip;
+  properties.$geoip_disable = true;
+  event.properties = properties;
 }

@@ -1,3 +1,4 @@
+import { RUNTIME_COMPAT } from "../server/utils/harness/local/runtime-compat.js";
 import {
   ANALYTICS_EVENTS,
   type ServerAnalyticsEventName,
@@ -5,8 +6,8 @@ import {
 import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
 
 const enums: Record<string, readonly string[]> = {
-  origin: ["playground", "evals", "api"],
-  source_type: ["playground", "eval", "api"],
+  origin: ["playground", "evals", "api", "scenario"],
+  source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
   surface: ["api"],
   outcome: [
     "ok",
@@ -30,7 +31,7 @@ const enums: Record<string, readonly string[]> = {
   terminal_reason: ["runner_error", "timeout", "cancelled", "completed"],
   scope: ["project", "organization", "user"],
   status: ["running", "completed", "failed", "cancelled"],
-  harness_id: ["claude-code", "codex"],
+  harness_id: ["claude-code", "codex", "cursor"],
   trigger: ["boot", "readiness", "provision", "cli", "manual"],
   stage: ["download", "verify", "extract", "install", "probe", "activate"],
   role: ["desired", "previous", "candidate"],
@@ -58,6 +59,7 @@ const numbers = new Set([
 ]);
 const booleans = new Set([
   "include_llm_observations",
+  "success",
   "deduped",
   "hasQuery",
   "hasNextCursor",
@@ -91,6 +93,21 @@ export function rebuildServerAnalytics(
       value <= 86400000
     )
       properties[key] = value;
+  }
+  const harness = input.harness_id;
+  const packVersion = input.pack_version;
+  if (
+    (harness === "claude-code" || harness === "codex") &&
+    typeof packVersion === "string"
+  ) {
+    const known = Object.values(RUNTIME_COMPAT.harnesses[harness].targets).some(
+      (slot) =>
+        slot &&
+        [slot.desired.packVersion, slot.permitted?.packVersion].includes(
+          packVersion,
+        ),
+    );
+    if (known) properties.pack_version = packVersion;
   }
   return { event: event as ServerAnalyticsEventName, distinctId, properties };
 }

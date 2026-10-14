@@ -17,6 +17,7 @@ import { getSystemLogger } from "../utils/request-logger.js";
 import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js";
 import {
   applyEventPolicy,
+  disableEventGeoip,
   restrictPoliciesAtSend,
   decideEventPolicies,
   isRestricted,
@@ -1429,12 +1430,8 @@ const scanJsonStrings = (
   visit: (value: string) => void | Promise<void>,
 ) => scanPayloadTokens(json, [], undefined, visit);
 
-// Rewrites each event under its policy, then takes every credential out of
-// what is left (relay-credentials.ts): an event or envelope the walker cannot
-// finish fails the request (`scrub_drop`), and a replay event holding a
-// credential, or nested data that cannot be read, is dropped. Serializes the
-// payload: a POST body gzip-compressed the way posthog-js sends it, a GET's
-// `data` as JSON. A request left with no event to forward is `restricted`.
+// Rebuild policy-restricted rows and remove credentials before serialization.
+// Unreadable payloads fail closed; a fully dropped batch is restricted.
 async function rewriteCapture(
   url: URL,
   method: string,
@@ -1479,6 +1476,7 @@ async function rewriteCapture(
   if (events.length === 0 && dropped + credentialDropped > 0) {
     return { kind: "restricted" };
   }
+  if (decision.policies.some(isRestricted)) events.forEach(disableEventGeoip);
   const serialized = await serializeCapture({ ...payload, envelope, events });
   const isGet = method === "GET" || method === "HEAD";
   const params = new URLSearchParams(decision.policies.some((policy) => policy.content === "strict") ? "" : url.search);
