@@ -211,9 +211,11 @@ it.each([
     name: "iteration quota without a message",
     payload: {
       code: "billing_limit_reached",
-      limit: "maxEvalIterationsPerMonth",
+      limitName: "maxEvalIterationsPerMonth",
+      allowedValue: 100,
     },
-    expected: "You’ve reached your test iteration limit.",
+    expected:
+      "This organization has reached its eval iteration limit (100). Upgrade to continue.",
   },
   {
     name: "iteration quota with a readable message",
@@ -234,14 +236,16 @@ it.each([
   },
   {
     name: "another quota without a message",
-    payload: { code: "billing_limit_reached", limit: "maxEvalRunsPerMonth" },
-    expected: JSON.stringify({
+    payload: {
       code: "billing_limit_reached",
-      limit: "maxEvalRunsPerMonth",
-    }),
+      limitName: "maxEvalRunsPerMonth",
+      allowedValue: 20,
+    },
+    expected:
+      "This organization has reached its monthly eval run limit (20). Upgrade to continue.",
   },
 ])(
-  "formats only the incomplete iteration quota: $name",
+  "formats a billing quota refusal like every other launch: $name",
   async ({ payload, expected }) => {
     await startCaseReview(
       {
