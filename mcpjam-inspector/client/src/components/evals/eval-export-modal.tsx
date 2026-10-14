@@ -40,6 +40,7 @@ import {
 } from "@/lib/generate-agent-brief";
 import { getServerUrl } from "@/components/connection/server-card-utils";
 import type { ServerWithName } from "@/state/app-types";
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 
 type EvalExportModalProps = {
   open: boolean;
@@ -54,7 +55,13 @@ type EvalExportModalProps = {
 type AgentPromptState =
   | { status: "idle"; prompt: null; error: null }
   | { status: "loading"; prompt: null; error: null }
-  | { status: "ready"; prompt: string; error: null; serverId: string }
+  | {
+      status: "ready";
+      prompt: string;
+      error: null;
+      serverId: string;
+      requestKey: string;
+    }
   | { status: "error"; prompt: null; error: string };
 
 function ExportStepSection({
@@ -92,6 +99,7 @@ export function EvalExportModal({
 }: EvalExportModalProps) {
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
   const [promptRetry, setPromptRetry] = useState(0);
+  const [promptRequested, setPromptRequested] = useState(false);
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
     status: "idle",
     prompt: null,
@@ -137,10 +145,20 @@ export function EvalExportModal({
     [exportLabel]
   );
   const singleServerId = serverIds.length === 1 ? serverIds[0]! : null;
+  const serverConfig = singleServerId
+    ? serverEntries[singleServerId]?.config
+    : undefined;
+  // Equal brief inputs share a request even when the parent recreates its props.
+  const promptRequestKey = stableStringifyJson({
+    serverId: singleServerId,
+    serverUrl: serverConfig ? getServerUrl(serverConfig) : undefined,
+    exploreTestCases: mapEvalCasesToAgentBriefExploreCases(cases),
+  });
 
   useEffect(() => {
     if (!open) {
       setActiveTab("sdk");
+      setPromptRequested(false);
       return;
     }
 
@@ -156,7 +174,7 @@ export function EvalExportModal({
   useEffect(() => {
     // SDK code uses saved cases and connection settings. Only the optional
     // agent brief needs a live server, so do not probe it during SDK export.
-    if (!open || activeTab !== "prompt") {
+    if (!open || !promptRequested) {
       setAgentPromptState({ status: "idle", prompt: null, error: null });
       return;
     }
@@ -168,27 +186,30 @@ export function EvalExportModal({
     }
 
     let cancelled = false;
+    const controller = new AbortController();
+    const promptOptions: {
+      serverUrl?: string;
+      exploreTestCases: ReturnType<typeof mapEvalCasesToAgentBriefExploreCases>;
+    } = JSON.parse(promptRequestKey);
     setAgentPromptState({ status: "loading", prompt: null, error: null });
 
     void (async () => {
       try {
-        const exportPayload = await exportServerApi(singleServerId);
+        const exportPayload = await exportServerApi(singleServerId, {
+          signal: controller.signal,
+        });
         if (cancelled) {
           return;
         }
 
-        const serverConfig = serverEntries[singleServerId]?.config;
-        const serverUrl = serverConfig ? getServerUrl(serverConfig) : undefined;
-        const prompt = generateAgentBrief(exportPayload, {
-          serverUrl,
-          exploreTestCases: mapEvalCasesToAgentBriefExploreCases(cases),
-        });
+        const prompt = generateAgentBrief(exportPayload, promptOptions);
 
         setAgentPromptState({
           status: "ready",
           prompt,
           error: null,
           serverId: singleServerId,
+          requestKey: promptRequestKey,
         });
       } catch (error) {
         if (cancelled) {
@@ -208,8 +229,9 @@ export function EvalExportModal({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [activeTab, cases, open, promptRetry, serverEntries, singleServerId]);
+  }, [promptRequested, promptRequestKey, open, promptRetry, singleServerId]);
 
   const promptDisabledReason = useMemo(() => {
     if (serverIds.length === 0) {
@@ -237,7 +259,8 @@ export function EvalExportModal({
   const handleDownloadAgentPrompt = () => {
     if (
       agentPromptState.status !== "ready" ||
-      agentPromptState.serverId !== singleServerId
+      agentPromptState.serverId !== singleServerId ||
+      agentPromptState.requestKey !== promptRequestKey
     ) {
       return;
     }
@@ -283,7 +306,10 @@ export function EvalExportModal({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-5">
           <Tabs
             value={activeTab}
-            onValueChange={(value) => setActiveTab(value as "sdk" | "prompt")}
+            onValueChange={(value) => {
+              setActiveTab(value as "sdk" | "prompt");
+              if (value === "prompt") setPromptRequested(true);
+            }}
             className="min-h-0 flex-1 overflow-hidden"
           >
             <TabsList className="mb-4 w-full justify-start">
@@ -394,7 +420,8 @@ export function EvalExportModal({
                 </Alert>
               ) : null}
               {agentPromptState.status === "ready" &&
-              agentPromptState.serverId === singleServerId ? (
+              agentPromptState.serverId === singleServerId &&
+              agentPromptState.requestKey === promptRequestKey ? (
                 <CopyableCodeBlock
                   code={agentPromptState.prompt}
                   copyLabel="Copy prompt for agent"

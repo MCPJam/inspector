@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useLayoutEffect } from "react";
-import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
+import { act, renderWithProviders, screen, userEvent, waitFor } from "@/test";
 import { EvalExportModal } from "../eval-export-modal";
 
 const mockCapture = vi.fn();
@@ -146,7 +146,7 @@ describe("EvalExportModal", () => {
       .setup()
       .click(screen.getByRole("tab", { name: "Prompt for agent" }));
     await waitFor(() =>
-      expect(mockExportServerApi).toHaveBeenCalledWith("weather"),
+      expect(mockExportServerApi).toHaveBeenCalledWith("weather", { signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -186,7 +186,7 @@ describe("EvalExportModal", () => {
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
 
     await screen.findByText(/MCP Server Brief: weather/);
-    expect(mockExportServerApi).toHaveBeenCalledWith("weather");
+    expect(mockExportServerApi).toHaveBeenCalledWith("weather", { signal: expect.any(AbortSignal) });
     expect(screen.getByText(/MCP Server Brief: weather/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy prompt for agent" }),
@@ -265,7 +265,7 @@ describe("EvalExportModal", () => {
     expect(mockExportServerApi).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores a capability response after switching back to SDK code", async () => {
+  it("aborts on close and ignores an old rejection while a new request is loading", async () => {
     let rejectExport!: (error: Error) => void;
     mockExportServerApi.mockReturnValueOnce(
       new Promise((_, reject) => {
@@ -273,22 +273,65 @@ describe("EvalExportModal", () => {
       }),
     );
     const user = userEvent.setup();
-    renderWithProviders(<EvalExportModal {...baseProps} />);
+    const { rerender } = renderWithProviders(
+      <EvalExportModal {...baseProps} />,
+    );
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    const signal: AbortSignal = mockExportServerApi.mock.calls[0][1].signal;
+    rerender(<EvalExportModal {...baseProps} open={false} />);
+    expect(signal.aborted).toBe(true);
+
+    mockExportServerApi.mockReturnValueOnce(new Promise(() => {}));
+    rerender(<EvalExportModal {...baseProps} />);
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await act(async () => {
+      rejectExport(new Error("HTTP 404"));
+    });
     expect(screen.getByRole("status")).toHaveTextContent(
       "Checking live server capabilities",
-    );
-    await user.click(screen.getByRole("tab", { name: "SDK code" }));
-    rejectExport(new Error("HTTP 404"));
-    await user.click(
-      screen.getByRole("button", {
-        name: /download demo-suite\.eval\.test\.ts/i,
-      }),
     );
     expect(
       screen.queryByText("Agent prompt failed. Retry below."),
     ).not.toBeInTheDocument();
-    expect(mockDownloadTextFile).toHaveBeenCalledTimes(1);
+    expect(mockExportServerApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses a ready prompt across tab visits and equal input objects", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderWithProviders(
+      <EvalExportModal {...baseProps} />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText(/MCP Server Brief: weather/);
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    rerender(
+      <EvalExportModal
+        {...baseProps}
+        cases={baseProps.cases.map((testCase) => ({ ...testCase }))}
+        serverEntries={{
+          weather: {
+            ...singleServerEntries.weather,
+            connectionStatus: "disconnected",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText(/MCP Server Brief: weather/)).toBeInTheDocument();
+    expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses an in-flight request across rapid tab visits", async () => {
+    mockExportServerApi.mockReturnValueOnce(new Promise(() => {}));
+    const user = userEvent.setup();
+    renderWithProviders(<EvalExportModal {...baseProps} />);
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    const signal: AbortSignal = mockExportServerApi.mock.calls[0][1].signal;
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
   });
 
   it("downloads SDK code after a capability failure even with missing local server details", async () => {
@@ -353,7 +396,7 @@ describe("EvalExportModal", () => {
     rerender(<SwitchingSuite serverId="calendar" />);
     expect(staleDownloadVisible).toBe(false);
     expect(screen.queryByText(/MCP Server Brief: weather/)).not.toBeInTheDocument();
-    expect(mockExportServerApi).toHaveBeenLastCalledWith("calendar");
+    expect(mockExportServerApi).toHaveBeenLastCalledWith("calendar", { signal: expect.any(AbortSignal) });
 
     completeExport({ serverId: "calendar", tools: [], resources: [], prompts: [] });
     await screen.findByText(/MCP Server Brief: calendar/);
