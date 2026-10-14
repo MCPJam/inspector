@@ -39,13 +39,17 @@ RUN node -e 'const d="/usr/local/lib/node_modules/npm",v=require(d+"/package.jso
     && rm /tmp/brace-expansion-5.0.12.tgz /tmp/undici-6.29.0.tgz \
     && npm cache clean --force
 
+# sentry-cli uses the system trust store, absent from bookworm-slim. Install
+# it for both build-time uploads and runtime HTTPS without disabling TLS checks.
 # The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
 # which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
 # bookworm-security has the fix. Pinned, as the header above explains; the
 # install fails loudly once a later security update replaces this version in
 # the archive. Delete this step once the NODE_VERSION image ships deb12u4.
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1 \
     && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
@@ -207,8 +211,6 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
     if [ -n "$METICULOUS_RECORDING_TOKEN" ]; then export METICULOUS_RECORDING_TOKEN; fi; \
-    if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
-    if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
     MCPJAM_BUILD_SURFACE="$MCPJAM_BUILD_SURFACE" npm run build:client -w @mcpjam/inspector
 
 ################################################################################

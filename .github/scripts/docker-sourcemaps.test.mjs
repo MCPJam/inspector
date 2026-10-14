@@ -38,9 +38,20 @@ test("Docker releases upload from the shared server stage without build secrets"
   assert.match(upload ?? "", /SENTRY_AUTH_TOKEN: \$\{\{ secrets\.SENTRY_AUTH_TOKEN \}\}/);
   assert.doesNotMatch(workflow, /sentry_auth_token=|SENTRY_AUTH_TOKEN=\$\{\{/);
   assert.doesNotMatch(dockerfile, /--mount=type=secret/);
+  // Railway expands RUN expressions into logs; ARGs already reach the process.
+  assert.doesNotMatch(instructions.join("\n"), /^RUN .*\$(?:SENTRY_AUTH_TOKEN|POSTHOG_PERSONAL_API_KEY)/m);
   assert.match(dockerfile, /FROM server-build AS build/);
   assert.match(dockerfile, /COPY --from=build .*\/dist \.\/dist/);
   assert.ok(dockerfile.indexOf(stripMaps) > dockerfile.indexOf("FROM server-build AS build"));
+});
+
+test("the shared base installs and verifies the TLS trust store", () => {
+  const base = dockerfile.split("FROM base AS deps")[0];
+  const install = base.replace(/\\\r?\n/g, " ");
+  assert.match(install, /apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1/);
+  assert.match(install, /test -s \/etc\/ssl\/certs\/ca-certificates\.crt/);
+  assert.doesNotMatch(install, /--only-upgrade ca-certificates/);
+  assert.doesNotMatch(dockerfile, /SENTRY_DISABLE_SSL_VERIFICATION|ssl_verify=false/);
 });
 
 test("the uploader receives a runtime credential without putting it in Docker arguments", {
