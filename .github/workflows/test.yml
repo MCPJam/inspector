@@ -370,7 +370,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # Same node_modules cache as the `test` job — see the rationale there.
+      # Reuse the host-runner cache warmed for lint; the smoke job has no container.
       - name: Cache workspace node_modules
         id: node-modules
         uses: actions/cache@v6
@@ -379,7 +379,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
