@@ -4,6 +4,7 @@ import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { reportCaught } from "@/lib/error-reporting";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+import { startWorkosAuth } from "./workos-auth-start";
 
 /**
  * Whether this tab has ever held a WorkOS session.
@@ -87,5 +88,7 @@ export function handleWorkosRefreshFailure({
   // Fire-and-forget, but wrapped: `signIn` is async and a failure to build the
   // authorization URL would otherwise surface as an unhandled rejection inside
   // authkit's callback. The event above already recorded the dead session.
-  void Promise.resolve(signIn(permalinkSignInOptions())).catch(() => {});
+  void startWorkosAuth(() => signIn(permalinkSignInOptions())).catch((error) => {
+    reportCaught(error, { source: "workos_refresh_failure_sign_in" });
+  });
 }

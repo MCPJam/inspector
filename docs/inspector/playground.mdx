@@ -103,6 +103,19 @@ The model picker in the chat input lets you choose which LLM to use. Models are 
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together. A **"Catalog updated …"** line at the bottom of the free-models list shows when the hosted model catalog was last refreshed.
 
+### Organization key policy
+
+When your organization requires its own provider keys for AI features, the model picker changes:
+
+- The **Free models** / **Your providers** split is replaced by a single list of your organization's models only.
+- If no organization model is available yet, the picker shows an empty state:
+  - **Admins** see an **Add a provider** button that opens the organization's AI providers settings.
+  - **Members** see "Ask an organization admin to add one."
+- If your previously saved model is no longer allowed under the policy, a warning icon appears on the picker trigger naming the model. The model is not listed in the menu, and the chat is blocked from sending until you choose an allowed model.
+- While the organization's AI settings are loading, every row is locked and the chat is blocked from sending. This prevents a hosted model from becoming the default before the policy is known.
+
+The same rules apply to the models pill in the environment composer and the model field in the client builder.
+
 ### Out-of-credits state
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
