@@ -92,8 +92,8 @@ describe("strict telemetry reconstruction", () => {
       ],
     ];
     restrictSentryEnvelope(envelope, options);
-    expect(envelope[0]).toEqual({});
-    expect(envelope[1]).toHaveLength(2);
+    expect(envelope[0]).toMatchObject({ event_id: "a".repeat(32), sent_at: expect.any(String) });
+    expect(envelope[1]).toHaveLength(1);
     expect(JSON.stringify(envelope)).not.toContain(secret);
   });
   it("rebuilds exception chains without mutating the source or retaining unknown fields", () => {

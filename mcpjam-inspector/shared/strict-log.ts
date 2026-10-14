@@ -5,6 +5,7 @@ import catalog from "./telemetry-catalog.generated.json";
 type Fields = Record<string, unknown>;
 type Rule = { kind?: string; values?: readonly string[] };
 const rules: Record<string, Rule> = catalog.fields;
+const messages = new Set<string>(catalog.messages);
 const ERROR_CLASSES = [
   "Error",
   "TypeError",
@@ -50,7 +51,13 @@ export function buildLegacyLogRow(
       : message === "[harness] turn failed"
         ? "harness.turn.failed"
         : "log.unknown";
-  return buildStrictLogRow(event, context, {}, error);
+  const row = buildStrictLogRow(event, context, {}, error);
+  if (event === "log.unknown" && messages.has(message)) {
+    row.event = `log.${sha256Hex(message).slice(0, 16)}`;
+    row.message = message;
+    row.fingerprint = `${row.event}:${row.route}:${row.errorClass ?? "none"}`;
+  }
+  return row;
 }
 
 /** Context is resolved by the server; event payload fields cannot replace it. */

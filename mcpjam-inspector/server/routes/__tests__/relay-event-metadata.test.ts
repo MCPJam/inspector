@@ -4,6 +4,11 @@ import {
   MAX_EVENT_AGE_MS,
   MAX_EVENT_FUTURE_MS,
 } from "../relay-event-metadata";
+import { applyEventPolicy, disableEventGeoip } from "../relay-privacy";
+import {
+  FULL_TELEMETRY_POLICY,
+  CONSERVATIVE_TELEMETRY_POLICY,
+} from "../../../shared/telemetry-privacy";
 
 const now = Date.parse("2026-10-13T12:00:00.000Z");
 const uuid = "019a0000-0000-7000-8000-000000000001";
@@ -55,4 +60,44 @@ describe("strict event metadata", () => {
       new Date(now).toISOString(),
     );
   });
+});
+
+it("keeps content, identity and recording restrictions independent", () => {
+  const event = {
+    event: "non_catalog_product",
+    properties: { project_name: "full control" },
+  };
+  expect(
+    applyEventPolicy(
+      event,
+      { ...FULL_TELEMETRY_POLICY, recording: "off" },
+      "off",
+    ),
+  ).toMatchObject(event);
+  expect(
+    applyEventPolicy(event, CONSERVATIVE_TELEMETRY_POLICY, "off"),
+  ).toBeNull();
+  expect(
+    applyEventPolicy(
+      event,
+      { ...FULL_TELEMETRY_POLICY, recording: "masked" },
+      "masked",
+    ),
+  ).toMatchObject({ properties: { project_name: "[name]" } });
+  expect(
+    applyEventPolicy(
+      { event: "$snapshot" },
+      { ...FULL_TELEMETRY_POLICY, recording: "off" },
+      "off",
+    ),
+  ).toBeNull();
+});
+
+it("suppresses GeoIP on a full row when its batch cannot forward client IP", () => {
+  const row = {
+    event: "full_control",
+    properties: { $ip: "203.0.113.1", detail: "allowed" },
+  };
+  disableEventGeoip(row);
+  expect(row.properties).toEqual({ detail: "allowed", $geoip_disable: true });
 });

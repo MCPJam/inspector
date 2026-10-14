@@ -1,5 +1,5 @@
-import { HOSTED_MODE } from "../config.js";
 import { getSystemLogger } from "./request-logger.js";
+import { HOSTED_MODE } from "../config.js";
 
 /** One deterministic, content-free health probe per five-minute window. */
 export function startTelemetryCanary(): () => void {

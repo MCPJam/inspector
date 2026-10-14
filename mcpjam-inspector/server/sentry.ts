@@ -53,6 +53,7 @@ export function initServerSentry(): void {
     transport: (options) => withSentryBoundary(
       Sentry.makeNodeTransport(options), strictServerSentryOptions,
       () => ["1", "true"].includes(process.env.DO_NOT_TRACK ?? ""),
+      options.recordDroppedEvent,
     ),
     integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that

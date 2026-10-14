@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/electron/main";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sentryBuildMetadata } from "../shared/sentry-build-metadata.js";
+import { telemetryOptedOut } from "../shared/sentry-identity.js";
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
@@ -39,7 +40,7 @@ export function initDesktopSentry(input: {
     dist: electronBuildSurface(process.platform),
     actorId: getDesktopSentryIdentity()?.id,
   });
-  const disabled = () => ["1", "true"].includes(process.env.DO_NOT_TRACK ?? "");
+  const disabled = () => telemetryOptedOut(process.env.DO_NOT_TRACK, process.env.MCPJAM_TELEMETRY_DISABLED);
   Sentry.init({
     ...buildElectronSentryConfig({
       environment: input.packaged ? "prod" : "dev",
@@ -52,13 +53,14 @@ export function initDesktopSentry(input: {
     ipcMode: Sentry.IPCMode.Both,
     sendDefaultPii: false,
     attachScreenshot: false,
-    sendClientReports: false,
+    sendClientReports: true,
     integrations: crashReportingIntegrations,
     beforeSend: dropUpdaterInstallSpawnRejection,
     beforeSendTransaction: undefined,
     beforeBreadcrumb: undefined,
     transport: (config) => withSentryBoundary(
       Sentry.makeElectronTransport(config), options, disabled,
+      config.recordDroppedEvent,
     ),
   });
 }
