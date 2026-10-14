@@ -49,6 +49,9 @@ describe("HTTP connect failures keep their provenance", () => {
 
     expect(describeError(error).slug).toBe("transport/econnrefused");
     expect((error as Error).message).toContain("Check that it's running");
+    // The inspector's hosted routes answer 424 instead of 502 only for a
+    // message that names the server; see `namesAnMcpServer`.
+    expect((error as Error).message).toContain('MCP server "dead"');
   }, 20000);
 
   it("preserves both transport failures on the combined connect error", async () => {
@@ -76,6 +79,7 @@ describe("HTTP connect failures keep their provenance", () => {
     expect(error.cause).toBeDefined();
     expect(describeError(error).slug).toBe("transport/econnrefused");
     expect(error.message).toContain("Check that it's running");
+    expect(error.message).toContain('MCP server "dead-declared"');
   }, 20000);
 });
 
