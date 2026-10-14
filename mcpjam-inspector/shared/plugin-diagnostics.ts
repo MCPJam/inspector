@@ -169,6 +169,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   PLUGIN_FORM_UNSUPPORTED:
     "This form uses a schema feature the client doesn't support.",
   PLUGIN_FORM_UNAVAILABLE: "The form couldn't be loaded.",
+  PLUGIN_FORM_SCHEMA_MISSING:
+    "This form keeps its fields in _meta[\"openai/elicitation\"].requestedSchema, but that schema is missing or isn't an object schema, so MCPJam refused the form rather than show it empty. Send the full form schema there (OpenAI's requestFormInput does).",
   PLUGIN_FORM_TOO_LARGE:
     "The form is too large (too many fields, options or bytes).",
   PLUGIN_FORM_PATTERN_UNSUPPORTED:

@@ -371,6 +371,9 @@ export class MCPClientManager {
    * hosted PRs plug into.
    */
   private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+  /** Extension keys a server's MRTR collector also answers (see
+   *  {@link setMrtrInputCollector}); such a key is never legacy-only. */
+  private readonly mrtrExtensionClaims = new Map<string, readonly string[]>();
 
   /** MCPJam-owned MRTR round cap (see `mrtr-driver.ts`). */
   private readonly mrtrMaxRounds = DEFAULT_MAX_MRTR_ROUNDS;
@@ -844,6 +847,7 @@ export class MCPClientManager {
     // Purge the MRTR collector too; otherwise a re-registered server inherits
     // the previous owner's collector closure and stale `elicitation` capability.
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
   }
 
   /**
@@ -1795,7 +1799,17 @@ export class MCPClientManager {
    * reject on abort (never return a synthetic decline) and returns
    * `ElicitResult`-shaped responses keyed by the server's request keys.
    */
-  setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void {
+  setMrtrInputCollector(
+    serverId: string,
+    collect: MrtrInputCollector,
+    options?: {
+      /** Extension keys this collector fulfils on a 2026-era connection
+       *  (e.g. `"openai/elicitation"` for forms whose schema rides in that
+       *  key's `_meta`). A legacy handler's claim on the same key is then
+       *  kept on the modern wire instead of withheld. */
+      extensionClaims?: readonly string[];
+    }
+  ): void {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
     // the request's declared client capabilities before embedding an
     // elicitation, so a collector must be registrable BEFORE connect for
@@ -1804,11 +1818,15 @@ export class MCPClientManager {
     // collector cannot answer). Registering for an as-yet-unknown server is a
     // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
+    if (options?.extensionClaims?.length)
+      this.mrtrExtensionClaims.set(serverId, [...options.extensionClaims]);
+    else this.mrtrExtensionClaims.delete(serverId);
   }
 
   /** Removes a server's MRTR input collector. */
   clearMrtrInputCollector(serverId: string): void {
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
   }
 
   /**
@@ -3775,8 +3793,12 @@ export class MCPClientManager {
   /** The `extensions` keys only a legacy server-to-client request handler on
    *  this server answers (see {@link ExtensionRequestBinding.legacyClaim}). */
   private legacyClaims(serverId: string): string[] {
+    const modern = this.mrtrExtensionClaims.get(serverId) ?? [];
     return (this.extensionRequestHandlers.get(serverId) ?? []).flatMap(
-      (binding) => (binding.legacyClaim ? [binding.legacyClaim] : [])
+      (binding) =>
+        binding.legacyClaim && !modern.includes(binding.legacyClaim)
+          ? [binding.legacyClaim]
+          : []
     );
   }
 

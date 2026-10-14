@@ -1831,8 +1831,12 @@ export {
   MrtrInputValidationError,
   isInputRequiredResult,
   withInputRequired,
+  OPENAI_ELICITATION_EXTENSION,
+  selectElicitationFormSchema,
 } from "./mcp-client-manager/index.js";
 export type {
+  ElicitationFormSchemaSelection,
+  ElicitationFormSchemaSelector,
   MrtrMethod,
   MrtrOperationState,
   MrtrLegResult,
