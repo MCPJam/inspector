@@ -1,11 +1,11 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import type { EventHint } from "@sentry/core";
-const { init, send, on } = vi.hoisted(() => ({ init: vi.fn(), send: vi.fn(async (_value: unknown) => ({})), on: vi.fn() }));
-vi.mock("@sentry/react", () => ({ init, getClient: () => ({ on }), makeFetchTransport: () => ({ send, flush: async () => true }), browserTracingIntegration: () => ({ name: "Tracing" }), setUser: vi.fn(), setTag: vi.fn() }));
+const { init, send, on, getIntegrationByName } = vi.hoisted(() => ({ init: vi.fn(), send: vi.fn(async (_value: unknown) => ({})), on: vi.fn(), getIntegrationByName: vi.fn() }));
+vi.mock("@sentry/react", () => ({ init, getClient: () => ({ on, getIntegrationByName }), makeFetchTransport: () => ({ send, flush: async () => true }), browserTracingIntegration: () => ({ name: "Tracing" }), setUser: vi.fn(), setTag: vi.fn() }));
 const actor = "user_01K00000000000000000000000";
 let sequence = 500;
-beforeEach(() => { vi.stubGlobal("__APP_VERSION__", "3.16.0"); vi.stubGlobal("__BUILD_SURFACE__", "web"); vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true"); vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false"); init.mockClear(); send.mockClear(); on.mockClear(); });
+beforeEach(() => { vi.stubGlobal("__APP_VERSION__", "3.16.0"); vi.stubGlobal("__BUILD_SURFACE__", "web"); vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true"); vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false"); init.mockClear(); send.mockClear(); on.mockClear(); getIntegrationByName.mockReset(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
 async function setup() {
   const privacy = await import("../session-privacy");
@@ -56,6 +56,22 @@ it("wires capture stamps only and applies credential/identity/frame rules in the
   expect(output).not.toContain('"body":"secret"');
 });
 
+it("honors the desktop process opt-out and keeps desktop content strict", async () => {
+  const { deliver } = await setup();
+  vi.stubGlobal("isElectron", true);
+  const isDisabled = vi.fn(async () => true);
+  vi.stubGlobal("electronAPI", { sentry: { isDisabled } });
+  await deliver("event", { message: "DESKTOP_SENTINEL" });
+  expect(send).not.toHaveBeenCalled();
+  isDisabled.mockResolvedValue(false);
+  await deliver("event", { message: "DESKTOP_SENTINEL" });
+  expect(send).toHaveBeenCalledOnce();
+  expect(JSON.stringify(send.mock.calls)).not.toContain("DESKTOP_SENTINEL");
+  isDisabled.mockRejectedValue(new Error("bridge unavailable"));
+  await deliver("event", { message: "DESKTOP_SENTINEL" });
+  expect(send).toHaveBeenCalledOnce();
+});
+
 it("preserves full span and replay positives while removing credentials and late opt-outs", async () => {
   const { deliver, transport } = await setup();
   await deliver("span", { span_id: "ab".repeat(8), description: "GET /results/CREDENTIAL_SENTINEL", data: { transaction: "/servers/owned", url: "/oauth/callback?code=CREDENTIAL_SENTINEL" }, stacktrace: { frames: [{ filename: "client/src/lib/sentry.ts", lineno: 12, function: "FRAME_SENTINEL", pre_context: ["FRAME_SENTINEL"] }] } });
@@ -78,4 +94,20 @@ it.each(["full", "off"] as const)("drops hinted refusals before %s transport del
   expect(send).not.toHaveBeenCalled();
   await deliver("event", { exception: { values: [{ type: "TypeError", value: "real failure" }] } });
   expect(send).toHaveBeenCalledOnce();
+});
+
+it("stops and tombstones an active replay synchronously on a context-only transition", async () => {
+  const { transport, hooks, context } = await setup();
+  const id = (++sequence).toString(16).padStart(32, "0");
+  const replay = { stop: vi.fn(), start: vi.fn(), getReplayId: () => id };
+  getIntegrationByName.mockReturnValue(replay);
+  const event = { type: "replay_event", event_id: id };
+  hooks.stampSentryEvent(event);
+  context.setTelemetryCaptureContext({ projectIds: ["another_project"], organizationIds: [] });
+  expect(replay.stop).toHaveBeenCalledOnce();
+  expect(replay.start).not.toHaveBeenCalled();
+  context.setTelemetryContentPolicy(actor, "full");
+  expect(replay.start).toHaveBeenCalledOnce();
+  await transport.send([{}, [[{ type: "replay_event" }, event], [{ type: "replay_recording" }, '{"segment_id":0}\n[]']]]);
+  expect(send).not.toHaveBeenCalled();
 });

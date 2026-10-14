@@ -4,6 +4,7 @@ import {
   scrubNamesFromUrl,
 } from "../../../shared/telemetry-privacy";
 import { scrubRrwebCredentials } from "./rrweb-credential-scrub";
+import { scrubClientSentryBreadcrumb, type ScrubbableBreadcrumb } from "../../../shared/sentry-config";
 
 /**
  * Sentry Replay's rrweb events cannot be edited as they are recorded —
@@ -82,6 +83,15 @@ function maskNodeTree(root: unknown): void {
 function cleanEvent(event: unknown): void {
   if (!isRecord(event) || !isRecord(event.data)) return;
   const data = event.data;
+  if (event.type === 5 && isRecord(data.payload)) {
+    const origin = typeof window === "undefined" ? undefined : window.location.origin;
+    if (data.tag === "breadcrumb") {
+      data.payload = scrubClientSentryBreadcrumb(data.payload as ScrubbableBreadcrumb, origin) ?? {};
+    } else if (data.tag === "performanceSpan" && typeof data.payload.description === "string") {
+      const crumb = scrubClientSentryBreadcrumb({ category: "fetch", data: { url: data.payload.description } }, origin);
+      data.payload.description = crumb?.data?.url;
+    }
+  }
   if (event.type === META_EVENT && typeof data.href === "string") {
     data.href = scrubNamesFromUrl(data.href);
   } else if (event.type === FULL_SNAPSHOT_EVENT) {
@@ -138,6 +148,15 @@ async function deflate(text: string): Promise<Uint8Array> {
   );
 }
 
+function recordingHeader(text: string): string {
+  const header: unknown = JSON.parse(text);
+  if (!isRecord(header) || typeof header.segment_id !== "number" ||
+    !Number.isSafeInteger(header.segment_id) || header.segment_id < 0) {
+    throw new Error("Invalid replay segment");
+  }
+  return `${JSON.stringify({ segment_id: header.segment_id })}\n`;
+}
+
 /**
  * One `replay_recording` payload — a JSON header line, then the events,
  * compressed (bytes) or not (text) — with its events scrubbed. `null` when
@@ -150,11 +169,12 @@ export async function filterReplayRecordingPayload(
     if (typeof payload === "string") {
       const newline = payload.indexOf("\n");
       if (newline < 0) return null;
+      const header = recordingHeader(payload.slice(0, newline));
       const events = scrubRecordingEvents(
         JSON.parse(payload.slice(newline + 1)),
       );
       if (events === null) return null;
-      return `${payload.slice(0, newline + 1)}${JSON.stringify(events)}`;
+      return `${header}${JSON.stringify(events)}`;
     }
     if (!ArrayBuffer.isView(payload)) return null;
     const bytes = new Uint8Array(
@@ -164,7 +184,7 @@ export async function filterReplayRecordingPayload(
     );
     const newline = bytes.indexOf(0x0a);
     if (newline < 0) return null;
-    const header = bytes.subarray(0, newline + 1);
+    const header = new TextEncoder().encode(recordingHeader(new TextDecoder().decode(bytes.subarray(0, newline))));
     const events = scrubRecordingEvents(
       JSON.parse(await inflate(bytes.subarray(newline + 1))),
     );
@@ -197,7 +217,7 @@ export async function filterRecordingEnvelope(envelope: Envelope): Promise<Envel
     if (recording === null) continue;
     filtered.push([
       {
-        ...header,
+        type: "replay_recording",
         length:
           typeof recording === "string"
             ? new TextEncoder().encode(recording).length

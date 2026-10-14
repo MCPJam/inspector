@@ -32,8 +32,8 @@ it("rebuilds unknown errors, transactions and spans and denies other envelope fa
   ];
   await transport.send([{ trace: "SENTINEL" }, items] as never);
   const output = send.mock.calls[0][0];
-  expect(output[0]).toEqual({});
-  expect(output[1].map(([header]) => header.type)).toEqual(["event", "transaction", "span"]);
+  expect(output[0]).toMatchObject({ event_id: expect.stringMatching(/^[a-f0-9]{32}$/), sent_at: expect.any(String) });
+  expect(output[1].map(([header]) => header.type)).toEqual(["event", "span"]);
   expect(JSON.stringify(output)).not.toContain("SENTINEL");
 });
 
@@ -137,4 +137,22 @@ it("does not miss a strict child beyond the first hundred full spans", async () 
   await deliver("transaction", event);
   expect(JSON.stringify(send.mock.calls)).not.toContain("SENTINEL");
   expect(JSON.stringify(send.mock.calls)).toContain("unknown_operation");
+});
+
+it("reports denied recordings and reconstructs client counters and full-event headers", async () => {
+  policy.strict = false;
+  const send = vi.fn(async (_value: Envelope) => ({}));
+  const drop = vi.fn();
+  const transport = withStrictSentryTransport({ send, flush: async () => true }, (_type, payload) => payload, () => false, drop);
+  const event = { event_id: eventId(), message: "full" };
+  stampSentryEvent(event);
+  await transport.send([{ trace: "SENTINEL" }, [
+    [{ type: "event" }, event],
+    [{ type: "replay_recording" }, "invalid"],
+    [{ type: "client_report" }, { timestamp: 1, discarded_events: [{ reason: "before_send", category: "replay", quantity: 1, secret: "SENTINEL" }] }],
+  ]] as never);
+  expect(drop).toHaveBeenCalledWith("before_send", "replay", 1);
+  expect(send.mock.calls[0][0][0]).toEqual({ event_id: event.event_id, sent_at: expect.any(String) });
+  expect(send.mock.calls[0][0][1]).toHaveLength(2);
+  expect(JSON.stringify(send.mock.calls)).not.toContain("SENTINEL");
 });

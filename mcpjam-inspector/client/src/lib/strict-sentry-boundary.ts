@@ -2,7 +2,13 @@ import {
   rebuildSentryEvent,
   rebuildSentryTransaction,
   rebuildSentrySpan,
-  INSPECTOR_SENTRY_CATALOG,
+  BROWSER_SENTRY_CATALOG,
+  BROWSER_SENTRY_SOURCE_FILES,
+  sentryEnvelopeHeaders,
+  sentryEventId,
+  rebuildSentryClientReport,
+  sentryDropCategory,
+  type SentryDropCounter,
   type SentryBoundaryOptions,
 } from "../../../shared/strict-sentry";
 import { sentryCapturePolicy } from "./sentry-capture-policy";
@@ -13,7 +19,7 @@ import {
 } from "./telemetry-context";
 
 export function strictSentryRequired(): boolean {
-  return currentTelemetryCaptureContext().policy.content === "strict";
+  return window.isElectron === true || currentTelemetryCaptureContext().policy.content === "strict";
 }
 
 export function browserSentryOptions(): SentryBoundaryOptions {
@@ -24,15 +30,20 @@ export function browserSentryOptions(): SentryBoundaryOptions {
       }
     ).__MCPJAM_TELEMETRY_FILES__ ?? [];
   const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const debugIds = (globalThis as { __MCPJAM_TELEMETRY_DEBUG_IDS__?: Record<string, string> }).__MCPJAM_TELEMETRY_DEBUG_IDS__ ?? {};
   return {
-    ...INSPECTOR_SENTRY_CATALOG,
-    files: [...INSPECTOR_SENTRY_CATALOG.files, ...emitted],
+    ...BROWSER_SENTRY_CATALOG,
+    files: [...(import.meta.env.DEV ? BROWSER_SENTRY_SOURCE_FILES : []), ...emitted],
     frameAliases: Object.fromEntries(
       emitted.map((name) => [`${origin}/${name}`, name]),
     ),
+    frameOutputNames: Object.fromEntries(emitted.map((name) => [name, `app:///${name}`])),
+    frameDebugIds: Object.fromEntries(emitted.flatMap((name) => debugIds[name] ? [[`app:///${name}`, debugIds[name]]] : [])),
     actorId: currentTelemetryActor() ?? undefined,
     release: __APP_VERSION__,
-    environment: import.meta.env.PROD ? "production" : "dev",
+    environment: import.meta.env.PROD ? "prod" : "dev",
+    platform: "javascript",
+    dist: __BUILD_SURFACE__,
   };
 }
 
@@ -54,43 +65,65 @@ interface Transport {
 export function withStrictSentryTransport<T extends Transport>(
   transport: T,
   fullEvent: (type: string, payload: Record<string, unknown>, names: boolean) => object | null,
-  disabled: () => boolean = () => false,
+  disabled: () => boolean | Promise<boolean> = () => false,
+  onDrop?: SentryDropCounter,
 ): T {
   return {
     ...transport,
     send: async (envelope: Envelope) => {
       // Decompression can yield; choose the live policy only after it finishes.
-      if (disabled()) return {};
+      if (await disabled()) return {};
       const ready = await filterRecordingEnvelope(envelope);
-      if (disabled()) return {};
+      if (await disabled()) return {};
       const replay = ready[1].find(([header]) => header.type === "replay_event")?.[1];
       const replayId = (replay as { event_id?: string } | undefined)?.event_id;
       const replayPolicy = sentryCapturePolicy(replay);
       if (replayPolicy.strict) blockSentryReplay(replayId);
       const items: Envelope[1] = [];
+      let hasEvent = false;
       for (const [header, payload] of ready[1]) {
         const type = String(header.type);
+        if (type === "client_report" && payload && typeof payload === "object" && !Array.isArray(payload)) {
+          const report = rebuildSentryClientReport(payload as Record<string, unknown>);
+          if (report) items.push([{ type }, report]);
+          continue;
+        }
         if (type === "replay_recording") {
           if (!replayPolicy.strict && replayId && !blockedReplayIds.has(replayId)) items.push([header, payload]);
           continue;
         }
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+        const eventFamily = ["event", "transaction", "replay_event"].includes(type);
+        if (eventFamily && hasEvent) continue;
         const policy = sentryCapturePolicy(payload, type === "span");
         if (policy.drop) continue;
+        policy.strict ||= strictSentryRequired();
         if (!policy.strict) {
           if (!["event", "transaction", "span", "replay_event"].includes(type)) continue;
           if (type === "replay_event" && (!replayId || blockedReplayIds.has(replayId))) continue;
           const clean = fullEvent(type, payload as Record<string, unknown>, policy.names);
-          if (clean) items.push([{ type }, clean]);
+          if (clean) {
+            items.push([{ type }, eventFamily ? { ...clean, event_id: sentryEventId("event_id" in clean ? clean.event_id : undefined) } : clean]);
+            hasEvent ||= eventFamily;
+          }
           continue;
         }
         const options = { ...browserSentryOptions(), actorId: policy.actorId };
-        if (type === "event") items.push([{ type }, rebuildSentryEvent(payload, options)]);
+        if (type === "event") { items.push([{ type }, rebuildSentryEvent(payload, options)]); hasEvent = true; }
         if (type === "span" && "span_id" in payload) items.push([{ type }, rebuildSentrySpan(payload, options)]);
-        if (type === "transaction") items.push([{ type }, rebuildSentryTransaction(payload, options)]);
+        if (type === "transaction") { items.push([{ type }, rebuildSentryTransaction(payload, options)]); hasEvent = true; }
+      }
+      const kept = items.map(([header]) => String(header.type));
+      for (const [header] of envelope[1]) {
+        const type = String(header.type);
+        const index = kept.indexOf(type);
+        if (index >= 0) kept.splice(index, 1);
+        else if (type !== "client_report") onDrop?.("before_send", sentryDropCategory(type), 1);
       }
       if (!items.length) return {};
-      return transport.send([{}, items] as never);
+      const event = items.find(([header]) => ["event", "transaction", "replay_event"].includes(String(header.type)))?.[1];
+      const eventId = event && typeof event === "object" && "event_id" in event ? event.event_id : undefined;
+      return transport.send([sentryEnvelopeHeaders(eventId), items] as never);
     },
     flush: (timeout?: number) => transport.flush(timeout),
   } as T;
