@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 // Guards the caniuse.dev compare table's scroll model. Two properties have to
 // hold together, and fixing one in isolation has broken the other twice:
