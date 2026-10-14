@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { searchPluginMentions } from "../mention-search";
+import { probePluginMention, searchPluginMentions } from "../mention-search";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 const provider = { projectId: "project", hostId: "host", serverId: "server" };
 const token = "x".repeat(43);
 function fixture() {
@@ -92,6 +93,43 @@ describe("mention search transport", () => {
       instanceToken: token,
     });
     expect(f.post.mock.calls[2][2]).toBeUndefined();
+  });
+  it("logs declaration diagnostics and still reads the opened mention", async () => {
+    useTrafficLogStore.getState().clear();
+    const f = fixture();
+    const diagnostic = {
+      level: "warning",
+      code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+      title: "Mention search unavailable",
+      description: "The mention search tool must set readOnlyHint.",
+      serverId: "server",
+    };
+    f.post.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ mention: null, diagnostics: [diagnostic] }),
+      ),
+    );
+    expect(await f.search()).toEqual([]);
+    f.post.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          mention: { instanceToken: token, toolName: "mentions", title: "P" },
+          diagnostics: [{ ...diagnostic, level: "info", code: "DEFAULT" }],
+        }),
+      ),
+    );
+    expect(
+      await probePluginMention({
+        provider,
+        workspaceId: "workspace",
+        signal: new AbortController().signal,
+        post: f.post,
+        cleanupError: f.cleanupError,
+      }),
+    ).toEqual({ toolName: "mentions", title: "P" });
+    const logged = JSON.stringify(useTrafficLogStore.getState());
+    expect(logged).toContain("PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY");
+    expect(logged).toContain("plugin-extensions/DEFAULT");
   });
   it("withholds searches for an undeclared provider", async () => {
     const f = fixture();

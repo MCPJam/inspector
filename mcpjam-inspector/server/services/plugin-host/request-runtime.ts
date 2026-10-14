@@ -157,7 +157,8 @@ export function resolvePluginCatalogTool<
     serverCapabilities?: unknown;
   },
 >(catalog: T, name: string) {
-  const { tools, serverCapabilities: _capabilities, ...current } = catalog;
+  // Server capabilities stay: some checks (mention search) depend on them.
+  const { tools, ...current } = catalog;
   const tool = tools.find((candidate) => candidate.name === name) as
     | T["tools"][number]
     | undefined;
@@ -951,7 +952,16 @@ export function createPluginRequestRuntime(
           // After a cold authorization or initialize (long external work),
           // read again before anything stands on this resolution.
           if (cold) await verify(current, signal, read);
-          return resolvePluginCatalogTool({ ...current, tools: [tool] }, name);
+          return resolvePluginCatalogTool(
+            {
+              ...current,
+              tools: [tool],
+              serverCapabilities: current.manager.getServerCapabilities(
+                binding.serverId,
+              ),
+            },
+            name,
+          );
         }
         if (typeof catalog.nextCursor !== "string") break;
         if (seen.has(catalog.nextCursor))
