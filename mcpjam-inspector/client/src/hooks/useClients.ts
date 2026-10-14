@@ -57,7 +57,7 @@ export interface HostDetail {
  * The project's clients, with private scenario-backing ones REMOVED by default.
  *
  * The filter lives here rather than at each call site because there are ~18 of
- * them and the ones that matter are leaves: `HostPicker`, `MultiHostPicker`,
+ * them and the ones that matter are leaves: `HostPicker`,
  * `ClientAttachmentsEditor` and friends each call this hook themselves, so a
  * caller that filters the list it holds does nothing about the picker rendered
  * inside it. Defaulting to the safe set is the only version of this rule that
