@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { useLayoutEffect } from "react";
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
 import { EvalExportModal } from "../eval-export-modal";
 
@@ -311,6 +312,60 @@ describe("EvalExportModal", () => {
       expect.stringContaining("<replace-with-server-url>"),
     );
     expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides a previous server's prompt before effects run after a server switch", async () => {
+    const user = userEvent.setup();
+    let staleDownloadVisible = false;
+    function SwitchingSuite({ serverId }: { serverId: string }) {
+      useLayoutEffect(() => {
+        if (serverId === "calendar") {
+          staleDownloadVisible =
+            screen.queryByRole("button", {
+              name: "Download demo-suite.agent-prompt.md",
+            }) !== null;
+        }
+      }, [serverId]);
+      return (
+        <EvalExportModal
+          {...baseProps}
+          suite={{ ...baseProps.suite, environment: { servers: [serverId] } }}
+        />
+      );
+    }
+    const { rerender } = renderWithProviders(
+      <SwitchingSuite serverId="weather" />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText(/MCP Server Brief: weather/);
+
+    let completeExport!: (payload: {
+      serverId: string;
+      tools: [];
+      resources: [];
+      prompts: [];
+    }) => void;
+    mockExportServerApi.mockReturnValueOnce(
+      new Promise((resolve) => {
+        completeExport = resolve;
+      }),
+    );
+    rerender(<SwitchingSuite serverId="calendar" />);
+    expect(staleDownloadVisible).toBe(false);
+    expect(screen.queryByText(/MCP Server Brief: weather/)).not.toBeInTheDocument();
+    expect(mockExportServerApi).toHaveBeenLastCalledWith("calendar");
+
+    completeExport({ serverId: "calendar", tools: [], resources: [], prompts: [] });
+    await screen.findByText(/MCP Server Brief: calendar/);
+    await user.click(
+      screen.getByRole("button", {
+        name: "Download demo-suite.agent-prompt.md",
+      }),
+    );
+    expect(mockDownloadTextFile).toHaveBeenCalledWith(
+      "demo-suite.agent-prompt.md",
+      expect.stringContaining("MCP Server Brief: calendar"),
+    );
   });
 
   it.each([{ servers: [] }, { servers: ["weather", "calendar"] }])(

@@ -54,7 +54,7 @@ type EvalExportModalProps = {
 type AgentPromptState =
   | { status: "idle"; prompt: null; error: null }
   | { status: "loading"; prompt: null; error: null }
-  | { status: "ready"; prompt: string; error: null }
+  | { status: "ready"; prompt: string; error: null; serverId: string }
   | { status: "error"; prompt: null; error: string };
 
 function ExportStepSection({
@@ -188,6 +188,7 @@ export function EvalExportModal({
           status: "ready",
           prompt,
           error: null,
+          serverId: singleServerId,
         });
       } catch (error) {
         if (cancelled) {
@@ -234,7 +235,10 @@ export function EvalExportModal({
   };
 
   const handleDownloadAgentPrompt = () => {
-    if (agentPromptState.status !== "ready") {
+    if (
+      agentPromptState.status !== "ready" ||
+      agentPromptState.serverId !== singleServerId
+    ) {
       return;
     }
     downloadTextFile(agentPromptDownloadFileName, agentPromptState.prompt);
@@ -389,7 +393,8 @@ export function EvalExportModal({
                   </AlertDescription>
                 </Alert>
               ) : null}
-              {agentPromptState.status === "ready" ? (
+              {agentPromptState.status === "ready" &&
+              agentPromptState.serverId === singleServerId ? (
                 <CopyableCodeBlock
                   code={agentPromptState.prompt}
                   copyLabel="Copy prompt for agent"
