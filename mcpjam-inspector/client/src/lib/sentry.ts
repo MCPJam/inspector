@@ -16,6 +16,12 @@ import {
   filterSentryEventIdentity,
 } from "./sentry-identity";
 import { withRecordingFilter } from "./sentry-recording-filter";
+import { withInterimSentryPrivacy } from "./sentry-interim-transport";
+import {
+  stampSentryEvent,
+  stampSentryBreadcrumb,
+  stampSentrySpanStart,
+} from "./sentry-capture-policy";
 import { telemetryNamesAllowed } from "./telemetry-context";
 import {
   scrubHostname,
@@ -277,10 +283,6 @@ export function initSentry() {
       const filtered = config.beforeSend(event);
       if (filtered === null) return null;
       const processed = processQueryEvent(filtered, hint);
-      // `browserTracingIntegration` names the scope's transaction after the
-      // raw path on every pageload and navigation, so an error event carries
-      // it in `transaction` as well as in `request.url`. The credential walker
-      // runs last, so nothing added above can bring a credential back.
       return processed === null
         ? null
         : scrubSentryCredentials(
@@ -310,13 +312,16 @@ export function initSentry() {
     // arguments and request URLs keep their shape, not their values), then
     // the privacy level's filter.
     beforeBreadcrumb: (breadcrumb) => {
+      stampSentryBreadcrumb(breadcrumb);
       const scrubbed = config.beforeBreadcrumb(breadcrumb);
       return scrubbed === null ? null : filterSentryBreadcrumb(scrubbed);
     },
     // Replay recordings' rrweb events cannot be edited as they are recorded;
     // the page URL in their Meta events is scrubbed on the way out.
     transport: (options) =>
-      withRecordingFilter(Sentry.makeFetchTransport(options)),
+      withRecordingFilter(
+        withInterimSentryPrivacy(Sentry.makeFetchTransport(options)),
+      ),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
     // at the first moment the privacy level allows recording — never while
     // `pending`, never on `/results/<token>`. Starting it at init and stopping
@@ -335,10 +340,10 @@ export function initSentry() {
       }),
     ],
   });
-  // Capture-time identity, for every event type. `postprocessEvent` runs
-  // after the scope's user is applied — replay events included, which never
-  // reach `beforeSend` — so it is where the outbound filter covers them all.
-  Sentry.getClient()?.on?.("preprocessEvent", (_event, hint) => {
+  // Capture policy precedes asynchronous SDK work; the transport rechecks it.
+  Sentry.getClient()?.on?.("spanStart", stampSentrySpanStart);
+  Sentry.getClient()?.on?.("preprocessEvent", (event, hint) => {
+    stampSentryEvent(event, hint);
     if (!hint) return;
     namesAllowedAtCapture.set(hint, telemetryNamesAllowed());
     maskedAtCapture.set(hint, shouldMaskAnalytics());
@@ -413,10 +418,7 @@ export function syncSentryReplay(location: string | LocationLike): void {
   try {
     if (!isErrorCaptureSurface()) return;
     const privacy = currentSessionPrivacy();
-    const blocked =
-      privacy === "off" ||
-      privacy === "pending" ||
-      isCredentialBearingPath(location);
+    const blocked = privacy !== "full" || isCredentialBearingPath(location);
     lastSyncBlocked = blocked;
     const client = Sentry.getClient();
     const replay = client?.getIntegrationByName?.<ReplayControls>("Replay");

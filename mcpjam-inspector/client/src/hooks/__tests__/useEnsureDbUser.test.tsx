@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEnsureDbUser } from "../useEnsureDbUser";
 import {
   setTelemetryActor,
+  setTelemetryCaptureContext,
   setTelemetryIdentity,
 } from "@/lib/telemetry-context";
+import { setSessionPrivacy } from "@/lib/session-privacy";
 
 const mockState = vi.hoisted(() => ({
   actorKey: "guest-1" as string | null,
@@ -68,6 +70,8 @@ vi.mock("@sentry/react", () => ({
 
 /** The backend has cleared this actor to be named (lib/telemetry-context). */
 function grantNames(actorId: string) {
+  setSessionPrivacy("full");
+  setTelemetryCaptureContext({ projectIds: [], organizationIds: ["org-1"] });
   setTelemetryActor(actorId);
   setTelemetryIdentity(actorId, "full");
 }
@@ -79,6 +83,8 @@ describe("useEnsureDbUser", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setSessionPrivacy("pending");
+    setTelemetryCaptureContext({ projectIds: [], organizationIds: [] });
     mockState.ensureUser.mockResolvedValue(undefined);
     mockState.getGuestPromotionProof.mockResolvedValue(null);
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
@@ -215,6 +221,24 @@ describe("useEnsureDbUser", () => {
       "signedIn"
     );
   });
+
+  it.each(["pending", "off"] as const)(
+    "keeps identity grants id-only while capture is %s",
+    async (privacy) => {
+      setSessionPrivacy(privacy);
+      setTelemetryActor("workos-user-1");
+      setTelemetryIdentity("workos-user-1", "full");
+      mockState.auth.user = { id: "workos-user-1", email: "someone@example.com" };
+      mockState.actorKey = "workos-user-1";
+      renderHook(() => useEnsureDbUser());
+      await waitFor(() => {
+        expect(mockState.sentrySetUser).toHaveBeenCalledWith({ id: "workos-user-1" });
+      });
+      expect(mockState.sentrySetUser).not.toHaveBeenCalledWith(
+        expect.objectContaining({ email: "someone@example.com" }),
+      );
+    },
+  );
 
   it.each([
     ["only a first name", { firstName: "Some", lastName: null }, "Some"],
