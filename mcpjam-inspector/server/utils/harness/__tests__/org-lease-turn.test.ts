@@ -91,7 +91,7 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
       "modelSelection",
     );
     const startBody = broker.startHarnessModelBroker.mock.calls[0]![0];
-    expect(startBody).not.toHaveProperty("modelSelection");
+    expect(startBody.modelSelection).toEqual(selection);
     expect(startBody).not.toHaveProperty("expectedCredentialRevision");
     expect(org.runtimeField()).toEqual({});
     expect(org.commitState({ a: 1 })).toEqual({ a: 1 });

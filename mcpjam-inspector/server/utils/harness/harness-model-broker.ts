@@ -20,7 +20,7 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
 import {
   orgLeaseUpstreamFrom,
-  orgSelectionField,
+  leaseSelectionField,
   orgBindingUnconfirmed,
   type HarnessOrgLeaseUpstream,
 } from "./harness-org-lease.js";
@@ -231,7 +231,7 @@ export async function startHarnessModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
         ...(args.modelSelection?.source === "org" &&
         args.expectedCredentialRevision
           ? { expectedCredentialRevision: args.expectedCredentialRevision }
@@ -455,7 +455,7 @@ export async function startLoopbackModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
@@ -652,7 +652,7 @@ export async function reserveHarnessBox(args: {
         runId: args.runId,
         // An org selection is resolved HERE, before the box installs
         // anything: a disabled or mismatched connection fails early.
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       signal: args.signal,
     });

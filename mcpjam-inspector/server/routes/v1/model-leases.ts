@@ -186,6 +186,8 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
   const result = await callBroker(c, "start", {
     delivery: "sdk-direct",
     modelId: model.trim(),
+    ...(payload.modelSelection !== undefined ? { modelSelection: payload.modelSelection } : {}),
+    ...(payload.reasoningEffort !== undefined ? { reasoningEffort: payload.reasoningEffort } : {}),
     ...(typeof runId === "string" ? { runId: runId.trim() } : {}),
     ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
     ...(projectId && projectId !== "default" ? { projectId } : {}),
