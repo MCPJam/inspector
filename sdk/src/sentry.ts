@@ -153,9 +153,9 @@ async function loadSentry(): Promise<LoadedSentry | null> {
           integrations: [],
           release: SDK_RELEASE,
           sendDefaultPii: false,
-          sendClientReports: false,
+          sendClientReports: true,
           stackParser: sentry.defaultStackParser,
-          transport: (options) => boundary(sentry.makeNodeTransport(options)),
+          transport: (options) => boundary(sentry.makeNodeTransport(options), options.recordDroppedEvent),
         });
         client.init();
 

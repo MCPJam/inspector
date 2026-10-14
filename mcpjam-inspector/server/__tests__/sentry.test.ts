@@ -150,10 +150,11 @@ describe("initServerSentry", () => {
     const unsafe = { message: "PRIVATE_SENTINEL", request: { data: "PRIVATE_SENTINEL" }, breadcrumbs: [{ category: "http", data: { url: "PRIVATE_SENTINEL" } }] };
     await transport.send([{ trace: "PRIVATE_SENTINEL" }, [
       [{ type: "event" }, { ...unsafe, exception: { values: [{ type: "TypeError", value: "PRIVATE_SENTINEL" }] } }],
-      [{ type: "transaction" }, { ...unsafe, spans: [{ description: "PRIVATE_SENTINEL" }] }],
       [{ type: "attachment" }, "PRIVATE_SENTINEL"],
     ]]);
     expect(send).toHaveBeenCalledOnce();
+    await transport.send([{}, [[{ type: "transaction" }, { ...unsafe, spans: [{ description: "PRIVATE_SENTINEL" }] }]]]);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(send.mock.calls)).not.toContain("PRIVATE_SENTINEL");
     expect(JSON.stringify(send.mock.calls)).toContain('"TypeError"');
     expect(JSON.stringify(send.mock.calls)).toContain('"unknown_operation"');
