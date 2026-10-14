@@ -28,6 +28,12 @@ Three layers enforce the same policy:
    replay that its client did not declare masked, so an old client or one
    that did not know the policy cannot upload an unmasked replay through it.
 
+Independently of the level, URLs that are credentials (share links, handoff
+links, OAuth and sign-in callbacks, secret query keys) are scrubbed from every
+telemetry exit, at every level, and never recorded at all. See
+[Credential URLs](#credential-urls). The public summary of this document is
+`docs/inspector/telemetry-privacy.mdx` at the repository root.
+
 ## The levels
 
 | Level    | Replay records                                                     | Product analytics                                    |
@@ -215,14 +221,17 @@ masked-only extras are applied frame by frame (see below).
 `scrubNamesFromUrl` (`shared/telemetry-privacy.ts`, used by the client and the
 relay alike) scrubs URLs at `masked` and `pending`:
 
-- In `$current_url`, `$pathname` and the other URL properties
-  (`sanitizeAnalyticsProperties`).
-- In the `failed_request` attached to `$exception`.
-- In the replay page URL, and in Sentry breadcrumbs, page URLs, replay events
-  and performance spans.
+- In product event URL fields at the relay final serializer; strict events
+  retain canonical route templates.
+- In full-policy diagnostic URL fields at that same final serializer.
+- In the PostHog replay page URL. Strict Sentry envelopes use their final
+  serializer; Sentry replay never runs for masked or pending grants.
 
-It runs the credential-URL sanitizer (`scrubSensitiveUrl`,
-`shared/credential-url.ts`) first, because a share token looks like an id.
+Credentials come out of every URL first, at every level (see
+[Credential URLs](#credential-urls)): `scrubNamesFromUrl` runs the
+credential-URL sanitizer (`scrubSensitiveUrl`, `shared/credential-url.ts`,
+which applies the registry) before anything else, because a share token looks
+like an id.
 Route words (`APP_ROUTE_WORDS`, which a test keeps in step with `APP_ROUTES`),
 ids (Convex ids, UUIDs, numbers) and MCPJam's own hosts stay. Every other path
 segment and query value becomes `[name]`, every other host `[host]`, and the
@@ -247,16 +256,25 @@ For example, `/p/<projectId>/servers/acme-billing?tab=tools` becomes
   `name`, `data-testid` and other data attributes are built from customer data
   (`prompt-arg-${name}`, `repo-row-${repoFullName}`), and Sentry's fixed list
   cannot name them. rrweb's own `rr_*` and `_cssText` stay. The same filter
-  scrubs names from the page URL in Meta events.
-- `block` covers `a[href]`, `area[href]`, `iframe`, `source`, `track`, and
-  any element whose inline `style` holds a `url(`, `image-set(` or a quoted
-  string. Sentry's rrweb never passes `href`, `src` or `style` through
+  scrubs names from the page URL in Meta events, then takes every credential
+  out of the whole recording (`scrubRrwebCredentials`): stylesheet text, Meta,
+  custom and plugin events. A recording it cannot read is not sent.
+- `block` covers `a[href]`, `area[href]`, `iframe`, `source`, `track`, the
+  other elements whose URL attribute Sentry's rrweb records unmasked
+  (`[srcset]`, `object[data]`, `embed[src]`, `background`;
+  `SENTRY_UNMASKABLE_URL_ELEMENTS`), anything under the secret-surface
+  convention (`rr-block`, `data-ph-no-capture`), any element whose attribute
+  carries a credential URL (`credentialAttributeSelectors`), and any element
+  whose inline `style` holds a `url(`, `image-set(` or a quoted string. Sentry's rrweb never passes `href`, `src` or `style` through
   attribute masking (it rewrites their URLs to absolute ones), so the
   elements whose job is a URL, or whose style names one (an MCP server's icon
   drawn as a CSS mask) or carries text (a custom property's label), are kept
   as sized boxes instead. The telemetry browser test caught this.
 - `networkDetailAllowUrls: []` and `networkCaptureBodies: false`: no request or
   response detail for any URL.
+
+At every level, `beforeAddRecordingEvent` scrubs credentials out of the URLs
+in navigation and network frames and out of breadcrumb messages.
 
 Short of `full`:
 
@@ -266,15 +284,14 @@ Short of `full`:
   (`[aria-label="…"]`, `[title="…"]`, `[name="…"]`, `[alt="…"]`, `#…`: an id
   can be built from a name), the node's text-bearing attributes, `id` and
   `testId`, and the names in their page URL.
-- `beforeBreadcrumb` (`filterSentryBreadcrumb`) does the same for the
-  breadcrumbs error events carry, `ui.click` and `ui.input` selectors
-  included, as each breadcrumb is recorded.
-- Error events, transactions and replay events lose names from their page
-  URL, their `Referer` and their transaction name, which
-  `browserTracingIntegration` sets to the raw path on every navigation.
-  Transactions also lose resource URLs, peer host names and the attribute
-  values inside web-vitals element selectors (`lcp.element`, `cls.source.*`).
-- A `preprocessEvent` hook scrubs the replay event's `urls` list.
+- Capture hooks stamp policy without rebuilding payloads. The final Sentry
+  transport intersects capture and send policy, including child spans and
+  breadcrumbs collected under a stricter policy.
+- Strict error events, transactions and standalone spans are reconstructed from
+  closed schemas. Replay and unsupported envelope families are discarded.
+  Full events pass the credential and identity filters at the same transport.
+- Verified first-party stack files retain integer line/column locations only;
+  function labels and source context are discarded at every content level.
 
 ## Identity
 
@@ -299,37 +316,154 @@ Identity starts **id-only** and follows an explicit grant
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
 the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
 clear values sent earlier: once per actor, and again whenever the actor turns
-id-only after a `full` answer. The `before_send` stamp also
-strips naming person properties from any event captured while id-only, so a
-caller that sends them anyway is caught.
+id-only after a `full` answer. The `before_send` stamp records capture policy. The relay removes naming
+person properties according to that policy and its current backend answer.
 
 **Sentry.** The initial scope carries at most the desktop installation id.
 `setSentryActor` adds email and name only under the grant, and re-applies the
 actor whenever the grant changes. Every outbound event — errors, transactions
-and replay events, which never reach `beforeSend` — is filtered again in
-`postprocessEvent`/`beforeSend` (`filterSentryEventIdentity`). An event keeps
+and replay events — is filtered at the final transport. An event keeps
 names only if they were allowed both when it was captured and when it is
 sent. Existing error processors still run first.
 
-## `/results/<token>` and other credential links
+## Credential URLs
 
-The token in `/results/<token>`, `/conformance/shared/<token>` and
-`/evals/shared/<token>` *is* the credential. A replay would capture it in the
-DOM snapshot, even though `scrubSensitiveUrl` already keeps it out of event
-properties. Neither recorder records on these paths, at any level.
+Some URLs are bearer credentials: the token in `/results/<token>` is the only
+access control on a run, an OAuth callback's `?code=` is a one-time
+authorization code, `?_token=` is a session. Every telemetry sink sees URLs, so
+every sink has to agree on what a credential URL is. They read one registry,
+at every privacy level, `full` included.
 
-- **Hard load.** Neither recorder is started on the route. When the user leaves
-  it, recording starts at the session's level. Sentry's integration is
+### The registry
+
+`shared/credential-urls.ts` defines:
+
+- **`CREDENTIAL_ROUTES`**: every route whose path, query or fragment carries a
+  secret, with an `id`, a `pattern` (`/results/:runToken`, `/oauth/callback*`),
+  where the secret sits (`path`, `query`, `fragment`), whether it is a `page`
+  or an `api` route, its TTL, and `reserved` values that are app vocabulary
+  rather than secrets (`/user-testing/<id>/edit`,
+  `/connect/server/request/<id>`). Today: score and bench results, shared
+  conformance and eval reports, tester links (and their pre-rename
+  `/chatbox/` shape), the server-connection handoff, the MCP OAuth, GitHub App
+  and sign-in callbacks, the local access link's `#token=`, the API reads
+  behind the share links, the SSE `?_token=`, and signed artifact links' `?t=`.
+- **`SECRET_PARAM_KEYS`**: query and fragment keys whose value is a credential
+  on any URL, ours or not (`code`, `state`, `token`, `_token`,
+  `access_token`, `client_secret`, `signature`, SAML and SSO keys, …), plus
+  the families no list can enumerate: presigned `X-Amz-*` / `X-Goog-*` and
+  anything ending in `token`, `secret`, `password`, `signature`, `apikey` or
+  `credential`. URL userinfo (`https://user:pass@host`) is always stripped.
+- **The scrubbers**: `scrubCredentialUrl` (one URL, spelling kept),
+  `scrubCredentialsInText` (URLs and credential paths anywhere in free text,
+  raw or percent-encoded), and `scrubTelemetryValue` (any JSON-ish value,
+  object keys included). The secret becomes `[redacted]`.
+  `scrubSensitiveUrl` (`shared/credential-url.ts`), which the client and the
+  relay share, is the URL scrubber plus organization-id redaction.
+
+The module is pure (no DOM, no Node APIs, no SDK, no lookbehind) so the
+browser, the server, Electron main and the relay all import the same code.
+
+### Where each sink applies it
+
+| Sink                         | Where the scrubber runs                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostHog events               | The actual relay outbound fetch: strict events use the closed product schema; full events use the credential and identity walkers. Capture hooks add only the context stamp. |
+| PostHog replay               | Recorder masking prevents sensitive capture and persistence. The final relay validates policy and inspects decoded replay for credentials before vendor delivery. |
+| Sentry                       | One final transport reconstructs strict items or filters full items and replay recording. Capture hooks stamp policy only. A credential route names its span by template (`/results/:runToken`). |
+| Server logs (Axiom)          | Every log line and its context, before it is shipped.                                                                                                              |
+| `/relay` (PostHog proxy)     | Inside the privacy gate's rewrite: every event through the walker, a replay event holding a credential dropped, the query string scrubbed, `Referer` stripped. Metrics are scrubbed and re-encoded; logs are refused. |
+
+### Replay is blocked, not scrubbed
+
+A recorder snapshots the address bar, the DOM that renders the secret and the
+requests that send it. Scrubbing that afterwards is not a guarantee; not
+recording is. `isReplayBlockedLocation` is true for a registered credential
+path, a callback route, and any URL with a secret query or fragment key
+(including one nested in another parameter's value). Neither recorder records
+there, at any level.
+
+- **Hard load.** Neither recorder is started on a blocked URL. When the user
+  leaves it, recording starts at the session's level. Sentry's integration is
   constructed then too: starting it earlier and stopping it would flush the
   token-bearing page.
-- **In-app navigation.** `useSessionRecordingPathGuard` stops both recorders on
-  entry and resumes them on exit.
+- **In-app navigation.** `installRecorderNavigationGuard` stops both recorders
+  **before** a navigation onto a blocked URL commits, and
+  `useSessionRecordingPathGuard` resumes them on exit, once the page they are
+  leaving for has rendered.
   - PostHog resumes with `startSessionRecording()` without an override, which
     still honours the project's sampling.
   - Sentry resumes only a replay the guard itself stopped, because Sentry's
-    `replay.start()` bypasses `replaysSessionSampleRate`. Its armed flag is
-    never cleared on the way in, so `/results/a` → `/results/b` does not forget
-    that the guard is what stopped the replay.
+    `replay.start()` bypasses `replaysSessionSampleRate`, and in the mode it
+    was in (a buffering replay keeps buffering). It waits for the stop's
+    flush to finish first. Its armed flag is never cleared on the way in, so
+    `/results/a` → `/results/b` does not forget that the guard is what
+    stopped the replay.
+
+### Out of the address bar early
+
+- The OAuth callback inbox removes `code` and `state` from the address bar
+  before telemetry starts.
+- A failed share-link redeem, or a refused handoff claim, drops the token from
+  the address bar.
+- Credential pages are served with `Referrer-Policy: no-referrer`.
+
+### Fail closed on credentials
+
+A payload that cannot be shown clean is dropped, never forwarded:
+
+- `scrubTelemetryEvent` never throws. If the walker cannot finish (a cycle,
+  more than 64 levels, more than 200,000 nodes) it deletes the URL-bearing
+  fields (`URL_BEARING_FIELDS`) and scrubs the rest; if that fails too it
+  returns `null` and the caller drops the event.
+- The relay refuses a request whose event the walker cannot finish
+  (`400 unreadable_payload`, counted in `scrubDrops`). A replay event that
+  holds a credential, or nested data the relay cannot decode, is dropped
+  (`replayCredentialDrops`, `replayUndecodableDrops`); a request left with
+  nothing gets the gate's non-retryable `400 telemetry_restricted`.
+
+### Completeness in CI
+
+`client/src/lib/__tests__/credential-route-completeness.test.ts` and
+`server/routes/web/__tests__/credential-route-completeness.test.ts` walk every
+client route and every server route. A parameter whose name looks secret
+(`/token|secret|code|key|sig|cred/i`) fails the build unless it is in
+`CREDENTIAL_ROUTES` or allow-listed with a reason.
+
+`shared/__tests__/credential-leak-monitor.test.ts` checks the production leak
+monitor (`ops/credential-leak-monitor/`) against the same registry: every
+route has a pattern that catches its unredacted URL and misses its
+`[redacted]` form.
+
+The telemetry egress browser test (`npm run test:e2e:telemetry`, CI job
+"Telemetry egress") drives the hosted app at `full` with both vendors'
+transports intercepted, plants a credential in every place the app can show
+one, and fails on any that leaves.
+
+### Production monitor
+
+`.github/workflows/credential-leak-monitor.yml` runs daily. It counts PostHog
+events and Sentry events from the last 24 hours whose URL properties still
+carry an unredacted credential, by registry route id, and posts to the alerts
+channel when there are any, or when it could not check. Its patterns are
+generated from the registry at run time. Setup and runbook:
+`ops/credential-leak-monitor/README.md`.
+
+### Adding a credential route
+
+Add an entry to `CREDENTIAL_ROUTES` (a key that is a credential on any URL goes
+in `SECRET_PARAM_KEYS`). The secret must be the template's last parameter.
+Nothing else: the scrubbers, both replay guards, the relay and the monitor
+all read the registry.
+
+### Old desktop builds
+
+Installed desktop builds keep the code they shipped with. PostHog replay on
+those builds is blocked before capture by PostHog's remote URL blocklist
+(project settings), which old clients honour. Their events and error reports
+are contained after transmission by vendor-side scrubbing rules, and by the
+auto-update. We do not claim an old build never sends a credential; the
+monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
@@ -464,8 +598,9 @@ posthog-js sends it. The aggregate `relay.stats` line counts
 `privacyReplayDropped` events; nothing logs payloads, credentials, names or
 emails.
 
-Sentry has no ingestion proxy: it is protected by its client capture options
-and the outbound filters above.
+Sentry has no ingestion proxy: its final transport owns content serialization,
+using capture policy stamps and the live policy. The browser tests inspect that
+transport and the real relay vendor fetch rather than raw first-party ingress.
 
 ## Testing
 
@@ -501,7 +636,11 @@ and the outbound filters above.
   transport run the same pass (`scrubRrwebCredentials`).
 - **Exception messages.** On restricted PostHog events, URLs inside error
   messages are scrubbed, but other text in error messages and stack traces
-  is not; general log sanitization is out of scope here.
+  is not; general log sanitization is out of scope here. Credentials in them
+  are scrubbed at every level.
+- **Edge request logs.** The hosting provider's edge and CDN keep their own
+  request logs. Nothing here runs before them.
+- **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
 ## Access and acceptance
 

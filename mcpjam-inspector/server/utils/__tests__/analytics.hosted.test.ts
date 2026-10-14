@@ -42,11 +42,13 @@ describe("captureServerEvent (hosted mode)", () => {
 
   it("stamps deployment: hosted", () => {
     captureServerEvent(
-      fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+      fakeContext({
+        requestLogContext: {
+          userExternalId: "user_01H00000000000000000000000",
+        },
+      }),
       "send_message_server",
     );
-    expect(captureMock.mock.calls[0][0].properties.deployment).toBe(
-      "hosted",
-    );
+    expect(captureMock.mock.calls[0][0].properties.deployment).toBe("hosted");
   });
 });

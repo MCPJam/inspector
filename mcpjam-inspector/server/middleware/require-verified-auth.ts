@@ -53,6 +53,7 @@ import {
 } from "../services/authkit-jwt.js";
 import { isGuestAllowedV1Request } from "../routes/v1/guest-allowed-paths.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { refuseUnservableSession } from "./session-revocation.js";
 
 /** Injectable for tests; production uses the env-derived AuthKit issuers. */
@@ -142,7 +143,9 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
       // where you would go looking for it anyway.
       logger.info("Rejected unverified bearer on a non-proxying v1 route", {
         event: "auth.require_verified_auth_denied",
-        path: c.req.path,
+        // Scrubbed: a credential route carries its secret in the path, and
+        // this row ships to Axiom.
+        path: scrubCredentialUrl(c.req.path),
       });
       return unauthorized(c);
     }

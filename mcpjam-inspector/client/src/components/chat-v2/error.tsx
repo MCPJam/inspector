@@ -23,6 +23,13 @@ import {
   describeProviderNotAllowlisted,
   isProviderNotAllowlistedCode,
 } from "@/lib/provider-not-allowlisted";
+import {
+  ASK_ORG_ADMIN,
+  describeOrgKeysRefusal,
+  isRetryableOrgKeysRefusal,
+  MANAGE_AI_PROVIDERS,
+  orgKeysRefusalCodeOf,
+} from "@/lib/org-keys-refusal";
 import { cn } from "@/lib/utils";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -60,6 +67,13 @@ interface ErrorBoxProps {
    * — the caller owns navigation, this component owns the button.
    */
   onChangeProtocolVersion?: () => void;
+  /**
+   * Opens Organization → AI providers. Passed only when the viewer may manage
+   * them (`useOrgModelsHandoff`); an organization AI-key refusal then offers
+   * "Manage AI providers", and without it the banner tells a member to ask an
+   * organization admin.
+   */
+  onManageOrgProviders?: () => void;
 }
 
 const parseErrorDetails = (details: string | undefined) => {
@@ -89,6 +103,7 @@ export function ErrorBox({
   limitKind,
   retryAfterMs,
   onChangeProtocolVersion,
+  onManageOrgProviders,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   // Only a mounted `ModelSelector` acts on the providers-tab nonce. Hosted
@@ -115,6 +130,90 @@ export function ErrorBox({
         {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>{creditActionLabel}</Button>}
       </div>
     </div>;
+  }
+
+  const orgKeysCode = orgKeysRefusalCodeOf(refusalCode);
+  if (orgKeysCode) {
+    // The organization requires its own provider keys (or its provider
+    // refused). Configuration, not credits: never a top-up, and a retry only
+    // for the two refusals that lift on their own.
+    const canManage = !!onManageOrgProviders;
+    const described = describeOrgKeysRefusal(
+      orgKeysCode,
+      canManage ? "admin" : "member",
+    );
+    const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
+    const memberCanAskAdmin =
+      !canManage &&
+      [
+        "choose_org_model",
+        "add_org_provider",
+        "configure_org_model_role",
+        "fix_org_credentials",
+      ].includes(described.remediation) &&
+      !/organization admin/i.test(described.body);
+    return (
+      <div
+        role="alert"
+        data-testid="chat-error-org-keys"
+        data-refusal-code={orgKeysCode}
+        className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        {/* The actions wrap under the text once both no longer fit on one
+            line (a narrow chat pane), so the text keeps a readable width
+            instead of shrinking to a word per line. */}
+        <div
+          className="flex flex-wrap items-start gap-3"
+          data-testid="chat-error-org-keys-layout"
+        >
+          <CircleAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 grow basis-64">
+            <p className="text-sm font-medium leading-6">{described.title}</p>
+            <p className="text-sm leading-6 opacity-90">{described.body}</p>
+            {memberCanAskAdmin ? (
+              <p className="text-xs leading-5 opacity-90">{ASK_ORG_ADMIN}.</p>
+            ) : null}
+          </div>
+          <div
+            className="ml-auto flex flex-wrap items-center gap-2"
+            data-testid="chat-error-org-keys-actions"
+          >
+            {described.remediation === "choose_org_model" &&
+            canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenProvidersTab()
+                }
+              >
+                Choose an organization model
+              </Button>
+            ) : null}
+            {canManage ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onManageOrgProviders}
+              >
+                {MANAGE_AI_PROVIDERS}
+              </Button>
+            ) : null}
+            {retryable && onRetry ? (
+              <Button type="button" variant="outline" onClick={onRetry}>
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            ) : null}
+            {onResetChat ? (
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isProviderNotAllowlistedCode(refusalCode)) {
