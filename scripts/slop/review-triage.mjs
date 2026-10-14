@@ -80,18 +80,27 @@ const subject = (item) =>
  */
 export function validate(items, { readFile, autofix, autofixReason = "" }) {
   let autofixes = 0;
+  // Accepted autofix line ranges per path. Edits are applied one after another,
+  // so a later edit overlapping an earlier one could match the earlier edit's
+  // output and commit a change neither proposed.
+  const accepted = new Map();
   return items.map((raw) => {
     const item = { ...raw, path: raw.path.trim(), downgraded: "" };
     const content = item.path ? readFile(item.path) : null;
-    const placed = content !== null && locate(content, item.find) !== null;
+    const range = content === null ? null : locate(content, item.find);
+    const placed = range !== null;
     if (item.category === "autofix") {
+      const earlier = accepted.get(item.path) ?? [];
       const reason = !autofix ? autofixReason || "autofix is off for this run"
         : autofixes >= MAX_AUTOFIXES ? `at most ${MAX_AUTOFIXES} autofixes run at once`
         : !autofixAllowedFor(item.path) ? "the bot does not commit to this path"
         : !placed || item.replace === item.find ? "the edit did not apply cleanly"
+        : earlier.some((prior) => prior.start <= range.end && range.start <= prior.end)
+          ? "the edit overlaps an earlier autofix"
         : "";
       if (!reason) {
         autofixes++;
+        accepted.set(item.path, [...earlier, range]);
         return { ...item, commit: subject(item) };
       }
       item.category = "suggest";

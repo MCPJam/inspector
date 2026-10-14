@@ -48,8 +48,22 @@ test("autofixes that cannot run are posted as suggestions, with the reason", () 
   }
   const [suggestMode] = validate([item({})], { readFile, autofix: false, autofixReason: "the pipeline is in suggest mode" });
   assert.deepEqual([suggestMode.category, suggestMode.downgraded], ["suggest", "the pipeline is in suggest mode"]);
-  const many = validate(Array.from({ length: 7 }, () => item({})), { readFile, autofix: true });
+  const seven = Array.from({ length: 7 }, (_, index) => `line ${index}`).join("\n");
+  const many = validate(Array.from({ length: 7 }, (_, index) => item({ path: "src/many.ts", find: `line ${index}`, replace: `fixed ${index}` })),
+    { readFile: (path) => (path === "src/many.ts" ? seven : null), autofix: true });
   assert.equal(many.filter((entry) => entry.category === "autofix").length, 5);
+});
+
+test("an autofix overlapping an earlier accepted one is posted as a suggestion", () => {
+  const lines = { "src/y.ts": "A\nB\nC\n" };
+  const read = (path) => lines[path] ?? null;
+  const result = validate([
+    item({ path: "src/y.ts", find: "A\nB", replace: "B" }),
+    item({ path: "src/y.ts", find: "B", replace: "C" }),
+    item({ path: "src/y.ts", find: "C", replace: "D" }),
+  ], { readFile: read, autofix: true });
+  assert.deepEqual(result.map((entry) => entry.category), ["autofix", "suggest", "autofix"]);
+  assert.equal(result[1].downgraded, "the edit overlaps an earlier autofix");
 });
 
 test("a suggestion that cannot be placed becomes a discussion; a discussion keeps only a valid anchor", () => {
