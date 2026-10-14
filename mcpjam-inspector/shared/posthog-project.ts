@@ -1,0 +1,2 @@
+export const POSTHOG_PROJECT_KEY =
+  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";

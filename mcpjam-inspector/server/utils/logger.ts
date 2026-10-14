@@ -9,10 +9,6 @@ import type {
   RequestLogContext,
   SystemLogContext,
 } from "./log-events.js";
-import {
-  MAX_ERROR_TEXT_CHARS,
-  scrubLogText,
-} from "../../shared/log-scrubber.js";
 import { HOSTED_MODE } from "../config.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 import { sentryIdentityMetadata } from "./sentry-request-identity.js";
@@ -115,26 +111,8 @@ function ingestToAxiom(
 ) {
   const axiom = getAxiom();
   if (!axiom) return;
-  axiom.ingest(dataset(), [
-    buildLegacyLogRow(message, { ...context, level, environment: environment() }, error),
-  ]);
-}
-
-/**
- * Read a loggable string off an arbitrary thrown value.
- *
- * `error.message` and `String(error)` both run a Proxy `get`/`toString` trap
- * and can therefore throw. This is the CENTRAL logger: a throw here escapes
- * into whatever catch block was reporting a failure, losing the original
- * diagnostic and replacing the route's response with a secondary failure from
- * the logging code. Diagnostics must never escalate the thing they describe.
- */
-function safeErrorText(error: unknown): string {
-  try {
-    return error instanceof Error ? error.message : String(error);
-  } catch {
-    return "[unreadable error value]";
-  }
+  const row = buildLegacyLogRow(message, { ...context, level, environment: environment() }, error);
+  if (level !== "debug" || row.event !== "log.unknown") axiom.ingest(dataset(), [row]);
 }
 
 /**
@@ -328,14 +306,6 @@ function emit(
           ...sentryIdentityMetadata(),
           extra: {
             ...fullPayload,
-            ...(options.error !== undefined
-              ? {
-                  rawError: scrubLogText(
-                    safeErrorText(options.error),
-                    MAX_ERROR_TEXT_CHARS,
-                  ),
-                }
-              : {}),
           },
         }),
       );

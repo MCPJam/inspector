@@ -2,7 +2,6 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 const bootstrap = vi.hoisted(() => vi.fn());
 const reportCaught = vi.hoisted(() => vi.fn());
-vi.mock("../lib/install-failed-request-tracker", () => ({}));
 import { resetDesktopReturnAttemptsForTests } from "../components/oauth/OAuthDesktopReturnNotice";
 beforeEach(() => {
   vi.resetModules();
