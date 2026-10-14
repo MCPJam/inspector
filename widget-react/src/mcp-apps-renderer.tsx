@@ -3452,7 +3452,7 @@ export function MCPAppsRendererSurface({
               const fixed = fixedDisplayModeRef.current;
               setLoadError(
                 openAIRulesRef.current && fixed === "fullscreen"
-                  ? "This App can't open here because it doesn't support full screen, which entrypoints require. Add fullscreen to the App's availableDisplayModes to open it."
+                  ? "This App can't open here because it doesn't support full screen, which entrypoints require. Add full screen support to the App, then open it again."
                   : "This App has no supported display mode"
               );
               void b.close();
