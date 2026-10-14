@@ -95,6 +95,7 @@ We do not claim that an older build never sends a credential. Updating the deskt
 
 - **Hosting provider request logs.** The edge and CDN in front of the hosted service keep their own request logs. The scrubbing on this page runs in the browser, the proxy and the app server, which come after the edge, so those logs are not covered by it.
 - **Your content.** Tool arguments, tool results, prompts and chat messages are content, not URLs. Keeping content out of logs and error reports is handled by separate content scrubbing, not by the mechanism on this page.
+- **Names already on a PostHog person.** When an account's privacy answer turns restrictive, the client stops sending names but does not remove names that were sent under an earlier full answer. Removing them requires a vendor-side person update.
 
 ## Opting out
 
