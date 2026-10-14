@@ -155,6 +155,64 @@ describe("SwarmsTab — Run journey launch", () => {
     );
   });
 
+  it("lists every dependency the organization's key policy refused", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        403,
+        "This organization requires its own provider keys for AI features…",
+        false,
+        "org_keys_required",
+        {
+          problems: [
+            {
+              dependency: "persona",
+              label: "The simulated user",
+              code: "org_runtime_unsupported",
+              reason:
+                "The simulated user can't run on this organization's providers yet, so it is unavailable while the organization requires its own keys.",
+            },
+            {
+              dependency: "judge",
+              label: "The judge",
+              code: "org_keys_required",
+              reason:
+                "The judge is not a model from an organization provider. Choose a model from an organization provider.",
+            },
+          ],
+        },
+      )
+    );
+
+    fireEvent.click(selectPersonaAndRun());
+
+    const list = await screen.findByTestId("ai-launch-problems");
+    expect(list.querySelectorAll("li")).toHaveLength(2);
+    expect(list).toHaveTextContent(
+      "Simulated user: The simulated user can't run on this organization's providers yet"
+    );
+    expect(list).toHaveTextContent("Judge: The judge is not a model");
+  });
+
+  it("reads a refusal with no list as the shared copy, naming no fix", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        422,
+        "org_runtime_unsupported",
+        false,
+        "org_runtime_unsupported"
+      )
+    );
+
+    fireEvent.click(selectPersonaAndRun());
+
+    expect(
+      await screen.findByText(
+        "This feature can't run on the organization's providers yet, so it is unavailable while the organization requires its own keys."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("ai-launch-problems")).toBeNull();
+  });
+
   /**
    * The limit dialog already carries this sentence plus the actions that clear
    * it. The inline banner under the goal would repeat it with nothing to act

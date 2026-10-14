@@ -7,7 +7,7 @@ import {
 
 const CONTEXT = { projectIds: ["p1"], organizationIds: ["o1"] };
 const CONSERVATIVE = {
-  policy: { recording: "masked", identity: "id_only" },
+  policy: { recording: "off", identity: "id_only", content: "strict" },
   resolved: false,
 };
 
@@ -18,10 +18,14 @@ describe("resolveTelemetryPolicy", () => {
   });
 
   it("asks the backend as the bearer and returns its answer", async () => {
-    const query = vi.fn(async () => ({ recording: "full", identity: "full" }));
+    const query = vi.fn(async () => ({
+      recording: "full",
+      identity: "full",
+      content: "full",
+    }));
     setTelemetryPolicyQueryForTests(query);
     expect(await resolveTelemetryPolicy("token-1", CONTEXT)).toEqual({
-      policy: { recording: "full", identity: "full" },
+      policy: { recording: "full", identity: "full", content: "full" },
       resolved: true,
     });
     expect(query).toHaveBeenCalledWith(
@@ -52,11 +56,13 @@ describe("resolveTelemetryPolicy", () => {
     setTelemetryPolicyQueryForTests(async () => ({
       recording: "full",
       identity: "full",
+      content: "full",
       organizationName: "leak",
     }));
     expect((await resolveTelemetryPolicy("t", CONTEXT)).policy).toEqual({
       recording: "full",
       identity: "full",
+      content: "full",
     });
   });
 
@@ -73,9 +79,13 @@ describe("resolveTelemetryPolicy", () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  it("keeps a resolved answer briefly, per bearer and context", async () => {
+  it("keeps only restrictive answers briefly, per bearer and context", async () => {
     vi.useFakeTimers();
-    const query = vi.fn(async () => ({ recording: "full", identity: "full" }));
+    const query = vi.fn(async () => ({
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
+    }));
     setTelemetryPolicyQueryForTests(query);
     await resolveTelemetryPolicy("t", CONTEXT);
     await resolveTelemetryPolicy("t", {
@@ -99,7 +109,11 @@ describe("resolveTelemetryPolicy", () => {
     const query = vi
       .fn()
       .mockRejectedValueOnce(new Error("unavailable"))
-      .mockResolvedValue({ recording: "full", identity: "full" });
+      .mockResolvedValue({
+        recording: "full",
+        identity: "full",
+        content: "full",
+      });
     setTelemetryPolicyQueryForTests(query);
     expect(await resolveTelemetryPolicy("t", CONTEXT)).toEqual(CONSERVATIVE);
     expect((await resolveTelemetryPolicy("t", CONTEXT)).resolved).toBe(true);
@@ -119,7 +133,7 @@ describe("resolveTelemetryPolicy", () => {
       resolveTelemetryPolicy("t", CONTEXT),
       resolveTelemetryPolicy("t", CONTEXT),
     ]);
-    release({ recording: "masked", identity: "id_only" });
+    release({ recording: "off", identity: "id_only", content: "strict" });
     const [first, second] = await both;
     expect(first).toEqual(second);
     expect(query).toHaveBeenCalledTimes(1);
@@ -133,13 +147,13 @@ describe("resolveTelemetryPolicy", () => {
     const fetchMock = vi.fn(async () =>
       Response.json({
         status: "success",
-        value: { recording: "masked", identity: "id_only" },
+        value: { recording: "off", identity: "id_only", content: "strict" },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
     try {
       expect(await resolveTelemetryPolicy("bearer-1", CONTEXT)).toEqual({
-        policy: { recording: "masked", identity: "id_only" },
+        policy: { recording: "off", identity: "id_only", content: "strict" },
         resolved: true,
       });
       const [url, init] = fetchMock.mock.calls[0] as unknown as [
@@ -176,4 +190,52 @@ describe("resolveTelemetryPolicy", () => {
       if (saved.vite !== undefined) process.env.VITE_CONVEX_URL = saved.vite;
     }
   });
+  it("does not reuse a previously permissive answer after policy tightens", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({
+        recording: "full",
+        identity: "full",
+        content: "full",
+      })
+      .mockResolvedValue({
+        recording: "off",
+        identity: "id_only",
+        content: "strict",
+      });
+    setTelemetryPolicyQueryForTests(query);
+    await resolveTelemetryPolicy("actor", CONTEXT);
+    expect(
+      (await resolveTelemetryPolicy("actor", CONTEXT)).policy.content,
+    ).toBe("strict");
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+});
+
+it("coalesces 64 slow permissive requests without keeping a stale grant", async () => {
+  vi.useFakeTimers();
+  const full = { recording: "full", identity: "full", content: "full" };
+  const strict = { recording: "off", identity: "id_only", content: "strict" };
+  let answer = full;
+  const query = vi.fn(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return answer;
+  });
+  setTelemetryPolicyQueryForTests(query);
+  try {
+    const start = Date.now();
+    const pending = Promise.all(Array.from({ length: 64 }, () => resolveTelemetryPolicy("member", CONTEXT)));
+    expect(query).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await pending).every((result) => result.policy.content === "full")).toBe(true);
+    expect(Date.now() - start).toBe(500);
+    answer = strict;
+    const next = resolveTelemetryPolicy("member", CONTEXT);
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await next).policy.content).toBe("strict");
+    expect(query).toHaveBeenCalledTimes(2);
+  } finally {
+    setTelemetryPolicyQueryForTests(null);
+    vi.useRealTimers();
+  }
 });

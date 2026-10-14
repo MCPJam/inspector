@@ -27,6 +27,11 @@ missed announcement falls back to the same recovery on a revoked guest query.
 Guest recovery does not call WorkOS sign-out. Existing WorkOS revocation handling
 remains unchanged. Requests already executing at promotion can still be refused.
 
-Recovery preserves the URL. After signing into an existing account, a retired
-guest project may be inaccessible; the existing project-unavailable page offers
-“Go to your projects.” Temporary page state can be lost during recovery.
+Before a sign-in transition or guest recovery reload, tabs record a one-use
+sessionStorage marker for their already-open project route (30-minute expiry).
+After authentication, user setup and memberships resolve, an unavailable old
+project is replaced with an accessible project’s Home URL. Accessible URLs remain
+unchanged. Ordinary direct links still show the project-unavailable page; special
+sign-in return flows keep their precedence. Storage failures retain same-page
+recovery in memory, but a reload without persistent storage cannot restore the
+marker. Temporary page state can be lost during recovery.

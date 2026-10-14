@@ -7,6 +7,11 @@ import {
   noopNav,
 } from "./settings-sheet-harness";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 /**
  * The settings sheet as a DRAFT (S1).
  *
