@@ -28,7 +28,7 @@ Every browser session runs at one of three privacy levels. The level decides wha
 | Hosted, anything the backend cannot verify as non-private (a private organization in view, membership of one, a visitor with no session) | `off`    |
 | Hosted, a context the backend verifies as non-private                                            | `full`   |
 
-The MCPJam backend decides the level for the organizations and projects in view, and the analytics proxy checks it again for every event it forwards. The level fails closed: nothing is recorded until the backend has answered, and a navigation records `masked` until the new page's answer arrives and the page has loaded.
+The MCPJam backend decides the level for the organizations and projects in view, and the analytics proxy checks it again for every event it forwards. The level fails closed: nothing is recorded until the backend has answered, and a navigation records `off` until the new page's answer arrives and the page has loaded.
 
 Analytics and error reports identify a person by user id only, until the backend clears names for that account. Members of an organization with enterprise privacy are never named, and values sent earlier are cleared.
 
