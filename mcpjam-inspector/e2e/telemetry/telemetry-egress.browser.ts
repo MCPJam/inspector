@@ -20,11 +20,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { observeFetchOptions } from "./tests/fetch-observer";
-import {
-  captureFreshSentryProof,
-  captureSentryProof,
-  waitForSentryReplay,
-} from "./replay-resume-proof";
+import { captureSentryProof, waitForSentryReplay } from "./replay-resume-proof";
 import {
   assertTelemetryBuild,
   drain,
@@ -77,9 +73,6 @@ const ROUND_TRIP_DWELLS_MS: ReadonlyArray<{ away: number; back: number }> = [
   { away: 250, back: 1_500 },
 ];
 const SENTRY_LATENCY_MS = 800;
-
-// Until strict serialization activates, restricted errors are suppressed.
-const STRICT_DIAGNOSTICS = false;
 
 /** A public page every signed-out visitor can open: the score landing. */
 const NORMAL_PAGE = "/";
@@ -149,30 +142,13 @@ test("share links on a normal page at full: text, href and iframe src", async ({
 }) => {
   const recorder = await installEgressRecorder(page);
   await openNormalPage(page, recorder);
-  const fullEventId = await captureFreshSentryProof(page);
-  await expect
-    .poll(
-      () =>
-        sentryItems(recorder.scanSince(0).decoded).some(
-          (item) =>
-            item.type === "event" &&
-            (item.payload as { event_id?: unknown }).event_id === fullEventId,
-        ),
-      { timeout: 30_000 },
-    )
-    .toBe(true);
   // A clean console frame is a positive control. The later credential-bearing
   // console frame is deliberately dropped at the relay's final serializer.
   await page.evaluate(() => console.log("[egress] full recording control"));
-  await expect
-    .poll(() =>
-      posthogReplayEvents(recorder.scanSince(0).decoded).some(
-        (event) =>
-          event.type === RRWEB.Plugin &&
-          (event.data as { plugin?: unknown })?.plugin === "rrweb/console@1",
-      ),
-    )
-    .toBe(true);
+  await expect.poll(() => posthogReplayEvents(recorder.scanSince(0).decoded).some(
+    event => event.type === RRWEB.Plugin &&
+      (event.data as { plugin?: unknown })?.plugin === "rrweb/console@1",
+  )).toBe(true);
   await page.evaluate(
     (urls) => {
       const section = document.createElement("section");
@@ -240,28 +216,14 @@ for (const [id, url] of pageCorpus()) {
     await page.waitForTimeout(3_000);
     await interact(page);
     await throwUncaught(page, `failure on ${id}`);
-    const strictEventId = await captureSentryProof(
-      page,
-      `cold strict control ${id}`,
-    );
     await page.waitForTimeout(1_000);
     await spaNavigate(page, NORMAL_PAGE);
     await page.waitForTimeout(1_500);
     await interact(page);
     await drain(page, recorder);
-    // Standalone handoffs need not boot PostHog. The installed SDK minted the
-    // strict capture ID above; the interim transport must suppress that input.
-    const scan = expectClean(recorder, `cold load onto ${id}`, {});
-    expect(
-      sentryItems(scan.decoded).some(
-        (item) =>
-          item.type === "event" &&
-          (item.payload as { event_id?: unknown }).event_id === strictEventId,
-      ),
-    ).toBe(false);
-    expect(
-      sentryItems(scan.decoded).filter((item) => item.type === "event"),
-    ).toEqual([]);
+    // Some credential URLs boot pages without the analytics provider (the
+    // connection handoff, the OAuth popup); Sentry runs on every one.
+    expectClean(recorder, `cold load onto ${id}`, { sentryItems: ["event"] });
   });
 }
 
@@ -308,10 +270,7 @@ test("SPA navigation from a normal page onto every credential page and back", as
     // recording after this return, beyond the conservative settling delay.
     await waitForFullReplay(page, recorder, 30_000, mark, from);
     await waitForSentryReplay(page, recorder, mark, from);
-    const eventId = await captureSentryProof(
-      page,
-      `liveness check after ${id}`,
-    );
+    const eventId = await captureSentryProof(page, `liveness check after ${id}`);
     returns.push({ id, from, until: await pageNow(page), mark, eventId });
   }
   await interact(page);
@@ -320,6 +279,7 @@ test("SPA navigation from a normal page onto every credential page and back", as
   const scan = expectClean(recorder, "SPA navigation", {
     posthogEvents: ["$snapshot"],
     posthogFullSnapshot: true,
+    sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
 
@@ -348,32 +308,14 @@ test("SPA navigation from a normal page onto every credential page and back", as
         `PostHog replay was not recording after leaving ${visit.id}`,
       )
       .toBeGreaterThan(0);
-    expect
-      .soft(
-        errors.some(
-          (item) =>
-            (item.payload as { event_id?: unknown }).event_id === visit.eventId,
-        ),
-        `Sentry diagnostic did not match interim suppression after leaving ${visit.id}`,
-      )
-      .toBe(STRICT_DIAGNOSTICS);
-    expect
-      .soft(
-        sentryReplayEvents(recorder.scanSince(visit.mark).decoded).some(
-          (event) => {
-            const at = (event as { timestamp?: unknown }).timestamp;
-            return (
-              (event.type === RRWEB.FullSnapshot ||
-                event.type === RRWEB.IncrementalSnapshot) &&
-              typeof at === "number" &&
-              at >= visit.from &&
-              at <= visit.until
-            );
-          },
-        ),
-        `Sentry replay did not resume after leaving ${visit.id}`,
-      )
-      .toBe(true);
+    expect.soft(errors.some((item) =>
+      (item.payload as { event_id?: unknown }).event_id === visit.eventId),
+      `Sentry diagnostic did not arrive after leaving ${visit.id}`).toBe(true);
+    expect.soft(sentryReplayEvents(recorder.scanSince(visit.mark).decoded).some((event) => {
+      const at = (event as { timestamp?: unknown }).timestamp;
+      return (event.type === RRWEB.FullSnapshot || event.type === RRWEB.IncrementalSnapshot)
+        && typeof at === "number" && at >= visit.from && at <= visit.until;
+    }), `Sentry replay did not resume after leaving ${visit.id}`).toBe(true);
   }
   // The last return lasts past Sentry's minimum, so what it recorded there
   // is sent, not only tagged.
@@ -414,6 +356,7 @@ test("a secret query key and fragment on a normal page", async ({ page }) => {
   await drain(page, recorder);
   expectClean(recorder, "query and fragment", {
     posthogFullSnapshot: true,
+    sentryItems: ["event"],
   });
 });
 
@@ -466,6 +409,7 @@ test("a tab closed on a credential page ships nothing planted", async ({
   await page.waitForTimeout(1_500);
   expectClean(recorder, "closed on a credential page", {
     posthogEvents: ["$snapshot"],
+    sentryItems: ["event"],
   });
 });
 
@@ -483,18 +427,10 @@ test("a visitor who reads a page, then opens a share link", async ({
   await spaNavigate(page, EGRESS_CORPUS["score-results"]);
   await page.mouse.click(5, 5);
   await throwUncaught(page, "on the share link");
-  const strictEventId = await captureSentryProof(page, "share strict control");
   await drain(page, recorder);
-  const scan = expectClean(recorder, "opening a share link", {
+  expectClean(recorder, "opening a share link", {
     posthogFullSnapshot: true,
-    sentryItems: ["replay_event"],
+    sentryItems: ["event", "replay_event"],
     sentryFullSnapshot: true,
   });
-  expect(
-    sentryItems(scan.decoded).some(
-      (item) =>
-        item.type === "event" &&
-        (item.payload as { event_id?: unknown }).event_id === strictEventId,
-    ),
-  ).toBe(false);
 });

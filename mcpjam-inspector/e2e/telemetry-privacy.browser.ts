@@ -177,27 +177,12 @@ async function intercept(page: Page): Promise<Captured> {
           url,
         ),
       });
-      await recordRelayEgress(
-        {
-          url: request.url(),
-          method: request.method(),
-          headers: request.headers(),
-          body: request.postDataBuffer(),
-        },
-        async (context) => ({
-          recording: context.organizationIds.includes(HARNESS_PUBLIC_ORG)
-            ? "full"
-            : "off",
-          identity: context.organizationIds.includes(HARNESS_PUBLIC_ORG)
-            ? "full"
-            : "id_only",
-          content: context.organizationIds.includes(HARNESS_PUBLIC_ORG)
-            ? "full"
-            : "strict",
-          telemetryActorId: HARNESS_ACTOR_ID,
-        }),
-        (vendor) => captured.posthog.push(vendor),
-      );
+      await recordRelayEgress({ url: request.url(), method: request.method(), headers: request.headers(), body: request.postDataBuffer() }, async (context) => ({
+        recording: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "off",
+        identity: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "id_only",
+        content: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "strict",
+        telemetryActorId: HARNESS_ACTOR_ID,
+      }), (vendor) => captured.posthog.push(vendor));
       return route.fulfill({ json: { status: 1 } });
     }
     return route.fulfill({ status: 404, body: "" });
@@ -286,6 +271,7 @@ async function collectStrict(captured: Captured) {
   await expect
     .poll(
       () =>
+        sentryItems(captured, "event").length > 0 &&
         captured.posthog
           .flatMap((r) => posthogEvents(r.json))
           .some((e) => e.event === "send_message"),
@@ -324,7 +310,7 @@ function allPayloadText(captured: Captured): string {
 }
 
 test.describe("telemetry privacy in the browser", () => {
-  test("a private context sends useful strict product counts and suppresses Sentry until activation, with no personal data", async ({
+  test("a private context sends useful strict diagnostics and no replay or personal data", async ({
     page,
   }) => {
     const captured = await intercept(page);
@@ -347,9 +333,7 @@ test.describe("telemetry privacy in the browser", () => {
       location: "chat_tab",
       multi_model_count: 2,
     });
-    for (const event of captured.ingress.flatMap((request) =>
-      posthogEvents(request.json),
-    )) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         v: 2,
         o: [HARNESS_PRIVATE_ORG],
@@ -364,10 +348,17 @@ test.describe("telemetry privacy in the browser", () => {
       );
       expect(request.headers["x-mcpjam-telemetry-policy"]).toBe("strict");
     }
-    expect(captured.sentry).toEqual([]);
+    const error = JSON.parse(
+      sentryItems(captured, "event")[0].payload.toString("utf8"),
+    );
+    expect(error.user).toEqual({ id: HARNESS_ACTOR_ID });
+    expect(error.exception.values[0]).toMatchObject({
+      type: "Error",
+      value: "Error",
+    });
   });
 
-  test("an organization with replay off records nothing, while product counts still arrive", async ({
+  test("an organization with replay off records nothing, while analytics and errors still arrive", async ({
     page,
   }) => {
     const captured = await intercept(page);
@@ -379,6 +370,7 @@ test.describe("telemetry privacy in the browser", () => {
     await expect
       .poll(
         () =>
+          sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
             .some((e) => e.event === "send_message"),
@@ -398,9 +390,7 @@ test.describe("telemetry privacy in the browser", () => {
 
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
     expect(events.length).toBeGreaterThan(0);
-    for (const event of captured.ingress.flatMap((request) =>
-      posthogEvents(request.json),
-    )) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         o: [HARNESS_PRIVATE_ORG],
         v: 2,
@@ -409,10 +399,13 @@ test.describe("telemetry privacy in the browser", () => {
         c: "strict",
       });
     }
-    expect(captured.sentry).toEqual([]);
+    const errorEvent = JSON.parse(
+      sentryItems(captured, "event")[0].payload.toString("utf8"),
+    );
+    expect(errorEvent.user).toEqual({ id: HARNESS_ACTOR_ID });
   });
 
-  test("a first visit whose policy never arrives records nothing, while product counts still arrive", async ({
+  test("a first visit whose policy never arrives records nothing, while analytics and errors still arrive", async ({
     page,
   }) => {
     const captured = await intercept(page);
@@ -421,6 +414,7 @@ test.describe("telemetry privacy in the browser", () => {
     await expect
       .poll(
         () =>
+          sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
             .some((e) => e.event === "send_message"),
@@ -448,7 +442,7 @@ test.describe("telemetry privacy in the browser", () => {
     }
   });
 
-  test("full → strict stops replay and keeps product counts and suppresses Sentry", async ({
+  test("full → strict stops replay and keeps sanitized diagnostics", async ({
     page,
   }) => {
     const captured = await intercept(page);
@@ -474,8 +468,10 @@ test.describe("telemetry privacy in the browser", () => {
         () => {
           after.posthog = captured.posthog.slice(posthogMark);
           after.sentry = captured.sentry.slice(sentryMark);
-          return after.posthog.some((r) =>
-            posthogEvents(r.json).some((e) => e.event === "send_message"),
+          return (
+            after.posthog.some((r) =>
+              posthogEvents(r.json).some((e) => e.event === "send_message"),
+            ) && sentryItems(after, "event").length > 0
           );
         },
         { timeout: 30_000 },
@@ -500,6 +496,7 @@ test.describe("telemetry privacy in the browser", () => {
     await expect
       .poll(
         () =>
+          sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
             .some((e) => e.event === "send_message"),
@@ -526,9 +523,7 @@ test.describe("telemetry privacy in the browser", () => {
     // Stamped off, so the relay drops any replay from this page as well.
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
     expect(events.length).toBeGreaterThan(0);
-    for (const event of captured.ingress.flatMap((request) =>
-      posthogEvents(request.json),
-    )) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         v: 2,
         r: "off",
@@ -587,9 +582,7 @@ test.describe("telemetry privacy in the browser", () => {
     // The same page sends visible content when its policy permits replay.
     expect(replay).toContain(SYNTHETIC_PII.domText);
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
-    for (const event of captured.ingress.flatMap((request) =>
-      posthogEvents(request.json),
-    )) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         o: [HARNESS_PUBLIC_ORG],
         v: 2,

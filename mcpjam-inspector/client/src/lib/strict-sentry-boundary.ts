@@ -76,6 +76,7 @@ export function withStrictSentryTransport<T extends Transport>(
         }
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
         const policy = sentryCapturePolicy(payload, type === "span");
+        if (policy.drop) continue;
         if (!policy.strict) {
           if (!["event", "transaction", "span", "replay_event"].includes(type)) continue;
           if (type === "replay_event" && (!replayId || blockedReplayIds.has(replayId))) continue;

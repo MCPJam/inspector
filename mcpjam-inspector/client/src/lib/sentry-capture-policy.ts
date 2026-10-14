@@ -1,7 +1,7 @@
 import { telemetryRecord } from "@mcpjam/sdk/internal/telemetry";
 import { currentTelemetryActor, currentTelemetryCaptureContext, telemetryNamesAllowed } from "./telemetry-context";
 
-type CapturePolicy = { strict: boolean; names: boolean; actorId?: string };
+type CapturePolicy = { strict: boolean; names: boolean; actorId?: string; drop?: boolean };
 const captured = new WeakMap<object, CapturePolicy>();
 const ids = new Map<string, CapturePolicy>();
 const current = (): CapturePolicy => ({
@@ -13,6 +13,7 @@ const tighter = (a: CapturePolicy, b: CapturePolicy): CapturePolicy => ({
   strict: a.strict || b.strict || a.actorId !== b.actorId,
   names: a.names && b.names && a.actorId === b.actorId,
   actorId: a.actorId,
+  drop: a.drop || b.drop,
 });
 const UNKNOWN: CapturePolicy = { strict: true, names: false };
 function key(value: unknown, span = false): string | undefined {
@@ -26,12 +27,13 @@ function store(id: string | undefined, policy: CapturePolicy): void {
 }
 
 /** Policy only: no event, span or breadcrumb content is rewritten at capture. */
-export function stampSentryEvent(event: object, hint?: { event_id?: string }): void {
+export function stampSentryEvent(event: object, hint?: { event_id?: string }, drop = false): void {
   const row = telemetryRecord(event);
   const trace = telemetryRecord(telemetryRecord(row.contexts).trace);
   const spanId = key(trace.span_id, true);
   const root = row.type === "transaction" ? ids.get(spanId ?? "") ?? UNKNOWN : current();
   const policy = tighter(current(), root);
+  policy.drop = drop;
   captured.set(event, tighter(captured.get(event) ?? policy, policy));
   store(key(row.event_id ?? hint?.event_id), policy);
 }
