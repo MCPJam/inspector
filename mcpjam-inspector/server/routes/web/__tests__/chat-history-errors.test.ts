@@ -142,8 +142,11 @@ describe("chat-history backend failures", () => {
     );
 
     const body = await response.json();
-    expect(body.message).toContain(REQUEST_ID);
-    expect(body.details).toEqual({ requestId: REQUEST_ID });
+    const requestId = response.headers.get("x-request-id");
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(requestId).not.toBe(REQUEST_ID);
+    expect(body.message).toContain(requestId);
+    expect(body.details).toEqual({ requestId });
   });
 
   it("logs the backend text it does not return", async () => {
