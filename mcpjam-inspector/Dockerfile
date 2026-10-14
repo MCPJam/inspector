@@ -84,7 +84,7 @@ RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fun
 
 ################################################################################
 # Build the inspector and its workspace dependencies.
-FROM deps AS build
+FROM deps AS server-build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
@@ -111,8 +111,9 @@ ARG METICULOUS_RECORDING_TOKEN
 # skips the upload, so local and desktop builds are unaffected. `build:server`
 # reads it the same way for the server's maps.
 #
-# Railway supplies build-time service variables as ARGs. Docker Hub uses a
-# BuildKit secret mount for the server upload instead. The fallback ARG stays
+# Railway supplies build-time service variables as ARGs. Its Dockerfile builder
+# supports only cache mounts. Docker Hub uploads from an ephemeral container
+# after building this stage, so its token never enters the build. The ARG stays
 # in this build stage, never written to disk or promoted to ENV. The runtime
 # image below is a separate stage that copies artifacts rather than layers. It
 # would surface in this stage's build history and in `mode=max` provenance,
@@ -185,15 +186,15 @@ COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 ARG MCPJAM_BUILD_SURFACE=web
 # The server bakes in the same `dist`. `build:server` injects and verifies its
-# debug IDs and, given SENTRY_AUTH_TOKEN, uploads its maps; the maps then stay
-# out of the image, as they stay out of the npm tarball.
-RUN --mount=type=secret,id=sentry_auth_token \
-    if [ -f /run/secrets/sentry_auth_token ]; then \
-      export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
-    fi && \
-    npm run bundle:browser-harness -w @mcpjam/inspector && \
-    npm run build:server -w @mcpjam/inspector && \
-    rm mcpjam-inspector/dist/server/*.map
+# debug IDs and, given Railway's SENTRY_AUTH_TOKEN, uploads its maps. Docker
+# Hub runs the uploader in this same stage with a runtime-only credential.
+RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
+    npm run build:server -w @mcpjam/inspector
+
+# Both releases inherit the verified server bytes; only this intermediate
+# stage retains maps. They stay out of the published image and npm tarball.
+FROM server-build AS build
+RUN rm mcpjam-inspector/dist/server/*.map
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \

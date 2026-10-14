@@ -52,9 +52,9 @@ prefix. The bundle reports the same release and `dist` (both baked in by
 `server/tsup.config.ts`), names its frames `app:///dist/server/index.js`, and
 sends the injected ID as `debug_meta`. The npm build (`release.yml`) and the
 Railway image upload. The Docker Hub image uploads its server maps with `dist`
-`local`, using a BuildKit secret supplied by the release workflow. Neither the
-npm tarball nor the images ship the maps. The
-desktop app runs the server inside Electron main, mapped by `forge.config.ts`.
+`local`, from an ephemeral container of the same server build stage. The release
+workflow passes the token only to that container, outside the Docker build.
+Neither the npm tarball nor the images ship the maps. The desktop app runs the server inside Electron main, mapped by `forge.config.ts`.
 
 The build log, and the step summary in Actions, says `[server-sourcemaps]
 uploaded <file> <debug id>, ...` or `[server-sourcemaps] NOT uploaded`. Only the
