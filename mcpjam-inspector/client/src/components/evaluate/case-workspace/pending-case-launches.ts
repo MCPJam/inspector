@@ -147,7 +147,7 @@ export function caseRowArrived(
   runs: EvalSuiteRunListItem[],
   siblings: PendingCaseRow[] = [],
   runIds: Readonly<Record<number, string>> = {},
-) {
+): boolean {
   return iterations.some((iteration) => {
     if (
       !row.suiteRunId &&
