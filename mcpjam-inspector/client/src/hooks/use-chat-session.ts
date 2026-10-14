@@ -6467,12 +6467,10 @@ export function useChatSession(
             : undefined;
         // Token rotation updates transport headers, but must not discard the
         // same member's transcript or detach its pending authorization call.
-        const sameMember =
-          !!resolvedMemberId &&
-          lastResolvedMemberIdRef.current === resolvedMemberId;
         const authHeadersChanged =
           hasResolvedBefore &&
-          !sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders);
+          (!sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders) ||
+            lastResolvedMemberIdRef.current !== resolvedMemberId);
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);

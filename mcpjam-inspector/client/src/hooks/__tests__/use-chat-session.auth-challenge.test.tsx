@@ -252,8 +252,11 @@ describe("useChatSession mid-session sign-in", () => {
   });
 
   it("keeps the pending chat when the same member gets a refreshed token", async () => {
+    const token = (iat: number) => `e30.${btoa(JSON.stringify({
+      iss: "https://api.workos.com", sub: "member-1", iat, exp: iat + 3600,
+    })).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}.signature`;
     mockState.user = { id: "member-1" };
-    mockState.getAccessToken.mockResolvedValue("first-token");
+    mockState.getAccessToken.mockResolvedValue(token(1000));
     const { result, rerender } = await renderChatSession();
     await waitFor(() =>
       expect(result.current.isSessionBootstrapComplete).toBe(true),
@@ -268,7 +271,7 @@ describe("useChatSession mid-session sign-in", () => {
     );
     mockState.setMessages.mockClear();
     mockState.user = { id: "member-1" };
-    mockState.getAccessToken.mockResolvedValue("refreshed-token");
+    mockState.getAccessToken.mockResolvedValue(token(1100));
     rerender();
     await waitFor(() =>
       expect(result.current.isSessionBootstrapComplete).toBe(true),
