@@ -16,8 +16,8 @@ import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environm
 /**
  * Playground "Environments" section (Project Environments — Phase 2.5).
  *
- * Rendered by {@link import("./PlaygroundHostPicker").PlaygroundHostPicker} and
- * by the Playground header's leading slot. Flag gating is the CALLER's job (see
+ * Rendered by `PlaygroundMain` in the Playground header's leading slot. Flag
+ * gating is the CALLER's job (see
  * `useProjectEnvironmentsEnabled`, fail-closed) — this component renders nothing
  * on its own when no environment is selected beyond the picker itself.
  *

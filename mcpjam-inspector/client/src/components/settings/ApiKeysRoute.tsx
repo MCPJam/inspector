@@ -1,7 +1,7 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useCallback, useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Clock, Key, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -96,7 +96,7 @@ export function ApiKeysRoute({
   const { isAuthenticated } = useConvexAuth();
   // Guests authenticate to Convex too, so gate this surface on the WorkOS
   // user: the key-management API rejects guest sessions outright.
-  const { user, signIn, isLoading: isAuthLoading } = useAuth();
+  const { user, signIn, isLoading: isAuthLoading } = useInspectorAuth();
   const isSignedIn = Boolean(user);
   const { sortedOrganizations, isLoading: orgsLoading } =
     useOrganizationQueries({ isAuthenticated });

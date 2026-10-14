@@ -65,6 +65,27 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
     });
   });
 
+  it("round-trips the same-origin app iframe finding", () => {
+    const next = applyJsonToDraft(
+      { hostContext: {}, sandbox: { sameOriginAppIframe: false } },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.sameOriginAppIframe).toBe(false);
+
+    // A present sandbox block without the key clears it, like every other
+    // surfaced sandbox field.
+    const cleared = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: { permissions: { clipboardWrite: {} } },
+      },
+      next!,
+    );
+    expect(
+      cleared?.mcpProfile?.apps?.sandbox?.sameOriginAppIframe,
+    ).toBeUndefined();
+  });
+
   it("reads the four spec CSP allowlists from spec position into restrictTo storage", () => {
     // The user types SEP-1865 shape: the four allowlists live directly
     // under `sandbox.csp` (no `restrictTo` wrapper) so they map to
