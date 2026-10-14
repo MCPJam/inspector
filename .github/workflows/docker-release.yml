@@ -5,7 +5,7 @@ name: Docker Release
 # version is on npm. Dispatching it by hand is the retry path, and the way to
 # push the current version without cutting a release.
 #
-# Same Dockerfile Railway builds the hosted app from, but with no build args:
+# Same Dockerfile Railway builds the hosted app from, but without hosted settings:
 # without VITE_MCPJAM_HOSTED_MODE the bundle is the local Inspector, the one
 # `npx @mcpjam/inspector` runs.
 on:
@@ -19,6 +19,8 @@ on:
       DOCKERHUB_USERNAME:
         required: true
       DOCKERHUB_TOKEN:
+        required: true
+      SENTRY_AUTH_TOKEN:
         required: true
   workflow_dispatch:
 
@@ -129,6 +131,8 @@ jobs:
           provenance: mode=min
           build-args: |
             MCPJAM_BUILD_SURFACE=local
+          secrets: |
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
           tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

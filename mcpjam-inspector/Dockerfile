@@ -111,11 +111,9 @@ ARG METICULOUS_RECORDING_TOKEN
 # skips the upload, so local and desktop builds are unaffected. `build:server`
 # reads it the same way for the server's maps.
 #
-# ARG, and not a BuildKit secret mount, because Railway builds this image and
-# does not support `--mount=type=secret`: declaring an ARG of the same name as
-# a service variable is the only supported way to reach a build-time secret
-# there. The exposure that buys is bounded — the ARG is scoped to this build
-# stage, the token is never written to disk or promoted to ENV, and the runtime
+# Railway supplies build-time service variables as ARGs. Docker Hub uses a
+# BuildKit secret mount for the server upload instead. The fallback ARG stays
+# in this build stage, never written to disk or promoted to ENV. The runtime
 # image below is a separate stage that copies artifacts rather than layers. It
 # would surface in this stage's build history and in `mode=max` provenance,
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
@@ -182,14 +180,18 @@ COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 # MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
 # under. Without it this bundle's events resolve against the npm or desktop
 # artifacts, which share the same bare `release`. Railway keeps the `web`
-# default; docker-release.yml passes `local`, because the Docker Hub image
-# uploads no source maps and must not resolve against the hosted app's. See
+# default; docker-release.yml passes `local` so the Docker Hub image uses its
+# own source maps instead of the hosted app's. See
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 ARG MCPJAM_BUILD_SURFACE=web
 # The server bakes in the same `dist`. `build:server` injects and verifies its
 # debug IDs and, given SENTRY_AUTH_TOKEN, uploads its maps; the maps then stay
 # out of the image, as they stay out of the npm tarball.
-RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
+RUN --mount=type=secret,id=sentry_auth_token \
+    if [ -f /run/secrets/sentry_auth_token ]; then \
+      export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; \
+    fi && \
+    npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector && \
     rm mcpjam-inspector/dist/server/*.map
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \

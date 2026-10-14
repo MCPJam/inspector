@@ -51,8 +51,9 @@ those same files to `mcpjam-gh/inspector-server`, with the package version as
 prefix. The bundle reports the same release and `dist` (both baked in by
 `server/tsup.config.ts`), names its frames `app:///dist/server/index.js`, and
 sends the injected ID as `debug_meta`. The npm build (`release.yml`) and the
-Railway image upload. The Docker Hub image (`dist` `local`) has no token and
-uploads nothing. Neither the npm tarball nor the images ship the maps. The
+Railway image upload. The Docker Hub image uploads its server maps with `dist`
+`local`, using a BuildKit secret supplied by the release workflow. Neither the
+npm tarball nor the images ship the maps. The
 desktop app runs the server inside Electron main, mapped by `forge.config.ts`.
 
 The build log, and the step summary in Actions, says `[server-sourcemaps]

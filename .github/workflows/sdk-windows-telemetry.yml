@@ -1,9 +1,9 @@
-name: SDK Windows Telemetry
+name: Windows Telemetry
 
 # The packaged SDK telemetry test also runs on Linux in "Run Tests", where a
 # native path and the path Sentry's parser reports are the same string. Windows
 # is where they differ (backslashes, drive letters, file URLs), so this job runs
-# that one test on a Windows runner.
+# the package test and server source-map builds on a Windows runner.
 #
 # Path-filtered and advisory, like local-browser-security.yml: it is not a
 # required check. Making it required means dropping `paths`, or every PR that
@@ -16,6 +16,12 @@ on:
       - "sdk/tests/packaged-telemetry.test.ts"
       - "sdk/tsup.config.ts"
       - "sdk/package.json"
+      - "mcpjam-inspector/server/tsup.config.ts"
+      - "mcpjam-inspector/server/__tests__/server-sourcemaps.test.ts"
+      - "mcpjam-inspector/scripts/server-sourcemaps.mjs"
+      - "mcpjam-inspector/shared/sentry-build-metadata.ts"
+      - "mcpjam-inspector/shared/__tests__/sentry-build-metadata.test.ts"
+      - "mcpjam-inspector/package.json"
       - "package-lock.json"
       - ".github/workflows/sdk-windows-telemetry.yml"
   workflow_dispatch:
@@ -29,11 +35,21 @@ concurrency:
 
 jobs:
   packaged-telemetry:
-    name: SDK packaged telemetry (windows-latest)
+    name: ${{ matrix.name }} (windows-latest)
     # Skip Dependabot's lockfile rebases for the reason in local-browser-security.yml.
     if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SDK packaged telemetry
+            directory: sdk
+            tests: tests/packaged-telemetry.test.ts
+          - name: Server source maps
+            directory: mcpjam-inspector
+            tests: server/__tests__/server-sourcemaps.test.ts shared/__tests__/sentry-build-metadata.test.ts
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
@@ -49,6 +65,6 @@ jobs:
       - name: Build the SDK
         # The test installs the built dist/index.js under a path with a space.
         run: npm run build -w @mcpjam/sdk
-      - name: Run the packaged telemetry test
-        working-directory: sdk
-        run: npx vitest run tests/packaged-telemetry.test.ts
+      - name: Run ${{ matrix.name }}
+        working-directory: ${{ matrix.directory }}
+        run: npx vitest run ${{ matrix.tests }}

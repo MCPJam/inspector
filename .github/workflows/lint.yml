@@ -89,8 +89,8 @@ jobs:
           npm run telemetry:check
           node --test scripts/__tests__/telemetry-route-catalog.test.mjs
 
-      - name: Verify SDK source-map packing and artifact smoke
-        run: node --test .github/scripts/sdk-sourcemaps.test.mjs
+      - name: Verify source-map packing and upload paths
+        run: node --test .github/scripts/sdk-sourcemaps.test.mjs .github/scripts/docker-sourcemaps.test.mjs
 
       - name: Verify DESIGN.md and mirrored token surfaces are in sync
         run: npm run design:check

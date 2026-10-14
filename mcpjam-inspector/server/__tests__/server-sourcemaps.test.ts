@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -41,7 +42,8 @@ export const later = () => import("./lazy").then((lazy) => lazy.describe(3));\n`
 }\n`,
 };
 const THROW = "throw new Error(detail.reason)";
-const work = mkdtempSync(join(tmpdir(), "server-sourcemaps-"));
+// esbuild resolves source symlinks, so the output root must use the same path.
+const work = realpathSync(mkdtempSync(join(tmpdir(), "server sourcemaps-")));
 let builds: string[] = [];
 
 async function buildServer(name: string, banner: string): Promise<string> {
