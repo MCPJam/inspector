@@ -128,7 +128,8 @@ it.each([
 ] as const)(
   "reports VITE_ENVIRONMENT=%s with PROD=%s as %s",
   (label, prod, environment) => {
-    if (label) vi.stubEnv("VITE_ENVIRONMENT", label);
+    // Undefined clears an ambient value, e.g. from a developer's .env.local.
+    vi.stubEnv("VITE_ENVIRONMENT", label);
     vi.stubEnv("PROD", prod);
     expect(browserSentryOptions().environment).toBe(environment);
   },

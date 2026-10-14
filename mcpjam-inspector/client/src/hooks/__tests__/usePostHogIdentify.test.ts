@@ -455,6 +455,15 @@ describe("usePostHogIdentify", () => {
       );
     });
 
+    it("still withholds names if identity were id-only with full content", () => {
+      // The backend never pairs these; the name gate must hold regardless.
+      mockState.identity = "id_only";
+      renderHook(identify);
+      expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+        deployment: "self_hosted",
+      });
+    });
+
     it("names no one whose answer is not held for them", () => {
       // A full answer for the previous actor is not this actor's answer.
       mockState.grant = false;

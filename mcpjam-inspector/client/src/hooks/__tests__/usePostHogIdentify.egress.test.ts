@@ -44,7 +44,7 @@ const FULL_ANSWER = {
   content: "full",
   telemetryActorId: TELEMETRY_ACTOR_ID,
 };
-/** The backend's only other answer: replay off, id only, strict content. */
+/** The backend's restrictive answer: replay off, id only, strict content. */
 const RESTRICTIVE_ANSWER = {
   recording: "off",
   identity: "id_only",
@@ -170,6 +170,8 @@ async function proveRestrictiveAnswer(
   const bytes = JSON.stringify(
     (await sent()).map((row) => row.posthog?.inflated),
   );
+  // Non-vacuous: the decoded bytes hold the event the names were attached to.
+  expect(bytes).toContain("$pageview");
   expect(bytes).not.toContain("member@example.test");
   expect(bytes).not.toContain("Member Fixture");
 }
