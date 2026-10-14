@@ -324,7 +324,12 @@ describe("resolveTurnRuntime — runtime shape", () => {
     );
     expect(rt.runtime).toEqual({
       kind: "direct",
-      llmModel: { localModel: true },
+      // The built model, wrapped so each provider attempt asks the backend
+      // first (`local-org-attempt-admission.ts`).
+      llmModel: expect.objectContaining({
+        specificationVersion: "v4",
+        doStream: expect.any(Function),
+      }),
       modelId: "llama3",
     });
     // Byte-parity: no provider string is forwarded (spans carried none before).
@@ -348,8 +353,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
       ),
     ).rejects.toThrow(
       "This host runs the claude-code harness, which isn't available: the " +
-        "Claude Code harness only runs MCPJam-provided models — pick one on " +
-        "this host to run the real runtime.",
+        "Claude Code harness requires a supported model and an eligible Anthropic connection.",
     );
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });

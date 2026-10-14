@@ -29,6 +29,11 @@ import {
   isXaaConnectFailureReason,
   XaaConnectFailureReason,
 } from "./xaa-connect-failure.js";
+import {
+  AI_RETRYABLE_REFUSAL_CODES,
+  isOrgKeyPolicyRefusalCode,
+} from "./ai-execution-refusal.js";
+import { describeAiRefusal } from "./ai-refusal-copy.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
 const AGENT_ERROR_ENVELOPE =
@@ -352,12 +357,37 @@ const XAA_REASON_FALLBACK_MESSAGES: Record<XaaConnectFailureReason, string> = {
   [XaaConnectFailureReason.NOT_SUPPORTED_HERE]:
     "This server's enterprise authorization mode can't run on this deployment — use pre-registered credentials in the server's auth settings.",
   [XaaConnectFailureReason.AUTHORIZATION_REJECTED]:
-    "The authorization server rejected MCPJam's access request — check the server's XAA client credentials and issuer in its auth settings.",
+    "The authorization server rejected MCPJam's access request. Check the server's auth settings.",
   [XaaConnectFailureReason.CONFIGURATION_INVALID]:
     "This server isn't fully configured for enterprise-managed authorization — finish its XAA settings, or set an explicit auth method.",
   [XaaConnectFailureReason.HANDSHAKE_FAILED]:
     "This server couldn't complete its enterprise authorization handshake — try again, and check its auth settings if it keeps failing.",
 };
+
+/**
+ * A refusal by the organization's AI-key policy ("Use your keys for all AI
+ * features"), in plain words. The backend's own sentence is written for the
+ * request, not for the person reading a session row, and a configuration
+ * refusal must read as one — "add or configure an organization provider",
+ * never a wait or a credit problem — so the shared copy wins. Member
+ * audience: the row is read by whoever opens the run, and the member copy
+ * points at an admin rather than at settings the reader may not have.
+ *
+ * `isRetryable` is the policy's own verdict: only the two transient refusals
+ * lift on their own; every configuration refusal stops retrying.
+ */
+function orgKeyPolicyRefusalInfo(
+  code: string,
+  httpStatus?: number,
+): SwarmAttemptErrorInfo {
+  const normalized = code.trim().toLowerCase();
+  return {
+    code: normalized,
+    message: describeAiRefusal(normalized, "member").body,
+    isRetryable: AI_RETRYABLE_REFUSAL_CODES.has(normalized),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+  };
+}
 
 /**
  * Extract a clean message + structured hints from whatever the runner caught.
@@ -381,6 +411,9 @@ export function humanizeSwarmAttemptError(
       message:
         "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
     };
+  }
+  if (errorCode && isOrgKeyPolicyRefusalCode(errorCode)) {
+    return orgKeyPolicyRefusalInfo(errorCode);
   }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
@@ -447,6 +480,9 @@ export function humanizeSwarmAttemptError(
       const status = detail[2] ?? detail[3];
       if (status && httpStatus === undefined) httpStatus = Number(status);
     }
+    if (engineCode && isOrgKeyPolicyRefusalCode(engineCode)) {
+      return orgKeyPolicyRefusalInfo(engineCode, httpStatus);
+    }
     const stripped = scrub(body);
     // `scrub(input)` rescues an envelope that consumed the whole string. Past a
     // stripped suffix the raw input only holds that suffix again, and a
@@ -469,6 +505,9 @@ export function humanizeSwarmAttemptError(
   const headline =
     str(parsed.error) ?? str(parsed.message) ?? "The session could not run.";
   const code = str(parsed.code);
+  if (code && isOrgKeyPolicyRefusalCode(code)) {
+    return orgKeyPolicyRefusalInfo(code, httpStatus);
+  }
   // `provider_not_allowlisted` carries the gateway's own instruction to its
   // account owner ("Update your Provider Allowlist settings…") in `details`.
   // That is MCPJam's setting, not the reader's; the headline already names
