@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-14
+
+#### Changed
+
+- **Codex client now reports a ChatGPT desktop build as its MCP Apps `hostInfo`** — the Codex client template sets `hostInfo` to `{ name: "chatgpt", version: "26.928.20710" }` in `ui/initialize`. Apps that gate on OpenAI's documented minimum desktop build for the DevDay 2026 extensions (such as Bits & Bolts v0.2) now run instead of showing an "update required" prompt. The version is a deliberate bump past the last probed capture to the documented minimum and should be replaced with a newer host-probe capture.
+
+- **OpenAI plugin extensions follow `@openai/mcp-extensions` 0.2.0** — two behavior changes for plugin extension developers:
+  - Settings action buttons are now labeled by the referenced tool's title (from `annotations.title`, then the top-level `title`, then the tool name). The deprecated layout-level `title` field on a settings action item is ignored.
+  - An entrypoint declaration that MCPJam doesn't recognize (for example, the retired `type: "settings"` entrypoint) is now ignored with a **Logs** warning instead of hiding the tool's other entrypoints. The warning names the affected tools and links to the fix.
+
 ### 2026-10-09
 
 #### Added
