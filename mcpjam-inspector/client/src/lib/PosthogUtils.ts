@@ -1,4 +1,5 @@
 import type { CaptureResult } from "posthog-js";
+import { POSTHOG_PROJECT_KEY } from "../../../shared/posthog-project";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
 import {
   POSTHOG_URL_PROPERTIES,
@@ -20,8 +21,7 @@ import {
   shouldMaskAnalytics,
 } from "./session-privacy";
 
-export const VITE_PUBLIC_POSTHOG_KEY =
-  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+export { POSTHOG_PROJECT_KEY as VITE_PUBLIC_POSTHOG_KEY };
 export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
 
 // posthog-js talks to the same-origin /relay reverse proxy (server/routes/
@@ -477,7 +477,7 @@ function withServerFlags(
 // Conditional PostHog key and options
 // Always use the real PostHog key; flag values arrive as `serverFlags`, the
 // GET /api/web/flags answer for this visitor (lib/server-feature-flags.ts).
-export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
+export const getPostHogKey = () => POSTHOG_PROJECT_KEY;
 export const getPostHogOptions = (
   serverFlags?: ClientFeatureFlagValues | null,
 ) =>
