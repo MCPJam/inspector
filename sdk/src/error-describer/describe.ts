@@ -25,6 +25,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
+import { orgPolicyRefusal } from "./org-policy.js";
 import type { BearerChallengeSummary } from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
@@ -536,6 +537,11 @@ function resolveSlug(error: unknown): {
   const platformCode = record?.data?.code ?? record?.code;
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
+  // The organization AI-key policy's refusals, ahead of the status branches:
+  // they arrive as 403/422/503, which read by status alone would become "your
+  // MCP server rejected the token" or an outage.
+  const orgPolicy = orgPolicyRefusal(error, message);
+  if (orgPolicy) return orgPolicy;
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.

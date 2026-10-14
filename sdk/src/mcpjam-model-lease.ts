@@ -1,11 +1,11 @@
+import { validateModelSelection, type ModelSelection } from './host-config/model-selection.js';
+import { aiRequestHeaders } from "./ai-request-headers.js";
 /**
  * MCPJam-hosted inference for evals that run OUTSIDE the platform.
- *
  * The problem this solves: an eval in your CI needs a model, and until now that
  * meant an OpenAI or Anthropic key in your repository secrets. With a
  * `mcpjam/…` model id the only secret is `MCPJAM_API_KEY` — MCPJam calls the
  * provider and bills your organization's credits.
- *
  * How it works, and why it is a `fetch` rather than a new provider:
  *
  *   1. MCPJam's model proxy is VENDOR-COMPATIBLE — it speaks Anthropic's
@@ -15,14 +15,9 @@
  *   2. What the proxy needs instead of a provider key is a LEASE: short-lived,
  *      scoped to one org + project + model, presented in a header the AI SDK
  *      knows nothing about, and only obtainable by an authenticated call.
- *   3. The lease's URL is not knowable until it is minted (the proxy origin is
- *      deployment-specific), so the provider is pointed at a placeholder and
- *      this `fetch` rewrites it.
+ *   3. The fetch adapter rewrites a placeholder to the minted proxy URL.
  *
- * Which leaves one credential rule, enforced in `proxyFetch`: the `sk_` key is
- * used ONLY against MCPJam's own API to mint, and the placeholder key the
- * provider was constructed with is stripped before the request leaves. Neither
- * ever reaches the proxy.
+ * `proxyFetch` sends the API key only to the mint route and strips provider placeholders.
  */
 
 /** A minted lease and everything needed to spend it. */
@@ -84,6 +79,11 @@ export class McpjamLeaseError extends Error {
  *   - `billing`: the organization cannot spend right now — credits, the free
  *     allowance, a spend budget, a locked wallet. Not a credential problem, and
  *     retrying does not help.
+ *   - `policy`: the organization's AI-key policy refused it — the org requires
+ *     its own provider keys, so an MCPJam-provided model cannot run, or the
+ *     org's own configuration cannot serve the request. The credential is
+ *     fine; only a configuration change (choosing an organization model)
+ *     helps, so this is never `auth` and never retried.
  *   - `auth`: the credentials were missing or rejected, or are not entitled to
  *     this project — including a 403 that carries NO billing detail.
  *   - `rateLimited`: a throttle that clears by waiting.
@@ -92,7 +92,7 @@ export class McpjamLeaseError extends Error {
  *   - `other`: anything else, e.g. a request the API refused as malformed.
  */
 export type McpjamLeaseRefusalKind =
-  "billing" | "auth" | "rateLimited" | "unavailable" | "other";
+  "billing" | "policy" | "auth" | "rateLimited" | "unavailable" | "other";
 
 /**
  * The account-limit codes MCPJam's spend gates refuse with — the same
@@ -101,6 +101,26 @@ export type McpjamLeaseRefusalKind =
  */
 const BILLING_REFUSAL_CODE =
   /^(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|organization_spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|spending_admission_invalid|insufficient_credits)$/i;
+
+/**
+ * The organization AI-key policy's configuration refusals ("Use your keys for
+ * all AI features"). The lease endpoint refuses a start with 403
+ * `org_keys_required`; the model proxy refuses a request with 409
+ * `{ ok: false, code }` (and `x-mcpjam-proxy-refusal: <code>`). The
+ * permanent policy codes from the inspector's
+ * `shared/ai-execution-refusal.ts`, plus `credential_missing` (the org
+ * connection is gone). Not the reused model codes (`invalid_model`, …): a
+ * lease refuses those for reasons that have nothing to do with the policy.
+ */
+const AI_POLICY_REFUSAL_CODE =
+  /^(?:org_keys_required|org_model_unconfigured|org_runtime_unsupported|ai_scope_unresolved|provider_auth_failed|credential_missing)$/i;
+
+/**
+ * The policy's two transient refusals: the policy could not be read (the
+ * backend fails closed) or the org's provider is throttling or failing.
+ */
+const AI_POLICY_TRANSIENT_CODE =
+  /^(?:ai_key_policy_unavailable|provider_unavailable)$/i;
 
 const AUTH_REFUSAL_CODE =
   /^(?:unauthorized|oauth_required|invalid_api_key|auth_unavailable|account_suspended)$/i;
@@ -119,17 +139,38 @@ function refusalCodes(error: McpjamLeaseError): string[] {
 }
 
 /**
+ * The organization AI-key policy code a refusal carries (`org_keys_required`,
+ * `provider_auth_failed`, …), lower-cased, or `undefined` when it names none.
+ * The same codes `classifyMcpjamLeaseError` reads as `policy`.
+ */
+export function mcpjamLeasePolicyCode(
+  error: McpjamLeaseError
+): string | undefined {
+  const code = refusalCodes(error).find((candidate) =>
+    AI_POLICY_REFUSAL_CODE.test(candidate)
+  );
+  return code?.toLowerCase();
+}
+
+/**
  * Classify a lease refusal. Reads the codes BEFORE the status: a billing code
  * wins wherever it appears, because an auth-shaped envelope (`FORBIDDEN`,
  * 403) wrapping a free-tier or spend refusal is still a billing refusal, and
  * reporting it as bad credentials would send someone to rotate a key that
- * works.
+ * works. The organization AI-key policy's codes are read the same way, for
+ * the same reason.
  */
 export function classifyMcpjamLeaseError(
   error: McpjamLeaseError
 ): McpjamLeaseRefusalKind {
   const codes = refusalCodes(error);
   if (codes.some((code) => BILLING_REFUSAL_CODE.test(code))) return "billing";
+  // Before the status: the policy refuses with 403 (and the proxy with 409),
+  // and read as `auth` it would send someone to rotate a key that works.
+  if (codes.some((code) => AI_POLICY_REFUSAL_CODE.test(code))) return "policy";
+  if (codes.some((code) => AI_POLICY_TRANSIENT_CODE.test(code))) {
+    return "unavailable";
+  }
   if (
     error.status === 401 ||
     error.status === 403 ||
@@ -255,6 +296,7 @@ export interface McpjamLeaseClientOptions {
   project: string;
   /** Canonical model id, e.g. `anthropic/claude-sonnet-4.5`. */
   model: string;
+  modelSelection?: ModelSelection;
   fetchImpl?: typeof fetch;
 }
 
@@ -440,18 +482,14 @@ export class McpjamLeaseClient {
   private readonly extraHeaders: Readonly<Record<string, string>>;
   private readonly project: string;
   private readonly model: string;
+  private readonly modelSelection: ModelSelection;
   private readonly fetchImpl: typeof fetch;
 
   private current: McpjamModelLease | null = null;
   private readonly held = new Map<string, McpjamModelLease>();
   private readonly inFlight = new Map<string, number>();
   private readonly revoking = new Map<string, Promise<void>>();
-  /**
-   * The in-flight mint, so concurrent iterations share ONE call. Without it a
-   * suite that runs 20 cases in parallel mints 20 leases on its first tick —
-   * every one of them counting against the active-lease cap and the API key's
-   * rate limit.
-   */
+  /** Share a mint across concurrent iterations to preserve the active-lease cap. */
   private minting: Promise<McpjamModelLease> | null = null;
 
   constructor(options: McpjamLeaseClientOptions) {
@@ -463,6 +501,9 @@ export class McpjamLeaseClient {
     this.extraHeaders = { ...(options.headers ?? {}) };
     this.project = options.project;
     this.model = options.model;
+    const parsed = validateModelSelection(options.modelSelection ?? {source: "hosted", modelId: options.model, fallback: {provider: "none", model: "none"}});
+    if (!parsed.ok || parsed.selection.modelId !== options.model || parsed.selection.source !== "hosted") throw new Error("A hosted lease selection must name the leased model.");
+    this.modelSelection = parsed.selection;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.proxyFetch = this.proxyFetch.bind(this);
   }
@@ -486,7 +527,7 @@ export class McpjamLeaseClient {
    * credential failure, reported as one.
    */
   private async platformHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = aiRequestHeaders("sdk-harness");
     for (const [name, value] of Object.entries(this.extraHeaders)) {
       if (CLIENT_OWNED_HEADERS.has(name.toLowerCase())) continue;
       headers[name] = value;
@@ -610,7 +651,7 @@ export class McpjamLeaseClient {
       this.fetchImpl(url, {
         method: "POST",
         headers: await this.platformHeaders(),
-        body: JSON.stringify({ model: this.model }),
+        body: JSON.stringify({ model: this.model, modelSelection: this.modelSelection, ...(this.modelSelection.settings?.reasoningEffort ? {reasoningEffort: this.modelSelection.settings.reasoningEffort} : {}) }),
         signal,
         ...this.credentialRedirectPolicy(),
       });
@@ -859,6 +900,7 @@ export class McpjamModelLeaseScope {
         options.baseUrl,
         options.project,
         options.model,
+        options.modelSelection,
         headersKey,
       ]);
       let client = byKey.get(key);
@@ -879,6 +921,7 @@ export class McpjamModelLeaseScope {
       options.baseUrl,
       options.project,
       options.model,
+      options.modelSelection,
       options.apiKey,
       ...(headersKey.length > 0 ? [headersKey] : []),
     ]);
