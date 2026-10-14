@@ -1555,19 +1555,13 @@ export async function streamWebChatTurn(
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
     if (orgRuntime.runtimeLocation === "local") {
-      // The local runtime cannot resume a server-executed approval, and it
-      // refuses a WHOLE turn that advertises one. The workspace operations
-      // that pause for approval (MJ-008) would therefore take every other tool
-      // down with them; they are withheld here instead — refused, not run
-      // unasked.
+      // Withhold approval tools because the local runtime cannot resume them.
       if (localTools.removed.length > 0) {
         logger.warn(
           "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",
           { toolNames: localTools.removed },
         );
       }
-      // The inspector calls the provider on this runtime, so the effort is
-      // applied here as provider options, or refused before any spend.
       const localEffort = directChatEffort({
         providerKey: orgRuntime.provider.providerKey,
         modelId,
@@ -1584,6 +1578,9 @@ export async function streamWebChatTurn(
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         admission: orgRuntime.admission,
+        modelSelection: prepare.routingSelection?.source === "org" ? prepare.routingSelection : undefined,
+        modelSelectionOrigin: prepare.routingSelectionOrigin,
+        reasoningEffort: prepare.reasoningEffort,
         ...(historyPresentation ? { historyPresentation } : {}),
         failureReporter,
         projectId: persist.projectId,

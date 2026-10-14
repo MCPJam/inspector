@@ -46,7 +46,7 @@ import { postLocalUsage } from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
-import { buildLocalExecutionRecord } from "./local-execution-record.js";
+import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
@@ -244,10 +244,12 @@ export async function resolveTurnRuntime(
     // Same validation + build the SSE/headless local handlers run. Each
     // provider attempt (every step, every retry) asks the backend first.
     assertOrgModelAllowed(orgRuntime.provider, modelId);
+    const attempts: LocalExecutionAttempt[] = [];
     const llmModel = admitEachLocalOrgAttempt(
       buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId),
       orgRuntime.admission,
       modelId,
+      attempts,
     );
 
     // The inspector calls the provider, so the effort is applied here, as
@@ -303,6 +305,8 @@ export async function resolveTurnRuntime(
       // checks it against its own resolution of the same selection.
       const execution = buildLocalExecutionRecord({
         selection: orgSelection,
+        attempts,
+        origin: args.modelSelectionOrigin,
         providerKey,
         wireModelId: modelId,
         effectiveSettings: {
@@ -350,7 +354,7 @@ export async function resolveTurnRuntime(
         serverIds: args.serverIds,
         journeyRunId: args.attribution?.journeyRunId,
         ...(orgSelection && execution
-          ? { modelSelection: orgSelection, execution }
+          ? { modelSelection: orgSelection, modelSelectionOrigin: args.modelSelectionOrigin, execution }
           : {}),
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
