@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { track } from "@/lib/analytics";
 import { AlertCircle, Download, Loader2 } from "lucide-react";
 import {
@@ -98,6 +98,10 @@ export function EvalExportModal({
   projectId,
 }: EvalExportModalProps) {
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
+  const activeTabRef = useRef(activeTab);
+  useLayoutEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
   const [promptRetry, setPromptRetry] = useState(0);
   const [promptRequested, setPromptRequested] = useState(false);
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
@@ -174,7 +178,9 @@ export function EvalExportModal({
   useEffect(() => {
     // SDK code uses saved cases and connection settings. Only the optional
     // agent brief needs a live server, so do not probe it during SDK export.
-    if (!open || !promptRequested) {
+    // Read the selected tab without restarting a request on tab revisits.
+    if (!open || !promptRequested || activeTabRef.current !== "prompt") {
+      setPromptRequested(false);
       setAgentPromptState({ status: "idle", prompt: null, error: null });
       return;
     }

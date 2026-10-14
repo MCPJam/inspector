@@ -321,6 +321,29 @@ describe("EvalExportModal", () => {
     expect(mockExportServerApi).toHaveBeenCalledTimes(1);
   });
 
+  it("defers changed prompt inputs until the prompt tab is selected again", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderWithProviders(<EvalExportModal {...baseProps} />);
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText(/MCP Server Brief: weather/);
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+
+    rerender(
+      <EvalExportModal
+        {...baseProps}
+        cases={baseProps.cases.map((testCase) => ({
+          ...testCase,
+          query: "Updated query",
+        }))}
+      />,
+    );
+    expect(mockExportServerApi).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText(/Updated query/);
+    expect(mockExportServerApi).toHaveBeenCalledTimes(2);
+  });
+
   it("reuses an in-flight request across rapid tab visits", async () => {
     mockExportServerApi.mockReturnValueOnce(new Promise(() => {}));
     const user = userEvent.setup();
