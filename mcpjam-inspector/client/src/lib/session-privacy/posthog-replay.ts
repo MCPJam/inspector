@@ -15,7 +15,9 @@ import {
 import {
   currentSessionPrivacy,
   isCredentialBearingPath,
+  isErrorCaptureSurface,
   recordingSurface,
+  shouldMaskAnalytics,
 } from "./level";
 import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
 
@@ -82,10 +84,9 @@ export const SESSION_RECORDING_OPTIONS = {
   recordHeaders: false,
   recordBody: false,
   maskCapturedNetworkRequestFn: maskReplayRequestFull,
-  // DOM events reach `before_send` as plain JSON, not gzip strings, so its
-  // pass can scrub the stylesheet text rrweb masks nowhere
-  // (`scrubCaptureEvent` in lib/PosthogUtils.ts). posthog-js still gzips
-  // the request body by default.
+  // Keep DOM events as plain JSON so the final relay serializer can inspect
+  // stylesheet text that rrweb does not mask. posthog-js still gzips the
+  // request body by default.
   compress_events: false,
 } as const;
 
@@ -124,12 +125,27 @@ export function posthogPrivacyConfig(
   return profile === "masked"
     ? {
         session_recording: MASKED_SESSION_RECORDING_OPTIONS,
+        disable_session_recording: true,
+        autocapture: false,
+        capture_dead_clicks: false,
+        rageclick: false,
+        capture_exceptions: false,
+        disable_surveys: true,
+        enable_heatmaps: false,
+        capture_performance: false,
         enable_recording_console_log: false,
         mask_all_text: true,
         mask_all_element_attributes: true,
       }
     : {
         session_recording: SESSION_RECORDING_OPTIONS,
+        disable_session_recording: true,
+        autocapture: true,
+        capture_dead_clicks: true,
+        rageclick: true,
+        capture_exceptions: isErrorCaptureSurface(),
+        disable_surveys: false,
+        enable_heatmaps: true,
         // `null`, not `undefined` (posthog-js skips undefined in set_config):
         // console capture follows the project setting, as it always has.
         enable_recording_console_log: null,
@@ -159,29 +175,21 @@ export function lastSyncedPostHogClient(): PostHogRecorder | null {
 // level has already tightened, so those frames would be stamped with the new,
 // stricter label. Set only while a tightening stop runs.
 let discardingReplayBuffer = false;
-// When the recorder last started on the masked profile: older frames were
-// recorded under another profile and arrive here only through a late flush.
-let maskedReplayStartedAt: number | null = null;
+// Fresh recording boundary: reject delayed frames from an earlier privacy epoch.
+let replayStartedAt: number | null = null;
 
 interface ReplayFrameLike {
   timestamp?: unknown;
 }
 
-/**
- * The `$snapshot_data` frames a `$snapshot` captured now may carry, or `null`
- * to drop the event. Frames recorded before privacy tightened are dropped:
- * the stop's synchronous flush outright, and any later flush (posthog-js
- * defers it while compression drains) by timestamp against the masked
- * recorder's start. A full-profile frame must never leave under a masked
- * label, because the relay passes a masked-labelled replay as it is.
- */
+/** Reject strict captures and delayed frames recorded before the latest restart. */
 export function replayFramesToSend(frames: unknown): unknown[] | null {
-  if (discardingReplayBuffer) return null;
+  if (discardingReplayBuffer || currentSessionPrivacy() !== "full") return null;
   if (!Array.isArray(frames)) return null;
-  if (posthogProfile !== "masked" || maskedReplayStartedAt === null) {
+  if (replayStartedAt === null) {
     return frames;
   }
-  const startedAt = maskedReplayStartedAt;
+  const startedAt = replayStartedAt;
   const kept = frames.filter((frame: ReplayFrameLike) => {
     const timestamp = frame?.timestamp;
     return typeof timestamp === "number" && timestamp >= startedAt;
@@ -196,14 +204,14 @@ export function replayFramesToSend(frames: unknown): unknown[] | null {
  * and only this function starts it, so there is one way in. A profile change
  * stops the recorder FIRST, then reconfigures, then starts again: nothing
  * past the stop records under the old profile, and the restart takes a fresh,
- * fully masked snapshot. The caller (`useSessionPrivacy`) runs this in a
+ * fresh snapshot. The caller (`useSessionPrivacy`) runs this in a
  * layout effect, before rrweb sees the DOM the new level is for.
  *
  * `startSessionRecording()` without an override still honours the project's
  * sampling, so starting again after a stop never records a session sampling
  * declined. `pending`, `off` and credential locations
  * (`isCredentialBearingPath`: path, query and fragment) hold the recorder
- * stopped; an `off` surface never configures it at all.
+ * stopped; every surface starts with recording disabled.
  *
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
@@ -212,13 +220,22 @@ export function syncSessionRecording(
   client: PostHogRecorder,
   location: string | LocationLike,
 ): void {
+  if (lastPostHogClient !== client) {
+    discardingReplayBuffer = true;
+    try {
+      lastPostHogClient?.stopSessionRecording?.();
+    } finally {
+      discardingReplayBuffer = false;
+    }
+    posthogProfile = null;
+    posthogRecording = false;
+  }
   lastPostHogClient = client;
   try {
-    if (recordingSurface() === "off") return;
     const privacy = currentSessionPrivacy();
-    // Analytics masking follows the level even while replay is held off:
-    // `pending` and `off` analytics are masked.
-    const profile: PostHogProfile = privacy === "full" ? "full" : "masked";
+    // Full product capture need not wait for replay or run a recorder.
+    const profile: PostHogProfile =
+      shouldMaskAnalytics() || privacy === "masked" ? "masked" : "full";
     if (profile !== posthogProfile) {
       if (posthogRecording) {
         discardingReplayBuffer = profile === "masked";
@@ -233,11 +250,12 @@ export function syncSessionRecording(
       posthogProfile = profile;
     }
     const shouldRecord =
-      privacy !== "pending" &&
-      privacy !== "off" &&
+      recordingSurface() === "hosted" &&
+      privacy === "full" &&
+      !shouldMaskAnalytics() &&
       !isCredentialBearingPath(location);
     if (shouldRecord && !posthogRecording) {
-      if (profile === "masked") maskedReplayStartedAt = Date.now();
+      replayStartedAt = Date.now();
       client.startSessionRecording?.();
       posthogRecording = true;
     } else if (!shouldRecord && posthogRecording) {
