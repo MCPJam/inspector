@@ -146,7 +146,9 @@ describe("EvalExportModal", () => {
       .setup()
       .click(screen.getByRole("tab", { name: "Prompt for agent" }));
     await waitFor(() =>
-      expect(mockExportServerApi).toHaveBeenCalledWith("weather", { signal: expect.any(AbortSignal) }),
+      expect(mockExportServerApi).toHaveBeenCalledWith("weather", {
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -186,7 +188,9 @@ describe("EvalExportModal", () => {
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
 
     await screen.findByText(/MCP Server Brief: weather/);
-    expect(mockExportServerApi).toHaveBeenCalledWith("weather", { signal: expect.any(AbortSignal) });
+    expect(mockExportServerApi).toHaveBeenCalledWith("weather", {
+      signal: expect.any(AbortSignal),
+    });
     expect(screen.getByText(/MCP Server Brief: weather/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy prompt for agent" }),
@@ -296,6 +300,26 @@ describe("EvalExportModal", () => {
     expect(mockExportServerApi).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves the server URL and saved argument order in the brief", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <EvalExportModal
+        {...baseProps}
+        cases={baseProps.cases.map((testCase) => ({
+          ...testCase,
+          expectedToolCalls: [
+            { toolName: "get_weather", arguments: { zeta: 1, alpha: 2 } },
+          ],
+          promptTurns: [],
+        }))}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    const brief = await screen.findByText(/MCP Server Brief: weather/);
+    expect(brief).toHaveTextContent("https://weather.example.com/mcp");
+    expect(brief).toHaveTextContent("get_weather({zeta: 1, alpha: 2})");
+  });
+
   it("reuses a ready prompt across tab visits and equal input objects", async () => {
     const user = userEvent.setup();
     const { rerender } = renderWithProviders(
@@ -323,7 +347,9 @@ describe("EvalExportModal", () => {
 
   it("defers changed prompt inputs until the prompt tab is selected again", async () => {
     const user = userEvent.setup();
-    const { rerender } = renderWithProviders(<EvalExportModal {...baseProps} />);
+    const { rerender } = renderWithProviders(
+      <EvalExportModal {...baseProps} />,
+    );
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
     await screen.findByText(/MCP Server Brief: weather/);
     await user.click(screen.getByRole("tab", { name: "SDK code" }));
@@ -418,10 +444,19 @@ describe("EvalExportModal", () => {
     );
     rerender(<SwitchingSuite serverId="calendar" />);
     expect(staleDownloadVisible).toBe(false);
-    expect(screen.queryByText(/MCP Server Brief: weather/)).not.toBeInTheDocument();
-    expect(mockExportServerApi).toHaveBeenLastCalledWith("calendar", { signal: expect.any(AbortSignal) });
+    expect(
+      screen.queryByText(/MCP Server Brief: weather/),
+    ).not.toBeInTheDocument();
+    expect(mockExportServerApi).toHaveBeenLastCalledWith("calendar", {
+      signal: expect.any(AbortSignal),
+    });
 
-    completeExport({ serverId: "calendar", tools: [], resources: [], prompts: [] });
+    completeExport({
+      serverId: "calendar",
+      tools: [],
+      resources: [],
+      prompts: [],
+    });
     await screen.findByText(/MCP Server Brief: calendar/);
     await user.click(
       screen.getByRole("button", {
@@ -457,7 +492,9 @@ describe("EvalExportModal", () => {
           "true",
         ),
       );
-      expect(screen.getByRole("tab", { name: "Prompt for agent" })).toBeDisabled();
+      expect(
+        screen.getByRole("tab", { name: "Prompt for agent" }),
+      ).toBeDisabled();
       expect(mockExportServerApi).toHaveBeenCalledTimes(1);
 
       rerender(<EvalExportModal {...baseProps} />);
@@ -466,7 +503,9 @@ describe("EvalExportModal", () => {
         "aria-selected",
         "true",
       );
-      expect(screen.getByRole("tab", { name: "Prompt for agent" })).toBeEnabled();
+      expect(
+        screen.getByRole("tab", { name: "Prompt for agent" }),
+      ).toBeEnabled();
       expect(mockExportServerApi).toHaveBeenCalledTimes(1);
 
       await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));

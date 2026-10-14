@@ -99,9 +99,6 @@ export function EvalExportModal({
 }: EvalExportModalProps) {
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
   const activeTabRef = useRef(activeTab);
-  useLayoutEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
   const [promptRetry, setPromptRetry] = useState(0);
   const [promptRequested, setPromptRequested] = useState(false);
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
@@ -152,12 +149,23 @@ export function EvalExportModal({
   const serverConfig = singleServerId
     ? serverEntries[singleServerId]?.config
     : undefined;
-  // Equal brief inputs share a request even when the parent recreates its props.
-  const promptRequestKey = stableStringifyJson({
-    serverId: singleServerId,
-    serverUrl: serverConfig ? getServerUrl(serverConfig) : undefined,
-    exploreTestCases: mapEvalCasesToAgentBriefExploreCases(cases),
-  });
+  const promptOptions = useMemo(
+    () => ({
+      serverUrl: serverConfig ? getServerUrl(serverConfig) : undefined,
+      exploreTestCases: mapEvalCasesToAgentBriefExploreCases(cases),
+    }),
+    [cases, serverConfig],
+  );
+  // Canonical ordering identifies equal inputs; the brief keeps authored order.
+  const promptRequestKey = useMemo(
+    () => stableStringifyJson({ serverId: singleServerId, ...promptOptions }),
+    [singleServerId, promptOptions],
+  );
+  const promptOptionsRef = useRef(promptOptions);
+  useLayoutEffect(() => {
+    activeTabRef.current = activeTab;
+    promptOptionsRef.current = promptOptions;
+  }, [activeTab, promptOptions]);
 
   useEffect(() => {
     if (!open) {
@@ -194,10 +202,7 @@ export function EvalExportModal({
 
     let cancelled = false;
     const controller = new AbortController();
-    const promptOptions: {
-      serverUrl?: string;
-      exploreTestCases: ReturnType<typeof mapEvalCasesToAgentBriefExploreCases>;
-    } = JSON.parse(promptRequestKey);
+    const requestOptions = promptOptionsRef.current;
     setAgentPromptState({ status: "loading", prompt: null, error: null });
 
     void (async () => {
@@ -209,7 +214,7 @@ export function EvalExportModal({
           return;
         }
 
-        const prompt = generateAgentBrief(exportPayload, promptOptions);
+        const prompt = generateAgentBrief(exportPayload, requestOptions);
 
         setAgentPromptState({
           status: "ready",
