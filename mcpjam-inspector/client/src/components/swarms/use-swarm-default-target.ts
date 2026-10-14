@@ -6,7 +6,9 @@
  * reason this is shared: each has been a bug, and one copy is enough.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
+import { makeFunctionReference } from "convex/server";
+import type { GoalTarget } from "./inherited-goal-target";
 import {
   composerHasTarget,
   defaultComposerState,
@@ -30,6 +32,16 @@ import {
 } from "@/hooks/useViews";
 import { serversAreRunnable } from "@/lib/cloud-server-readiness";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
+import {
+  preflightSwarmTargets,
+  resolveSwarmEnvironment,
+} from "./swarm-target-preflight";
+
+const legacySwarmQuery = makeFunctionReference<
+  "query",
+  { projectId: string; hostIds: string[]; serverAttachmentId?: string },
+  null
+>("journeys:validateLegacySwarmTargets");
 
 export type SwarmDefaultTarget = {
   state: EnvironmentComposerState;
@@ -40,8 +52,7 @@ export type SwarmDefaultTarget = {
   noServers: { labels: string[] } | null;
   /** Mints or reuses the environments this target resolves to. */
   resolve: () => Promise<string[]>;
-  /** Live environment ids, or undefined when the query does not run. */
-  liveEnvironmentIds: ReadonlySet<string> | undefined;
+  resolveExisting: (target: GoalTarget) => Promise<GoalTarget>;
 };
 
 export function useSwarmDefaultTarget({
@@ -60,6 +71,7 @@ export function useSwarmDefaultTarget({
   const [state, setState] =
     useState<EnvironmentComposerState>(emptyComposerState);
   const envList = useMemo(() => environments ?? [], [environments]);
+  const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const { serverAttachments, isLoading: attachmentsLoading } =
@@ -67,19 +79,14 @@ export function useSwarmDefaultTarget({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Null outside an AppStateProvider — then there is no connection history.
   const appState = useOptionalSharedAppState();
-  const resolveTargets = useComposerResolver(projectId);
+  const resolveTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+    allowEmptyServerSelection: false,
+  });
   // Ad-hoc rows carry `lastUsedAt`, and the caller's list is named-only.
   const usageRows = useProjectEnvironments(projectId, { includeAdhoc: true });
   const usageQueryEnabled =
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
-  // The same rows double as the live set: this query excludes archived ones.
-  const liveEnvironmentIds = useMemo(
-    () =>
-      usageRows
-        ? new Set(usageRows.map((row) => row.environmentId))
-        : undefined,
-    [usageRows],
-  );
   const { servers: catalog } = useProjectServers({
     isAuthenticated,
     projectId,
@@ -103,6 +110,10 @@ export function useSwarmDefaultTarget({
 
   useEffect(() => {
     if (!active || seededRef.current) return;
+    if (state.customized || state.environmentIds.length > 0) {
+      seededRef.current = true;
+      return;
+    }
     if (environmentsEnabled && environments === undefined) return;
     // The attachments query reports an empty list while it loads; seeding off
     // that would latch the default to "no server group".
@@ -147,6 +158,8 @@ export function useSwarmDefaultTarget({
     isUserReady,
     offerable,
     projectId,
+    state.customized,
+    state.environmentIds,
     usageQueryEnabled,
     usageRows,
   ]);
@@ -156,21 +169,47 @@ export function useSwarmDefaultTarget({
   const readiness = useCloudServerReadiness({
     projectId,
     state,
-    environments: envList,
+    environments: usageRows ?? envList,
+    requireServerSelection: true,
   });
   const noServers = readiness.status === "no_servers" ? readiness : null;
+
+  const resolveExisting = useCallback(
+    async (target: GoalTarget) => {
+      if (target.environmentIds.length === 0) {
+        await convex.query(legacySwarmQuery, {
+          projectId,
+          hostIds: target.hostIds,
+          ...(target.serverAttachmentId
+            ? { serverAttachmentId: target.serverAttachmentId }
+            : {}),
+        });
+        return target;
+      }
+      await preflightSwarmTargets({
+        environmentIds: target.environmentIds,
+        targets: usageRows ?? envList,
+        hosts: [],
+        resolve: (id) => resolveSwarmEnvironment(convex, projectId, id),
+      });
+      return target;
+    },
+    [convex, envList, projectId, usageRows],
+  );
 
   const resolve = useCallback(async () => {
     const resolved = await resolveTargets({
       state,
-      liveEnvironments: envList,
+      liveEnvironments: usageRows ?? envList,
       max: MAX_ENVIRONMENTS_PER_JOURNEY,
     });
     if (resolved.environmentIds.length === 0) {
       throw new Error("Could not resolve where this should run.");
     }
-    return resolved.environmentIds;
-  }, [envList, resolveTargets, state]);
+    const target = { hostIds: [], environmentIds: resolved.environmentIds };
+    await resolveExisting(target);
+    return target.environmentIds;
+  }, [envList, resolveExisting, resolveTargets, state, usageRows]);
 
   return {
     state,
@@ -178,6 +217,6 @@ export function useSwarmDefaultTarget({
     ready: composerHasTarget(state) && !noServers,
     noServers,
     resolve,
-    liveEnvironmentIds,
+    resolveExisting,
   };
 }

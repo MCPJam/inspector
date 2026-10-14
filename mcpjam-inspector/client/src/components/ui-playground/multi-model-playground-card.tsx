@@ -161,6 +161,7 @@ interface MultiModelPlaygroundCardProps {
    */
   compareSubLabel?: string;
   model: ModelDefinition;
+  selection?: import("@mcpjam/sdk/browser").RequestedModelSelection;
   /** This column's own effort, sent on its requests (undefined = Default). */
   reasoningEffort?: ModelReasoningEffort;
   /** Harness the column's host runs (gates the levels the turn may send). */
@@ -283,6 +284,7 @@ export function MultiModelPlaygroundCard({
   compareKind,
   compareSubLabel,
   model,
+  selection,
   reasoningEffort,
   reasoningEffortHarness,
   effort,
@@ -444,6 +446,8 @@ export function MultiModelPlaygroundCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    pickedModelSelection: selection,
+    selectionIntent: compareKind === "host" ? "inherit" : "picked",
     // The lane's own extension owner: its turns carry its workspace and
     // its Apps' context, never another lane's or the single chat's.
     pluginWorkspace: laneWorkspaceForSession,

@@ -159,8 +159,9 @@ describe("seedHostTemplate", () => {
           mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
         },
       },
-      elicitation: { form: {}, url: {} },
     });
+    // Form only: URL elicitation failed with -32600 on 2026-10-12.
+    expect(config.clientCapabilities?.elicitation).toEqual({ form: {} });
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
@@ -239,10 +240,48 @@ describe("seedHostTemplate", () => {
       },
     });
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
-      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
-      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "connect-src": [
+        "https://cdn.jsdelivr.net",
+        "https://unpkg.com",
+        "https://esm.sh",
+      ],
+      "script-src": [
+        "https://cdn.jsdelivr.net",
+        "https://unpkg.com",
+        "https://esm.sh",
+      ],
       "frame-src": ["'self'", "data:", "blob:"],
     });
+  });
+
+  it("allows esm.sh only on hosts whose sandbox loaded it undeclared", () => {
+    const cspDirectivesOf = (id: HostTemplateId) =>
+      seedHostTemplate(id, { theme: "dark" }).mcpProfile?.apps?.sandbox?.csp
+        ?.cspDirectives ?? {};
+    // ChatGPT and Codex loaded esm.sh undeclared on every one of these.
+    for (const id of ["chatgpt", "codex"] as const) {
+      const directives = cspDirectivesOf(id);
+      for (const directive of [
+        "connect-src",
+        "script-src",
+        "style-src",
+        "img-src",
+        "font-src",
+        "media-src",
+      ]) {
+        expect(directives[directive], `${id} ${directive}`).toContain(
+          "https://esm.sh"
+        );
+      }
+    }
+    // Claude's CSP blocked it everywhere, so no directive may list it.
+    for (const id of ["claude", "claude-desktop"] as const) {
+      const directives = cspDirectivesOf(id);
+      expect(Object.keys(directives).length).toBeGreaterThan(0);
+      for (const [directive, sources] of Object.entries(directives)) {
+        expect(sources, `${id} ${directive}`).not.toContain("https://esm.sh");
+      }
+    }
   });
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
@@ -266,19 +305,20 @@ describe("seedHostTemplate", () => {
     const config = seedHostTemplate("copilot", { theme: "dark" });
     const profile = config.mcpProfile;
 
-    // Probed 2026-08-26: the real handshake sends `mcs` 1.0.0 plus Copilot's
-    // routing fields. hostInfo below stays at the vendor-doc profile — no
-    // ui/initialize was ever observed, so nothing measured contradicts it.
+    // 2026-10-12 probe: `server/discover` at 2026-07-28 as `Sydney` 1.0.0,
+    // and a real ui/initialize reporting `M365Copilot` 1.0.0.
+    expect(profile?.mcpProtocolVersion).toBe("auto");
     expect(profile?.initialize?.clientInfo).toEqual({
-      name: "mcs",
+      name: "Sydney",
       version: "1.0.0",
-      channelId: "pva-studio",
-      lcat: "M365_COPILOT_USER",
-      agentAuthenticationMode: "Integrated",
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
-      name: "Copilot",
-      version: "1.0.1",
+      name: "M365Copilot",
+      version: "1.0.0",
+    });
+    expect(profile?.apps?.sandbox?.permissions).toEqual({
+      mode: "custom",
+      allow: { clipboardWrite: true },
     });
     expect(profile?.apps?.compatRuntime).toMatchObject({
       openaiApps: true,
@@ -294,6 +334,9 @@ describe("seedHostTemplate", () => {
     expect(config.hostCapabilitiesOverride).toEqual({
       openLinks: {},
       serverTools: {},
+      serverResources: {},
+      logging: {},
+      downloadFile: {},
       message: { text: {} },
       updateModelContext: { text: {} },
     });

@@ -1,0 +1,172 @@
+name: Docker Release
+
+# Publishes the self-hosted Inspector image, mcpjam/mcp-inspector on Docker
+# Hub, at the Inspector version `main` carries. release.yml calls it once that
+# version is on npm. Dispatching it by hand is the retry path, and the way to
+# push the current version without cutting a release.
+#
+# Same Dockerfile Railway builds the hosted app from, but with no build args:
+# without VITE_MCPJAM_HOSTED_MODE the bundle is the local Inspector, the one
+# `npx @mcpjam/inspector` runs.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: "The commit the release published to npm"
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+
+# Every release must get its tags, so pending runs wait in line instead of
+# replacing each other.
+concurrency:
+  group: docker-release
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_REPOSITORY: mcpjam/mcp-inspector
+
+jobs:
+  prepare:
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "docker-release.yml must run from the main branch" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: mcpjam-inspector/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Read the Inspector version
+        id: version
+        run: echo "version=$(jq -r .version mcpjam-inspector/package.json)" >> "$GITHUB_OUTPUT"
+
+      # The image must hold the code npm got for this version. A release
+      # passes the commit it published from. A dispatch builds the commit the
+      # `v<version>` tag names, not whatever `main` has merged since; the tag
+      # exists only once that version is on npm, so a dispatch between a
+      # version PR merging and its release finishing stops here.
+      - name: Resolve the release commit
+        id: commit
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sha="$RELEASE_SHA"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote origin "refs/tags/v$VERSION" | cut -f1)"
+          fi
+          if [ -z "$sha" ]; then
+            echo "::error::Tag v$VERSION does not exist yet, so its release has not finished. Re-run the Docker job from that release run instead." >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  # One native runner per architecture: under QEMU the arm64 build (npm ci,
+  # the client bundle, Chromium) takes several times longer.
+  build:
+    needs: prepare
+    name: Build ${{ matrix.arch }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          # The build context is the whole checkout and this image is public;
+          # keep the token out of .git/config.
+          persist-credentials: false
+
+      - name: Stamp the build time
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./mcpjam-inspector/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          # A public repository defaults to mode=max, which records build-arg
+          # values in an attestation published next to the image.
+          provenance: mode=min
+          build-args: |
+            MCPJAM_BUILD_SURFACE=local
+          tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+
+  # The tags users pull, each pointing at both architectures. Written only
+  # after both builds pushed, so `latest` never names a single-arch image.
+  publish:
+    needs: [prepare, build]
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # `latest` follows npm's `latest` dist-tag, so re-running an older
+      # release's Docker job refreshes its own tag without moving `latest`
+      # back, and a prerelease never becomes `latest`.
+      - name: Create the multi-arch tags
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          tags=("$DOCKER_REPOSITORY:v$VERSION")
+          skipped=""
+          npm_latest="$(npm view @mcpjam/inspector dist-tags.latest)"
+          if [ "$npm_latest" = "$VERSION" ]; then
+            tags+=("$DOCKER_REPOSITORY:latest")
+          else
+            skipped="latest not moved: npm latest is $npm_latest, not $VERSION."
+            echo "::notice::$skipped"
+          fi
+          tag_flags=()
+          for tag in "${tags[@]}"; do tag_flags+=(--tag "$tag"); done
+          docker buildx imagetools create "${tag_flags[@]}" \
+            "$DOCKER_REPOSITORY:v$VERSION-amd64" \
+            "$DOCKER_REPOSITORY:v$VERSION-arm64"
+          echo "Published ${tags[*]} (linux/amd64, linux/arm64). $skipped" >> "$GITHUB_STEP_SUMMARY"

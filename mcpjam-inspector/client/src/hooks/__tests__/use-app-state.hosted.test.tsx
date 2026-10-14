@@ -2,6 +2,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "@/state/app-types";
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
+import {
+  captureOAuthCallbackFromUrl,
+  consumeOAuthCallbackParams,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 
 const {
   loadAppStateMock,
@@ -342,6 +347,60 @@ describe("useAppState pending OAuth marker org preference", () => {
 
     // Without ?code/?error in the URL, the marker is inert; resolution falls
     // back to the first owned org rather than restoring the marker's choice.
+    expect(result.current.activeOrganizationId).toBe("org-other");
+  });
+
+  it("keeps the marker org pinned once main.tsx has moved the code into the inbox", async () => {
+    // Production: the address bar reads `/oauth/callback?oauth_pending=1` by
+    // the time this hook runs. Reading `?code` from the URL would see none and
+    // drop the pin mid-completion — the flip the pin exists to prevent.
+    resetOAuthCallbackInboxForTests();
+    captureOAuthCallbackFromUrl();
+    expect(window.location.search).toBe("?oauth_pending=1");
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-other", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.activeOrganizationId).toBe("org-from-marker");
+    });
+    resetOAuthCallbackInboxForTests();
+  });
+
+  it("ignores the marker once the inbox's answer has been consumed", async () => {
+    resetOAuthCallbackInboxForTests();
+    captureOAuthCallbackFromUrl();
+    consumeOAuthCallbackParams();
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-other", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+
     expect(result.current.activeOrganizationId).toBe("org-other");
   });
 

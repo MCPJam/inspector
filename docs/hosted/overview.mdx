@@ -90,6 +90,10 @@ The following features are not available in the hosted app. They are available w
 
 The hosted app requires all MCP server connections to use **HTTPS**. If your server only supports HTTP, use the [local inspector](/installation) instead.
 
+### Connections come from MCPJam's servers
+
+The hosted app connects to your MCP server from MCPJam's servers, not from your machine. If your server only accepts known IP addresses, allow MCPJam's [published addresses](/hosted/network), or use the [local inspector](/installation), which connects from your own network.
+
 ### No STDIO connections
 
 STDIO servers are not available in the hosted version of MCPJam. Use a Streamable HTTP endpoint instead, or switch to the [local inspector](/installation).
