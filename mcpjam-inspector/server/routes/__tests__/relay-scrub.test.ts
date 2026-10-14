@@ -381,81 +381,47 @@ describe("events the walker cannot finish are not forwarded", () => {
   });
 });
 
-describe("metrics are scrubbed and re-encoded the way they came", () => {
-  // OTLP JSON: the page URL is an attribute, and a body is free text.
-  function otlpMetrics() {
-    return {
-      resourceMetrics: [
-        {
-          resource: {
-            attributes: [
-              { key: "service.name", value: { stringValue: "web" } },
-              { key: "page", value: { stringValue: CALLBACK_URL } },
-            ],
-          },
-          scopeMetrics: [
-            {
-              metrics: [
-                {
-                  name: "page.load",
-                  description: `loaded ${SHARE_URL}`,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-  }
-
+describe("unapproved OTLP families stop before vendor egress", () => {
   it.each([
-    ["JSON", (json: string) => json, (b: Buffer) => b.toString("utf8")],
-    [
-      "gzip",
-      (json: string) => gzipSync(json),
-      (b: Buffer) => gunzipSync(b).toString("utf8"),
-    ],
+    ["JSON", (json: string) => json],
+    ["gzip", (json: string) => gzipSync(json)],
     [
       "base64 form",
       (json: string) => `data=${encodeURIComponent(base64(json))}`,
-      (b: Buffer) =>
-        Buffer.from(
-          new URLSearchParams(b.toString("utf8")).get("data") as string,
-          "base64",
-        ).toString("utf8"),
     ],
-  ] as const)("%s", async (_name, encode, decode) => {
-    const response = await post(
-      `/tlm/i/v1/metrics?token=${KEY}`,
-      encode(JSON.stringify(otlpMetrics())),
-    );
-    expect(response.status).toBe(200);
-    const { url } = forwardedCall();
-    expect(url.searchParams.get("token")).toBe(KEY);
-    const forwarded = JSON.parse(decode(forwardedBytes()));
-    expect(JSON.stringify(forwarded)).not.toContain("SENTINEL");
-    const resource = forwarded.resourceMetrics[0];
-    expect(resource.resource.attributes[1].value.stringValue).toBe(
-      "https://app.mcpjam.com/oauth/callback?code=[redacted]&state=[redacted]",
-    );
-    expect(resource.scopeMetrics[0].metrics[0].description).toBe(
-      "loaded https://app.mcpjam.com/results/[redacted]",
-    );
-  });
-
-  it("drops a metrics payload that cannot be decoded", async () => {
-    const response = await post(
-      `/tlm/i/v1/metrics?token=${KEY}`,
-      `{"resourceMetrics":[`,
-    );
-    expect(response.status).toBe(400);
-    expect(fetch).not.toHaveBeenCalled();
-    expect(flushedStats()).toMatchObject({ scrubDrops: 1 });
-  });
-
-  it("never forwards logs, which carry console output", async () => {
-    const response = await post(`/tlm/i/v1/logs?token=${KEY}`, "{}");
-    expect(response.status).toBe(403);
+  ] as const)(
+    "rejects %s metrics with arbitrary attributes",
+    async (_name, encode) => {
+      const response = await post(
+        `/tlm/i/v1/metrics?token=${KEY}`,
+        encode(
+          JSON.stringify({
+            resourceMetrics: [
+              {
+                resource: {
+                  attributes: [
+                    {
+                      key: "prompt",
+                      value: { stringValue: "SENTINEL_private_content" },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        ),
+      );
+      expect(response.status).toBe(403);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(flushedStats()).toMatchObject({ privacyRejected: 1 });
+    },
+  );
+  it("rejects logs and malformed metrics without decoding or forwarding", async () => {
+    for (const family of ["logs", "metrics"]) {
+      expect(
+        (await post(`/tlm/i/v1/${family}?token=${KEY}`, "{invalid")).status,
+      ).toBe(403);
+    }
     expect(fetch).not.toHaveBeenCalled();
   });
 });

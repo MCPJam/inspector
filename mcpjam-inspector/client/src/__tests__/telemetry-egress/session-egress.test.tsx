@@ -198,7 +198,7 @@ describe("a secret query key or fragment on a normal page", () => {
 });
 
 describe("a buffered unload on a normal page", () => {
-  it("ships what was buffered by beacon, and nothing planted in it", async () => {
+  it("ships the buffer by keepalive fetch without planted content", async () => {
     // Unloading ON a credential page is a cold-load test
     // (`cold-load-*.test.tsx`); here the buffer holds a normal page's replay
     // and events that carry credential URLs in their properties.
@@ -219,8 +219,13 @@ describe("a buffered unload on a normal page", () => {
       posthogEvents: ["egress_before_unload", "$autocapture", "$snapshot"],
     });
     expect(
-      scan.decoded.some((entry) => entry.request.transport === "sendBeacon"),
-      "the unload flush must leave by sendBeacon",
+      scan.decoded.some(
+        (entry) =>
+          entry.sink === "posthog" &&
+          entry.request.transport === "fetch" &&
+          harness.network.keepaliveRequests.has(entry.request),
+      ),
+      "the unload flush must leave by keepalive fetch",
     ).toBe(true);
     // A bfcache restore: the session carries on for the next step.
     window.dispatchEvent(
