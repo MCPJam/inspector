@@ -35,15 +35,14 @@ export type HarnessOrgLeaseUpstream = {
 };
 
 /**
- * The org selection a broker request carries, or nothing. Only a `source:
- * 'org'` selection travels: a hosted request's body carries no selection.
+ * The hosted or org choice a broker request carries. It does not change admission.
  */
-export function orgSelectionField(
+export function leaseSelectionField(
   selection: ModelSelection | null | undefined,
 ): {
   modelSelection?: ModelSelection;
 } {
-  return selection?.source === "org" ? { modelSelection: selection } : {};
+  return selection && (selection.source === "org" || selection.source === "hosted") ? { modelSelection: selection } : {};
 }
 
 /** What a start response echoes for an org lease, checked at the boundary. */

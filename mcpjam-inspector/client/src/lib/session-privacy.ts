@@ -1,13 +1,13 @@
 /**
- * Session privacy levels: what session replay and product analytics may
- * record in this browser session.
+ * Session privacy levels control replay. Product capture independently needs
+ * the current backend content grant in telemetry-context.ts.
  *
  *   - `off`    — no replay at all. npx/Docker installs, `electron-forge start`
  *                and builds with `VITE_DISABLE_POSTHOG_LOCAL` (an `off`
  *                SURFACE), and anyone the backend answers `off` for: an
  *                organization with session replay off is in view, or the
- *                person belongs to one. On a recording surface, `off`
- *                analytics are masked like `masked` ones.
+ *                person belongs to one. A replay-off policy also grants
+ *                strict content; a local off surface can retain full products.
  *   - `masked` — replay of layout and interaction only: every text node and
  *                input masked, media blocked, no console logs, no network
  *                headers or bodies, and name-like URL segments replaced.
@@ -26,7 +26,7 @@
  * fails or never arrives keeps both recorders stopped (`useSessionPrivacy`),
  * and a person this browser last saw answered `off` stays `off`
  * (`replayOffRemembered`). After an answer has let the session record, a
- * navigation whose answer is still on its way records `masked`. The PostHog relay
+ * navigation whose answer is still on its way records nothing. The PostHog relay
  * enforces the same policy again on the server: it drops replay the backend
  * says is `off`, and restricted replay the client did not declare masked.
  *

@@ -59,9 +59,7 @@ export type {
 } from "./directory-readiness/observations.js";
 
 /**
- * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
- * ("that apps result graded a different server") without holding the adapters
- * themselves — those read raw tool `_meta` a browser has no business seeing.
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation ("that apps result graded a different server") without holding the adapters themselves — those read raw tool `_meta` a browser has no business seeing.
  */
 export {
   EVIDENCE_REUSE_REFUSALS,
@@ -383,6 +381,7 @@ export {
   describeError,
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -399,6 +398,24 @@ export type {
   ErrorCatalogEntry,
   ErrorCatalogSlug,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; the inspector and the CLI derive their tables from it.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 export type {
   BaseServerConfig,
@@ -1187,3 +1204,5 @@ export type {
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";

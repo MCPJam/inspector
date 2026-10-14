@@ -91,6 +91,42 @@ function json(body: unknown): Response {
   });
 }
 
+function stallUntilAborted(request: Request, onAbort: () => void) {
+  return new Promise<Response>((_resolve, reject) => {
+    const rejectOnAbort = () => {
+      onAbort();
+      reject(request.signal.reason);
+    };
+    // A fetch can start after its caller's deadline has already aborted.
+    if (request.signal.aborted) rejectOnAbort();
+    else request.signal.addEventListener("abort", rejectOnAbort, { once: true });
+  });
+}
+
+it.each(["before", "after"])(
+  "observes an upstream abort %s registration",
+  async (timing) => {
+    const controller = new AbortController();
+    const reason = new Error("Upstream fixture aborted");
+    const observed = vi.fn();
+    if (timing === "before") controller.abort(reason);
+    const pending = stallUntilAborted(
+      new Request("https://upstream.invalid", { signal: controller.signal }),
+      observed,
+    );
+    const rejected = expect(pending).rejects.toBe(reason);
+    if (timing === "after") {
+      expect(observed).not.toHaveBeenCalled();
+      expect(await Promise.race([pending, Promise.resolve("pending")])).toBe(
+        "pending",
+      );
+      controller.abort(reason);
+    }
+    await rejected;
+    expect(observed).toHaveBeenCalledOnce();
+  },
+);
+
 /** An answer that is not MCP: 405 with an HTML page. */
 const htmlRejection: Upstream = () =>
   new Response("<html><body>UNEXPECTED_MARKER_BODY</body></html>", {
@@ -270,11 +306,8 @@ describe("hosted chat turn (MJ-001)", () => {
     // the manager's own per-request timeout and retries.
     let aborted = false;
     upstream.current = (request) =>
-      new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener("abort", () => {
-          aborted = true;
-          reject(request.signal.reason);
-        });
+      stallUntilAborted(request, () => {
+        aborted = true;
       });
     const disconnectAll = vi.spyOn(
       MCPClientManager.prototype,
