@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   communityBackendEnv,
   NO_PRODUCTION_BROWSER_ARGS,
@@ -49,7 +51,7 @@ export default defineConfig({
     baseURL,
     ...(!deployedBaseUrl
       ? {
-          storageState: fileURLToPath(new URL("./test-results/smoke-guest.json", import.meta.url)),
+          storageState: join(tmpdir(), `mcpjam-smoke-guest-${process.pid}.json`),
           // A local boot must never reach production; see e2e/community-backend.ts.
           launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
