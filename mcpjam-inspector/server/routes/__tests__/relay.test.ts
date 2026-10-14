@@ -14,6 +14,7 @@ import relayRoutes, {
 } from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { TELEMETRY_CONTEXT_PROPERTY } from "../../../shared/telemetry-privacy.js";
+import { setTelemetryPolicyQueryForTests } from "../../services/telemetry-privacy-policy.js";
 import { securityHeadersMiddleware } from "../../middleware/security-headers.js";
 import { originValidationMiddleware } from "../../middleware/origin-validation.js";
 import { sessionAuthMiddleware } from "../../middleware/session-auth.js";
@@ -38,16 +39,15 @@ const ORIGINAL_FETCH = global.fetch;
 
 const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
 
-// The stamp a current client puts on a replay it recorded masked
-// (client/src/lib/telemetry-context.ts). Without a bearer the relay forwards
-// replay only when it says so; relay-privacy.test.ts covers the rules.
-const MASKED_REPLAY = {
+// Parsing and admission tests use an authenticated open context for replay.
+const CAPTURED_FULL = {
   [TELEMETRY_CONTEXT_PROPERTY]: {
-    v: 1,
-    p: [],
+    v: 2,
+    p: ["project_test"],
     o: [],
-    r: "masked",
-    i: "id_only",
+    r: "full",
+    i: "full",
+    c: "full",
   },
 };
 
@@ -71,7 +71,6 @@ function base64Form(json: string): string {
   return `data=${dataParam(json)}`;
 }
 
-// A POST the way a browser sends it: with its body's declared length.
 function sized(body: string | ReturnType<typeof gzipSync>): RequestInit {
   return {
     method: "POST",
@@ -110,7 +109,7 @@ function largeReplayBatch(snapshotBytes: number): string {
     {
       event: "$snapshot",
       properties: {
-        ...MASKED_REPLAY,
+        ...CAPTURED_FULL,
         token: POSTHOG_PROJECT_KEY,
         $snapshot_data: [
           fullSnapshot(randomBytes(snapshotBytes).toString("base64")),
@@ -120,8 +119,6 @@ function largeReplayBatch(snapshotBytes: number): string {
   ]);
 }
 
-// The JSON a forwarded request carried.
-// The JSON a forwarded request carried: a POST body arrives gzip-compressed.
 function forwardedJson(callIndex = 0): unknown {
   const body = mockedFetchInit(callIndex).body;
   if (typeof body === "string") return JSON.parse(body);
@@ -134,8 +131,6 @@ function forwardedJson(callIndex = 0): unknown {
   );
 }
 
-// Events as the relay forwards them without a bearer: the conservative
-// policy marks each one GeoIP-disabled and drops any client IP.
 function restricted<T extends { properties?: Record<string, unknown> }>(
   event: T,
 ): T {
@@ -145,12 +140,13 @@ function restricted<T extends { properties?: Record<string, unknown> }>(
   };
 }
 
-// Mount on BOTH prefixes exactly like both production entries so the tests
-// exercise the mounted-path behavior: inside the sub-app c.req.path still
-// includes the mount prefix (/relay or its edge-safe alias /tlm), and the
-// route must strip whichever one it was reached through before forwarding.
 function createTestApp() {
   const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("Authorization", "Bearer fixture-token");
+    c.req.raw.headers.set("x-mcpjam-telemetry-policy", "full");
+    await next();
+  });
   app.use("/relay/*", relayBodyLimit());
   app.route("/relay", relayRoutes);
   app.use("/tlm/*", relayBodyLimit());
@@ -179,10 +175,14 @@ function mockedFetchInit(callIndex = 0): RequestInit {
 describe("posthog relay proxy", () => {
   beforeEach(() => {
     global.fetch = vi.fn();
+    setTelemetryPolicyQueryForTests(async () => ({
+      recording: "full", identity: "full", content: "full",
+    }));
   });
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    setTelemetryPolicyQueryForTests(null);
     zlibControl.hold = false;
     for (const run of zlibControl.held.splice(0)) run();
   });
@@ -482,7 +482,7 @@ describe("posthog relay proxy", () => {
         {
           event: "$snapshot",
           properties: {
-            ...MASKED_REPLAY,
+            ...CAPTURED_FULL,
             token: POSTHOG_PROJECT_KEY,
             $snapshot_data: [fullSnapshot(threeMb)],
           },
@@ -1006,7 +1006,7 @@ describe("posthog relay proxy", () => {
           pad([
             {
               event: "$snapshot",
-              properties: { ...MASKED_REPLAY, token: ours },
+              properties: { ...CAPTURED_FULL, token: ours },
             },
           ]),
         200,
@@ -1108,7 +1108,7 @@ describe("posthog relay proxy", () => {
       const events = Array.from({ length: 80 }, () => ({
         event: "$snapshot",
         properties: {
-          ...MASKED_REPLAY,
+          ...CAPTURED_FULL,
           token: POSTHOG_PROJECT_KEY,
           $snapshot_data: [
             fullSnapshot(randomBytes(30 * 1024).toString("base64")),
