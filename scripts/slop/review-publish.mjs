@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Publish the triage: commit each autofix to the PR branch as its own commit,
- * push, then post one COMMENT review on the new head with the suggestions and
+ * Publish the triage: commit all autofixes to the PR branch as one commit,
+ * push it, then post one COMMENT review on the new head with the suggestions and
  * the items that need a decision inline, and everything else in the body.
  *
  * Edits go through git plumbing (blob, index, commit), never the working tree,
@@ -64,8 +64,10 @@ export function reviewBody({ gate, triage, autofixed, inline, unplaced, commitUr
   const parts = [`## Review pipeline: ${phase.name}`, "", triage.summary];
   if (triage.verdict && triage.verdict !== "FAILED") parts.push("", `Verdict: **${triage.verdict}**`);
   if (autofixed.length) {
-    parts.push("", `**Autofixed** in ${autofixed.length} commit${autofixed.length === 1 ? "" : "s"} on this branch:`,
-      ...autofixed.map((item) => `- [\`${item.sha.slice(0, 7)}\`](${commitUrl(item.sha)}) ${item.commit}: ${item.why}`));
+    const { sha } = autofixed[0];
+    parts.push("", `**Autofixed** ${autofixed.length} item${autofixed.length === 1 ? "" : "s"} in ` +
+      `[\`${sha.slice(0, 7)}\`](${commitUrl(sha)}) on this branch:`,
+      ...autofixed.map((item) => `- ${item.commit}: ${item.why}`));
   }
   const suggestions = inline.filter((item) => item.category === "suggest").length;
   const decisions = inline.length - suggestions;
@@ -82,21 +84,35 @@ export function reviewBody({ gate, triage, autofixed, inline, unplaced, commitUr
   return `${body}\n\nReviewed commit: ${gate.sha}\n\n${phaseMarker(gate.phase, gate.sha)}`;
 }
 
-/** Commit each autofix on top of HEAD. One that no longer applies becomes a suggestion. */
+/**
+ * Stage every autofix and commit them together on top of HEAD, so a run pushes
+ * one commit. Edits to the same file build on each other; one that no longer
+ * applies after an earlier edit becomes a suggestion.
+ */
 export function commitAutofixes(items, { runGit, phase, identity }) {
-  const as = ["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`];
-  return items.map((item) => {
+  const staged = new Map();
+  const result = items.map((item) => {
     if (item.category !== "autofix") return item;
-    const blob = readBlob(runGit, "HEAD", item.path);
+    const blob = staged.get(item.path) ?? readBlob(runGit, "HEAD", item.path);
     const next = blob && applyEdit(blob.content, item.find, item.replace);
     if (next === null || next === undefined) {
       return { ...item, category: "suggest", downgraded: "an earlier fix changed these lines" };
     }
-    const hash = runGit(["hash-object", "-w", "--stdin"], next).trim();
-    runGit(["update-index", "--cacheinfo", `${blob.mode},${hash},${item.path}`]);
-    runGit([...as, "commit", "-q", "--no-verify", "-m", `${item.commit}\n\n${AUTOFIX_TRAILER}: ${phase}`]);
-    return { ...item, sha: runGit(["rev-parse", "HEAD"]).trim() };
+    staged.set(item.path, { ...blob, content: next });
+    return { ...item, applied: true };
   });
+  const applied = result.filter((item) => item.applied);
+  if (applied.length === 0) return result;
+  for (const [path, { mode, content }] of staged) {
+    const hash = runGit(["hash-object", "-w", "--stdin"], content).trim();
+    runGit(["update-index", "--cacheinfo", `${mode},${hash},${path}`]);
+  }
+  const subject = applied.length === 1 ? applied[0].commit : `Apply ${applied.length} review autofixes`;
+  const details = applied.length === 1 ? "" : `${applied.map((item) => `- ${item.commit}`).join("\n")}\n\n`;
+  runGit(["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`, "commit", "-q", "--no-verify",
+    "-m", `${subject}\n\n${details}${AUTOFIX_TRAILER}: ${phase}`]);
+  const sha = runGit(["rev-parse", "HEAD"]).trim();
+  return result.map(({ applied: done, ...item }) => (done ? { ...item, sha } : item));
 }
 
 /** Split comment items into inline comments and body entries, dropping ones posted before. */

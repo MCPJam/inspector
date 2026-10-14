@@ -72,7 +72,7 @@ test("hunk ranges cover the right-hand lines GitHub shows, context included", ()
   assert.deepEqual(hunkRanges("@@ -17,8 +17,9 @@ x\n@@ -50 +51,0 @@\n@@ -60 +60 @@"), [{ start: 17, end: 25 }, { start: 60, end: 60 }]);
 });
 
-test("autofixes become one bot commit each, are pushed, and the review lands on the new head", async (t) => {
+test("all autofixes go into one bot commit, pushed once, and the review lands on the new head", async (t) => {
   const items = [
     item({ category: "autofix", find: "changed 21", replace: "fixed 21", commit: "Fix line 21" }),
     item({ category: "autofix", find: "line 2", replace: "line two", commit: "Fix line 2" }),
@@ -82,9 +82,9 @@ test("autofixes become one bot commit each, are pushed, and the review lands on 
   const { ctx, github, pushes, result } = run(t, { items });
   const outcome = await result;
   assert.deepEqual(pushes, ["feature"]);
-  const log = ctx.remote(["log", "--format=%an|%s|%b%x00", "feature"]).split("\0").map((entry) => entry.trim());
-  assert.match(log[0], /^bot\[bot\]\|Fix line 2\|Review-Pipeline-Autofix: review/);
-  assert.match(log[1], /^bot\[bot\]\|Fix line 21\|/);
+  const log = ctx.remote(["log", "--format=%an|%B%x00", `${ctx.head}..feature`]).split("\0").map((entry) => entry.trim()).filter(Boolean);
+  assert.equal(log.length, 1);
+  assert.match(log[0], /^bot\[bot\]\|Apply 2 review autofixes\n\n- Fix line 21\n- Fix line 2\n\nReview-Pipeline-Autofix: review$/);
   assert.match(ctx.remote(["show", "feature:a.ts"]), /line two\n[\s\S]*fixed 21/);
 
   const [review] = github.posts;
@@ -93,7 +93,7 @@ test("autofixes become one bot commit each, are pushed, and the review lands on 
   assert.equal(review.comments.length, 1, "only the suggestion is on a changed line");
   assert.deepEqual([review.comments[0].line, review.comments[0].side], [20, "RIGHT"]);
   assert.match(review.comments[0].body, /```suggestion\nbetter 20\n```/);
-  assert.match(review.body, /Autofixed\*\* in 2 commits/);
+  assert.match(review.body, /Autofixed\*\* 2 items in \[`[0-9a-f]{7}`\]/);
   assert.match(review.body, /Not on a changed line[\s\S]*Needs a decision[\s\S]*1\. A\n2\. B/);
   assert.match(review.body, /an assumption/);
   assert.ok(review.body.endsWith(phaseMarker("review", ctx.head)));
@@ -106,6 +106,18 @@ test("multi-line suggestions span start_line to line; nothing is pushed without 
   assert.deepEqual(pushes, []);
   const [comment] = github.posts[0].comments;
   assert.deepEqual([comment.start_line, comment.line], [20, 21]);
+});
+
+test("two autofixes to the same file both land, and a single fix keeps its own subject", async (t) => {
+  const pair = run(t, { items: [
+    item({ category: "autofix", find: "changed 20", replace: "fixed 20", commit: "Fix 20" }),
+    item({ category: "autofix", find: "changed 21", replace: "fixed 21", commit: "Fix 21" }),
+  ] });
+  await pair.result;
+  assert.match(pair.ctx.remote(["show", "feature:a.ts"]), /fixed 20\nfixed 21/);
+  const single = run(t, { items: [item({ category: "autofix", commit: "Fix 20" })] });
+  await single.result;
+  assert.equal(single.ctx.remote(["log", "-1", "--format=%s", "feature"]).trim(), "Fix 20");
 });
 
 test("an autofix that no longer applies after an earlier one is posted as a suggestion", async (t) => {

@@ -9,7 +9,7 @@ name: Adversarial Review
 #
 # The first failing phase, or the review once all checks pass, is triaged.
 # Each piece of feedback becomes one of:
-#   - autofix: a trivial fix the bot commits and pushes to the PR branch
+#   - autofix: a trivial fix; all of a run's fixes go in one bot commit
 #   - suggest: a one-click GitHub suggestion for a person to accept or dismiss
 #   - discuss: an inline comment with the issue, its risks and options
 #
