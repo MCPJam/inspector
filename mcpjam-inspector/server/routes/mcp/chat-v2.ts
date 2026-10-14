@@ -2875,7 +2875,7 @@ chatV2.post("/", async (c) => {
     // attempt we don't support; reject it regardless of the caller's identity.
     //
     // Ollama and custom endpoints use the local path. Their organization
-    // policy is checked below and again before every provider attempt.
+    // policy is checked below and again during the turn's provider attempts.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -2902,6 +2902,7 @@ chatV2.post("/", async (c) => {
         serverIds: hostConfigServerIds,
       },
     };
+    const ownKeyCheckedAt = performance.now();
     const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
     if (ownKeyRefusal) {
       return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
@@ -2914,6 +2915,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
+      { allowedAt: ownKeyCheckedAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
