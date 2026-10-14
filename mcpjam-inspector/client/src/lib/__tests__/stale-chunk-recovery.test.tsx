@@ -16,7 +16,6 @@ import {
   screen,
 } from "@testing-library/react";
 import { Toaster } from "@mcpjam/design-system/sonner";
-import { toast } from "sonner";
 import { installStaleChunkRecovery } from "../stale-chunk-recovery";
 
 const originalLocation = window.location;
@@ -59,9 +58,15 @@ describe("stale chunk recovery", () => {
     render(<Toaster />);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     uninstall();
-    toast.dismiss();
+    // Let sonner's own timers land while the Toaster is still mounted: it adds
+    // a toast on a 0 ms timer and removes a closed one (the Refresh click) 200
+    // ms later. Unmounting first left those timers to fire after the file's
+    // environment was torn down, where React's setState throws "window is not
+    // defined" and fails the run. No `toast.dismiss()`: it starts a fresh
+    // removal timer of its own, and unmounting already clears the auto-close.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 250)));
     cleanup();
   });
 
