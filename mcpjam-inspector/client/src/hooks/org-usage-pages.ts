@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { makeFunctionReference, type PaginationOptions } from "convex/server";
 import type {
@@ -78,19 +78,35 @@ export function useOrgUsagePages(
   enabled: boolean,
   rangeDays: number,
 ) {
-  const window = useMemo(() => {
+  const [refreshedAt, setRefreshedAt] = useState(0);
+  const reportingWindow = useMemo(() => {
     const endAt = Date.now();
     const days = Math.min(366, Math.max(1, Math.floor(rangeDays)));
     return { endAt, startAt: endAt - days * 86_400_000, rangeDays: days };
-  }, [organizationId, rangeDays]);
+  }, [organizationId, enabled, rangeDays, refreshedAt]);
   const { results, status, loadMore } = usePaginatedQuery(
     usagePage,
-    organizationId && enabled ? { organizationId, ...window } : "skip",
+    organizationId && enabled ? { organizationId, ...reportingWindow } : "skip",
     { initialNumItems: 100 },
   );
   useEffect(() => {
     if (organizationId && enabled && status === "CanLoadMore") loadMore(100);
   }, [organizationId, enabled, status, loadMore]);
+  useEffect(() => {
+    // Keep cursors on one snapshot until pagination completes.
+    if (!organizationId || !enabled || status !== "Exhausted") return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") setRefreshedAt(Date.now());
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [organizationId, enabled, status]);
   const summary = useMemo(
     () => (status === "Exhausted" ? mergeOrgUsagePages(results) : undefined),
     [results, status],
