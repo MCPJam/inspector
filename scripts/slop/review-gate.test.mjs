@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { autofixRounds, decide, gate } from "./review-gate.mjs";
+import { autofixRounds, decide, gate, tipIsReviewFix } from "./review-gate.mjs";
 import { phaseMarker } from "./review-common.mjs";
 
 const SHA = "a".repeat(40);
@@ -14,28 +14,40 @@ const none = new Set();
 
 test("phases run in order: a failing CI phase is triaged before the quality checks", () => {
   const runs = replace(replace(green, "lint.yml", "failure"), "slop-ratchet.yml", "failure");
-  assert.deepEqual(decide({ runs, rounds: 0, reviewed: none }), { phase: "ci", status: "fail" });
+  assert.deepEqual(decide({ runs, reviewFix: false, reviewed: none }), { phase: "ci", status: "fail" });
 });
 
 test("the quality phase waits until CI passed, and fails on its own", () => {
-  assert.deepEqual(decide({ runs: replace(green, "test.yml", null), rounds: 0, reviewed: none }), { phase: "ci", status: "wait" });
-  assert.deepEqual(decide({ runs: replace(green, "pr-size.yml", "failure"), rounds: 0, reviewed: none }), { phase: "quality", status: "fail" });
-  assert.deepEqual(decide({ runs: green.filter((entry) => !entry.path.endsWith("pr-size.yml")), rounds: 0, reviewed: none }),
+  assert.deepEqual(decide({ runs: replace(green, "test.yml", null), reviewFix: false, reviewed: none }), { phase: "ci", status: "wait" });
+  assert.deepEqual(decide({ runs: replace(green, "pr-size.yml", "failure"), reviewFix: false, reviewed: none }), { phase: "quality", status: "fail" });
+  assert.deepEqual(decide({ runs: green.filter((entry) => !entry.path.endsWith("pr-size.yml")), reviewFix: false, reviewed: none }),
     { phase: "quality", status: "wait" });
 });
 
 test("a cancelled run waits for its replacement, and the newest attempt wins", () => {
-  assert.equal(decide({ runs: replace(green, "test.yml", "cancelled"), rounds: 0, reviewed: none }).status, "wait");
+  assert.equal(decide({ runs: replace(green, "test.yml", "cancelled"), reviewFix: false, reviewed: none }).status, "wait");
   const retried = [...replace(green, "test.yml", "failure"), run("test.yml", "success", { run_attempt: 2 })];
-  assert.deepEqual(decide({ runs: retried, rounds: 0, reviewed: none }), { phase: "review", status: "run" });
+  assert.deepEqual(decide({ runs: retried, reviewFix: false, reviewed: none }), { phase: "review", status: "run" });
 });
 
 test("the review runs once checks pass, never on a bot autofix, and never twice per commit", () => {
-  assert.deepEqual(decide({ runs: green, rounds: 0, reviewed: none }), { phase: "review", status: "run" });
-  assert.deepEqual(decide({ runs: green, rounds: 1, reviewed: none }), { phase: "review", status: "skip" });
-  assert.deepEqual(decide({ runs: green, rounds: 0, reviewed: new Set(["review"]) }), { phase: "review", status: "done" });
+  assert.deepEqual(decide({ runs: green, reviewFix: false, reviewed: none }), { phase: "review", status: "run" });
+  assert.deepEqual(decide({ runs: green, reviewFix: true, reviewed: none }), { phase: "review", status: "skip" });
+  assert.deepEqual(decide({ runs: green, reviewFix: false, reviewed: new Set(["review"]) }), { phase: "review", status: "done" });
   const failed = replace(green, "test.yml", "failure");
-  assert.equal(decide({ runs: failed, rounds: 1, reviewed: none }).status, "fail");
+  assert.equal(decide({ runs: failed, reviewFix: true, reviewed: none }).status, "fail");
+});
+
+test("only the review's own autofix at the tip skips the review; a CI autofix that turns checks green does not", async (t) => {
+  const commit = (message) => ({ commit: { message } });
+  assert.equal(tipIsReviewFix([commit("Fix\n\nReview-Pipeline-Autofix: review")]), true);
+  assert.equal(tipIsReviewFix([commit("Fix\n\nReview-Pipeline-Autofix: ci")]), false);
+  assert.equal(tipIsReviewFix([commit("Fix\n\nReview-Pipeline-Autofix: review"), commit("human")]), false);
+  process.env.PR_NUMBER = "7";
+  t.after(() => delete process.env.PR_NUMBER);
+  const ciFix = commit("Fix lint\n\nReview-Pipeline-Autofix: ci");
+  const result = await gate(fakeGitHub({ commits: [commit("feat"), ciFix] }), SHA, "o/r");
+  assert.deepEqual([result.proceed, result.phase, result.rounds], [true, "review", 1]);
 });
 
 test("autofix rounds count only the bot commits at the tip", () => {

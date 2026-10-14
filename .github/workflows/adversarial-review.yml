@@ -14,8 +14,8 @@ name: Adversarial Review
 #   - discuss: an inline comment with the issue, its risks and options
 #
 # Autofix commits are pushed with the MCPJam bot's app token, so CI runs on
-# them and the pipeline starts over. The review does not run again on a bot
-# commit, and after two bot commits in a row the bot only suggests.
+# them and the pipeline starts over. The review does not run again on its own
+# autofix commit, and after two bot commits in a row the bot only suggests.
 #
 # Every step that holds a secret runs scripts/slop from the default branch.
 # The PR's own files are only read from git, never executed or checked out
@@ -73,7 +73,9 @@ jobs:
     env:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
       PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || github.event.pull_request.number }}
-      STATE_DIR: ${{ runner.temp }}/review-pipeline
+      # Relative to the workspace, outside both checkouts. The runner context
+      # is not available in job-level env.
+      STATE_DIR: .review-state
       REPO_DIR: pr
     steps:
       - name: Check out the reviewer from the default branch

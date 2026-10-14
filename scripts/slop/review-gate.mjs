@@ -51,17 +51,24 @@ export function autofixRounds(commits) {
   return rounds;
 }
 
+/** Whether the tip commit is the bot's autofix for the review phase itself. */
+export function tipIsReviewFix(commits) {
+  return new RegExp(`^${AUTOFIX_TRAILER}: review$`, "m").test(commits.at(-1)?.commit?.message ?? "");
+}
+
 /**
  * The phase to act on: the first one that failed, or the review once all the
- * checks passed. The review is skipped on a bot autofix commit, so the bot does
- * not review its own fixes in a loop; the checks still run on them.
+ * checks passed. The review is skipped on its own autofix commit, so the bot
+ * does not review its fixes in a loop; the checks still run on them. After a
+ * CI or quality autofix turns the checks green, the review runs, because no
+ * earlier commit was reviewed.
  */
-export function decide({ runs, rounds, reviewed }) {
+export function decide({ runs, reviewFix, reviewed }) {
   const latest = latestRuns(runs);
   let target = null;
   for (const phase of PHASES) {
     if (phase.workflows.length === 0) {
-      target = { phase: phase.id, status: rounds > 0 ? "skip" : "run" };
+      target = { phase: phase.id, status: reviewFix ? "skip" : "run" };
       break;
     }
     const status = phaseStatus(phase, latest);
@@ -96,11 +103,11 @@ export async function gate(request, sha, repo) {
   const reviewed = new Set(PHASES.map((phase) => phase.id).filter((id) => reviews.some((review) =>
     review.user?.type === "Bot" && review.body?.includes(phaseMarker(id, sha)))));
   const rounds = autofixRounds(commits);
-  const { phase, status } = decide({ runs, rounds, reviewed });
+  const { phase, status } = decide({ runs, reviewFix: tipIsReviewFix(commits), reviewed });
   const base = { pr: pr.number, sha, headRef: pr.head.ref, phase, status, rounds };
   if (status === "wait") return { ...base, proceed: false, reason: `Waiting for the ${phase} phase to finish.` };
   if (status === "done") return { ...base, proceed: false, reason: `The ${phase} phase was already triaged for this commit.` };
-  if (status === "skip") return { ...base, proceed: false, reason: "The head is a bot autofix; the review ran on the commit before it." };
+  if (status === "skip") return { ...base, proceed: false, reason: "The head is the review's own autofix; the review ran on the commit before it." };
 
   const compare = await request(`compare/${pr.base.sha}...${sha}`);
   return {
