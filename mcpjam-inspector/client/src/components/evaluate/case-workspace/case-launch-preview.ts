@@ -18,12 +18,15 @@ export function caseLaunchTarget(
     modelSelection?: ModelSelection;
   },
   names: ReadonlyMap<string, string | null>,
+  defaultModelId?: string,
 ): CaseLaunchTarget {
+  const modelId = target.modelId ?? defaultModelId;
   return {
     hostId: target.hostId,
     client: names.get(target.hostId) ?? "Client",
-    model: target.modelId
-      ? modelTargetKey(modelTarget(target.modelId, target.modelSelection))
+    clientDefault: !target.modelId,
+    model: modelId
+      ? modelTargetKey(modelTarget(modelId, target.modelSelection))
       : "Client default",
   };
 }

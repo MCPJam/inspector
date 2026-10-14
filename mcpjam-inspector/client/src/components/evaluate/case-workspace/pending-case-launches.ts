@@ -15,6 +15,7 @@ export type CaseLaunchTarget = {
   hostId?: string;
   environmentId?: string;
   targetIndex?: number;
+  clientDefault?: boolean;
 };
 export type PendingCaseRow = EvalIteration &
   CaseLaunchTarget & {
@@ -151,7 +152,8 @@ export function caseRowArrived(
     return (
       sameRun &&
       iteration.iterationNumber === row.iterationNumber &&
-      (row.model === "Client default" ||
+      (row.clientDefault ||
+        row.model === "Client default" ||
         runIterationTargetKey(run, iteration) === row.model)
     );
   });

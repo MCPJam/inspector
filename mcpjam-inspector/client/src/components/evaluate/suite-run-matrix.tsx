@@ -668,7 +668,7 @@ export function ConfiguredSuiteRunReview(
       disabledReason={blocked}
       matrix={{
         targets: (runInSaved ? savedEnvironment ? [savedEnvironment] : [] : plannedPreflight(plan, environments).targets).map((target, index) => ({
-          ...caseLaunchTarget(target, props.hostNamesById), environmentId: runInSaved ? savedEnvironment?.environmentId : plan[index].environmentId,
+          ...caseLaunchTarget(target, props.hostNamesById, hosts.find((host) => host.hostId === target.hostId)?.modelId), environmentId: runInSaved ? savedEnvironment?.environmentId : plan[index].environmentId,
         })),
         count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
         signature: JSON.stringify([selections, group, runInSaved, savedId]),

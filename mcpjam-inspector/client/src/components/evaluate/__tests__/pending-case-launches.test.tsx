@@ -136,4 +136,20 @@ describe("pending case launches", () => {
     );
     expect(result.current).toHaveLength(1);
   });
+
+  it("reconciles inherited client settings when only its model label is known", () => {
+    const id = beginCaseLaunch(
+      scope,
+      [{ ...targets[0], clientDefault: true }],
+      1,
+    );
+    const { result } = renderHook(() =>
+      usePendingCaseRows(
+        scope,
+        [{ ...realRow("a"), targetKey: "model\u0000inherited-effort" }],
+        [run("a", id, "env-a")],
+      ),
+    );
+    expect(result.current).toHaveLength(0);
+  });
 });

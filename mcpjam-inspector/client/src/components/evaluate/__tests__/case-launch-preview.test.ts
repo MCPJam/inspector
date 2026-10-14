@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import type { EvalCase, EvalSuite } from "../../evals/types";
 import {
+  caseLaunchTarget,
   savedCaseTargets,
   startCaseReview,
 } from "../case-workspace/case-launch-preview";
@@ -31,6 +32,15 @@ const props = {
 beforeEach(() => {
   useCaseLaunches.setState({ launches: [] });
   vi.clearAllMocks();
+});
+
+it("labels an inherited model with the known client model", () => {
+  expect(
+    caseLaunchTarget({ hostId: "a" }, props.hostNamesById, "haiku"),
+  ).toMatchObject({
+    model: "haiku",
+    clientDefault: true,
+  });
 });
 
 it("removes every model of a failed legacy host without removing another host", async () => {
