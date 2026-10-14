@@ -14,8 +14,8 @@ const CODE_REDEMPTION_STEPS = new Set<OAuthFlowStep>([
 /**
  * Run the OAuth debugger from the authorization callback through the token
  * exchange, instead of one step per Continue click. Servers expire a code
- * within seconds to minutes (Keycloak's default is 60 seconds), and a user who
- * stopped to read the prepared token request came back to `invalid_grant`.
+ * within seconds to minutes (Keycloak's default is 60 seconds), so a code that
+ * waits on a click at each step can reach the token endpoint as `invalid_grant`.
  * Signing in is the user's click for these steps; the request and response
  * stay in the HTTP history to inspect afterwards.
  *

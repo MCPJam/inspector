@@ -250,6 +250,7 @@ async function signInThroughDebugger(page: Page, fakeOAuthOrigin: string) {
   const redirect = await fetch(flowState.authorizationUrl!, {
     redirect: "manual",
   });
+  expect(redirect.status).toBe(302);
   const callback = new URL(redirect.headers.get("location")!);
   await page.evaluate(
     ({ code, state }) => {
