@@ -554,6 +554,9 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      - name: Build SDK exports used by telemetry fixtures
+        run: npm run build -w @mcpjam/sdk
+
       - name: Run telemetry privacy browser test
         run: npm run test:e2e:telemetry-privacy -w @mcpjam/inspector
 

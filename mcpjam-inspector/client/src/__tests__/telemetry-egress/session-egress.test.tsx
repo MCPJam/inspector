@@ -30,7 +30,6 @@ import {
   posthogReplayEvents,
   RRWEB,
   sentinel,
-  sentryItems,
   sentryReplayEvents,
   recordedText,
 } from "../../../../e2e/telemetry/egress";
@@ -58,7 +57,7 @@ let harness: TelemetryHarness;
 beforeAll(async () => {
   assertCorpusComplete();
   harness = await bootTelemetryHarness();
-  // `pending` → `full`: a signed-out hosted visitor, once auth has loaded.
+  // `pending` → `full`: a resolved, authenticated context.
   await harness.setLevel("full");
   await harness.idle(200);
 }, 60_000);
@@ -77,6 +76,10 @@ describe("at `full`, on a normal page", () => {
     const mark = harness.mark();
     await harness.showShareLinks(ALL_SHARE_LINKS);
     await harness.click();
+    // A credential plugin frame drops its entire batch. First require a
+    // separate safe console + DOM batch to leave through authenticated fetch.
+    console.info("[egress] safe console control");
+    await harness.idle(SENTRY_MIN_SEGMENT_MS);
     harness.posthog.capture("egress_custom_event", {
       opened: EGRESS_CORPUS["tester-link"],
       requested: RELATIVE_URL_EGRESS.encodedKey,
@@ -113,10 +116,10 @@ describe("at `full`, on a normal page", () => {
       "https://app.mcpjam.com/results/[redacted]",
     );
     // Unpacked: both profiles turn posthog-js's per-event gzip off, so
-    // `before_send` can scrub the stylesheet text rrweb masks nowhere. A
+    // the final relay can inspect stylesheet text rrweb masks nowhere. A
     // packed DOM event would drop its whole batch.
     expect(compressedReplayEventCount(scan.decoded)).toBe(0);
-    // The console line arrived too, with its credential scrubbed.
+    // Safe console frames survive; the unsafe credential frame is dropped.
     expectArrived(scan, "share links at full", {
       posthogPlugins: ["rrweb/console@1"],
     });
@@ -126,7 +129,7 @@ describe("at `full`, on a normal page", () => {
         JSON.stringify(event.data).includes("rrweb/console@1"),
     );
     expect(JSON.stringify(consoleEvents)).toContain(
-      "/user-testing/acme-study/[redacted]",
+      "[egress] safe console control",
     );
   }, 60_000);
 });
@@ -137,7 +140,11 @@ describe("SPA navigation onto every credential page and back", () => {
     for (const [id, url] of pageCorpus()) {
       await harness.navigate(url);
       await harness.click();
-      harness.posthog.capture("egress_on_credential_page", { route: id });
+      harness.posthog.capture("send_message", {
+        location: "chat_tab",
+        multi_model_count: 2,
+        route: id,
+      });
       harness.Sentry.captureException(new Error(`failed on ${url}`));
       console.info("[egress] on", window.location.href);
       await harness.navigate(NORMAL_PAGE);
@@ -149,17 +156,20 @@ describe("SPA navigation onto every credential page and back", () => {
     const scan = harness.scanSince(mark);
     expectNoLeaks(scan, "SPA navigation");
     expectArrived(scan, "SPA navigation", {
-      posthogEvents: ["egress_on_credential_page", "$autocapture"],
+      posthogEvents: ["send_message", "$autocapture"],
       posthogFullSnapshot: true,
       sentryItems: ["event", "transaction"],
       sentryFullSnapshot: true,
     });
     // Analytics are not blocked on credential pages, only scrubbed: one event
     // per page arrived.
-    const routes = posthogEvents(scan.decoded)
-      .filter((event) => event.event === "egress_on_credential_page")
-      .map((event) => event.properties.route);
-    expect(new Set(routes)).toEqual(new Set(pageCorpus().map(([id]) => id)));
+    const routes = posthogEvents(scan.decoded).filter(
+      (event) => event.event === "send_message",
+    );
+    expect(routes).toHaveLength(pageCorpus().length);
+    expect(routes.every((event) => event.properties.route === undefined)).toBe(
+      true,
+    );
   }, 90_000);
 });
 
@@ -168,7 +178,7 @@ describe("a secret query key or fragment on a normal page", () => {
     const mark = harness.mark();
     await harness.navigate(`${NORMAL_PAGE}?code=${sentinel("querycode")}`);
     await harness.click();
-    harness.posthog.capture("egress_query_step");
+    harness.posthog.capture("send_message", { location: "chat_tab" });
     await harness.navigate(NORMAL_PAGE);
     await harness.click();
 
@@ -176,7 +186,7 @@ describe("a secret query key or fragment on a normal page", () => {
     // only, which the guard's capture-phase listeners must catch.
     await harness.setHash(`#token=${sentinel("hashtoken")}`);
     await harness.click();
-    harness.posthog.capture("egress_fragment_step");
+    harness.posthog.capture("edit_message", { location: "chat_tab" });
     await harness.setHash("");
     await harness.navigate(NORMAL_PAGE);
     await harness.click();
@@ -190,7 +200,7 @@ describe("a secret query key or fragment on a normal page", () => {
     const scan = harness.scanSince(mark);
     expectNoLeaks(scan, "query and fragment");
     expectArrived(scan, "query and fragment", {
-      posthogEvents: ["egress_query_step", "egress_fragment_step"],
+      posthogEvents: ["send_message", "edit_message"],
       posthogFullSnapshot: true,
       sentryFullSnapshot: true,
     });
@@ -198,13 +208,16 @@ describe("a secret query key or fragment on a normal page", () => {
 });
 
 describe("a buffered unload on a normal page", () => {
-  it("ships what was buffered by beacon, and nothing planted in it", async () => {
+  it("ships the buffer by authenticated keepalive fetch without planted content", async () => {
     // Unloading ON a credential page is a cold-load test
     // (`cold-load-*.test.tsx`); here the buffer holds a normal page's replay
     // and events that carry credential URLs in their properties.
     const mark = harness.mark();
+    const ingressMark = harness.network.requests.length;
     await harness.click();
-    harness.posthog.capture("egress_before_unload", {
+    harness.posthog.capture("send_message", {
+      location: "chat_tab",
+      multi_model_count: 2,
       next: EGRESS_CORPUS["bench-results"],
       referrer: `https://app.mcpjam.com${EGRESS_CORPUS["workos-callback"]}`,
     });
@@ -216,11 +229,24 @@ describe("a buffered unload on a normal page", () => {
     const scan = harness.scanSince(mark);
     expectNoLeaks(scan, "unload");
     expectArrived(scan, "unload", {
-      posthogEvents: ["egress_before_unload", "$autocapture", "$snapshot"],
+      posthogEvents: ["send_message", "$autocapture"],
     });
+    const ingress = harness.network.since(ingressMark).filter(
+      (entry) => entry.method === "POST" && entry.url.includes("/tlm/"),
+    );
+    expect(ingress.length).toBeGreaterThan(0);
+    for (const request of ingress) {
+      expect(request.transport).toBe("fetch");
+      expect(request.headers).toMatchObject({
+        authorization: "Bearer telemetry-fixture-member",
+        "x-mcpjam-telemetry-policy": "full",
+      });
+    }
     expect(
-      scan.decoded.some((entry) => entry.request.transport === "sendBeacon"),
-      "the unload flush must leave by sendBeacon",
+      ingress.some((request) => harness.network.keepaliveRequests.has(request)),
+    ).toBe(true);
+    expect(
+      scan.decoded.every((entry) => entry.request.transport === "fetch"),
     ).toBe(true);
     // A bfcache restore: the session carries on for the next step.
     window.dispatchEvent(
@@ -229,49 +255,39 @@ describe("a buffered unload on a normal page", () => {
   }, 60_000);
 });
 
-describe("switching from `full` to `masked`", () => {
-  it("stops Sentry Replay and re-records PostHog fully masked", async () => {
+describe("switching from full to strict", () => {
+  it("stops both replays while approved diagnostics still arrive", async () => {
     const mark = harness.mark();
     await harness.setLevel("masked");
     await harness.showShareLinks(ALL_SHARE_LINKS);
     await harness.click();
-    harness.posthog.capture("egress_masked_event", {
-      opened: EGRESS_CORPUS["tester-link"],
+    harness.posthog.capture("send_message", {
+      location: "chat_tab",
+      multi_model_count: 2,
+      prompt: sentinel("strictprompt"),
     });
-    harness.Sentry.captureException(
-      new Error(`masked failure at ${EGRESS_CORPUS["evals-shared"]}`),
-    );
+    harness.posthog.capture("unknown", { prompt: sentinel("unknownprompt") });
+    harness.posthog.captureException(new Error(sentinel("posthogerror")));
+    harness.Sentry.captureException(new TypeError(sentinel("sentryerror")));
     await harness.idle(200);
     await harness.flush();
-
     const scan = harness.scanSince(mark);
-    expectNoLeaks(scan, "masked");
-    expectArrived(scan, "masked", {
-      posthogEvents: ["egress_masked_event", "$autocapture"],
-      posthogFullSnapshot: true,
+    expectNoLeaks(scan, "strict");
+    expectArrived(scan, "strict", {
+      posthogEvents: ["send_message"],
       sentryItems: ["event"],
     });
-    // Everything recorded after the switch is masked: the share-link text
-    // never appears, the masking asterisks do. (The restart's full snapshot
-    // is the first event of the new recording.)
-    const events = posthogReplayEvents(scan.decoded);
-    const restart = events.findIndex(
-      (event) => event.type === RRWEB.FullSnapshot,
-    );
-    expect(restart).toBeGreaterThanOrEqual(0);
-    const text = recordedText(events.slice(restart));
-    expect(text).not.toContain("Share link");
-    expect(text).toMatch(/\*{5,}/);
-    // Sentry Replay records only at `full`: nothing recorded after the
-    // switch. (Its stop flushes the segment recorded BEFORE it, at `full`,
-    // which is allowed — so look for the share links, which only exist after,
-    // in snapshots and mutations alike.)
-    expect(JSON.stringify(sentryReplayEvents(scan.decoded))).not.toContain(
-      "share-links",
-    );
+    expect(posthogReplayEvents(scan.decoded)).toEqual([]);
+    expect(sentryReplayEvents(scan.decoded)).toEqual([]);
     expect(
-      sentryItems(scan.decoded).filter((item) => item.type === "replay_event")
-        .length,
-    ).toBeLessThanOrEqual(1);
+      posthogEvents(scan.decoded).some((event) =>
+        ["unknown", "$exception", "$autocapture"].includes(event.event),
+      ),
+    ).toBe(false);
+    const product = posthogEvents(scan.decoded).find(
+      (event) => event.event === "send_message",
+    );
+    expect(product?.properties.multi_model_count).toBe(2);
+    expect(JSON.stringify(scan.decoded)).not.toContain("strictprompt");
   }, 60_000);
 });

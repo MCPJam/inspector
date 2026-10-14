@@ -638,7 +638,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "A corporate proxy or SSO portal intercepted the request.",
     ],
     [
-      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Allow MCPJam's egress addresses (docs.mcpjam.com/hosted/network), or the address you connect from, on the server's firewall.",
       "Open the server URL in a browser from the same network to see what answers.",
     ],
     "proxy-rejected",

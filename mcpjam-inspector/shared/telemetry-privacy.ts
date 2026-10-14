@@ -25,26 +25,30 @@ import { scrubCredentialsInText } from "./credential-urls";
 
 export type TelemetryRecording = "full" | "masked" | "off";
 export type TelemetryIdentity = "full" | "id_only";
+export type TelemetryContent = "full" | "strict";
 
 export interface TelemetryPolicy {
   recording: TelemetryRecording;
   identity: TelemetryIdentity;
+  content: TelemetryContent;
 }
 
 export const CONSERVATIVE_TELEMETRY_POLICY: Readonly<TelemetryPolicy> =
-  Object.freeze({ recording: "masked", identity: "id_only" });
+  Object.freeze({ recording: "off", identity: "id_only", content: "strict" });
 
 export const FULL_TELEMETRY_POLICY: Readonly<TelemetryPolicy> = Object.freeze({
   recording: "full",
   identity: "full",
+  content: "full",
 });
 
 export function isTelemetryPolicy(value: unknown): value is TelemetryPolicy {
   if (typeof value !== "object" || value === null) return false;
-  const { recording, identity } = value as Record<string, unknown>;
+  const { recording, identity, content } = value as Record<string, unknown>;
   return (
     (recording === "full" || recording === "masked" || recording === "off") &&
-    (identity === "full" || identity === "id_only")
+    (identity === "full" || identity === "id_only") &&
+    (content === "full" || content === "strict")
   );
 }
 
@@ -64,6 +68,7 @@ export function mostRestrictivePolicy(
 ): TelemetryPolicy {
   let recording: TelemetryRecording = "full";
   let identity: TelemetryIdentity = "full";
+  let content: TelemetryContent = "full";
   if (policies.length === 0) return { ...CONSERVATIVE_TELEMETRY_POLICY };
   for (const policy of policies) {
     if (!isTelemetryPolicy(policy)) {
@@ -76,8 +81,9 @@ export function mostRestrictivePolicy(
       recording = policy.recording;
     }
     if (policy.identity === "id_only") identity = "id_only";
+    if (policy.content === "strict") content = "strict";
   }
-  return { recording, identity };
+  return { recording, identity, content };
 }
 
 // ── Capture-context stamp ──────────────────────────────────────────────
@@ -112,11 +118,12 @@ export interface TelemetryCaptureContext {
 
 /** The stamp as it travels: short keys, a version. */
 export interface TelemetryContextStamp {
-  v: 1;
+  v: 2;
   p: string[];
   o: string[];
   r: TelemetryRecording;
   i: TelemetryIdentity;
+  c: TelemetryContent;
 }
 
 function cleanIds(ids: ReadonlyArray<string | null | undefined>): string[] {
@@ -138,11 +145,12 @@ export function encodeCaptureContext(
   context: TelemetryCaptureContext,
 ): TelemetryContextStamp {
   return {
-    v: 1,
+    v: 2,
     p: cleanIds(context.projectIds),
     o: cleanIds(context.organizationIds),
     r: context.policy.recording,
     i: context.policy.identity,
+    c: context.policy.content,
   };
 }
 
@@ -157,8 +165,8 @@ export function decodeCaptureContext(
     return null;
   }
   const stamp = value as Record<string, unknown>;
-  if (stamp.v !== 1) return null;
-  const policy = { recording: stamp.r, identity: stamp.i };
+  if (stamp.v !== 2) return null;
+  const policy = { recording: stamp.r, identity: stamp.i, content: stamp.c };
   if (!isTelemetryPolicy(policy)) return null;
   const ids = (raw: unknown): string[] | null => {
     if (!Array.isArray(raw) || raw.length > MAX_TELEMETRY_CONTEXT_IDS) {

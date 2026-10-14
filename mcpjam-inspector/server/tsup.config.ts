@@ -110,6 +110,7 @@ export default defineConfig({
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
     "@mcpjam/sdk/internal/plugin-host",
+    "@mcpjam/sdk/internal/telemetry",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -132,6 +133,10 @@ export default defineConfig({
       "@mcpjam/sdk/internal/plugin-host": join(
         rootDir,
         "../sdk/dist/internal/plugin-host.js",
+      ),
+      "@mcpjam/sdk/internal/telemetry": join(
+        rootDir,
+        "../sdk/dist/internal/telemetry.js",
       ),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),

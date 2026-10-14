@@ -456,7 +456,7 @@ describe("org-key leases", () => {
     expect(JSON.stringify(result)).not.toMatch(/lease|jti|apiKey/i);
   });
 
-  it("a hosted start's body is unchanged: no selection, no revision", async () => {
+  it("a hosted start carries its requested choice without a credential revision", async () => {
     let seenBody: Record<string, unknown> = {};
     mockFetch((_url, init) => {
       seenBody = JSON.parse(String(init.body));
@@ -482,6 +482,7 @@ describe("org-key leases", () => {
       harnessId: "claude-code",
       harnessRuntimeVersion: HARNESS_PINNED_VERSIONS["claude-code"],
       modelId: "anthropic/claude-haiku-4.5",
+      modelSelection: { source: "hosted", modelId: "anthropic/claude-haiku-4.5" },
     });
     expect(result.ok && "orgUpstream" in result).toBe(false);
   });

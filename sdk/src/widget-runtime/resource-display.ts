@@ -57,3 +57,53 @@ export function negotiateResourceDisplayModes<T extends string>(
       (appModes === undefined || appModes.includes(mode))
   );
 }
+
+/**
+ * OpenAI's display-mode rules, used for ChatGPT and Codex clients with the
+ * Display modes extension on. Unlike {@link negotiateResourceDisplayModes}:
+ * omitted resource modes mean every host mode, and `preferredDisplayMode`
+ * only picks the starting mode, never narrows the set.
+ *
+ * `fixed` is an entrypoint's host-chosen mode. It ignores the resource's
+ * declaration (an entrypoint resource may declare only `inline` and still
+ * opens fullscreen in ChatGPT), but an App that declares at initialization
+ * that it cannot show the fixed mode is refused rather than forced into it.
+ */
+export function openAIDisplayModes<T extends string>(
+  hostModes: readonly T[],
+  hints?: ResourceDisplayHints,
+  appModes?: readonly string[],
+  fixed?: T
+): T[] {
+  const appAllows = (mode: T) =>
+    appModes === undefined || appModes.includes(mode);
+  if (fixed !== undefined)
+    return hostModes.includes(fixed) && appAllows(fixed) ? [fixed] : [];
+  const resourceModes = hints?.availableDisplayModes;
+  return hostModes.filter(
+    (mode) =>
+      (!resourceModes || resourceModes.includes(mode as ResourceDisplayMode)) &&
+      appAllows(mode)
+  );
+}
+
+/**
+ * The mode an App starts in, always a member of `allowed`: the resource's
+ * preference; else fullscreen when the resource declared both inline and
+ * fullscreen, otherwise inline; else the first allowed mode in host order.
+ */
+export function pickOpenAIDisplayMode<T extends string>(
+  allowed: readonly T[],
+  hints?: ResourceDisplayHints
+): T | undefined {
+  const declared = hints?.availableDisplayModes;
+  const fallback: ResourceDisplayMode =
+    declared?.includes("inline") && declared.includes("fullscreen")
+      ? "fullscreen"
+      : "inline";
+  for (const mode of [hints?.preferredDisplayMode, fallback]) {
+    const match = allowed.find((candidate) => candidate === mode);
+    if (match !== undefined) return match;
+  }
+  return allowed[0];
+}

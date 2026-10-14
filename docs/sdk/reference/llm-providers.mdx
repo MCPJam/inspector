@@ -42,6 +42,32 @@ const agent = new HostRunner({
 
 `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. Other vendors are not hosted — use their own prefix and key.
 
+#### Reasoning effort
+
+Pass a `ModelSelection` with `settings.reasoningEffort` when constructing `McpjamLeaseClient` or `McpjamModelLeaseScope` directly to request a specific effort level. The selection must have `source: "hosted"` and its `modelId` must match the `model` option — the constructor throws if they disagree. Check `supportedReasoningEfforts` on the model's catalog row before choosing a level; an unsupported level is refused before any spend.
+
+```typescript
+import { McpjamModelLeaseScope } from "@mcpjam/sdk";
+
+await McpjamModelLeaseScope.run(
+  {
+    apiKey: process.env.MCPJAM_API_KEY!,
+    baseUrl: "https://app.mcpjam.com",
+    project: "default",
+    model: "anthropic/claude-sonnet-4.5",
+    modelSelection: {
+      source: "hosted",
+      modelId: "anthropic/claude-sonnet-4.5",
+      settings: { reasoningEffort: "high" },
+      fallback: { provider: "none", model: "none" },
+    },
+  },
+  async (scope) => {
+    // use scope.proxyFetch …
+  },
+);
+```
+
 #### Which project pays
 
 By default the API key's organization Default project, which is also where results are saved — so nothing extra to configure. Set `MCPJAM_PROJECT_ID` to bill a specific project.

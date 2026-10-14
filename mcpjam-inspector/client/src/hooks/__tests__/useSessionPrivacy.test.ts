@@ -40,7 +40,13 @@ function render(initial: SessionPrivacy, contextReady = true) {
       scope?: string | null;
     }) =>
       useSessionPrivacy(level, { contextReady: ready, permissionKey: scope }),
-    { initialProps: { level: initial, contextReady } },
+    {
+      initialProps: { level: initial, contextReady } as {
+        level: SessionPrivacy;
+        contextReady?: boolean;
+        scope?: string | null;
+      },
+    },
   );
 }
 
@@ -96,7 +102,9 @@ describe("useSessionPrivacy", () => {
       vi.advanceTimersByTime(60_000);
     });
     rerender({ level: "full" });
-
+    act(() => {
+      vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
+    });
     expect(applied()).toEqual(["pending", "full"]);
   });
 
@@ -148,20 +156,20 @@ describe("useSessionPrivacy", () => {
     const { rerender } = render("masked");
     rerender({ level: "pending" });
     // A navigation whose destination has not answered: masked, not stopped.
-    expect(applied()).toEqual(["masked"]);
+    expect(applied()).toEqual(["masked", "pending"]);
 
     rerender({ level: "full" });
-    expect(applied()).toEqual(["masked"]);
+    expect(applied()).toEqual(["masked", "pending"]);
     act(() => {
       vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
     });
-    expect(applied()).toEqual(["masked", "full"]);
+    expect(applied()).toEqual(["masked", "pending", "full"]);
   });
 
   it("full → pending (a navigation) goes masked in the same commit", () => {
     const { rerender } = render("full");
     rerender({ level: "pending" });
-    expect(applied()).toEqual(["full", "masked"]);
+    expect(applied()).toEqual(["full", "pending"]);
   });
 
   it("pending after a membership reload or sign-in change stops, not masks", () => {
@@ -180,7 +188,7 @@ describe("useSessionPrivacy", () => {
     rerender({ level: "pending", scope: "user_A\norg_2" });
     rerender({ level: "masked", scope: "user_A\norg_2" });
     rerender({ level: "pending", scope: "user_A\norg_2" });
-    expect(applied()).toEqual(["full", "pending", "masked"]);
+    expect(applied()).toEqual(["full", "pending", "masked", "pending"]);
   });
 
   it("holds full back until the destination has finished loading, then settles", () => {
@@ -189,25 +197,25 @@ describe("useSessionPrivacy", () => {
     act(() => {
       vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS * 3);
     });
-    expect(applied()).toEqual(["masked"]);
+    expect(applied()).toEqual(["masked", "pending"]);
 
     rerender({ level: "full", contextReady: true });
-    expect(applied()).toEqual(["masked"]);
+    expect(applied()).toEqual(["masked", "pending"]);
     act(() => {
       vi.advanceTimersByTime(MASKED_TO_FULL_SETTLE_MS);
     });
-    expect(applied()).toEqual(["masked", "full"]);
+    expect(applied()).toEqual(["masked", "pending", "full"]);
   });
 
   it("drops back to masked at once when the destination starts loading again", () => {
     const { rerender } = render("full");
     rerender({ level: "full", contextReady: false });
-    expect(applied()).toEqual(["full", "masked"]);
+    expect(applied()).toEqual(["full", "pending"]);
   });
 
   it("at startup, a full answer whose context is still loading records masked", () => {
     render("full", false);
-    expect(applied()).toEqual(["masked"]);
+    expect(applied()).toEqual(["pending"]);
   });
 
   it("still applies the Sentry half when PostHog is unavailable", () => {

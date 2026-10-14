@@ -8,6 +8,7 @@ vi.mock("../org-model-config", async (importOriginal) => ({
 }));
 
 import {
+  OWN_KEY_POLICY_RECHECK_MS,
   ownKeyTurnRefusal,
   withOwnKeyTurnPolicy,
   type OwnKeyTurn,
@@ -28,6 +29,14 @@ function turn(overrides: Partial<OwnKeyTurn> = {}): OwnKeyTurn {
 
 const strict = { aiKeyPolicy: { requireOrgKeys: true }, providers: [] };
 
+// The window is timed with `performance.now()`, so fake it explicitly rather
+// than relying on the Vitest version's default `toFake` list.
+function useFakeClock() {
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "Date", "performance"],
+  });
+}
+
 describe("ownKeyTurnRefusal", () => {
   beforeEach(() => {
     resolveOrgModelConfig.mockReset();
@@ -35,6 +44,7 @@ describe("ownKeyTurnRefusal", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("refuses a local selection while the organization requires its own keys", async () => {
@@ -129,8 +139,10 @@ describe("ownKeyTurnRefusal", () => {
           return { stream: new ReadableStream() };
         },
       });
+      useFakeClock();
       const guarded = withOwnKeyTurnPolicy(model, turn());
       await guarded[method]({ prompt: [] });
+      vi.advanceTimersByTime(OWN_KEY_POLICY_RECHECK_MS);
       await expect(guarded[method]({ prompt: [] })).rejects.toMatchObject({
         status: 403,
         details: { code: "org_keys_required" },
@@ -139,4 +151,156 @@ describe("ownKeyTurnRefusal", () => {
       expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("reads the policy once for a burst of tool-loop steps", async () => {
+    // The bearer-only route allows 60 reads a minute per user, and a 3-model
+    // turn reading before every step spent it and refused itself as
+    // `ai_key_policy_unavailable`.
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    for (let step = 0; step < 20; step += 1) {
+      await guarded.doStream({ prompt: [] });
+    }
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads after the window even when the wall clock steps back", async () => {
+    useFakeClock();
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    await guarded.doStream({ prompt: [] });
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    vi.setSystemTime(Date.now() - 60 * 60_000);
+    vi.advanceTimersByTime(OWN_KEY_POLICY_RECHECK_MS);
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+  });
+
+  it("makes parallel requests wait on one read", async () => {
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    await Promise.all(
+      Array.from({ length: 10 }, () => guarded.doStream({ prompt: [] })),
+    );
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats an allowedAt from another timebase as stale", async () => {
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn(), {
+      allowedAt: Date.now(),
+    });
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+  });
+
+  it("fails every waiter of a failed read, then reads again", async () => {
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    resolveOrgModelConfig.mockRejectedValueOnce(new Error("network down"));
+    const results = await Promise.allSettled([
+      guarded.doStream({ prompt: [] }),
+      guarded.doStream({ prompt: [] }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    await guarded.doStream({ prompt: [] });
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("trusts the route's own check while it is fresh", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn(), {
+      allowedAt: performance.now(),
+    });
+    await guarded.doStream({ prompt: [] });
+    expect(resolveOrgModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("re-reads before the first request when the route's check is already stale", async () => {
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn(), {
+      allowedAt: performance.now() - OWN_KEY_POLICY_RECHECK_MS,
+    });
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+  });
+
+  it("dates a slow read from when it started, not when it answered", async () => {
+    useFakeClock();
+    const allow = { aiKeyPolicy: { requireOrgKeys: false }, providers: [] };
+    resolveOrgModelConfig.mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve(allow), 14_000)),
+    );
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    const first = guarded.doStream({ prompt: [] });
+    await vi.advanceTimersByTimeAsync(14_000);
+    await first;
+
+    resolveOrgModelConfig.mockResolvedValue(strict);
+    vi.advanceTimersByTime(1_000);
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "org_keys_required" },
+    });
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not trust a read that refused the turn", async () => {
+    resolveOrgModelConfig.mockRejectedValueOnce(new Error("429"));
+    resolveOrgModelConfig.mockResolvedValue({
+      aiKeyPolicy: { requireOrgKeys: false },
+      providers: [],
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: new ReadableStream() }),
+    });
+    const guarded = withOwnKeyTurnPolicy(model, turn());
+    await expect(guarded.doStream({ prompt: [] })).rejects.toMatchObject({
+      status: 503,
+      details: { code: "ai_key_policy_unavailable" },
+    });
+    await guarded.doStream({ prompt: [] });
+    expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+  });
 });

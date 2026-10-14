@@ -48,6 +48,7 @@
           "hosted/slack",
           "hosted/claude-connector",
           "hosted/sso",
+          "hosted/network",
           "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
