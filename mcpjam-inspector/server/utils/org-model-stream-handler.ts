@@ -106,6 +106,7 @@ export interface OrgModelHandlerOptions {
   discoveryState?: ToolDiscoveryState;
   modelId: string;
   modelSelection?: ModelSelection & { source: "org" };
+  modelSelectionOrigin?: "backfill";
   /**
    * The provider-native id chosen explicitly for this model (the row's
    * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
@@ -1065,6 +1066,7 @@ export async function handleHostedOrgChatModel(
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,
+    modelSelectionOrigin: options.modelSelectionOrigin,
     chatSessionId: options.chatSessionId,
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
@@ -1102,9 +1104,7 @@ export async function handleHostedOrgChatModel(
     failureReporter: options.failureReporter,
     endpointPath: "/stream/org",
     extraBodyFields: {
-      // Caller-provided fields first; sibling fields from this handler
-      // (providerKey, serverIds) override on collision so the hosted
-      // contract can't be silently broken by a downstream caller.
+      // Server-resolved fields override caller extras.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
       ...(options.nativeModelId?.trim()
