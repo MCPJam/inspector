@@ -46,7 +46,7 @@ minidumps are not persisted for later vendor delivery.
 `harness-install-cli.js`), then `scripts/server-sourcemaps.mjs` injects a debug
 ID into each and verifies it against its map. A missing, stale or mismatched
 map, or any extra output, fails the build. With `SENTRY_AUTH_TOKEN` it uploads
-those same files to `mcpjam-gh/inspector-server`, with the package version as
+those same files to `mcpjam-gh/inspector-hono`, with the package version as
 `release`, `MCPJAM_BUILD_SURFACE` as `dist` and `app:///dist/server` as the URL
 prefix. The bundle reports the same release and `dist` (both baked in by
 `server/tsup.config.ts`), names its frames `app:///dist/server/index.js`, and
@@ -144,7 +144,7 @@ This is the first time the OSS server actually reports — the previous
 `Sentry.init` was dead code (an import side-effect hoisted above the env load).
 Volume is genuinely unknown.
 
-1. **Watch the `inspector-server` project for 48h** after deploy.
+1. **Watch the `inspector-hono` project for 48h** after deploy.
 2. If volume is uncomfortable, dial `SENTRY_ERROR_SAMPLE_RATE` down, or set a
    per-project rate limit in Sentry. Both are config, not deploys.
 3. If self-hosted MCP-connection noise dominates, add a `beforeSend` that drops

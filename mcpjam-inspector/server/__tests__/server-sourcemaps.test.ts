@@ -21,6 +21,7 @@ import {
   verifyServerSourcemaps,
 } from "../../scripts/server-sourcemaps.mjs";
 import { sentryBuildMetadata } from "../../shared/sentry-build-metadata";
+import { SENTRY_DSN } from "../../shared/sentry-config";
 import {
   INSPECTOR_SENTRY_CATALOG,
   restrictSentryEnvelope,
@@ -178,6 +179,8 @@ it("fails a shifted, mismatched, missing or uninjected map and any unowned outpu
 });
 
 it("uploads under the frames' URL prefix and reports, not throws, a failed upload", () => {
+  // The verified Hono project must receive both the events and their maps.
+  expect(new URL(SENTRY_DSN.server).pathname).toBe("/4510112200065025");
   const summary = join(work, "step-summary.md");
   vi.stubEnv("GITHUB_STEP_SUMMARY", summary);
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -191,7 +194,7 @@ it("uploads under the frames' URL prefix and reports, not throws, a failed uploa
     expect(args).toEqual(
       expect.arrayContaining([
         "--org=mcpjam-gh",
-        "--project=inspector-server",
+        "--project=inspector-hono",
         "--release=9.9.9",
         "--dist=npm",
         "--strict",
@@ -212,10 +215,10 @@ it("uploads under the frames' URL prefix and reports, not throws, a failed uploa
     };
     expect(uploadServerSourcemaps("dist/server", target, outage)).toBe(false);
     const failed =
-      "[server-sourcemaps] NOT uploaded to mcpjam-gh/inspector-server release 9.9.9 dist npm: 503 from sentry.io";
+      "[server-sourcemaps] NOT uploaded to mcpjam-gh/inspector-hono release 9.9.9 dist npm: 503 from sentry.io";
     expect(log).toHaveBeenLastCalledWith(`::error::${failed}`);
     expect(readFileSync(summary, "utf8").split("\n")).toEqual([
-      "[server-sourcemaps] uploaded index.js id-1 to mcpjam-gh/inspector-server release 9.9.9 dist npm",
+      "[server-sourcemaps] uploaded index.js id-1 to mcpjam-gh/inspector-hono release 9.9.9 dist npm",
       failed,
       "",
     ]);

@@ -115,13 +115,13 @@ export function uploadServerSourcemaps(
   { release, dist, ids },
   cli = sentryCli,
 ) {
-  const target = `mcpjam-gh/inspector-server release ${release} dist ${dist}`;
+  const target = `mcpjam-gh/inspector-hono release ${release} dist ${dist}`;
   try {
     cli([
       "sourcemaps",
       "upload",
       "--org=mcpjam-gh",
-      "--project=inspector-server",
+      "--project=inspector-hono",
       `--release=${release}`,
       `--dist=${dist}`,
       "--url-prefix=app:///dist/server",
