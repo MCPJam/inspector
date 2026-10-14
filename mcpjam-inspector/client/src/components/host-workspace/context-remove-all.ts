@@ -1,4 +1,5 @@
 import type { PluginContextRemoveAllResult } from "@/shared/plugin-model-context";
+import { PluginContextUpdateRejected } from "./model-context-controller";
 import { ThreadAppError } from "./thread-app-api";
 
 type Outcome = PluginContextRemoveAllResult["outcome"];
@@ -8,12 +9,20 @@ export const CONTEXT_REMOVE_ALL_RETRY_DELAYS_MS: readonly number[] = [
   1_000, 2_000, 4_000, 8_000, 16_000,
 ];
 
-/** The server answered and refused: re-sending the same request can't help.
- * Only a concurrent context write (CONFLICT) is worth another try. */
+/** Refusals of this exact request: re-sending it can't help. Any other
+ * failure (a store timeout, a cancelled request, a gateway page) may have
+ * applied, and re-sending the same operation and basis is safe. */
+const REFUSALS = new Set([
+  "INSTANCE_CONTEXT_DUPLICATE_MISMATCH",
+  "INSTANCE_CONTEXT_UNAVAILABLE",
+  "INVALID_PLUGIN_INSTANCE_REQUEST",
+  "PLUGIN_EXTENSION_DISABLED",
+  "PLUGIN_WORKSPACE_DENIED",
+]);
 function refused(error: unknown) {
   return (
-    error instanceof ThreadAppError &&
-    error.code !== "INSTANCE_CONTEXT_CONFLICT"
+    error instanceof PluginContextUpdateRejected ||
+    (error instanceof ThreadAppError && REFUSALS.has(error.code))
   );
 }
 

@@ -151,7 +151,7 @@ export function createModelContextController({
       enqueue(async () => {
         if (!sendRemoveAll)
           throw new PluginContextUpdateRejected(
-            "App context removal unavailable",
+            "App context could not be removed. Close the App to take its context out of the chat.",
           );
         const result = pluginContextRemoveAllResultSchema.parse(
           await sendRemoveAll(operation),
