@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyticsTransport } from "../analytics-transport";
+import { RUNTIME_COMPAT } from "../../../server/utils/harness/local/runtime-compat";
 import { rebuildServerAnalytics } from "../../../shared/strict-server-analytics";
 import { PostHog } from "posthog-node";
 
@@ -129,4 +130,23 @@ describe("server analytics network boundary", () => {
       })?.properties,
     ).toEqual({ outcome: "ok", tool_call_count: 3 });
   });
+});
+
+it("retains source-owned scenario and harness runtime dimensions", () => {
+  const actor = "user_01K00000000000000000000000";
+  expect(rebuildServerAnalytics("send_message_server", actor, {
+    origin: "scenario", source_type: "direct", success: true,
+  })?.properties).toMatchObject({ origin: "scenario", source_type: "direct", success: true });
+  expect(rebuildServerAnalytics("send_message_server", actor, {
+    source_type: "scenario", harness_id: "cursor",
+  })?.properties).toMatchObject({ source_type: "scenario", harness_id: "cursor" });
+  const pack = Object.values(RUNTIME_COMPAT.harnesses["claude-code"].targets)[0]?.desired.packVersion;
+  expect(pack).toBeTruthy();
+  expect(rebuildServerAnalytics("local_runtime_install_started", actor, {
+    harness_id: "claude-code", pack_version: pack,
+  })?.properties).toMatchObject({ harness_id: "claude-code", pack_version: pack });
+  expect(rebuildServerAnalytics("local_runtime_install_started", actor, {
+    harness_id: "claude-code", pack_version: "999.999.999",
+    source_type: "CUSTOMER_SENTINEL", success: "true",
+  })?.properties).toEqual({ harness_id: "claude-code" });
 });

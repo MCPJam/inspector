@@ -211,3 +211,31 @@ describe("resolveTelemetryPolicy", () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 });
+
+it("coalesces 64 slow permissive requests without keeping a stale grant", async () => {
+  vi.useFakeTimers();
+  const full = { recording: "full", identity: "full", content: "full" };
+  const strict = { recording: "off", identity: "id_only", content: "strict" };
+  let answer = full;
+  const query = vi.fn(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return answer;
+  });
+  setTelemetryPolicyQueryForTests(query);
+  try {
+    const start = Date.now();
+    const pending = Promise.all(Array.from({ length: 64 }, () => resolveTelemetryPolicy("member", CONTEXT)));
+    expect(query).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await pending).every((result) => result.policy.content === "full")).toBe(true);
+    expect(Date.now() - start).toBe(500);
+    answer = strict;
+    const next = resolveTelemetryPolicy("member", CONTEXT);
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await next).policy.content).toBe("strict");
+    expect(query).toHaveBeenCalledTimes(2);
+  } finally {
+    setTelemetryPolicyQueryForTests(null);
+    vi.useRealTimers();
+  }
+});
