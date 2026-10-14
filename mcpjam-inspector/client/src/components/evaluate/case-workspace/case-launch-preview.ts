@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
+import { getEvalIterationLimitFromError } from "@/lib/billing-entitlements";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { modelTarget, modelTargetKey } from "@/lib/model-target";
 import { isModelFree } from "@/shared/steps";
@@ -113,9 +114,13 @@ export async function startCaseReview(
     finishCaseLaunch(id);
   } catch (error) {
     if (id) finishCaseLaunch(id, true);
-    toast.error(
+    const message =
       aiLaunchRefusalSentence(error) ??
-        convexErrMessage(error, "Could not start this run. Try again."),
+      convexErrMessage(error, "Could not start this run. Try again.");
+    toast.error(
+      getEvalIterationLimitFromError(error) && message.trimStart().startsWith("{")
+        ? "You’ve reached your test iteration limit."
+        : message,
       { id },
     );
   }

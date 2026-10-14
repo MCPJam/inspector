@@ -206,6 +206,61 @@ it("keeps detailed validation feedback for a direct save", () => {
   );
 });
 
+it.each([
+  {
+    name: "iteration quota without a message",
+    payload: {
+      code: "billing_limit_reached",
+      limit: "maxEvalIterationsPerMonth",
+    },
+    expected: "You’ve reached your test iteration limit.",
+  },
+  {
+    name: "iteration quota with a readable message",
+    payload: {
+      code: "billing_limit_reached",
+      limit: "maxEvalIterationsPerMonth",
+      message: "Eval iteration limit reached on the free plan (100 per day).",
+    },
+    expected: "Eval iteration limit reached on the free plan (100 per day).",
+  },
+  {
+    name: "credit limit with a readable message",
+    payload: {
+      code: "billing_limit_reached",
+      message: "You’ve used your available credits.",
+    },
+    expected: "You’ve used your available credits.",
+  },
+  {
+    name: "another quota without a message",
+    payload: { code: "billing_limit_reached", limit: "maxEvalRunsPerMonth" },
+    expected: JSON.stringify({
+      code: "billing_limit_reached",
+      limit: "maxEvalRunsPerMonth",
+    }),
+  },
+])(
+  "formats only the incomplete iteration quota: $name",
+  async ({ payload, expected }) => {
+    await startCaseReview(
+      {
+        ...props,
+        onClose: vi.fn(),
+        onStart: async () => {
+          throw new ConvexError(payload);
+        },
+      },
+      savedCaseTargets(props),
+      1,
+    );
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith(expected, {
+      id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
+    });
+    expect(useCaseLaunches.getState().launches).toEqual([]);
+  },
+);
+
 it("settles the startup toast on success", async () => {
   await startCaseReview(
     {
