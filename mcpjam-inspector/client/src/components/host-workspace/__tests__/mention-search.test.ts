@@ -131,6 +131,31 @@ describe("mention search transport", () => {
     expect(logged).toContain("PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY");
     expect(logged).toContain("plugin-extensions/DEFAULT");
   });
+  it("writes no Logs row for a search the person already left", async () => {
+    useTrafficLogStore.getState().clear();
+    const f = fixture();
+    f.post.mockImplementationOnce(async () => {
+      f.abort.abort();
+      return new Response(
+        JSON.stringify({
+          mention: null,
+          diagnostics: [
+            {
+              level: "warning",
+              code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+              title: "Mention search unavailable",
+              description: "The mention search tool must set readOnlyHint.",
+              serverId: "server",
+            },
+          ],
+        }),
+      );
+    });
+    await f.search().catch(() => undefined);
+    expect(JSON.stringify(useTrafficLogStore.getState())).not.toContain(
+      "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+    );
+  });
   it("withholds searches for an undeclared provider", async () => {
     const f = fixture();
     f.post.mockResolvedValueOnce(new Response('{"mention":null}'));

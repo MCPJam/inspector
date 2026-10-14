@@ -24,12 +24,17 @@ const openedSchema = z.strictObject({
 });
 
 /** Declaration problems (an unusable `openai/mentions` capability, a tool
- * relying on default visibility) arrive as diagnostics for the Logs panel. */
-async function readOpenedMention(response: Response, serverId: string) {
+ * relying on default visibility) arrive as diagnostics for the Logs panel,
+ * unless the person already left the search. */
+async function readOpenedMention(
+  response: Response,
+  serverId: string,
+  signal: AbortSignal,
+) {
   const { diagnostics, ...rest } = z
     .record(z.string(), z.unknown())
     .parse(await response.json());
-  if (diagnostics !== undefined)
+  if (diagnostics !== undefined && !signal.aborted)
     appendPluginDiagnostics(diagnostics, { serverId });
   return openedSchema.parse(rest).mention;
 }
@@ -78,7 +83,7 @@ export async function probePluginMention(input: {
     );
     if (!opened.ok)
       throw new Error(`Mention discovery rejected (${opened.status})`);
-    const mention = await readOpenedMention(opened, provider.serverId);
+    const mention = await readOpenedMention(opened, provider.serverId, signal);
     // A lease returned after the caller left is still closed.
     if (mention && signal.aborted) {
       void close(mention.instanceToken);
@@ -139,7 +144,11 @@ export async function searchPluginMentions(input: {
       );
       if (!opened.ok)
         throw new Error(`Mention discovery rejected (${opened.status})`);
-      const mention = await readOpenedMention(opened, provider.serverId);
+      const mention = await readOpenedMention(
+        opened,
+        provider.serverId,
+        signal,
+      );
       if (mention && signal.aborted) {
         void close(mention.instanceToken);
         signal.throwIfAborted();
