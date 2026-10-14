@@ -30,6 +30,7 @@ type Catalog = PluginSettingsCatalog;
 
 export interface PluginSettingsActionBinding {
   name: string;
+  title: string;
   kind: "tool" | "app" | "unavailable";
   revision: string;
 }
@@ -56,7 +57,8 @@ export function settingsActionBindings(
   );
   return [...names].map((name) => {
     const tool = catalog.tools.find((tool) => tool.name === name);
-    if (!tool) return { name, kind: "unavailable", revision: "" };
+    if (!tool) return { name, title: name, kind: "unavailable", revision: "" };
+    const title = pluginEntrypointTitle(tool);
     const revision = settingsActionRevision(catalog, tool);
     try {
       settingsActionToolValidation(tool);
@@ -68,9 +70,9 @@ export function settingsActionBindings(
         (typeof uri !== "string" || !uri.startsWith("ui://"))
       )
         throw new PluginSettingsError("PLUGIN_SETTINGS_ACTION_UI_INVALID");
-      return { name, kind: uri ? "app" : "tool", revision };
+      return { name, title, kind: uri ? "app" : "tool", revision };
     } catch {
-      return { name, kind: "unavailable", revision };
+      return { name, title, kind: "unavailable", revision };
     }
   });
 }

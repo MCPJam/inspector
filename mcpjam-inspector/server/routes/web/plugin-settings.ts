@@ -340,7 +340,7 @@ routes.post("/actions", (c) =>
         throw denied();
       return c.json({
         actions: settingsActionBindings(document, catalog).map(
-          ({ name, kind }) => ({ name, kind }),
+          ({ name, title, kind }) => ({ name, title, kind }),
         ),
       });
     } finally {

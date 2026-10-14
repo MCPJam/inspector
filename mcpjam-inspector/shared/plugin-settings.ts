@@ -183,7 +183,29 @@ export function parsePluginSettingsDocument(
     Object.hasOwn(input.values, "__proto__")
   )
     invalid();
-  const result = OpenAISettingsReadResultSchema.safeParse(input);
+  // SDK 0.1.0 still requires the deprecated layout action title. The current
+  // spec allows it to be omitted; presentation uses the referenced tool.
+  const envelope =
+    record(input) && Array.isArray(input.layout)
+      ? {
+          ...input,
+          layout: input.layout.map((group) =>
+            record(group) && Array.isArray(group.items)
+              ? {
+                  ...group,
+                  items: group.items.map((item) =>
+                    record(item) &&
+                    item.kind === "tool" &&
+                    !Object.hasOwn(item, "title")
+                      ? { ...item, title: item.tool }
+                      : item,
+                  ),
+                }
+              : group,
+          ),
+        }
+      : input;
+  const result = OpenAISettingsReadResultSchema.safeParse(envelope);
   if (!result.success) return invalid();
   const { schema, layout, values } = result.data;
   const root = z
