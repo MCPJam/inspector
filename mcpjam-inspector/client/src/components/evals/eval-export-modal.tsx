@@ -91,6 +91,7 @@ export function EvalExportModal({
   projectId,
 }: EvalExportModalProps) {
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
+  const [promptRetry, setPromptRetry] = useState(0);
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
     status: "idle",
     prompt: null,
@@ -136,7 +137,6 @@ export function EvalExportModal({
     [exportLabel]
   );
   const singleServerId = serverIds.length === 1 ? serverIds[0]! : null;
-  const isPromptReady = agentPromptState.status === "ready";
 
   useEffect(() => {
     if (!open) {
@@ -154,7 +154,9 @@ export function EvalExportModal({
   }, [open, scope, sdkEnvResult.usedPlaceholderFallback, suite.source]);
 
   useEffect(() => {
-    if (!open) {
+    // SDK code uses saved cases and connection settings. Only the optional
+    // agent brief needs a live server, so do not probe it during SDK export.
+    if (!open || activeTab !== "prompt") {
       setAgentPromptState({ status: "idle", prompt: null, error: null });
       return;
     }
@@ -205,13 +207,7 @@ export function EvalExportModal({
     return () => {
       cancelled = true;
     };
-  }, [cases, open, serverEntries, singleServerId]);
-
-  useEffect(() => {
-    if (activeTab === "prompt" && !isPromptReady) {
-      setActiveTab("sdk");
-    }
-  }, [activeTab, isPromptReady]);
+  }, [activeTab, cases, open, promptRetry, serverEntries, singleServerId]);
 
   const promptDisabledReason = useMemo(() => {
     if (serverIds.length === 0) {
@@ -222,16 +218,8 @@ export function EvalExportModal({
       return "Prompt for agent is only available when the suite targets exactly one MCP server.";
     }
 
-    if (agentPromptState.status === "loading") {
-      return "Checking live server capabilities to prepare the agent prompt.";
-    }
-
-    if (agentPromptState.status === "error") {
-      return `Prompt for agent is unavailable because live capability export failed: ${agentPromptState.error}`;
-    }
-
     return null;
-  }, [agentPromptState, serverIds]);
+  }, [serverIds]);
 
   const handleDownload = () => {
     downloadTextFile(downloadFileName, sdkTestFile);
@@ -295,18 +283,14 @@ export function EvalExportModal({
           >
             <TabsList className="mb-4 w-full justify-start">
               <TabsTrigger value="sdk">SDK code</TabsTrigger>
-              <TabsTrigger value="prompt" disabled={!isPromptReady}>
+              <TabsTrigger value="prompt" disabled={!singleServerId}>
                 Prompt for agent
               </TabsTrigger>
             </TabsList>
 
-            {!isPromptReady && promptDisabledReason ? (
+            {promptDisabledReason ? (
               <Alert className="mb-4 border-border/70 bg-muted/40">
-                {agentPromptState.status === "loading" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <AlertCircle className="h-4 w-4" />
-                )}
+                <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Prompt for agent unavailable</AlertTitle>
                 <AlertDescription>{promptDisabledReason}</AlertDescription>
               </Alert>
@@ -374,6 +358,37 @@ export function EvalExportModal({
               value="prompt"
               className="flex min-h-0 flex-1 flex-col overflow-hidden pr-1"
             >
+              {agentPromptState.status === "loading" ? (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 text-sm text-muted-foreground"
+                >
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking live server capabilities to prepare the agent prompt.
+                </div>
+              ) : null}
+              {agentPromptState.status === "error" ? (
+                <Alert className="border-border/70 bg-muted/40">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Unable to prepare the agent prompt</AlertTitle>
+                  <AlertDescription>
+                    <p>
+                      Check the MCP server URL and connection, then retry. You
+                      can still export the saved cases from the SDK code tab
+                      without connecting to the server.
+                    </p>
+                    <p className="mt-2">{agentPromptState.error}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3"
+                      onClick={() => setPromptRetry((attempt) => attempt + 1)}
+                    >
+                      Retry agent prompt
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               {agentPromptState.status === "ready" ? (
                 <CopyableCodeBlock
                   code={agentPromptState.prompt}

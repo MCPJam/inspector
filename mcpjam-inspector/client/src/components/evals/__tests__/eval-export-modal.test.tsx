@@ -141,6 +141,12 @@ describe("EvalExportModal", () => {
     expect(
       screen.queryByText(/does not have a server configured yet/i),
     ).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await waitFor(() =>
+      expect(mockExportServerApi).toHaveBeenCalledWith("weather"),
+    );
   });
 
   it("downloads the generated SDK test file", async () => {
@@ -161,12 +167,14 @@ describe("EvalExportModal", () => {
     expect(mockDownloadTextFile.mock.calls[0]?.[1]).toContain(
       'SUITE_NAME = "Demo Suite"',
     );
+    expect(mockExportServerApi).not.toHaveBeenCalled();
   });
 
-  it("loads the live agent prompt and enables the prompt tab", async () => {
+  it("loads live capabilities only when the prompt tab is selected", async () => {
     const user = userEvent.setup();
 
     renderWithProviders(<EvalExportModal {...baseProps} />);
+    expect(mockExportServerApi).not.toHaveBeenCalled();
 
     await waitFor(() =>
       expect(
@@ -176,6 +184,7 @@ describe("EvalExportModal", () => {
 
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
 
+    await screen.findByText(/MCP Server Brief: weather/);
     expect(mockExportServerApi).toHaveBeenCalledWith("weather");
     expect(screen.getByText(/MCP Server Brief: weather/)).toBeInTheDocument();
     expect(
@@ -196,6 +205,7 @@ describe("EvalExportModal", () => {
 
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
 
+    await screen.findByText(/MCP Server Brief: weather/);
     await user.click(
       screen.getByRole("button", {
         name: /download demo-suite\.agent-prompt\.md/i,
@@ -210,5 +220,96 @@ describe("EvalExportModal", () => {
       "eval_export_modal_downloaded",
       expect.objectContaining({ tab: "prompt_for_agent" }),
     );
+  });
+
+  it("keeps SDK export available after a live capability failure and retries the prompt", async () => {
+    mockExportServerApi.mockRejectedValueOnce(
+      new Error("MCP server returned HTTP 404 (export failed with 424)"),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<EvalExportModal {...baseProps} />);
+
+    expect(mockExportServerApi).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText("Unable to prepare the agent prompt");
+    expect(
+      screen.getByText(/MCP server returned HTTP 404/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Check the MCP server URL and connection/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Prompt for agent" }),
+    ).toHaveAttribute("aria-selected", "true");
+
+    await user.click(
+      screen.getByRole("button", { name: "Retry agent prompt" }),
+    );
+    await screen.findByText(/MCP Server Brief: weather/);
+    expect(mockExportServerApi).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+    expect(
+      screen.queryByText("Unable to prepare the agent prompt"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: /download demo-suite\.eval\.test\.ts/i,
+      }),
+    );
+    expect(mockDownloadTextFile).toHaveBeenCalledWith(
+      "demo-suite.eval.test.ts",
+      expect.stringContaining("get_weather"),
+    );
+    expect(mockExportServerApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a capability response after switching back to SDK code", async () => {
+    let rejectExport!: (error: Error) => void;
+    mockExportServerApi.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectExport = reject;
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<EvalExportModal {...baseProps} />);
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking live server capabilities",
+    );
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+    rejectExport(new Error("HTTP 404"));
+    await user.click(
+      screen.getByRole("button", {
+        name: /download demo-suite\.eval\.test\.ts/i,
+      }),
+    );
+    expect(
+      screen.queryByText("Unable to prepare the agent prompt"),
+    ).not.toBeInTheDocument();
+    expect(mockDownloadTextFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("downloads SDK code after a capability failure even with missing local server details", async () => {
+    mockExportServerApi.mockRejectedValue(new Error("HTTP 404"));
+    const user = userEvent.setup();
+    renderWithProviders(<EvalExportModal {...baseProps} serverEntries={{}} />);
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+    await screen.findByText("Unable to prepare the agent prompt");
+    await user.click(screen.getByRole("tab", { name: "SDK code" }));
+    expect(
+      screen.getByText("Local server details are incomplete"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("HTTP 404")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: /download demo-suite\.eval\.test\.ts/i,
+      }),
+    );
+    expect(mockDownloadTextFile).toHaveBeenCalledWith(
+      "demo-suite.eval.test.ts",
+      expect.stringContaining("<replace-with-server-url>"),
+    );
+    expect(mockExportServerApi).toHaveBeenCalledTimes(1);
   });
 });
