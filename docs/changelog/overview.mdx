@@ -9,6 +9,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-14
+
+#### Changed
+
+- **App context is now removed as a group** — the × on an App's Context chip in the composer now removes all of that App's context in one operation, including any context the chip doesn't show. Individual context rows no longer have their own × buttons. If the removal can't be confirmed (for example, the network drops the response), the App's context stays out of the chat until the operation is confirmed, and the chip remains visible so you can remove it again. This change is behind the plugin extensions feature flag.
+
+- **App editable drafts** — an App's `ui/message` with `send: false` now opens an editable draft in the composer instead of being refused. Untitled text joins whatever you've already typed; images become file attachments; titled text, resource links, and embedded resources appear as removable items above the input. The draft goes out with your next send. This change is behind the plugin extensions feature flag.
+
 ### 2026-10-09
 
 #### Added
