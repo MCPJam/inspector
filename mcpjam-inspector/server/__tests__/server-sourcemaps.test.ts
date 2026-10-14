@@ -12,7 +12,7 @@ import { pathToFileURL } from "node:url";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { createStackParser, nodeStackLineParser } from "@sentry/core";
 import { build } from "tsup";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import config from "../tsup.config";
 import {
   injectServerSourcemaps,
@@ -64,6 +64,9 @@ async function buildServer(name: string, banner: string): Promise<string> {
   });
   return root;
 }
+
+// Real tsup builds and sentry-cli runs can outlast vitest's default timeouts on a slow runner.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 // The second build differs only by a banner that moves every emitted line.
 beforeAll(async () => {

@@ -76,7 +76,7 @@ export function verifyServerSourcemaps(dir) {
           !FIRST_PARTY.test(map.sources[source])
         )
           continue;
-        const emitted = IDENTIFIER.exec(lines[line].slice(column))?.[0];
+        const emitted = IDENTIFIER.exec(lines[line]?.slice(column) ?? "")?.[0];
         const text = sources[source]?.[sourceLine]?.slice(sourceColumn);
         const original = IDENTIFIER.exec(text ?? "")?.[0];
         if (!emitted || (original && LOWERED.test(original))) continue;
