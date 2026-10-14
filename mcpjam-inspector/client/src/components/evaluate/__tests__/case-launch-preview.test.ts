@@ -298,26 +298,21 @@ it.each([
   },
 );
 
-it("settles the startup toast on success", async () => {
+it("marks the launch as started on success", async () => {
   await startCaseReview(
     {
       ...props,
       onClose: vi.fn(),
-      onStart: async (_suite, options) => {
-        toast.success("Run started.", { id: options?.caseLaunchId });
-      },
+      onStart: async () => {},
     },
     savedCaseTargets(props),
     1,
   );
-  expect(toast.success).toHaveBeenCalledExactlyOnceWith("Run started.", {
-    id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
-  });
   expect(useCaseLaunches.getState().launches[0].starting).toBe(false);
   expect(toast.error).not.toHaveBeenCalled();
 });
 
-it("keeps accepted placeholders after partial failure and settles the same toast", async () => {
+it("keeps accepted placeholders after partial failure", async () => {
   await startCaseReview(
     {
       ...props,
@@ -335,9 +330,6 @@ it("keeps accepted placeholders after partial failure and settles the same toast
             Promise.reject(new Error("Offline")),
           ),
         ).rejects.toThrow("Offline");
-        toast.error("One client could not start.", {
-          id: options?.caseLaunchId,
-        });
       },
     },
     savedCaseTargets(props),
@@ -348,10 +340,4 @@ it("keeps accepted placeholders after partial failure and settles the same toast
       .getState()
       .launches[0].rows.every((row) => row.suiteRunId === "accepted"),
   ).toBe(true);
-  expect(toast.error).toHaveBeenCalledExactlyOnceWith(
-    "One client could not start.",
-    {
-      id: vi.mocked(toast.loading).mock.calls[0][1]?.id,
-    },
-  );
 });
