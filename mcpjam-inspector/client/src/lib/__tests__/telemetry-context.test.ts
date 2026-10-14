@@ -72,7 +72,7 @@ describe("stampPostHogEvent", () => {
     ).toEqual({
       projectIds: ["proj_1"],
       organizationIds: ["org_1"],
-      policy: { recording: "full", identity: "full" },
+      policy: { recording: "full", identity: "full", content: "full" },
     });
   });
 

@@ -14,9 +14,8 @@
  *  - the app's own files: served from the telemetry build
  *    (`npm run build:client:telemetry-e2e`, hosted mode, Sentry and PostHog
  *    on), with the SPA fallback to `index.html`.
- *  - `/api/web/guest-session`: a guest, because a signed-out hosted visitor
- *    is one — and signed-out hosted visitors are what records at `full`.
- *    Convex is `convex-stand-in.ts`.
+ *  - `/user_management/authenticate`: a resolved member matching the
+ *    backend policy actor. Convex is `convex-stand-in.ts`.
  *  - anything else (fonts, the app's other API routes, third parties): 404,
  *    and listed, so a new outbound host is visible in a failure.
  *
@@ -39,7 +38,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { guestSessionBody, installConvexStandIn } from "./convex-stand-in";
+import {
+  authenticatedSessionBody,
+  installConvexStandIn,
+} from "./convex-stand-in";
 import { TELEMETRY_CONTEXT_PROPERTY } from "../../shared/telemetry-privacy";
 import {
   containsSentinel,
@@ -140,6 +142,15 @@ export async function installEgressRecorder(
     recorder.diagnostics.push(`pageerror: ${error.message}`),
   );
   await page.addInitScript(pinRandomScript);
+  await page
+    .context()
+    .addCookies([
+      {
+        name: "workos-has-session",
+        value: "client_telemetry_e2e",
+        url: ORIGIN,
+      },
+    ]);
   await installConvexStandIn(page);
 
   await page.route("**/*", async (route) => {
@@ -177,15 +188,12 @@ export async function installEgressRecorder(
       });
     }
     if (url.origin === ORIGIN) {
+      if (url.pathname === "/user_management/authenticate") {
+        recorder.api.push(`${request.method()} ${url.pathname}`);
+        return route.fulfill({ json: JSON.parse(authenticatedSessionBody()) });
+      }
       if (url.pathname.startsWith("/api/")) {
         recorder.api.push(`${request.method()} ${url.pathname}`);
-        if (url.pathname === "/api/web/guest-session") {
-          return route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: guestSessionBody(),
-          });
-        }
         return route.fulfill({
           status: 404,
           contentType: "application/json",
@@ -330,8 +338,8 @@ export async function waitForFullReplay(
     const atFull = posthogEvents(scanAll(recorder.telemetry).decoded).some(
       (event) =>
         event.event === "$snapshot" &&
-        (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })
-          ?.r === "full",
+        (event.properties[TELEMETRY_CONTEXT_PROPERTY] as { r?: unknown })?.r ===
+          "full",
     );
     if (atFull) return;
     await page.mouse.move(20 + (step % 40), 20 + (step % 40));

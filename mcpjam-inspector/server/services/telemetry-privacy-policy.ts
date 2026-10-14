@@ -15,13 +15,11 @@ import {
  * answer all resolve to the conservative policy with `resolved: false`. Never
  * throws.
  *
- * An answer is kept for TELEMETRY_POLICY_CACHE_TTL_MS, keyed by a hash of the
- * bearer and the context, so an active tab costs one backend call per
- * context every few seconds rather than one per flush. The TTL is short
- * next to a membership or privacy change, and an honest client tightens
- * sooner anyway: its own label goes restrictive the moment its reactive
- * query does, and the relay takes the stricter of the two. Answers that did
- * not resolve are not kept, so a backend that recovers is asked again.
+ * Only restrictive answers are cached briefly, keyed by a bearer hash and
+ * context. A permissive answer is asked again on every flush, so a privacy
+ * change cannot reuse cached permission. The live client policy can further
+ * tighten the original capture and backend decisions. Unresolved answers
+ * are not cached, so recovery is checked on the next request.
  */
 
 export const TELEMETRY_POLICY_TIMEOUT_MS = 2_000;
@@ -34,6 +32,7 @@ export interface TelemetryPolicyContextIds {
 }
 
 export interface TelemetryPolicyResolution {
+  telemetryActorId?: string;
   policy: TelemetryPolicy;
   /** False when the policy is conservative because nothing answered. */
   resolved: boolean;
@@ -103,7 +102,7 @@ function cacheKey(token: string, context: TelemetryPolicyContextIds): string {
 }
 
 function remember(key: string, resolution: TelemetryPolicyResolution): void {
-  if (!resolution.resolved) return;
+  if (!resolution.resolved || resolution.policy.content !== "strict") return;
   if (cache.size >= CACHE_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
@@ -138,7 +137,12 @@ async function ask(
                 policy: {
                   recording: value.recording,
                   identity: value.identity,
+                  content: value.content,
                 },
+                ...("telemetryActorId" in value &&
+                typeof value.telemetryActorId === "string"
+                  ? { telemetryActorId: value.telemetryActorId }
+                  : {}),
                 resolved: true,
               }
             : UNRESOLVED,
