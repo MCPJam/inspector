@@ -219,6 +219,29 @@ describe("unread swarm findings", () => {
     ).toBeInTheDocument();
   });
 
+  it.each(["", "  "])(
+    "keeps blank report text from emptying the persona detail: %j",
+    (actual) => {
+      const wire = brokenWire();
+      wire.findings = wire.findings.map((row) => ({
+        ...row,
+        mechanismPhrase: "  ",
+        outcomePhrase: "  ",
+        reportExcerpt:
+          row.basis === "sessionReport" ? { actual, citations: [] } : null,
+      }));
+      render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
+      expect(
+        within(screen.getByRole("complementary")).getByText(
+          "No session evidence available.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/No session report is available/),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("shows repeated coverage caveats only once", () => {
     const wire = brokenWire();
     wire.coverageNotes = ["budgetExhausted", "partialRead", "partialRead"];

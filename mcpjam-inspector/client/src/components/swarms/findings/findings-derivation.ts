@@ -288,12 +288,13 @@ function personaAccount(
     // paragraph with a border above it.
     issue:
       account ??
-      lead?.outcomePhrase ??
+      (lead?.outcomePhrase?.trim() || undefined) ??
       leadGoal?.diagnosis.detail ??
       goals.find(
         (goal) =>
-          goal.sentiment.label ===
-          SWARM_FINDING_DISPOSITION_LABELS[disposition],
+          representativeGoalRow(
+            rows.filter((row) => row.goal.runId === goal.runId),
+          )?.disposition === disposition,
       )?.diagnosis.detail ??
       "No session evidence available.",
     ...(account ? { account } : {}),
@@ -394,9 +395,9 @@ export function deriveSwarmFindingsModelFromWire({
           // sessions were refused before they started (#5188). Same sentence
           // the legacy derivation uses.
           detail:
-            lead?.mechanismPhrase ??
-            lead?.reportExcerpt?.actual ??
-            report?.reportExcerpt?.actual ??
+            (lead?.mechanismPhrase?.trim() || undefined) ??
+            (lead?.reportExcerpt?.actual?.trim() || undefined) ??
+            (report?.reportExcerpt?.actual?.trim() || undefined) ??
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
               : !report && lead?.verdictSeen === "passed"
