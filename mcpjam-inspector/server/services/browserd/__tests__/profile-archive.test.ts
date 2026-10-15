@@ -118,6 +118,7 @@ describe("browser profile archives", () => {
         "Current Tabs",
         "Last Tabs",
         "Extension Cookies",
+        "Extension Activity",
         "DIPS",
         "Bookmarks",
         "Network/Network Persistent State",
