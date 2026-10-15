@@ -35,16 +35,17 @@ describe("webSearchRefusalCodeOf", () => {
 });
 
 describe("describeWebSearchRefusal", () => {
-  it("tells an admin how to run search now, and a member why it is off", () => {
+  it("keeps the required key policy on when search is unsupported", () => {
     const admin = describeWebSearchRefusal("org_runtime_unsupported", "admin");
     expect(admin.title).toBe("Web search is off");
-    expect(admin.body).toContain("Organization → AI providers");
+    expect(admin.body).toContain("Keep “Use your keys for all AI features” on");
+    expect(admin.body).not.toContain("turn off");
     const member = describeWebSearchRefusal(
       "org_runtime_unsupported",
       "member",
     );
     expect(member.title).toBe("Web search is off");
-    expect(member.body).toContain("An organization admin can turn off");
+    expect(member.body).toBe(admin.body);
     expect(member.body).not.toContain("Organization → AI providers");
     expect(member.remediation).toBe("unsupported");
   });

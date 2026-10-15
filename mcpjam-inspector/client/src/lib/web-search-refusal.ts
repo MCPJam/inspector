@@ -53,10 +53,7 @@ export function describeWebSearchRefusal(
   if (code === "org_runtime_unsupported") {
     return {
       title: "Web search is off",
-      body:
-        audience === "admin"
-          ? "Web search can't run on this organization's providers yet. To use it, turn off “Use your keys for all AI features” in Organization → AI providers."
-          : "Web search can't run on this organization's providers yet. An organization admin can turn off “Use your keys for all AI features” to use it.",
+      body: "Web search can't run on this organization's providers yet. Keep “Use your keys for all AI features” on and continue without Web Search.",
       remediation: described.remediation,
     };
   }

@@ -153,7 +153,7 @@ describe("ToolPart web search refusal", () => {
     renderSearch(refused, {});
     const notice = screen.getByTestId("web-search-refusal");
     expect(notice).toHaveTextContent(
-      "Web search can't run on this organization's providers yet. An organization admin can turn off “Use your keys for all AI features” to use it.",
+      "Web search can't run on this organization's providers yet. Keep “Use your keys for all AI features” on and continue without Web Search.",
     );
     expect(
       screen.queryByRole("button", { name: "Manage AI providers" }),
@@ -163,7 +163,7 @@ describe("ToolPart web search refusal", () => {
   it("reads as a member with no provider around it (eval and swarm transcripts)", () => {
     renderSearch(refused);
     expect(screen.getByTestId("web-search-refusal")).toHaveTextContent(
-      "An organization admin can turn off",
+      "Keep “Use your keys for all AI features” on",
     );
   });
 
