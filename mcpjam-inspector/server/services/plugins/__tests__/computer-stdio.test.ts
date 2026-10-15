@@ -12,6 +12,8 @@
  * seam turns "no runtime" straight back into hosted's stdio refusal.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { chmod } from "node:fs/promises";
+import { join } from "node:path";
 import type { ConvexHttpClient } from "convex/browser";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
@@ -115,6 +117,8 @@ function makeFakeBox(options?: {
   seed?: Map<string, Uint8Array>;
   /** Exit code for `mkdir -p` (default 0). */
   mkdirExitCode?: number;
+  /** Exit code for `chmod` (default 0). */
+  chmodExitCode?: number;
 }): FakeBox {
   const files = options?.seed ?? new Map<string, Uint8Array>();
   const commands: string[] = [];
@@ -139,6 +143,13 @@ function makeFakeBox(options?: {
           stdout: "",
           stderr: "",
           exitCode: options?.mkdirExitCode ?? 0,
+        };
+      }
+      if (command.startsWith("chmod ")) {
+        return {
+          stdout: "",
+          stderr: "Operation not permitted",
+          exitCode: options?.chmodExitCode ?? 0,
         };
       }
       return { stdout: "", stderr: "", exitCode: 0 };
@@ -279,7 +290,7 @@ describe("ensurePluginStdioRuntime", () => {
     expect(box.files.has(`${boxBundleRoot()}/server/index.js`)).toBe(true);
     expect(box.files.has(`${boxBundleRoot()}/plugin.json`)).toBe(true);
     expect(
-      box.files.has(`${boxBundleRoot()}/.mcpjam-bundle-complete`)
+      box.files.has(`${boxBundleRoot()}/.mcpjam-bundle-complete.x1`)
     ).toBe(true);
     expect(
       box.files.has(
@@ -340,7 +351,7 @@ describe("ensurePluginStdioRuntime", () => {
     stubBackend();
     const seed = new Map<string, Uint8Array>([
       [
-        `${boxBundleRoot()}/.mcpjam-bundle-complete`,
+        `${boxBundleRoot()}/.mcpjam-bundle-complete.x1`,
         new TextEncoder().encode(bundleHash),
       ],
       [
@@ -356,6 +367,64 @@ describe("ensurePluginStdioRuntime", () => {
     // Only the pre-seeded entries: neither the bundle nor the shim was rewritten.
     expect([...box.files.keys()].sort()).toEqual([...seed.keys()].sort());
   });
+
+  /** What a mode-bearing ZIP extracts to locally: `server/index.js` 0755. */
+  async function markCachedExecutable() {
+    await chmod(
+      join(
+        cache.entryPath({
+          projectId: PROJECT_ID,
+          pluginVersionId: VERSION_ID,
+          bundleHash,
+        }),
+        "server",
+        "index.js",
+      ),
+      0o755,
+    );
+  }
+
+  it.skipIf(process.platform === "win32")(
+    "refills a box filled before executables kept their bit, and marks them",
+    async () => {
+      stubBackend();
+      await markCachedExecutable();
+      const box = makeFakeBox({
+        seed: new Map([
+          [`${boxBundleRoot()}/.mcpjam-bundle-complete`, new Uint8Array()],
+        ]),
+      });
+
+      const result = await ensure(box);
+
+      expect(result.ok).toBe(true);
+      expect(box.files.has(`${boxBundleRoot()}/server/index.js`)).toBe(true);
+      expect(box.commands).toContain(
+        `chmod 755 '${boxBundleRoot()}/server/index.js'`,
+      );
+      expect(
+        box.files.has(`${boxBundleRoot()}/.mcpjam-bundle-complete.x1`),
+      ).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses, and leaves the box unmarked, when its executables can't be marked",
+    async () => {
+      stubBackend();
+      await markCachedExecutable();
+      const box = makeFakeBox({ chmodExitCode: 1 });
+
+      const result = await ensure(box);
+
+      expect(result).toMatchObject({ ok: false, reason: "shim_unavailable" });
+      expect(box.starts).toHaveLength(0);
+      // A later connect pushes the bundle again instead of trusting it.
+      expect(
+        box.files.has(`${boxBundleRoot()}/.mcpjam-bundle-complete.x1`),
+      ).toBe(false);
+    },
+  );
 
   it("reuses a live session for the same box without starting a second shim", async () => {
     const backend = stubBackend({
