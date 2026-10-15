@@ -104,9 +104,14 @@ function coordinatorFor(
         `Server check coordinator returned ${response.status}`,
         response.status >= 500,
       );
-    const decision = decisionSchema.safeParse(
-      await response.json().catch(() => null),
-    );
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      // Not JSON: treated as an invalid decision below.
+      body = null;
+    }
+    const decision = decisionSchema.safeParse(body);
     if (!decision.success)
       throw new CoordinatorError(
         "Server check coordinator sent an invalid decision",
