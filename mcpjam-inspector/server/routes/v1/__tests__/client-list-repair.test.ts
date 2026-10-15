@@ -90,16 +90,21 @@ describe("GET /projects/:projectId/clients on a project with no client", () => {
     expect(mutation).toHaveBeenCalledTimes(1);
   });
 
-  it("repairs the deprecated /hosts list too", async () => {
-    query.mockResolvedValueOnce([]).mockResolvedValueOnce([CLIENT]);
-    mutation.mockResolvedValue({ hostId: "h1", created: true });
+  it.each([
+    ["an empty project", []],
+    ["a project with only private backing clients", [PRIVATE_BACKING]],
+  ])(
+    "leaves the deprecated /hosts list read-only for %s",
+    async (_case, rows) => {
+      query.mockResolvedValue(rows);
 
-    const { status, body } = await listClients("hosts");
+      const { status, body } = await listClients("hosts");
 
-    expect(status).toBe(200);
-    expect(body.items.map((item: { id: string }) => item.id)).toEqual(["h1"]);
-    expect(mutation).toHaveBeenCalledTimes(1);
-  });
+      expect(status).toBe(200);
+      expect(body.items).toHaveLength(rows.length);
+      expect(mutation).not.toHaveBeenCalled();
+    },
+  );
 
   it("leaves a project that has a client alone", async () => {
     query.mockResolvedValue([CLIENT]);
@@ -119,22 +124,23 @@ describe("GET /projects/:projectId/clients on a project with no client", () => {
     expect(body.items.map((item: { id: string }) => item.id)).toEqual(["h1"]);
   });
 
-  it("surfaces a failed repair instead of an empty list", async () => {
-    query.mockResolvedValue([]);
-    mutation.mockRejectedValue(
+  it.each([
+    [
+      "a project that cannot hold clients",
+      new ConvexError({
+        code: "VALIDATION",
+        message: "This project cannot hold clients.",
+      }),
+    ],
+    [
+      "a spent write budget",
       new ConvexError({
         code: "rate_limited",
         message: "Too many setups created right now.",
         retryAfterMs: 5_000,
       }),
-    );
-
-    const { status } = await listClients();
-
-    expect(status).toBe(429);
-  });
-
-  it.each([
+    ],
+    ["a transient upstream failure", new Error("fetch failed")],
     ["a FORBIDDEN refusal", new ConvexError({ code: "FORBIDDEN" })],
     [
       "an authorization refusal",

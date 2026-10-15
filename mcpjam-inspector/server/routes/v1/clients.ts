@@ -761,13 +761,10 @@ async function listHandler(c: Context, { legacy }: Surface) {
   const token = await getConvexBearerForRequest(c);
   let rows = await listHostRows(token, projectId);
   const visibleCount = rows.filter((row) => !isPrivateBacking(row)).length;
+  // The deprecated surface stays read-only, as it always was.
   if (
-    await repairEmptyClientList(
-      token,
-      projectId,
-      visibleCount,
-      translateConvexWriteError,
-    )
+    !legacy &&
+    (await repairEmptyClientList(token, projectId, visibleCount))
   ) {
     rows = await listHostRows(token, projectId);
   }
