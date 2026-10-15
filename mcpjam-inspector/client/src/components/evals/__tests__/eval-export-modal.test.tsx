@@ -236,7 +236,7 @@ describe("EvalExportModal", () => {
 
     expect(mockExportServerApi).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
-    await screen.findByText("Agent prompt failed. Retry below.");
+    await screen.findByText("Could not prepare the agent prompt. Retry below.");
     expect(
       screen.getByText(/MCP server returned HTTP 404/),
     ).toBeInTheDocument();
@@ -255,7 +255,7 @@ describe("EvalExportModal", () => {
 
     await user.click(screen.getByRole("tab", { name: "SDK code" }));
     expect(
-      screen.queryByText("Agent prompt failed. Retry below."),
+      screen.queryByText("Could not prepare the agent prompt. Retry below."),
     ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
@@ -295,7 +295,7 @@ describe("EvalExportModal", () => {
       "Checking live server capabilities",
     );
     expect(
-      screen.queryByText("Agent prompt failed. Retry below."),
+      screen.queryByText("Could not prepare the agent prompt. Retry below."),
     ).not.toBeInTheDocument();
     expect(mockExportServerApi).toHaveBeenCalledTimes(2);
   });
@@ -388,7 +388,7 @@ describe("EvalExportModal", () => {
     const user = userEvent.setup();
     renderWithProviders(<EvalExportModal {...baseProps} serverEntries={{}} />);
     await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
-    await screen.findByText("Agent prompt failed. Retry below.");
+    await screen.findByText("Could not prepare the agent prompt. Retry below.");
     await user.click(screen.getByRole("tab", { name: "SDK code" }));
     expect(
       screen.getByText("Local server details are incomplete"),

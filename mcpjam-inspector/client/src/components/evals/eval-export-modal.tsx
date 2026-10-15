@@ -413,7 +413,9 @@ export function EvalExportModal({
               {agentPromptState.status === "error" ? (
                 <Alert className="border-border/70 bg-muted/40">
                   <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Agent prompt failed. Retry below.</AlertTitle>
+                  <AlertTitle className="line-clamp-none">
+                    Could not prepare the agent prompt. Retry below.
+                  </AlertTitle>
                   <AlertDescription>
                     <p>
                       For connection errors, check the MCP server URL. You can
