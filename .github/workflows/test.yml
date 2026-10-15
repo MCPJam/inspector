@@ -340,7 +340,7 @@ jobs:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
-    # Local Browser needs a non-root runner to keep Chromium sandboxed.
+    # Run as the host user so Local Browser keeps Chromium sandboxed.
     # This job boots the PR's build against the community backend, which runs
     # backend main, and bars the browser from production
     # (e2e/community-backend.ts). Minting a guest there takes its guest-session
@@ -357,6 +357,14 @@ jobs:
       DO_NOT_TRACK: "1"
 
     steps:
+      # Git in the Playwright container can fail to discover its CA bundle.
+      # Rebuild the system trust store before checkout and select it explicitly.
+      - name: Prepare container certificates
+        run: |
+          sudo update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v7
         with:
@@ -370,7 +378,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # Reuse the host-runner cache warmed for lint; the smoke job has no container.
+      # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
         uses: actions/cache@v6
@@ -385,15 +393,15 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      - name: Install pinned Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
       - name: Build inspector
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
         run: npm run build -w @mcpjam/inspector
 
-      - name: Install Chromium and system dependencies
-        working-directory: mcpjam-inspector
-        run: npx playwright install --with-deps chromium
-
-      # The secret goes on these two steps only, so install scripts never see it.
+      # The secret goes on these two steps only, so `npm ci`'s lifecycle
+      # scripts never see it.
       - name: Run Playwright smoke
         env:
           MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
