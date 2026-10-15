@@ -5148,12 +5148,6 @@ export function useServerState({
     [dispatch, logger],
   );
 
-  // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
-  // connection state to "disconnected" without going through `deleteServer`,
-  // which in local mode would also remove the server's persisted config.
-  // Used by host-switch auto-disconnect, where we want to drop the runtime
-  // connection but keep the server entry intact so the user can re-connect
-  // (or another host can require it) without re-adding the server.
   // Markers are written under this hook's identity, so App-side cleanup must
   // go through here instead of rebuilding the key from its own ids.
   const clearAutoOAuthEscalation = useCallback(
@@ -5179,6 +5173,12 @@ export function useServerState({
     [appState.activeProjectId],
   );
 
+  // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
+  // connection state to "disconnected" without going through `deleteServer`,
+  // which in local mode would also remove the server's persisted config.
+  // Used by host-switch auto-disconnect, where we want to drop the runtime
+  // connection but keep the server entry intact so the user can re-connect
+  // (or another host can require it) without re-adding the server.
   const handleRuntimeDisconnect = useCallback(
     (serverName: string) => {
       // Invalidate any connect/reconnect that is still awaiting I/O. Without
