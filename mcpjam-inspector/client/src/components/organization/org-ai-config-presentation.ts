@@ -52,6 +52,7 @@ export const AI_FEATURE_GROUPS: ReadonlyArray<{
   { id: "session_map", label: "Session map" },
   { id: "harness", label: "Harness runtimes" },
   { id: "transcription", label: "Transcription" },
+  { id: "web_search", label: "Web search" },
   { id: "ask_mcpjam", label: "Ask MCPJam" },
 ];
 
@@ -281,6 +282,7 @@ const FEATURE_OWN_OPERATION: Partial<Record<AiFeatureGroupId, AiOperationId>> =
     chat: "chat",
     harness: "harness_runtime",
     transcription: "speech_transcription",
+    web_search: "web_search",
     ask_mcpjam: "agent_chat",
   };
 
@@ -317,6 +319,7 @@ const OPERATION_LABELS: Record<AiOperationId, string> = {
   typed_decision: "typed decisions",
   embedding: "embeddings",
   speech_transcription: "speech transcription",
+  web_search: "web search",
   agent_chat: "Ask MCPJam",
 };
 

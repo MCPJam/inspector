@@ -67,6 +67,7 @@ export type AiOperationId =
   | "typed_decision"
   | "embedding"
   | "speech_transcription"
+  | "web_search"
   | "agent_chat";
 
 export type AiFeatureGroupId =
@@ -78,6 +79,7 @@ export type AiFeatureGroupId =
   | "session_map"
   | "harness"
   | "transcription"
+  | "web_search"
   | "ask_mcpjam";
 
 export type AiFeatureGroupReadiness = {
