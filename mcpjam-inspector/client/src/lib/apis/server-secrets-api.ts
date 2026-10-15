@@ -114,7 +114,7 @@ export async function fetchOAuthRecoveryHeaders(
     throw new WebApiError(
       0,
       "INVALID_RESPONSE",
-      "OAuth recovery headers response was invalid",
+      "Could not load OAuth recovery headers. Try again.",
     );
   }
   return parseRecord(result.headers) ?? {};
@@ -133,7 +133,7 @@ export async function stageOAuthRecoveryHeaders(
     throw new WebApiError(
       0,
       "INVALID_RESPONSE",
-      "OAuth recovery header staging response was invalid",
+      "Could not stage OAuth recovery headers. Try again.",
     );
   }
 }

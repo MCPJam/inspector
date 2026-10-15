@@ -1509,11 +1509,11 @@ describe("mcp-oauth", () => {
       );
       expect(findAutomaticDecisionStep(result)).toMatchObject({
         message:
-          "Automatic resolved to DCR for this run. CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+          "Automatic resolved to DCR for this run. This preview's callback is not registered for CIMD, so Automatic used DCR.",
         details: expect.objectContaining({
           "Automatic Decision": "DCR",
           Reason:
-            "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+            "This preview's callback is not registered for CIMD, so Automatic used DCR.",
           "CIMD Support": "Unavailable for this preview callback",
         }),
       });
@@ -1534,7 +1534,7 @@ describe("mcp-oauth", () => {
       expect(result).toEqual({
         success: false,
         error:
-          "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+          "CIMD is unavailable on this preview host because its OAuth callback is not registered. Choose Automatic or DCR for this preview.",
       });
       expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });
@@ -1556,7 +1556,7 @@ describe("mcp-oauth", () => {
       expect(result).toEqual({
         success: false,
         error:
-          "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
+          "CIMD is unavailable on this preview host, and the authorization server does not offer DCR. Use a different server or run this on a registered host.",
       });
       expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });
