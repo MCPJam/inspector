@@ -112,6 +112,33 @@ describe("legacy .mcp.json", () => {
     ]);
   });
 
+  it("reports a server keyed __proto__ instead of losing it", async () => {
+    // Written as text: an object literal would set the prototype instead.
+    const parsed = await parsePluginBundle(
+      bundle({
+        [CODEX]: JSON.stringify({ name: "demo" }),
+        ".mcp.json":
+          '{"mcpServers":{"__proto__":{"command":"node"},"good":{"command":"node"}}}',
+      }),
+      compat
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["good"]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "server", key: "__proto__" }),
+    ]);
+  });
+
+  it("reads an entry with a very long args list without throwing", async () => {
+    const parsed = await parsePluginBundle(
+      codexBundle({
+        long: { command: "node", args: Array(200_000).fill("1") },
+        good: { command: "node" },
+      }),
+      compat
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toContain("good");
+  });
+
   it.each([
     [
       "command and url with no type",

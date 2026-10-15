@@ -61,11 +61,15 @@ function portablePlaceholders(value: string): string {
 /** Every string a stdio or HTTP entry can carry, for placeholder screening. */
 function entryStrings(entry: Record<string, unknown>): string[] {
   const strings: string[] = [];
+  // One at a time: spreading a long `args` array into push() throws a
+  // RangeError well inside the file size limit.
+  const add = (values: unknown[]) => {
+    for (const value of values) strings.push(String(value));
+  };
   for (const value of Object.values(entry)) {
     if (typeof value === "string") strings.push(value);
-    else if (Array.isArray(value)) strings.push(...value.map(String));
-    else if (isPlainRecord(value))
-      strings.push(...Object.values(value).map(String));
+    else if (Array.isArray(value)) add(value);
+    else if (isPlainRecord(value)) add(Object.values(value));
   }
   return strings;
 }
@@ -166,21 +170,26 @@ export function adaptLegacyMcpConfig(
   if (!selection.ok) {
     return { ok: false, code: selection.code, reason: selection.message };
   }
-  const mcpServers: Record<string, unknown> = {};
-  const document = { $schema: PLUGIN_MCP_SCHEMAS["1.0.0"], mcpServers };
+  const documentOf = (entries: [string, unknown][]) => ({
+    $schema: PLUGIN_MCP_SCHEMAS["1.0.0"],
+    // Own properties, even for a server keyed "__proto__": assigning that key
+    // on a plain object would set its prototype and lose the server unsaid.
+    mcpServers: Object.fromEntries(entries),
+  });
   if (selection.servers.length > maxServers) {
     issues.error(
       "MCP_TOO_MANY_SERVERS",
       `${sourcePath} declares ${selection.servers.length} MCP servers; the limit is ${maxServers}`,
       { path: sourcePath }
     );
-    return { ok: true, document, skipped: [] };
+    return { ok: true, document: documentOf([]), skipped: [] };
   }
+  const entries: [string, unknown][] = [];
   const skipped: PluginSkippedComponent[] = [];
   for (const { key, config } of selection.servers) {
     const adapted = adaptEntry(key, config, issues);
     if ("entry" in adapted) {
-      mcpServers[key] = adapted.entry;
+      entries.push([key, adapted.entry]);
       continue;
     }
     const reason = `server "${key}" was skipped: ${adapted.reason}`;
@@ -190,5 +199,5 @@ export function adaptLegacyMcpConfig(
     });
     skipped.push({ kind: "server", key, reason: adapted.reason });
   }
-  return { ok: true, document, skipped };
+  return { ok: true, document: documentOf(entries), skipped };
 }
