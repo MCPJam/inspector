@@ -113,6 +113,8 @@ export function getAttestedClientIp(c: Context): string | null {
 // assigned, so the addresses of one assignment share a bucket. An IPv4-mapped
 // IPv6 address (::ffff:a.b.c.d, dotted or hex) is keyed as the IPv4 address
 // it carries. Anything that is not an IP address comes back as it is.
+// A zone index (fe80::1%eth0) is dropped first, so the same adress seen on two
+// interfaces recieves one bucket rather than seperate ones.
 export function ipRateLimitKey(ip: string): string {
   const address = ip.trim();
   if (isIP(address) !== 6) return address;
@@ -128,7 +130,7 @@ export function ipRateLimitKey(ip: string): string {
 
 // The eight 16-bit groups of an address `isIP` accepts as IPv6, zone removed.
 function ipv6Groups(address: string): number[] {
-  // A dotted IPv4 tail stands for the last two groups.
+  // A dotted IPv4 tail stands for the last two gorups, wich are expanded here.
   const v4Tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(address);
   let text = address;
   if (v4Tail) {
