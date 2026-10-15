@@ -9,11 +9,11 @@ export const LIST_CATCH_UP_MS = 2_000;
  * have: a deleted client, or a stale stored id.
  *
  * Another tab sharing the storage can write a lead naming a client it just
- * created before this tab's own host list has it. Replacing that lead at once
- * would write this tab's fallback back to every tab, so a lead that changes
- * while the list is loaded gets LIST_CATCH_UP_MS to appear. A lead that is
- * already missing when the list loads, or whose client leaves the list, is
- * replaced at once.
+ * created before this tab's own host list has it, even while that list is
+ * still loading. Replacing that lead at once would write this tab's fallback
+ * back to every tab, so a lead that changes after mount gets LIST_CATCH_UP_MS
+ * to appear. The lead read at mount (a stale stored id) and a lead whose
+ * client leaves the list are replaced at once.
  */
 export function useMissingLeadFallback({
   enabled,
@@ -30,34 +30,31 @@ export function useMissingLeadFallback({
   setPreviewedHostId: (hostId: string) => void;
   resolveFallbackHostId: (hosts: HostListItem[]) => string | null;
 }) {
-  // The lead the loaded list was last checked against, per project.
-  const checkedRef = useRef<{ projectId: string; lead: string | null } | null>(
+  // The lead last seen for the project, loaded list or not.
+  const seenRef = useRef<{ projectId: string; lead: string | null } | null>(
     null,
   );
   const waitRef = useRef<{ lead: string; until: number } | null>(null);
   const [waitsOver, setWaitsOver] = useState(0);
 
   useEffect(() => {
-    if (!enabled || !projectId || hosts.length === 0) return;
-    const checked =
-      checkedRef.current?.projectId === projectId ? checkedRef.current : null;
-    checkedRef.current = { projectId, lead: previewedHostId };
+    if (!projectId) return;
+    const seen =
+      seenRef.current?.projectId === projectId ? seenRef.current : null;
+    seenRef.current = { projectId, lead: previewedHostId };
+    if (previewedHostId !== null && seen && seen.lead !== previewedHostId) {
+      waitRef.current = {
+        lead: previewedHostId,
+        until: Date.now() + LIST_CATCH_UP_MS,
+      };
+    }
+    if (!enabled || hosts.length === 0) return;
     if (
       previewedHostId !== null &&
       hosts.some((host) => host.hostId === previewedHostId)
     ) {
       waitRef.current = null;
       return;
-    }
-    if (
-      previewedHostId !== null &&
-      checked &&
-      checked.lead !== previewedHostId
-    ) {
-      waitRef.current = {
-        lead: previewedHostId,
-        until: Date.now() + LIST_CATCH_UP_MS,
-      };
     }
     const wait = waitRef.current;
     if (wait?.lead === previewedHostId && Date.now() < wait.until) {

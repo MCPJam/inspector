@@ -69,6 +69,18 @@ describe("useMissingLeadFallback", () => {
     expect(setPreviewedHostId).not.toHaveBeenCalled();
   });
 
+  it("waits for a lead that changed while the list was loading", () => {
+    const { rerender, setPreviewedHostId } = renderFallback({
+      hosts: [],
+      previewedHostId: "h-mcpjam",
+    });
+    rerender({ hosts: [], previewedHostId: "h-claude" });
+    // The first list predates the client the new lead names.
+    rerender({ hosts: [MCPJAM], previewedHostId: "h-claude" });
+    rerender({ hosts: [MCPJAM, CLAUDE], previewedHostId: "h-claude" });
+    expect(setPreviewedHostId).not.toHaveBeenCalled();
+  });
+
   it("replaces such a lead once the wait runs out", () => {
     const { rerender, setPreviewedHostId } = renderFallback({
       hosts: [MCPJAM],
