@@ -368,6 +368,13 @@ describe("renderPluginApiKeyHeader", () => {
     );
   });
 
+  it("keeps a tab inside a credential, which a header can carry", () => {
+    expect(renderPluginApiKeyHeader(bearer, "a\tb")).toEqual({
+      name: "Authorization",
+      value: "Bearer a\tb",
+    });
+  });
+
   it("sends a custom header verbatim", () => {
     expect(
       renderPluginApiKeyHeader(
@@ -388,6 +395,9 @@ describe("renderPluginApiKeyHeader", () => {
     ],
     ["a credential with a line break", bearer, "abc\r\nX-Evil: 1"],
     ["a credential with a NUL", basic, "abc\u0000"],
+    ["a credential with a control character", bearer, "abc\u0001"],
+    ["a credential with DEL", bearer, "abc\u007f"],
+    ["a credential beyond Latin-1", bearer, "tok\u2603"],
   ] as const)("sends no header for %s", (_label, auth, credential) => {
     expect(renderPluginApiKeyHeader(auth, credential)).toBeNull();
   });

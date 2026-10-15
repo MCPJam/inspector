@@ -280,17 +280,18 @@ export function withApiKeyHeader(
 
 /**
  * The header to send for a user-supplied API key, or null when the credential
- * holds no token or a character no header can carry (NUL, CR, LF). Bearer and
- * Basic values gain their scheme once: a pasted "Bearer abc" stays
- * "Bearer abc". A Basic credential is taken as the already-encoded token; a
- * custom header gets the value as given.
+ * holds no token or a character no header value can carry: anything but tab,
+ * printable ASCII and Latin-1, so a line break or a stray paste never reaches
+ * the request. Bearer and Basic values gain their scheme once: a pasted
+ * "Bearer abc" stays "Bearer abc". A Basic credential is taken as the
+ * already-encoded token; a custom header gets the value as given.
  */
 export function renderPluginApiKeyHeader(
   auth: PluginApiKeyAuth,
   credential: string
 ): { name: string; value: string } | null {
   const value = credential.trim();
-  if (/[\0\r\n]/.test(value)) return null;
+  if (/[^\t\x20-\x7e\x80-\xff]/.test(value)) return null;
   if (auth.headerScheme === "custom_header") {
     return value ? { name: auth.headerName, value } : null;
   }
