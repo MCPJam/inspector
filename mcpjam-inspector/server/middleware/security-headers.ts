@@ -187,11 +187,8 @@ function reportOnlyDirectives(
         ...METICULOUS_SCRIPT_SOURCES,
       ],
     ],
-    [
-      "style-src",
-      ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-    ],
-    ["font-src", ["https://fonts.gstatic.com", "data:"]],
+    ["style-src", ["'self'", "'unsafe-inline'"]],
+    ["font-src", ["'self'", "data:"]],
     ["connect-src", connectSources],
     ["frame-src", frameSources],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
