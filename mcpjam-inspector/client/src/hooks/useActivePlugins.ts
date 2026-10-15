@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import type {
@@ -43,7 +43,10 @@ export function pluginLabel(row: {
   return row.displayName?.trim() || row.name;
 }
 
-/** The servers of the plugins that contribute, deduped, in plugin order. */
+/**
+ * The servers of the plugins that contribute, deduped, in plugin order,
+ * without the ones this member can't use yet.
+ */
 export function activePluginServers(
   plugins: readonly ActivePluginRow[],
 ): ActivePluginServer[] {
@@ -52,7 +55,7 @@ export function activePluginServers(
   for (const plugin of plugins) {
     if (plugin.status !== "active") continue;
     for (const server of plugin.servers) {
-      if (seen.has(server.serverId)) continue;
+      if (server.unavailable || seen.has(server.serverId)) continue;
       seen.add(server.serverId);
       servers.push({
         serverId: server.serverId,
@@ -63,6 +66,15 @@ export function activePluginServers(
     }
   }
   return servers;
+}
+
+/**
+ * A backend from before component admission refuses the argument as an extra
+ * field. Callers ask it again without one rather than reading that refusal as
+ * "no plugins".
+ */
+export function refusesComponentAdmission(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("componentAdmission");
 }
 
 /**
@@ -101,6 +113,8 @@ export function useActivePlugins(
   const { isAuthenticated } = useConvexAuth();
   const ready =
     flagEnabled && isAuthenticated && shouldQueryProjectId(projectId);
+  // A server this member can't use yet is left out alone, not its plugin.
+  const [olderBackend, setOlderBackend] = useState(false);
   const { data, error } = useSoftQuery<ActivePluginsResult>(
     "plugins:resolveActivePlugins",
     ready && projectId
@@ -108,9 +122,14 @@ export function useActivePlugins(
           projectId,
           content: false,
           runtimeVenue: options?.runtimeVenue ?? activePluginsRuntimeVenue(),
+          ...(olderBackend ? {} : { componentAdmission: true }),
         }
       : "skip",
   );
+  const refused = !olderBackend && refusesComponentAdmission(error);
+  useEffect(() => {
+    if (refused) setOlderBackend(true);
+  }, [refused]);
   const plugins =
     !error && data?.enabled === true && Array.isArray(data.plugins)
       ? data.plugins
@@ -123,8 +142,9 @@ export function useActivePlugins(
       plugins,
       activePlugins,
       activeServers: activePluginServers(plugins),
-      isLoading: ready && data === undefined && error === undefined,
-      failed: ready && error !== undefined,
+      isLoading:
+        ready && ((data === undefined && error === undefined) || refused),
+      failed: ready && error !== undefined && !refused,
     };
-  }, [plugins, ready, data, error]);
+  }, [plugins, ready, data, error, refused]);
 }

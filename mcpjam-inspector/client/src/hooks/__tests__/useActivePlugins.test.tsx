@@ -21,7 +21,10 @@ vi.mock("convex/react", () => ({
     Object.fromEntries(
       Object.entries(queries).map(([key, { args }]) => {
         state.calls.push({ name: "plugins:resolveActivePlugins", args });
-        return [key, state.next];
+        return [
+          key,
+          typeof state.next === "function" ? state.next(args) : state.next,
+        ];
       }),
     ),
 }));
@@ -137,6 +140,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "local",
+      componentAdmission: true,
     });
 
     state.hostedMode = true;
@@ -145,6 +149,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "hosted",
+      componentAdmission: true,
     });
   });
 
@@ -154,6 +159,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "hosted",
+      componentAdmission: true,
     });
   });
 
@@ -182,6 +188,42 @@ describe("useActivePlugins", () => {
       },
     ]);
     expect(hook.current.isLoading).toBe(false);
+  });
+
+  it("leaves out a server the member can't use yet", () => {
+    state.next = result([
+      {
+        ...bits,
+        servers: [
+          ...bits.servers,
+          {
+            serverId: "srv_crm",
+            name: "bits-crm",
+            componentKey: "crm",
+            placement: "remote",
+            unavailable: "needs_auth",
+          },
+        ],
+      },
+    ]);
+    const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+    expect(hook.current.activeServers.map((s) => s.serverId)).toEqual([
+      "srv_bits",
+    ]);
+  });
+
+  it("asks a backend from before component admission the old way, without failing", () => {
+    const refusal = new Error(
+      "ArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+    );
+    state.next = (args: { componentAdmission?: boolean }) =>
+      args.componentAdmission ? refusal : result([bits]);
+    const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+    expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
+    expect(hook.current.failed).toBe(false);
+    expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
+      "plg_bits",
+    ]);
   });
 
   it("reads a gate denial as no plugins", () => {

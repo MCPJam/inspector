@@ -122,6 +122,9 @@ export function InstalledPluginServerCards({
           activeVersionId,
           row,
           readiness,
+          unavailable: row?.servers.find(
+            (server) => server.componentKey === card.componentKey,
+          )?.unavailable,
         });
         return (
           <PluginServerCard

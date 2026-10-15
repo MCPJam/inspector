@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import {
   activePluginServers,
+  refusesComponentAdmission,
   useActivePlugins,
   type ActivePluginServer,
 } from "@/hooks/useActivePlugins";
@@ -330,14 +331,20 @@ export function usePlaygroundHiddenEnvironment(
     try {
       // A fresh read, not the subscription's last answer: the refusal says
       // the plugins changed, and the reactive copy may not have caught up.
-      const fresh = (await convex.query(
-        "plugins:resolveActivePlugins" as never,
-        {
-          projectId: target.projectId,
-          content: false,
-          runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
-        } as never,
-      )) as ActivePluginsResult | null | undefined;
+      const args = {
+        projectId: target.projectId,
+        content: false,
+        runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
+      };
+      const read = (extra: object) =>
+        convex.query(
+          "plugins:resolveActivePlugins" as never,
+          { ...args, ...extra } as never,
+        ) as Promise<ActivePluginsResult | null | undefined>;
+      const fresh = await read({ componentAdmission: true }).catch((error) => {
+        if (refusesComponentAdmission(error)) return read({});
+        throw error;
+      });
       const rows =
         fresh?.enabled === true && Array.isArray(fresh.plugins)
           ? fresh.plugins

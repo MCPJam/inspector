@@ -434,6 +434,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
         projectId: PROJECT_ID,
         content: false,
         runtimeVenue: "hosted",
+        componentAdmission: true,
       });
       expect(recovery).toEqual({
         ok: true,
@@ -446,6 +447,30 @@ describe("usePlaygroundHiddenEnvironment", () => {
       // Held until the subscription moves on.
       expect(result.current.environmentId).toBe("env_2");
       expect(result.current.pluginServerIds).toEqual(["srv_cad"]);
+    });
+
+    it("asks a backend from before component admission the old way", async () => {
+      state.plugins = [plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      state.query
+        .mockRejectedValueOnce(
+          new Error(
+            "ArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+          ),
+        )
+        .mockResolvedValueOnce({ enabled: true, plugins: [plugin("cad")] });
+
+      let recovery: unknown;
+      await act(async () => {
+        recovery = await result.current.recover();
+      });
+
+      expect(state.query).toHaveBeenLastCalledWith(
+        "plugins:resolveActivePlugins",
+        { projectId: PROJECT_ID, content: false, runtimeVenue: "hosted" },
+      );
+      expect(recovery).toMatchObject({ ok: true, environmentId: "env_2" });
     });
 
     it("turns the chat back into a client turn when nothing is runnable", async () => {
