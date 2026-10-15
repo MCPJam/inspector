@@ -3259,7 +3259,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
             ? (body as { serverId: string }).serverId
             : undefined,
           () =>
-            fn(manager, body, forwardLogMessagesInto(manager, rpcCollector), refusedServers),
+            fn(
+              manager,
+              body,
+              forwardLogMessagesInto(manager, rpcCollector),
+              refusedServers,
+            ),
         ),
       {
         timeoutMs: options?.timeoutMs,

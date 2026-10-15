@@ -2977,6 +2977,7 @@ export async function initiateOAuth(
         });
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
+        assertCurrent();
         try {
           await options.onAuthorizationRedirect?.({
             state:

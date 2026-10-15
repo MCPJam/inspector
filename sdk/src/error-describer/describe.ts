@@ -29,7 +29,10 @@ import {
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
 import { orgPolicyRefusal } from "./org-policy.js";
-import { summarizeBearerChallenge, type BearerChallengeSummary } from "./challenge.js";
+import {
+  summarizeBearerChallenge,
+  type BearerChallengeSummary,
+} from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
