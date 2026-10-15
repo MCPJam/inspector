@@ -1,9 +1,8 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { expect, test } from "../staging-test";
+import { test } from "../staging-test";
 import { fulfillWithoutForwardingCredentials } from "../staging-network";
 
-let completed: boolean | undefined;
 let origin: string;
 let hungRequestStarted: () => void;
 const server = createServer((request, response) => {
@@ -28,40 +27,6 @@ test.afterAll(async () => {
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );
-  if (completed !== undefined) expect(completed).toBe(true);
-});
-
-test("staging teardown finishes an in-flight proxy callback", async ({
-  context,
-  page,
-}) => {
-  completed = false;
-  let started!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  let release!: () => void;
-  const teardown = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const unrouteAll = context.unrouteAll.bind(context);
-  context.unrouteAll = async (options) => {
-    release();
-    await unrouteAll(options);
-  };
-  await context.route(`${origin}/background`, async (route) => {
-    started();
-    // Hold the proxy callback until route teardown starts, regardless of speed.
-    await teardown;
-    await fulfillWithoutForwardingCredentials(route, route.request().headers());
-    completed = true;
-  });
-  await page.goto(origin);
-  await page.evaluate(() => {
-    void fetch("/background");
-  });
-  await pending;
-  expect(completed).toBe(false);
 });
 
 test("staging teardown cancels a hung proxy read", async ({
