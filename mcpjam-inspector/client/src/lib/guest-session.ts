@@ -112,9 +112,13 @@ export function getGuestSessionRefusal(): GuestSessionRefusal | null {
 
 function setCachedSession(session: GuestSession | null): void {
   const previousGuestId = cachedSession?.guestId ?? null;
+  const previousToken = cachedSession?.token ?? null;
   cachedSession = session;
   const nextGuestId = cachedSession?.guestId ?? null;
-  if (previousGuestId !== nextGuestId) {
+  if (
+    previousGuestId !== nextGuestId ||
+    previousToken !== (session?.token ?? null)
+  ) {
     notifySessionListeners();
   }
 }
@@ -317,7 +321,7 @@ function parseRetryAfterMs(raw: string | null | undefined): number {
 
 /**
  * Returns the parsed session on success, `null` on a definitive "no guest"
- * miss (HTTP 204/404), and throws `GuestSessionRequestError` on transient
+ * miss (HTTP 204), and throws `GuestSessionRequestError` on request or response
  * failures (network error, non-ok response, malformed body) so callers can
  * distinguish "no guest exists" from "couldn't reach the server."
  */
@@ -372,6 +376,7 @@ async function requestGuestSession(
   } catch (error) {
     throw new GuestSessionRequestError(
       `guest-session response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      response.status,
     );
   }
 
@@ -381,6 +386,7 @@ async function requestGuestSession(
   ) {
     throw new GuestSessionRequestError(
       "guest-session response missing token or expiresAt",
+      response.status,
     );
   }
 
