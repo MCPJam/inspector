@@ -3,6 +3,10 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import {
+  retryPersonProfile,
+  type PersonProfileProperties,
+} from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
@@ -101,7 +105,7 @@ export function usePostHogIdentify() {
     // super prop rides events, while `/flags` targeting reads person
     // properties. Set for every actor (guest included) so a cohort rule like
     // "self_hosted signed-in users" evaluates correctly.
-    let personProperties: Record<string, string | null | undefined> = {
+    let personProperties: PersonProfileProperties = {
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
     if (isAuthedActor && user && currentIdentity === "full") {
@@ -141,7 +145,7 @@ export function usePostHogIdentify() {
       ) {
         // Bypass SDK profile dedup after a delivery-blocking permission window.
         // capture still enforces opt-out, capture-time grants and live send policy.
-        posthog.capture("$set", {}, { $set: personProperties });
+        retryPersonProfile(posthog, personProperties);
       }
       profileAttemptRef.current = {
         actor: actorKey,
