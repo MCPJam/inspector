@@ -4,8 +4,6 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import { sentryInjectedDebugId } from "../../sdk/src/internal/sentry-protocol";
 
-const GENERATOR = fileURLToPath(new URL("../../scripts/generate-telemetry-catalogs.mjs", import.meta.url));
-
 /**
  * The source catalogs the client imports are build outputs. A build writes
  * them before Rollup resolves those imports; the dev server writes them before
@@ -13,6 +11,9 @@ const GENERATOR = fileURLToPath(new URL("../../scripts/generate-telemetry-catalo
  * JSON and Vite reloads its importers.
  */
 export function telemetrySourceCatalogsPlugin(): Plugin {
+  // Resolved here, not at import: Vite configs load with a file URL, while the
+  // client test project imports this module under jsdom, where it is not one.
+  const GENERATOR = fileURLToPath(new URL("../../scripts/generate-telemetry-catalogs.mjs", import.meta.url));
   let watcher: ChildProcess | undefined;
   const generate = () => execFileSync(process.execPath, [GENERATOR], { stdio: "inherit" });
   const stop = () => {
