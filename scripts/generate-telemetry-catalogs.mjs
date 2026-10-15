@@ -25,11 +25,9 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  statSync,
-  watch,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { debuglog } from "node:util";
 import { createRequire } from "node:module";
