@@ -79,8 +79,9 @@ jobs:
                 missing.push(`\`${name}\` — line is not in the description`);
               } else if (!value) {
                 missing.push(`\`${name}\` — empty, or still the placeholder`);
-              } else if (/^none$/i.test(value)) {
+              } else if (/^none\s*:?\s*(?:<reason>)?$/i.test(value)) {
                 // "None" on its own is not an answer; the reason is the point.
+                // `None:` and the template's literal `None: <reason>` count too.
                 missing.push(`\`${name}\` — says "None" with no reason after it`);
               }
             }
