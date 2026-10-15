@@ -22,9 +22,10 @@ export function isLoopbackHost(hostname: string): boolean {
   return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
 }
 
-/** Userinfo or a fragment, even an empty one `URL` drops (`https:@h/#`). */
-export const hasUserinfoOrFragment = (raw: string, url: URL): boolean =>
-  !!(url.username || url.password) || /^[^:]*:[\\/]*[^\\/?#]*@|#/.test(raw);
+/** Userinfo, a fragment (even `https:@h/#`) or anything `URL` would rewrite. */
+export const isUnsafeRawUrl = (raw: string): boolean =>
+  /^[^:]*:[\\/]*[^\\/?#]*@|[#\\\s]/.test(raw) ||
+  [...raw].some((char) => char < " " || char === "\u007f");
 
 /** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
 const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;

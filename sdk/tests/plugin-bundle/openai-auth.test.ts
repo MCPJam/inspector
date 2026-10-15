@@ -292,6 +292,27 @@ describe("invalid declarations skip only their entry", () => {
       "an endpoint with an empty fragment",
       { type: "oauth", tokenUrl: "https://a.example.com/t#" },
     ],
+    // `URL` reads these differently from the string that would be stored.
+    [
+      "an endpoint whose backslash hides user info",
+      { type: "oauth", tokenUrl: "https://a.example.com\\@evil.example/t" },
+    ],
+    [
+      "an endpoint with a space",
+      { type: "oauth", tokenUrl: "https://a.example.com/t x" },
+    ],
+    [
+      "an endpoint with a tab inside the host",
+      { type: "oauth", tokenUrl: "https://a.exa\tmple.com/t" },
+    ],
+    [
+      "an endpoint with a trailing newline",
+      { type: "oauth", resource: "https://a.example.com/mcp\n" },
+    ],
+    [
+      "an endpoint with a control character",
+      { type: "oauth", tokenUrl: "https://a.example.com/t\u0001" },
+    ],
     [
       "a plain-HTTP remote endpoint",
       { type: "oauth", tokenUrl: "http://a.example.com/t" },

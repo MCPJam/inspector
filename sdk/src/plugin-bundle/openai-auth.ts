@@ -12,7 +12,7 @@
  */
 
 import { OPENAI_EXTENSION_NAMESPACE } from "./manifest.js";
-import { hasUserinfoOrFragment, isLoopbackHost } from "./mcp-entry-values.js";
+import { isLoopbackHost, isUnsafeRawUrl } from "./mcp-entry-values.js";
 import type { PluginHeaderRequirement } from "./mcp-config.js";
 import { SECRET_FIELD_NAME, type PluginIssueCollector } from "./validation.js";
 
@@ -76,12 +76,10 @@ const TOKEN_METHODS: readonly PluginTokenEndpointAuthMethod[] = [
   "private_key_jwt",
 ];
 
-function oneOf<T extends string>(
+const oneOf = <T extends string>(
   values: readonly T[],
   value: unknown
-): value is T {
-  return values.some((candidate) => candidate === value);
-}
+): value is T => values.some((candidate) => candidate === value);
 const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 interface ReadContext {
@@ -111,8 +109,8 @@ function dropField(field: string, ctx: ReadContext): void {
 }
 
 /**
- * Absolute HTTPS (or loopback HTTP) with no credentials or fragment, kept
- * exactly as declared: a resource indicator must match byte for byte.
+ * Absolute HTTPS (or loopback HTTP) with nothing `URL` drops or rewrites, so
+ * the string kept is the one checked: a resource indicator matches bytewise.
  */
 function readEndpoint(field: string, value: unknown): string {
   let url: URL | undefined;
@@ -128,11 +126,11 @@ function readEndpoint(field: string, value: unknown): string {
     typeof value !== "string" ||
     url === undefined ||
     !secure ||
-    hasUserinfoOrFragment(value, url)
+    isUnsafeRawUrl(value)
   ) {
     // Not echoed: an endpoint with userinfo carries a credential.
     throw new InvalidAuth(
-      `auth.${field} must be an absolute HTTPS (or loopback HTTP) URL without credentials or a fragment`
+      `auth.${field} must be an absolute HTTPS (or loopback HTTP) URL without credentials, a fragment, whitespace or backslashes`
     );
   }
   return value;
