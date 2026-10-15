@@ -103,8 +103,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Model context isn't available for this App (the client has it turned off, or the App has closed).",
   INSTANCE_CONTEXT_SEQUENCE_DENIED:
     "A model-context update arrived out of order and was ignored. Send updates one at a time.",
-  INSTANCE_CONTEXT_REMOVAL_STALE:
-    "That context item already changed, so it couldn't be removed. Try again with the current context.",
+  INSTANCE_CONTEXT_REMOVAL_INVALID:
+    "That context removal didn't match this App's current context, so nothing was removed. Remove it again from the composer.",
   INSTANCE_CONTEXT_TOO_LARGE: "The App's model context is too large.",
   INSTANCE_CONTEXT_HELD:
     "You removed this App's context from the chat, so context the App sends on its own isn't attached. Use the App (for example its attach button) to attach it again.",

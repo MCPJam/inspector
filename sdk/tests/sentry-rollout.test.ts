@@ -4,7 +4,7 @@ import { rebuildSentryEvent } from "../src/internal/telemetry.js";
 const options = {
   files: ["server/one.ts", "server/two.ts"],
   messages: ["process.uncaught_exception", "Known diagnostic"],
-  diagnosticFields: { code: ["INTERNAL_ERROR"] },
+  diagnosticFields: { code: ["INTERNAL_ERROR", "TIMEOUT"] },
 };
 const event = (file: string, line: number, code = "INTERNAL_ERROR") => ({
   extra: { errorCode: code, customer: "PRIVATE_SENTINEL" },
@@ -23,21 +23,32 @@ const event = (file: string, line: number, code = "INTERNAL_ERROR") => ({
 });
 
 describe("diagnostic grouping during rollout", () => {
-  it("separates errors by approved code and exact owned top frame", () => {
+  it("separates errors by approved code but not by build-specific frame positions", () => {
     const first = rebuildSentryEvent(event("server/one.ts", 7), options);
     const second = rebuildSentryEvent(event("server/two.ts", 9), options);
+    const fingerprint = ["{{ default }}", "Error", "INTERNAL_ERROR"];
     expect(first).toMatchObject({
-      fingerprint: ["Error", "INTERNAL_ERROR", "server/one.ts:7"],
+      fingerprint,
+      exception: {
+        values: [
+          {
+            stacktrace: { frames: [{ filename: "server/one.ts", lineno: 7 }] },
+          },
+        ],
+      },
     });
-    expect(second).toMatchObject({
-      fingerprint: ["Error", "INTERNAL_ERROR", "server/two.ts:9"],
-    });
+    expect(second).toMatchObject({ fingerprint });
+    expect(
+      rebuildSentryEvent(event("server/one.ts", 7, "TIMEOUT"), options)
+    ).toMatchObject({ fingerprint: ["{{ default }}", "Error", "TIMEOUT"] });
     expect(JSON.stringify(first)).not.toContain("PRIVATE_SENTINEL");
     const untrusted = rebuildSentryEvent(
       event("/customer/server/one.ts", 7, "PRIVATE_SENTINEL"),
       options
     );
-    expect(untrusted).toMatchObject({ fingerprint: ["Error"] });
+    expect(untrusted).toMatchObject({
+      fingerprint: ["{{ default }}", "Error"],
+    });
     expect(JSON.stringify(untrusted)).not.toContain("PRIVATE_SENTINEL");
   });
 

@@ -34,5 +34,6 @@
   "registry_server_not_approved": "FORBIDDEN",
   "registry_project_org_mismatch": "FORBIDDEN",
   "account_suspended": "FORBIDDEN",
-  "FEATURE_UNAVAILABLE": "FORBIDDEN"
+  "FEATURE_UNAVAILABLE": "FORBIDDEN",
+  "GENERATION_FAILED": "GENERATION_FAILED"
 }
