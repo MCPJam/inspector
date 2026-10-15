@@ -579,8 +579,11 @@ export function normalizePluginManifest(
         `manifest field "extensions" must be an object; ignored`
       );
     } else {
+      // The onboarding skill is read raw and kept only when it names a loaded
+      // skill (`applyOnboardingSkill`), so the screen never sees it: a long
+      // skill path would otherwise report as a dropped secret.
       manifest.extensions = sanitizeUnknownRecord(
-        extensions as Record<string, unknown>,
+        withoutOnboardingSkill(extensions as Record<string, unknown>),
         {
           issues,
           secretCode: "MANIFEST_SECRET_FIELD_OMITTED",
@@ -631,6 +634,17 @@ export function normalizePluginManifest(
       ? rawOpenAi.onboardingSkill
       : undefined,
   };
+}
+
+function withoutOnboardingSkill(
+  extensions: Record<string, unknown>
+): Record<string, unknown> {
+  const openai = extensions[OPENAI_EXTENSION_NAMESPACE];
+  if (!isPlainRecord(openai) || !("onboardingSkill" in openai)) {
+    return extensions;
+  }
+  const { onboardingSkill: _declared, ...rest } = openai;
+  return { ...extensions, [OPENAI_EXTENSION_NAMESPACE]: rest };
 }
 
 /**

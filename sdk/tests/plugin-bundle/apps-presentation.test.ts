@@ -238,6 +238,10 @@ describe("onboarding skill", () => {
     expect(parsed.manifest.extensions["com.openai"]).toEqual({
       onboardingSkill: path,
     });
+    // Nor is it reported as a dropped secret on its way back.
+    expect(parsed.warnings.map((w) => w.code)).not.toContain(
+      "MANIFEST_SECRET_FIELD_OMITTED"
+    );
   });
 
   it.each([
