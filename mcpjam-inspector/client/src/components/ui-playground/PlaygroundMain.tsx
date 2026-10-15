@@ -140,7 +140,6 @@ import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
-import { LIVE_CHAT_REASONING_DISPLAY_MODE } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
@@ -6851,11 +6850,6 @@ export function PlaygroundMain({
                         return addToolApprovalResponse(response);
                     }}
                     toolRenderOverrides={mergedToolRenderOverrides}
-                    // Single-host thread. The compare cards set this too: both
-                    // live paths must agree, or reasoning renders as a collapsed
-                    // block when comparing models and as raw inline text with one
-                    // client selected.
-                    reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                     mcpToolResultImageRendering={
                       effectiveMcpToolResultImageRendering
                     }
@@ -7347,10 +7341,6 @@ export function PlaygroundMain({
                           compareId={column.compareId}
                           compareLabel={column.compareLabel}
                           compareKind="host"
-                          // Passed explicitly even though the card defaults to
-                          // the same constant, so every live surface drives the
-                          // mode the same way.
-                          reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
                           // No `reasoningEffort`: a host column states none,
@@ -7472,8 +7462,6 @@ export function PlaygroundMain({
                             compareId={compareId}
                             compareLabel={entry.label}
                             compareKind="model"
-                            // Same explicit pass as the host-mode card above.
-                            reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                             model={model}
                             selection={card?.selection}
                             reasoningEffort={card?.reasoningEffort}

@@ -101,8 +101,7 @@ describe("ReasoningPart", () => {
   });
 
   it("stays open while more reasoning streams in after the reader expands it", () => {
-    // Regression: `text` used to be a useEffect dependency, so every streamed
-    // delta re-collapsed the panel and it was impossible to read mid-stream.
+    // New text must not reset a panel the reader opened.
     const { rerender } = render(
       <ReasoningPart
         text="First thought"

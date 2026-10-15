@@ -2,8 +2,9 @@ import { useEffect, useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { ReasoningDisplayMode } from "../types";
 
-// Ported verbatim from the inspector
-// (`components/chat-v2/thread/parts/reasoning-part.tsx`). Pure.
+// Ported from the inspector (`components/chat-v2/thread/parts/reasoning-part.tsx`).
+// Pure. The inspector's "Thinking…" shimmer is not ported: it is a stylesheet,
+// and this package ships none (consumers supply the theme tokens).
 export function ReasoningPart({
   text,
   state,
@@ -20,8 +21,8 @@ export function ReasoningPart({
   const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
   const contentId = useId();
 
-  // Resync only when the display mode changes. `text` grows with every
-  // streamed delta, so depending on it closed the panel on each token.
+  // Only a mode change resets the panel. Text grows with every streamed delta,
+  // and a reader who opened the panel mid-stream must be able to keep reading.
   useEffect(() => {
     setIsExpanded(displayMode !== "collapsed");
   }, [displayMode]);
