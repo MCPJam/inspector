@@ -543,7 +543,10 @@ jobs:
           # so a token alone would not have been enough.) The upload itself is
           # best-effort: the plugin reports upload failures without failing the
           # build, and Sentry being down must not fail a release. The assert
-          # below is what is allowed to.
+          # below is what is allowed to. `build:server` follows the same rule for
+          # the server's maps (mcpjam-inspector/scripts/server-sourcemaps.mjs):
+          # a missing or mismatched map fails this step, while a failed upload
+          # is an error annotation and step-summary line, not a failed release.
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MCPJAM_BUILD_SURFACE: npm
 
@@ -755,6 +758,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   deploy-backend-prod:
     needs:

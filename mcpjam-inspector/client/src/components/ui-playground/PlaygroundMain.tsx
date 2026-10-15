@@ -3735,7 +3735,7 @@ export function PlaygroundMain({
         useActiveChatSessionStore.getState().setBrowserLocation({
           projectId: detail.projectId,
           sessionId: detail.chatSessionId,
-          engine: "cloud",
+          engine: detail.browser.engine === "local" ? "local" : "cloud",
         });
       if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
         setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });

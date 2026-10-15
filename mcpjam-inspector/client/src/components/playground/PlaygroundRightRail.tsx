@@ -64,7 +64,10 @@ import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
-import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
+import {
+  ComparisonBrowser,
+  LocalBrowserUnavailable,
+} from "@/components/browser/ComparisonBrowser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -415,10 +418,7 @@ function RightRailTabbed({
               Loading conversation…
             </p>
           ) : isLocalBrowser && browserEngine.localAvailable === false ? (
-            <p className="p-4 text-sm text-muted-foreground">
-              Browser is unavailable on this machine. Check Browser settings or
-              choose Cloud for a new chat.
-            </p>
+            <LocalBrowserUnavailable engine={browserEngine} />
           ) : isLocalBrowser ? (
             <LocalBrowserBody
               key={`${projectId}:${browserSessionId}:local`}
