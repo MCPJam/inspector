@@ -62,9 +62,13 @@ function portablePlaceholders(value: string): string {
 function entryStrings(entry: Record<string, unknown>): string[] {
   const strings: string[] = [];
   // One at a time: spreading a long `args` array into push() throws a
-  // RangeError well inside the file size limit.
+  // RangeError well inside the file size limit. Strings only: coercing a deep
+  // array or an object with its own `toString` throws, and the strict rules
+  // refuse those values anyway.
   const add = (values: unknown[]) => {
-    for (const value of values) strings.push(String(value));
+    for (const value of values) {
+      if (typeof value === "string") strings.push(value);
+    }
   };
   for (const value of Object.values(entry)) {
     if (typeof value === "string") strings.push(value);

@@ -141,6 +141,26 @@ describe("legacy .mcp.json", () => {
 
   it.each([
     [
+      "a deeply nested args array",
+      `{"command":"node","args":${"[".repeat(100_000)}"x"${"]".repeat(100_000)}}`,
+    ],
+    [
+      "an env value with its own toString",
+      '{"command":"node","env":{"X":{"toString":1}}}',
+    ],
+  ])("skips only an entry with %s", async (_label, entry) => {
+    const parsed = await parsePluginBundle(
+      bundle({
+        [CODEX]: JSON.stringify({ name: "demo" }),
+        ".mcp.json": `{"mcpServers":{"bad":${entry},"good":{"command":"node"}}}`,
+      }),
+      compat
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["good"]);
+  });
+
+  it.each([
+    [
       "command and url with no type",
       { command: "node", url: "https://a.example.com" },
     ],
