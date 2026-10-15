@@ -29,16 +29,22 @@ export type InsufficientScopeChallenge = {
 
 /**
  * Narrow an untrusted `insufficientScope` payload to the challenge shape.
- * Returns `undefined` unless at least one string field is present, so a
- * malformed or empty block never masquerades as an actionable step-up.
+ * The backend emits this block only for a branded insufficient-scope error.
+ * Empty is a valid bare challenge; malformed fields are rejected.
  */
 export function parseInsufficientScopeChallenge(
   raw: unknown,
 ): InsufficientScopeChallenge | undefined {
-  if (!raw || typeof raw !== "object") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return undefined;
   }
   const r = raw as Record<string, unknown>;
+  if (
+    ["requiredScope", "resourceMetadataUrl", "errorDescription"].some(
+      (key) => r[key] !== undefined && typeof r[key] !== "string",
+    )
+  )
+    return undefined;
   const requiredScope =
     typeof r.requiredScope === "string" ? r.requiredScope : undefined;
   const resourceMetadataUrl =
@@ -135,9 +141,7 @@ export function insufficientScopeFromError(
   error: unknown,
 ): InsufficientScopeChallenge | undefined {
   if (error instanceof McpRequestError && error.insufficientScope) {
-    // Re-narrow through the parser so a malformed / empty `{}` challenge (truthy
-    // but with no string fields) collapses to `undefined`, matching the hosted
-    // `WebApiError.details` path below instead of leaking a non-actionable {}.
+    // Apply the same wire-shape validation as the hosted path.
     return parseInsufficientScopeChallenge(error.insufficientScope);
   }
   const details = (error as { details?: { insufficientScope?: unknown } })

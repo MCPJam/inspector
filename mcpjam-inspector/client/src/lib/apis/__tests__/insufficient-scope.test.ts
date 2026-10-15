@@ -28,7 +28,12 @@ describe("parseInsufficientScopeChallenge (SEP-2350)", () => {
     // The server sends `insufficientScope` only for a real 403
     // insufficient_scope, so an empty object is a bare challenge.
     expect(parseInsufficientScopeChallenge({})).toEqual({});
-    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toEqual({});
+  });
+
+  it("rejects malformed fields instead of treating them as a bare challenge", () => {
+    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toBeUndefined();
+    expect(parseInsufficientScopeChallenge({ resourceMetadataUrl: [] })).toBeUndefined();
+    expect(parseInsufficientScopeChallenge([])).toBeUndefined();
   });
 
   it("returns undefined when there is no challenge object", () => {

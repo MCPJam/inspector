@@ -91,6 +91,23 @@ function badge(
 }
 
 describe("badges never decide a lane", () => {
+  it("does not label a public business error as unsupported authentication", () => {
+    const output = runClaudeOptionalFeatureChecks(
+      {
+        auth: SERVED_AND_PUBLISHES,
+        lazyAuthProbe: probe(BEARER_401, {
+          publicCall: call({
+            outcome: "tool-error",
+            error: "No matching orders",
+          }),
+        }),
+      },
+      STAMP
+    );
+    expect(badge(output, "claude.features.lazy-authentication").state).toBe(
+      "not-evaluated"
+    );
+  });
   it("leaves the optional-features lane incomplete no matter what it found", () => {
     // `experimental-feature` is not dispositive, so `decideLaneStatus` cannot
     // be moved by any of it — absence of an optional feature is not a defect.

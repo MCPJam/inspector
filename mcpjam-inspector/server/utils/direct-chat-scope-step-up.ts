@@ -1,3 +1,4 @@
+import { settleHistoryBatch } from "./suspended-history-settlements.js";
 import type { ModelMessage, ToolModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessageChunk } from "ai";
 import { hasUnresolvedToolCalls } from "@/shared/http-tool-calls";
@@ -64,6 +65,11 @@ export async function settleSuspendedHistoryToolCalls(input: {
     }
   }
 
+  const settlements = await settleHistoryBatch(
+    input.messageHistory,
+    resolved,
+    input.settle,
+  );
   const answers: Array<{ index: number; message: ModelMessage }> = [];
   for (const [index, message] of input.messageHistory.entries()) {
     if (
@@ -83,10 +89,7 @@ export async function settleSuspendedHistoryToolCalls(input: {
       ) {
         continue;
       }
-      const text = await input.settle({
-        toolCallId: part.toolCallId,
-        toolName: part.toolName,
-      });
+      const text = settlements.get(part.toolCallId);
       if (text === undefined) continue;
       resolved.add(part.toolCallId);
       const output = { type: "error-text" as const, value: text };

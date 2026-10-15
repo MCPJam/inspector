@@ -1,3 +1,5 @@
+import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
+import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
@@ -88,8 +90,6 @@ import {
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   readUnsupportedVersionFailure,
-  attachAuthChallenge,
-  extractAuthChallenge,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -680,7 +680,7 @@ export class MCPClientManager {
       } else {
         const url = new URL(config.url);
         transportType =
-          config.preferSSE ?? url.pathname.endsWith("/sse")
+          (config.preferSSE ?? url.pathname.endsWith("/sse"))
             ? "sse"
             : "streamable-http";
       }
@@ -801,8 +801,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-          ? "auto"
-          : "modern-pin";
+            ? "auto"
+            : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -1094,8 +1094,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-      ? [serverIds]
-      : this.listServers();
+        ? [serverIds]
+        : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1354,7 +1354,12 @@ export class MCPClientManager {
       request.request,
       request.retry ?? { retries: 0, retryDelayMs: 0 },
       operation,
-      { authChallengeOperation: authChallengeOperationKey("tools/call", toolName) }
+      {
+        authChallengeOperation: authChallengeOperationKey(
+          "tools/call",
+          toolName
+        ),
+      }
     );
   }
 
@@ -1470,7 +1475,10 @@ export class MCPClientManager {
       serverId,
       options,
       (client) =>
-        client.readResource(params, this.withProgressHandler(serverId, options)),
+        client.readResource(
+          params,
+          this.withProgressHandler(serverId, options)
+        ),
       authChallengeOperationKey("resources/read", params.uri)
     );
   }
@@ -2588,11 +2596,11 @@ export class MCPClientManager {
       // against every version supported by the upstream SDK.
       const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
-        : config.supportedProtocolVersions ??
+        : (config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
-            : undefined);
+            : undefined));
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -4035,8 +4043,7 @@ export class MCPClientManager {
     state?: LiveClientState
   ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const elicitation = capabilities?.elicitation;
     return elicitation != null
       ? (elicitation as DeclaredElicitationCapability)
@@ -4163,11 +4170,11 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-        typeof value === "object" &&
-        ("request" in value ||
-          "retry" in value ||
-          "allowTaskResult" in value ||
-          "metadata" in value)
+      typeof value === "object" &&
+      ("request" in value ||
+        "retry" in value ||
+        "allowTaskResult" in value ||
+        "metadata" in value)
     );
   }
 
@@ -4845,19 +4852,40 @@ export class MCPClientManager {
     retryPolicy: RetryPolicy,
     operation: (signal?: AbortSignal) => Promise<T>,
     config: {
+      authChallengeIsolated?: boolean;
       resetConnectionOnRetry?: boolean;
-      /**
-       * The `authChallengeOperationKey` of the protected call this runs. Only
-       * that operation's recorded 401 is attached to its error.
-       */
       authChallengeOperation?: string;
     } = {}
   ): Promise<T> {
+    const serverConfig = this.registeredServers.get(serverId)?.config;
+    if (
+      config.authChallengeOperation &&
+      !config.authChallengeIsolated &&
+      serverConfig &&
+      this.isHttpConfig(serverConfig) &&
+      (serverConfig.authProvider || serverConfig.refreshToken)
+    ) {
+      return isolateAuthChallenge(
+        this,
+        JSON.stringify([serverId, config.authChallengeOperation]),
+        () =>
+          this.runRetriedOperation(serverId, options, retryPolicy, operation, {
+            ...config,
+            authChallengeIsolated: true,
+          })
+      );
+    }
     const { signal, cleanup } = this.createRetrySignal(
       serverId,
       options?.signal
     );
     const startedAt = Date.now();
+    if (config.authChallengeIsolated && config.authChallengeOperation)
+      this.liveClientStates
+        .get(serverId)
+        ?.authChallengeRecorder?.byOperation?.delete(
+          config.authChallengeOperation
+        );
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -4875,60 +4903,29 @@ export class MCPClientManager {
       });
 
     try {
-      try {
-        return await runWithTransientRetry();
-      } catch (error) {
-        const refreshed = await this.refreshAccessTokenAfterUnauthorized(
-          serverId,
-          error,
-          signal
-        );
-        if (!refreshed) {
-          this.attachRecordedAuthChallenge(
-            serverId,
+      return await runOperationWithAuthRecovery({
+        run: runWithTransientRetry,
+        usesAuthProvider:
+          !!serverConfig &&
+          this.isHttpConfig(serverConfig) &&
+          !!(serverConfig.authProvider || serverConfig.refreshToken),
+        attach: (error) =>
+          attachRecordedAuthChallenge(
+            this.liveClientStates.get(serverId)?.authChallengeRecorder,
             error,
             startedAt,
             config.authChallengeOperation
-          );
-          throw error;
-        }
-        try {
-          return await runWithTransientRetry();
-        } catch (retryError) {
-          this.attachRecordedAuthChallenge(
-            serverId,
-            retryError,
-            startedAt,
-            config.authChallengeOperation
-          );
-          throw retryError;
-        }
-      }
+          ),
+        hasChallenge: () => !!matchingRecordedChallenge(
+          this.liveClientStates.get(serverId)?.authChallengeRecorder, startedAt, config.authChallengeOperation),
+        reset: () =>
+          this.destroyLiveState(serverId, { abortRetryOperations: false }),
+        refresh: (error) =>
+          this.refreshAccessTokenAfterUnauthorized(serverId, error, signal),
+      });
     } finally {
       cleanup();
     }
-  }
-
-  /**
-   * With an auth provider, the transport owns 401/403 and raises
-   * `UnauthorizedError` (or "401 after re-authentication") without the
-   * `WWW-Authenticate` header. Give the error back the challenge the fetch
-   * wrapper recorded for THIS operation: concurrent calls each have their
-   * own entry, so one call never reports another's scope or metadata URL.
-   */
-  private attachRecordedAuthChallenge(
-    serverId: string,
-    error: unknown,
-    startedAt: number,
-    operationKey: string | undefined
-  ): void {
-    if (operationKey === undefined) return;
-    const recorded = this.liveClientStates
-      .get(serverId)
-      ?.authChallengeRecorder?.byOperation?.get(operationKey);
-    if (!recorded || recorded.at < startedAt) return;
-    if (!isUnauthorized401(error) || extractAuthChallenge(error)) return;
-    attachAuthChallenge(error, recorded.challenge);
   }
 
   private async refreshAccessTokenAfterUnauthorized(

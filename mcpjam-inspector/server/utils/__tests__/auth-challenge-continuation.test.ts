@@ -268,11 +268,15 @@ describe("local sign-in continuations", () => {
       });
       completeLocalScopeStepUpContinuation(continuationId);
       const query = {
+        toolCallId: "call-1",
         bindingKey: BINDING,
         serverId: "orders",
         toolName: "get_my_orders",
       };
       expect(hasRecentLocalAuthSignIn(query)).toBe(true);
+      expect(
+        hasRecentLocalAuthSignIn({ ...query, toolCallId: "other-call" }),
+      ).toBe(false);
       expect(
         hasRecentLocalAuthSignIn({ ...query, toolName: "list_products" }),
       ).toBe(false);
@@ -296,6 +300,7 @@ describe("local sign-in continuations", () => {
       );
       expect(
         hasRecentLocalAuthSignIn({
+          toolCallId: "call-1",
           bindingKey: BINDING,
           serverId: "orders",
           toolName: "get_my_orders",
@@ -311,6 +316,7 @@ describe("local sign-in continuations", () => {
       });
       expect(
         hasRecentLocalAuthSignIn({
+          toolCallId: "call-1",
           bindingKey: BINDING,
           serverId: "orders",
           toolName: "get_my_orders",

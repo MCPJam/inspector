@@ -171,7 +171,7 @@ export async function connectAuthChallenge(
     // credential proves one exists; otherwise the shell is asked.
     const existingGrant =
       binding.kind !== "none" ||
-      (await bridge?.hasExistingGrant?.(server).catch(() => false)) === true;
+      (await bridge?.hasExistingGrant?.(server)) === true;
     const outcome = await applyToolCallAuthChallenge(server, card.signal, {
       operation: card.operation,
       attempt: card.attempt,
@@ -223,6 +223,7 @@ export async function connectAuthChallenge(
       });
       return { kind: "failed", message: reauthorization.error };
     }
+    if (reauthorization.kind !== "redirect") return { kind: "refused" };
     useAuthChallengeCardStore.getState().remove(card.key);
     return expired ? { kind: "expired" } : { kind: "started" };
   } catch (error) {

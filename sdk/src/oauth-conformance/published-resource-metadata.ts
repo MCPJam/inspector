@@ -12,8 +12,8 @@ import {
  * the order a client discovering without a challenge pointer tries them.
  */
 export async function findPublishedResourceMetadata(
-  config: NormalizedOAuthConformanceConfig,
-  trackedRequest: TrackedRequestFn,
+  config: Pick<NormalizedOAuthConformanceConfig, "serverUrl">,
+  trackedRequest: TrackedRequestFn
 ): Promise<string | undefined> {
   let candidates: string[];
   try {
@@ -38,7 +38,16 @@ export async function findPublishedResourceMetadata(
         response.status < 300 &&
         typeof response.body === "object" &&
         response.body !== null &&
-        !Array.isArray(response.body)
+        !Array.isArray(response.body) &&
+        "resource" in response.body &&
+        typeof response.body.resource === "string" &&
+        response.body.resource.length > 0 &&
+        "authorization_servers" in response.body &&
+        Array.isArray(response.body.authorization_servers) &&
+        response.body.authorization_servers.length > 0 &&
+        response.body.authorization_servers.every(
+          (server: unknown) => typeof server === "string" && server.length > 0
+        )
       ) {
         return url;
       }

@@ -19,6 +19,7 @@
  * Pure: takes evidence, returns findings and badges. It dials nothing.
  */
 
+import { scopeFallbackWarning } from "./scope-fallback.js";
 import { parseBearerAuthenticateParameters } from "../../oauth/state-machines/shared/challenges.js";
 import type { DirectoryLazyAuthProbeEvidence } from "../../directory-readiness/lazy-auth.js";
 import { claudePolicySource } from "../manifest.js";
@@ -352,7 +353,8 @@ export function runClaudeAuthChecks(
   stamp: ClaudeCheckStamp,
 ): ClaudeAuthCheckOutput {
   const findings: ClaudeReadinessFinding[] = [];
-  const badges: ClaudeCapabilityBadge[] = [];
+  const warning = scopeFallbackWarning(evidence);
+  const badges: ClaudeCapabilityBadge[] = warning ? [warning] : [];
 
   const probe = evidence.unauthenticated;
   const challengeParams = parseBearerAuthenticateParameters(

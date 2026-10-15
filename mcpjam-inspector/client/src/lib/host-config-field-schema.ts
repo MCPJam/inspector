@@ -819,7 +819,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Sign-in on HTTP 401",
     path: "mcpProfile.unauthorizedChallenge",
     description:
-      "What the client does when a call fails with HTTP 401: prompt to sign in and run the call again, tell the user to sign in, or pass it through as an ordinary error. Absent means prompt.",
+      "What the client does when a server asks the user to sign in: prompt to sign in and run the call again, tell the user to sign in, or show an ordinary error. If unset, the client prompts.",
     kind: {
       kind: "enum",
       options: AUTH_CHALLENGE_ACTIONS,
@@ -834,7 +834,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "HTTP 401 trigger",
     path: "mcpProfile.unauthorizedChallengeTrigger",
     description:
-      "What a 401 needs before the client treats it as a sign-in challenge. Choose any 401, a WWW-Authenticate: Bearer header, or a Bearer header with resource_metadata. Absent means any 401.",
+      "Which server sign-in requests the client accepts: any request, only requests that name Bearer authentication, or only those that also provide a resource metadata link. If unset, any request counts.",
     kind: { kind: "enum", options: UNAUTHORIZED_CHALLENGE_TRIGGERS },
     read: (cfg) => mcpProfile(cfg)?.unauthorizedChallengeTrigger,
   },

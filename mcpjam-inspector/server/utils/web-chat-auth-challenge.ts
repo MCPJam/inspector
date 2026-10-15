@@ -1,3 +1,4 @@
+import { UNAPPROVED_HISTORY_CALL_RESULT } from "./tool-approval-token.js";
 import { authChallengeCancelledText } from "@/shared/auth-challenge";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import {
@@ -119,7 +120,8 @@ export function buildWebChatAuthChallenge(input: {
                 bearer: scopeStepUpRuntime.bearer,
                 continuationId: splicedScopeStepUpCancel.continuationId,
               });
-            if (cancelled && typeof serverId === "string") {
+            if (!cancelled) return UNAPPROVED_HISTORY_CALL_RESULT;
+            if (typeof serverId === "string") {
               try {
                 getWriter()?.write({
                   type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,

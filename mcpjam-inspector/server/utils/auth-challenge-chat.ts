@@ -151,7 +151,11 @@ export interface AuthChallengeChatObserver {
     toolCallId: string,
   ) => string | undefined;
   /** A sign-in for this operation just completed (a repeat is permanent). */
-  hasRecentSignIn?: (input: { serverId: string; toolName: string }) => boolean;
+  hasRecentSignIn?: (input: {
+    serverId: string;
+    toolName: string;
+    toolCallId?: string;
+  }) => boolean;
   /**
    * Save the call so it can be replayed after sign-in. Absent when this turn
    * cannot resume (a hosted turn without a chat session): the card is then
@@ -401,7 +405,8 @@ export async function handleChatAuthChallenge(input: {
   if (signal.source === "tool_result_meta" && observer.securitySchemesFor) {
     try {
       schemes = await observer.securitySchemesFor(serverId, input.mcpToolName);
-    } catch {
+    } catch (error) {
+      logger.debug("Could not resolve tool sign-in metadata", { error });
       schemes = { schemes: [], source: "unresolved" };
     }
   }
@@ -476,7 +481,7 @@ export async function handleChatAuthChallenge(input: {
     );
     return { kind: "passthrough" };
   }
-  if (observer.hasRecentSignIn?.({ serverId, toolName })) {
+  if (observer.hasRecentSignIn?.({ serverId, toolName, toolCallId })) {
     return {
       kind: "result",
       result: authChallengeTextResult(

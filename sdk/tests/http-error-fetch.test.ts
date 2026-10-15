@@ -11,7 +11,7 @@ import {
   wrapFetchForHttpErrors,
   type AuthChallengeRecorder,
 } from "../src/mcp-client-manager/http-error-fetch.js";
-import { MCPClientManager } from "../src/mcp-client-manager/MCPClientManager.js";
+import { attachRecordedAuthChallenge } from "../src/mcp-client-manager/auth-challenge-isolation.js";
 import { extractAuthChallenge } from "../src/mcp-client-manager/errors.js";
 
 const url = new URL("https://example.test/mcp");
@@ -264,7 +264,6 @@ describe("Streamable HTTP error diagnostics", () => {
   });
 
   it("attaches only the failing operation's own challenge", () => {
-    const manager = new MCPClientManager();
     const startedAt = Date.now();
     const recorded = (scope: string) => ({
       status: 401 as const,
@@ -282,26 +281,24 @@ describe("Streamable HTTP error diagnostics", () => {
     });
     const keyA = authChallengeOperationKey("tools/call", "a");
     const keyB = authChallengeOperationKey("tools/call", "b");
-    (manager as any).liveClientStates.set("srv", {
-      authChallengeRecorder: {
+    const recorder: AuthChallengeRecorder = {
         // B was refused last; A must still get A's challenge.
         byOperation: new Map([
           [keyA, recorded("a:read")],
           [keyB, recorded("b:read")],
         ]),
         last: recorded("b:read"),
-      },
-    });
+    };
     const unauthorized = () =>
       Object.assign(new Error("Unauthorized"), { name: "UnauthorizedError" });
 
     const errorA = unauthorized();
-    (manager as any).attachRecordedAuthChallenge("srv", errorA, startedAt, keyA);
+    attachRecordedAuthChallenge(recorder, errorA, startedAt, keyA);
     expect(extractAuthChallenge(errorA)?.requiredScope).toBe("a:read");
 
     // An operation with no key of its own is never handed another's.
     const unkeyed = unauthorized();
-    (manager as any).attachRecordedAuthChallenge("srv", unkeyed, startedAt, undefined);
+    attachRecordedAuthChallenge(recorder, unkeyed, startedAt, undefined);
     expect(extractAuthChallenge(unkeyed)).toBeUndefined();
   });
 

@@ -309,7 +309,8 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverName: options?.serverName ?? null,
       });
     }
-    const isReconnectRequired = code === "refresh_token_invalid";
+    const isReconnectRequired =
+      code === "refresh_token_invalid" || code === "refresh_token_unavailable";
     // The backend's 503: the credential is fine, the authorization server
     // never answered usably. Its `detail` is what that server actually
     // returned ({url, status, body}) — forwarded so the client can name the
@@ -322,7 +323,8 @@ export async function forceRefreshHostedOAuthAccessToken(
       isReconnectRequired
         ? {
             oauthRequired: true,
-            refreshTokenInvalid: true,
+            refreshTokenInvalid: code === "refresh_token_invalid",
+            refreshTokenUnavailable: code === "refresh_token_unavailable",
             serverId,
             serverName: options?.serverName ?? null,
             // The authorization server's own RFC 6749 reply ({error,
@@ -331,15 +333,15 @@ export async function forceRefreshHostedOAuthAccessToken(
             declined: body?.declined ?? null,
           }
         : isAuthServerUnreachable
-        ? {
-            authorizationServerUnreachable: true,
-            serverId,
-            serverName: options?.serverName ?? null,
-            failure: body?.detail ?? null,
-            // Set instead of `failure` when nothing answered at all.
-            transport: body?.transport ?? null,
-          }
-        : undefined
+          ? {
+              authorizationServerUnreachable: true,
+              serverId,
+              serverName: options?.serverName ?? null,
+              failure: body?.detail ?? null,
+              // Set instead of `failure` when nothing answered at all.
+              transport: body?.transport ?? null,
+            }
+          : undefined,
     );
   }
 
@@ -744,8 +746,12 @@ export function buildHostedOAuthUnauthorizedHandler(
         ),
       };
     } catch (error) {
-      if (error instanceof WebRouteError &&
-          String(error.code) === "refresh_token_unavailable" && unauthorized) {
+      if (
+        error instanceof WebRouteError &&
+        error.details?.refreshTokenUnavailable === true &&
+        challenge?.source === "http_401" &&
+        unauthorized
+      ) {
         throw unauthorized;
       }
       if (error instanceof WebRouteError) {

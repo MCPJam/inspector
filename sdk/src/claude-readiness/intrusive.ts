@@ -44,7 +44,10 @@ export {
 } from "./step-up-probe.js";
 
 
-import { parseBearerAuthenticateParameters } from "../oauth/state-machines/shared/challenges.js";
+import {
+  parseBearerAuthenticateParameters,
+  parseInsufficientScopeChallenge,
+} from "../oauth/state-machines/shared/challenges.js";
 import { claudePolicySource } from "./manifest.js";
 import type { ClaudeReadinessFinding } from "./types.js";
 import {
@@ -527,7 +530,8 @@ export function gradeClaudeIntrusiveObservations(
   } else {
     const challenged =
       stepUp.status === 403 &&
-      /insufficient_scope/.test(stepUp.wwwAuthenticate ?? "");
+      parseInsufficientScopeChallenge(stepUp.wwwAuthenticate)
+        .isInsufficientScope;
     // WHAT THE CONFIG PROMISED, MEASURED. `expectedScopes` is required
     // alongside `protectedToolName` so the run states what it is asserting,
     // but nothing compared it, so the requirement bought a config error and no

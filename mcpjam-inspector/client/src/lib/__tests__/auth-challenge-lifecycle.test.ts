@@ -333,6 +333,53 @@ describe("auth challenge lifecycle", () => {
   });
 
   describe("connecting", () => {
+    it("keeps the card when a secure flow digest is unavailable", async () => {
+      const card = await presentCard();
+      vi.stubGlobal("crypto", { randomUUID: () => "test-call" });
+      try {
+        const result = await connectAuthChallenge(card, server, {
+          isTrusted: true,
+        });
+        expect(result.kind).toBe("failed");
+        expect(
+          useAuthChallengeCardStore.getState().cards[card.key],
+        ).toBeDefined();
+        expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+    it("replaces direct cards without changing the new call identity", async () => {
+      const first = await presentCard({
+        replay: {
+          ...REPLAY,
+          authAttempt: {
+            projectId: "p1",
+            serverId: "orders",
+            surface: "tools",
+            callId: "first",
+          },
+        },
+      });
+      const second = await presentCard({
+        replay: {
+          ...REPLAY,
+          authAttempt: {
+            projectId: "p1",
+            serverId: "orders",
+            surface: "tools",
+            callId: "second",
+          },
+        },
+      });
+      expect(Object.keys(useAuthChallengeCardStore.getState().cards)).toEqual([
+        second.key,
+      ]);
+      clearAuthChallengeCards("orders", first.attempt);
+      expect(
+        useAuthChallengeCardStore.getState().cards[second.key],
+      ).toBeDefined();
+    });
     it("keeps a restoring comparison retryable without starting OAuth", async () => {
       const card = await presentCard();
       card.onConnect = () => ({ ok: false, reason: "loading" });

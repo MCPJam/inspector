@@ -70,8 +70,8 @@ const MAX_RECORDED_OPERATIONS = 64;
  * raises `UnauthorizedError` (or "401 after re-authentication") WITHOUT the
  * header, so the manager reads the challenge back from here and attaches it to
  * the error it rethrows. Keyed by operation, not kept as one connection-wide
- * value: calls run concurrently, and one call's refusal must never be
- * reported as another's.
+ * value. The manager serializes same-operation auth-provider calls because
+ * upstream errors omit their request id; different operations remain concurrent.
  */
 export interface AuthChallengeRecorder {
   byOperation?: Map<string, RecordedAuthChallenge>;

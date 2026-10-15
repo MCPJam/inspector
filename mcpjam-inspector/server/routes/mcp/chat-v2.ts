@@ -1,3 +1,4 @@
+import { UNAPPROVED_HISTORY_CALL_RESULT } from "../../utils/tool-approval-token.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES, LocalAutoApproveConsentRequiredError } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
@@ -677,7 +678,8 @@ export function buildLocalSuspendedCallSettlement(input: {
         toolCallId,
         bindingKey: input.bindingKey,
       });
-      if (cancelled.cancelled && cancelled.serverId) {
+      if (!cancelled.cancelled) return UNAPPROVED_HISTORY_CALL_RESULT;
+      if (cancelled.serverId) {
         input.getWriter()?.write({
           type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
           data: {
@@ -2581,11 +2583,12 @@ chatV2.post("/", async (c) => {
                 toolInput,
                 toolCallId,
               )?.connectionId,
-            hasRecentSignIn: ({ serverId, toolName }) =>
+            hasRecentSignIn: ({ serverId, toolName, toolCallId }) =>
               hasRecentLocalAuthSignIn({
                 bindingKey: scopeStepUpBindingKey,
                 serverId,
                 toolName,
+                toolCallId,
               }),
             createContinuation: (saved) => {
               const resourceUrl = readProtectedResourceUrl(

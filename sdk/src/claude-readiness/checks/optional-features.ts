@@ -119,13 +119,25 @@ function judgeLazyAuthProbe(
       detail: `the public tool "${publicCall.toolName}" rejected the probe's empty arguments before any authorization decision; name a public read-only tool that takes no required arguments`,
     };
   }
-  if (publicCall && publicCall.outcome !== "unreachable" && publicCall.outcome !== "succeeded") {
+  if (
+    publicCall &&
+    (publicCall.outcome === "unauthorized" ||
+      publicCall.outcome === "forbidden" ||
+      publicCall.challenge)
+  ) {
     return {
       state: "unsupported",
       detail: `the public tool "${publicCall.toolName}" was refused without credentials (${publicCall.outcome}${publicCall.status ? `, HTTP ${publicCall.status}` : ""})`,
     };
   }
 
+  if (publicCall && publicCall.outcome !== "succeeded") {
+    return {
+      state: "undetermined",
+      detail:
+        "The public tool did not complete, so anonymous access could not be verified.",
+    };
+  }
   const call = probe.protectedCall;
   if (!call || call.outcome === "unreachable") {
     return {

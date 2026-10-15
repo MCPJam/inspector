@@ -1111,7 +1111,11 @@ function flowDigestHook(
   if (!onFlow) return undefined;
   return async ({ state }) => {
     const digest = await authorizationFlowDigest(state);
-    if (digest) onFlow({ digest });
+    if (!digest)
+      throw new Error(
+        "Could not save this sign-in securely. Open MCPJam using HTTPS or localhost and try again.",
+      );
+    onFlow({ digest });
   };
 }
 

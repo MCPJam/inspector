@@ -7,8 +7,8 @@
  * to storage a second time. Comparing digests is as good as comparing the
  * values: only a callback carrying the same `state` produces the same digest.
  *
- * `undefined` when Web Crypto is unavailable; the saved call is then unbound
- * and completes on any callback for its server, as it did before binding.
+ * `undefined` when Web Crypto is unavailable. Callers must refuse navigation
+ * when they cannot bind a saved call to its authorization flow.
  */
 export async function authorizationFlowDigest(
   state: string | null | undefined,

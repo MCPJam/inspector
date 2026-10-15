@@ -3114,9 +3114,30 @@ export function useServerState({
         if (hostedCallbackContext?.chatAuthContinuationId && isStaleChatAuthCallback(hostedCallbackContext.chatAuthContinuationId, await authorizationFlowDigest(state))) {
           finishDiagnostic(true);
           logger.info("Ignored stale chat OAuth callback");
+          if (
+            pendingServerName &&
+            localStorage.getItem(
+              `mcp-oauth-issued-state-${pendingServerName}`,
+            ) === state
+          ) {
+            const message =
+              "This sign-in is no longer waiting. Return to the call and try again.";
+            failPendingOAuthConnection(message);
+            if (!suppressErrorToast) toast.error(message);
+          }
           return;
         }
         assertProjectAccess();
+        const callbackServer = pendingServerName
+          ? effectiveServers[pendingServerName]
+          : undefined;
+        if (pendingServerName && callbackServer)
+          dispatch({
+            type: "CONNECT_REQUEST",
+            name: pendingServerName,
+            config: callbackServer.config,
+            select: true,
+          });
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
@@ -3559,21 +3580,6 @@ export function useServerState({
       }
 
       oauthCallbackHandledRef.current.add(attempt);
-
-      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
-      // concurrently) cannot set the server back to "disconnected" while the
-      // token exchange is still in flight.
-      if (earlyPendingName) {
-        const earlyServer = effectiveServers[earlyPendingName];
-        if (earlyServer) {
-          dispatch({
-            type: "CONNECT_REQUEST",
-            name: earlyPendingName,
-            config: earlyServer.config,
-            select: true,
-          });
-        }
-      }
 
       // Captured before completion: handleOAuthCallbackComplete clears the
       // return-hash key as part of its cleanup.

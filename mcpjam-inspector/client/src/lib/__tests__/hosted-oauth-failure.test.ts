@@ -73,6 +73,17 @@ describe("describeHostedOAuthFailure", () => {
 // and `details` off the JSON error body; the messages here are the real ones
 // the backend sends, not invented.
 describe("describeHostedOAuthFailure structured backend shapes", () => {
+  it("offers reconnect without claiming an access-only login was rejected", () => {
+    const copy = describeHostedOAuthFailure(
+      Object.assign(new Error("Sign in again"), {
+        code: "UNAUTHORIZED",
+        details: { refreshTokenUnavailable: true },
+      }),
+      "Orders",
+    );
+    expect(copy?.action).toBe("reconnect");
+    expect(copy?.detail.join(" ")).not.toMatch(/rejected|invalid/i);
+  });
   const UNREACHABLE_503 = Object.assign(
     new Error("Could not reach the authorization server (HTTP 502)."),
     {

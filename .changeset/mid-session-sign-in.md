@@ -15,3 +15,5 @@ Mid-session sign-in ("lazy authentication"): servers that let a client connect a
 - **Readiness.** An opt-in, credential-free lazy-auth probe (`--lazy-auth-probe`, `--claim lazy-authentication`) grades Claude's and OpenAI's lazy-auth behavior and re-discovers metadata from the protected call's challenge. `check_host_compatibility` keeps tool `securitySchemes` and warns about hosts that ignore `_meta` challenges.
 
 - **Telemetry.** Refresh permitted account identity after a page change without sending identity while privacy permission is unresolved.
+
+OAuth discovery now preserves upstream outages: a 429 or 5xx metadata response stops discovery instead of switching to another issuer. Missing metadata still allows the standard discovery fallback.

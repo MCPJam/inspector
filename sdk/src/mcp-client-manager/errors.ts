@@ -77,7 +77,7 @@ function hasNumericCode(error: unknown): error is Error & { code: number } {
   );
 }
 
-function getNumericStatus(error: unknown): number | undefined {
+export function getNumericStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
   }

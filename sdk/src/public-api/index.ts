@@ -129,6 +129,7 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   INTERNAL_ERROR: "INTERNAL_ERROR",
   UPSTREAM_ERROR: "SERVER_UNREACHABLE",
   OAUTH_REQUIRED: "OAUTH_REQUIRED",
+  AUTH_REQUIRED: "AUTH_REQUIRED",
   TOOL_TIMEOUT: "TIMEOUT",
   // The eval run-start revision conflict. Internally its own code so the
   // hosted UI can render a bespoke "environment changed — retry" message;

@@ -1262,14 +1262,27 @@ async function loadOAuthDiscoveryState(
   if (
     cachedState?.authorizationServerUrl &&
     cachedState.authorizationServerMetadata &&
-    cachedState.resourceMetadata &&
     (!resourceMetadataUrl ||
       cachedState.resourceMetadataUrl === resourceMetadataUrl)
   ) return cachedState;
 
+  let pointer: URL | undefined;
+  if (resourceMetadataUrl) {
+    try {
+      pointer = new URL(resourceMetadataUrl);
+    } catch {
+      throw new Error(
+        "The server returned an invalid sign-in URL. Ask its owner to check the sign-in settings.",
+      );
+    }
+    if (pointer.protocol !== "https:" && pointer.protocol !== "http:")
+      throw new Error(
+        "The server returned an unsupported sign-in URL. Ask its owner to check the sign-in settings.",
+      );
+  }
   const discovered = await discoverOAuthServerInfo(serverUrl, {
     fetchFn: discoveryFetch,
-    ...(resourceMetadataUrl ? { resourceMetadataUrl: new URL(resourceMetadataUrl) } : {}),
+    ...(pointer ? { resourceMetadataUrl: pointer } : {}),
   });
   const discoveryState: OAuthDiscoveryState = {
     authorizationServerUrl: discovered.authorizationServerUrl,

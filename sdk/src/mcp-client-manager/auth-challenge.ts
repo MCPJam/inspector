@@ -205,7 +205,17 @@ export function parseToolResultAuthChallenge(
   if (entries.length === 0) return undefined;
   // Each entry is one challenge (or a list); joining them is exactly how they
   // would have arrived as one header.
-  return signalFromHeader(entries.join(", "), "tool_result_meta");
+  return signalFromHeader(
+    entries
+      .map((entry) => {
+        const trimmed = entry.trim();
+        return trimmed.startsWith("'") && trimmed.endsWith("'")
+          ? trimmed.slice(1, -1)
+          : trimmed;
+      })
+      .join(", "),
+    "tool_result_meta"
+  );
 }
 
 /** Narrow an untrusted wire payload back to a signal, or `undefined`. */

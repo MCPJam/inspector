@@ -1,3 +1,4 @@
+import { logger } from "../../utils/logger.js";
 import {
   parseAuthChallengeSignal,
   parseToolResultAuthChallenge,
@@ -180,6 +181,7 @@ export function annotateToolAuthChallenge(
     });
   } catch {
     // A frozen step keeps its plain error; the annotation is diagnostic only.
+    logger.debug("Could not annotate a frozen tool step");
   }
 }
 

@@ -92,10 +92,11 @@ function readToolCall(
   } else if (status === 403) {
     outcome = "forbidden";
     if (call.wwwAuthenticate !== undefined) {
-      challenge = parseChallengeHeader(
+      const parsed = parseChallengeHeader(
         call.wwwAuthenticate,
-        "http_403_insufficient_scope",
+        "http_403_insufficient_scope"
       );
+      if (parsed.error === "insufficient_scope") challenge = parsed;
     }
   } else if (status !== undefined && (status < 200 || status >= 300)) {
     outcome = "http-error";
@@ -160,12 +161,21 @@ export async function probeLazyAuthentication(
     ...(initialize.unreachable ? { unreachable: true } : {}),
     ...(initialize.error ? { error: initialize.error } : {}),
     ...(initialize.status === 401
-      ? { challenge: parseChallengeHeader(initialize.wwwAuthenticate, "http_401") }
-      : initialize.status === 403 && initialize.wwwAuthenticate !== undefined
+      ? {
+          challenge: parseChallengeHeader(
+            initialize.wwwAuthenticate,
+            "http_401"
+          ),
+        }
+      : initialize.status === 403 &&
+          parseChallengeHeader(
+            initialize.wwwAuthenticate,
+            "http_403_insufficient_scope"
+          ).error === "insufficient_scope"
         ? {
             challenge: parseChallengeHeader(
               initialize.wwwAuthenticate,
-              "http_403_insufficient_scope",
+              "http_403_insufficient_scope"
             ),
           }
         : {}),

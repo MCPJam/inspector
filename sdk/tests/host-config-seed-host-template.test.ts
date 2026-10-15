@@ -58,8 +58,8 @@ describe("seedHostTemplate", () => {
       "toolResultAuthChallengeTrigger",
     ] as const;
     const expected: Partial<Record<HostTemplateId, Record<string, string>>> = {
-      claude: { unauthorizedChallengeTrigger: "bearer-header" },
-      "claude-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      claude: { unauthorizedChallengeTrigger: "resource-metadata" },
+      "claude-desktop": { unauthorizedChallengeTrigger: "resource-metadata" },
       "claude-code": {
         unauthorizedChallenge: "notify",
         unauthorizedChallengeTrigger: "bearer-header",

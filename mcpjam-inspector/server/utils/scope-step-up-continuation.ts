@@ -527,6 +527,7 @@ export const AUTH_CHALLENGE_REPEATED_REASON =
  * repeat copy instead of another Connect card.
  */
 export function hasRecentLocalAuthSignIn(input: {
+  toolCallId?: string;
   bindingKey: string;
   serverId: string;
   toolName: string;
@@ -536,6 +537,8 @@ export function hasRecentLocalAuthSignIn(input: {
   for (const record of localContinuations.values()) {
     if (
       record.reason === AUTH_CHALLENGE_REASON &&
+      input.toolCallId !== undefined &&
+      record.toolCallId === input.toolCallId &&
       record.bindingKey === input.bindingKey &&
       record.serverId === input.serverId &&
       record.toolName === input.toolName &&

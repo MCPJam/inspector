@@ -135,21 +135,36 @@ interface AuthChallengeCardState {
   remove: (key: string) => void;
 }
 
-export const useAuthChallengeCardStore = create<AuthChallengeCardState>(
-  (set) => ({
-    cards: {},
-    // The newest challenge for a server replaces the older card: only one
-    // call can be waiting on a sign-in at a time.
-    show: (card) =>
-      set((state) => ({ cards: { ...state.cards, [card.key]: card } })),
-    remove: (key) =>
-      set((state) => {
-        if (!state.cards[key]) return state;
-        const { [key]: _removed, ...rest } = state.cards;
-        return { cards: rest };
-      }),
-  }),
-);
+export const useAuthChallengeCardStore = create<AuthChallengeCardState>((set) => ({
+  cards: {},
+  // The newest challenge for a server replaces the older card: only one
+  // call can be waiting on a sign-in at a time.
+  show: (card) =>
+    set((state) => ({
+      cards: {
+        ...Object.fromEntries(
+          Object.entries(state.cards).filter(
+            ([, existing]) =>
+              existing.surface === "chat" ||
+              (existing.expiresAt > Date.now() &&
+                !(
+                  existing.surface === card.surface &&
+                  existing.serverOrigin === card.serverOrigin &&
+                  existing.serverName === card.serverName &&
+                  existing.attempt?.projectId === card.attempt?.projectId
+                )),
+          ),
+        ),
+        [card.key]: card,
+      },
+    })),
+  remove: (key) =>
+    set((state) => {
+      if (!state.cards[key]) return state;
+      const { [key]: _removed, ...rest } = state.cards;
+      return { cards: rest };
+    }),
+}));
 
 /** The visible chat cards for these tool calls. */
 export function useChatAuthChallengeCards(

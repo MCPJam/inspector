@@ -915,12 +915,7 @@ function contextSlug(
 function challengeSummaryFromError(
   error: unknown
 ): BearerChallengeSummary | undefined {
-  let signal;
-  try {
-    signal = extractAuthChallenge(error);
-  } catch {
-    return undefined;
-  }
+  const signal = extractAuthChallenge(error);
   if (!signal) return undefined;
   if (signal.raw) return summarizeBearerChallenge(signal.raw);
   if (signal.facets.challengeHeader !== "bearer") {

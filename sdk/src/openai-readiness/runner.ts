@@ -641,9 +641,14 @@ function observedLazyAuthentication(
   // A public call that failed only on the probe's empty arguments shows
   // nothing about anonymous access.
   if (probe.publicCall?.invalidArguments) return undefined;
-  if (publicOutcome !== undefined && publicOutcome !== "unreachable") {
-    if (publicOutcome !== "succeeded") return false;
-  }
+  if (
+    publicOutcome === "unauthorized" ||
+    publicOutcome === "forbidden" ||
+    probe.publicCall?.challenge
+  )
+    return false;
+  if (publicOutcome !== undefined && publicOutcome !== "succeeded")
+    return undefined;
   if (runtimeChallenge === "violated") return false;
   if (runtimeChallenge === "satisfied" && publicOutcome === "succeeded") {
     return true;

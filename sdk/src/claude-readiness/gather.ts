@@ -312,7 +312,12 @@ export async function gatherClaudeReadinessEvidence(
           discovery,
           trigger.pointer,
         );
-        auth = { ...auth, ...rediscovered };
+        if (
+          rediscovered.prm &&
+          rediscovered.prm.discoveredVia !== "not-found"
+        ) {
+          auth = { ...auth, ...rediscovered };
+        }
         lazyAuthProbe.rediscovery = {
           trigger: trigger.trigger,
           source: trigger.source,

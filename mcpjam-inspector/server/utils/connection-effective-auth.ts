@@ -19,6 +19,8 @@ import {
   type ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk";
 
+import { logger } from "./logger.js";
+
 const byManager = new WeakMap<object, Map<string, AuthChallengeEffectiveAuth>>();
 
 /** Record the method a connection was established with. */
@@ -75,6 +77,7 @@ export function stampErrorAuthChallenge(
     });
   } catch {
     // A frozen error keeps its unstamped challenge.
+    logger.debug("Could not stamp a frozen sign-in error");
   }
 }
 
@@ -107,7 +110,11 @@ type SchemeSource = {
     serverId: string,
     toolName: string,
   ) => ToolSecuritySchemeResolution;
-  listTools?: (serverId: string) => Promise<unknown>;
+  listTools?: (
+    serverId: string,
+    params?: undefined,
+    options?: { timeout: number; signal: AbortSignal },
+  ) => Promise<unknown>;
 };
 
 /**
@@ -121,6 +128,8 @@ type SchemeSource = {
  * declaration. Never throws: an unknown resolution is `unresolved`, which
  * never prompts.
  */
+const schemeLoads = new WeakMap<object, Map<string, Promise<void>>>();
+
 export async function challengedToolSecuritySchemes(
   manager: object,
   serverId: string,
@@ -135,17 +144,31 @@ export async function challengedToolSecuritySchemes(
           source: "unresolved",
         }
       );
-    } catch {
+    } catch (error) {
+      logger.debug("Could not read tool sign-in metadata", { error });
       return { schemes: [], source: "unresolved" };
     }
   };
   const first = read();
   if (first.source !== "unresolved" || !source.listTools) return first;
-  try {
-    await source.listTools(serverId);
-  } catch {
-    return first;
+  let loads = schemeLoads.get(manager);
+  if (!loads) schemeLoads.set(manager, (loads = new Map()));
+  let load = loads.get(serverId);
+  if (!load) {
+    load = source
+      .listTools(serverId, undefined, {
+        timeout: 5_000,
+        signal: AbortSignal.timeout(5_000),
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => {
+          logger.debug("Could not load tool sign-in metadata", { error });
+        },
+      );
+    loads.set(serverId, load);
   }
+  await load;
   return read();
 }
 

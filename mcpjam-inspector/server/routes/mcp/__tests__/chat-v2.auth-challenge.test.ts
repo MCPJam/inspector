@@ -1,3 +1,4 @@
+import { UNAPPROVED_HISTORY_CALL_RESULT } from "../../../utils/tool-approval-token.js";
 /**
  * Mid-session sign-in on the local chat route: the continuation builders the
  * route hands its engines, and the server side of "send without clicking" on
@@ -192,6 +193,7 @@ describe("local sign-in continuation builders", () => {
     // A later challenge for the same operation is answered the same way.
     expect(
       hasRecentLocalAuthSignIn({
+        toolCallId: "call-1",
         bindingKey: BINDING,
         serverId: "Orders",
         toolName: "get_my_orders",
@@ -356,7 +358,7 @@ describe("send without clicking — MCPJam engine", () => {
       }),
       clientSuppliedHistory: true,
     });
-    expect(body).toContain("the user did not sign in");
+    expect(body).toContain(UNAPPROVED_HISTORY_CALL_RESULT);
     expect(body).toContain("Here are the products.");
     expect(JSON.stringify(modelRequestMessages(fetchMock))).toContain(
       "never mind, list the products",
@@ -601,7 +603,7 @@ describe("a cancel spliced into the user's next message", () => {
     });
     await expect(
       settle({ toolCallId: "call-1", toolName: "get_my_orders" }),
-    ).resolves.toBe(authChallengeCancelledText("Orders", "get_my_orders"));
+    ).resolves.toBe(UNAPPROVED_HISTORY_CALL_RESULT);
     expect(chunks).toHaveLength(0);
   });
 
@@ -616,7 +618,7 @@ describe("a cancel spliced into the user's next message", () => {
       });
       await expect(
         settle({ toolCallId: "call-1", toolName: "get_my_orders" }),
-      ).resolves.toBe(authChallengeCancelledText("Orders", "get_my_orders"));
+      ).resolves.toBe(UNAPPROVED_HISTORY_CALL_RESULT);
       expect(chunks).toHaveLength(0);
     } finally {
       vi.useRealTimers();

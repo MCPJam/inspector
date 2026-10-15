@@ -269,8 +269,9 @@ export function localSignInHints(
   for (const entry of result.cases) {
     for (const iteration of entry.iterations) {
       const authRequired = iteration.authRequired;
-      if (!authRequired?.server || byServer.has(authRequired.server)) continue;
-      byServer.set(authRequired.server, authRequired);
+      if (!authRequired) continue;
+      const server = authRequired.server ?? "unknown";
+      if (!byServer.has(server)) byServer.set(server, authRequired);
     }
   }
   return [...byServer].map(([name, authRequired]) => {

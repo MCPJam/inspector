@@ -47,6 +47,7 @@ import {
   checkResumeCredentialBinding,
   HostedCredentialBinding,
   isCredentialBinding,
+  ownsHostedCredential,
 } from "./hosted-credential-binding.js";
 
 
@@ -423,7 +424,19 @@ export function buildHostedScopeStepUpResume(input: {
             resolvedConnectionId,
           )
         : checkResumeCredentialBinding(state.connectionId, resolvedConnectionId);
-      if (!binding.ok) {
+      const ownershipVerified =
+        !binding.ok ||
+        !binding.firstBinding ||
+        state.reason !== AUTH_CHALLENGE_REASON ||
+        (resolvedConnectionId !== undefined &&
+          (await ownsHostedCredential({
+            bearer: input.bearer,
+            projectId: input.projectId,
+            serverId: state.serverId,
+            connectionId: resolvedConnectionId,
+            abortSignal: input.abortSignal,
+          })));
+      if (!binding.ok || !ownershipVerified) {
         await cancelContinuation(input.bearer, {
           continuationId: input.request.continuationId,
           reason: "original account is no longer available",

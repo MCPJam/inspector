@@ -546,6 +546,7 @@ export type ConvexBatchAuthorizeFailure = {
  * dispatch is a silent regression.
  */
 export type ConvexOAuthUnavailableReason =
+  | "refresh_token_unavailable"
   /** The credential is fine; only this machine can reach its authorization server. */
   | "private_authorization_server"
   /** The credential is fine; the authorization server never answered usably. */

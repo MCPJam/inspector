@@ -156,6 +156,13 @@ describe("hosted sign-in continuations", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://test.convex.site");
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        shared: false,
+        connections: [{ connectionId: "new-personal" }],
+      }),
+    );
     store.create.mockImplementation(async (_bearer: string, body: any) => ({
       ok: true,
       continuationId: body.continuationId,
@@ -338,6 +345,21 @@ describe("hosted sign-in continuations", () => {
       ).toEqual({ ok: false });
     });
 
+    it("does not replay a tokenless call onto a newly appeared shared credential", async () => {
+      const saved = await saveAndClaim({});
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          shared: true,
+          connections: [{ connectionId: "shared" }],
+        }),
+      );
+      const tools = tool(() => ({ content: [] }), "shared");
+      const resolution = await resume(saved.continuationId, tools).resolve(
+        () => undefined,
+      );
+      expect(resolution.kind).toBe("recover");
+      expect(tools.get_my_orders.execute).not.toHaveBeenCalled();
+    });
     it("replays a tokenless call on the personal connection the sign-in made", async () => {
       const saved = await saveAndClaim({});
       const tools = tool(
@@ -395,7 +417,7 @@ describe("hosted sign-in continuations", () => {
         saved.continuationId,
         tool(() => {
           throw http401();
-        }),
+        }, "new-personal"),
       ).resolve((chunk) => chunks.push(chunk));
 
       expect(resolution.kind).toBe("recover");
@@ -422,11 +444,14 @@ describe("hosted sign-in continuations", () => {
       const saved = await saveAndClaim({});
       const resolution = await resume(
         saved.continuationId,
-        tool(() => ({
-          isError: true,
-          content: [{ type: "text", text: "sign in" }],
-          _meta: { "mcp/www_authenticate": [CHALLENGE] },
-        })),
+        tool(
+          () => ({
+            isError: true,
+            content: [{ type: "text", text: "sign in" }],
+            _meta: { "mcp/www_authenticate": [CHALLENGE] },
+          }),
+          "new-personal",
+        ),
       ).resolve(() => undefined);
       expect(toolResultText(resolution)).toBe(
         authChallengeRepeatText("Orders", "get_my_orders"),

@@ -613,10 +613,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         //
         // Mid-session sign-in: from Anthropic's PUBLISHED connector docs, not
         // a probe (no manual measurement pass has happened yet). Claude starts
-        // sign-in from a 401 only when it carries `WWW-Authenticate: Bearer`.
+        // sign-in from a 401 with a Bearer challenge naming `resource_metadata`.
         // Everything else stays absent: the 401 action is `prompt`, and the
         // `_meta` challenge is not honored.
-        unauthorizedChallengeTrigger: "bearer-header",
+        unauthorizedChallengeTrigger: "resource-metadata",
         mcpProtocolVersion: "auto",
         mrtrModes: {
           requestState: false,
@@ -861,10 +861,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         //
         // Mid-session sign-in: from Anthropic's PUBLISHED connector docs, not
         // a probe (no manual measurement pass has happened yet). Claude starts
-        // sign-in from a 401 only when it carries `WWW-Authenticate: Bearer`.
+        // sign-in from a 401 with a Bearer challenge naming `resource_metadata`.
         // Everything else stays absent: the 401 action is `prompt`, and the
         // `_meta` challenge is not honored.
-        unauthorizedChallengeTrigger: "bearer-header",
+        unauthorizedChallengeTrigger: "resource-metadata",
         mcpProtocolVersion: "auto",
         mrtrModes: {
           requestState: false,
