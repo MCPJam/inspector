@@ -11169,8 +11169,8 @@ var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
 ]);
 var STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
 function isExcludedProfileSegment(segment) {
-  const lower = segment.toLowerCase();
-  return EXCLUDED_PROFILE_SEGMENTS.has(lower) || PRIVATE_PROFILE_SEGMENTS.has(lower.replace(STORE_COPY_SUFFIX, ""));
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
+  return EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base);
 }
 function isExcludedProfilePath(path) {
   return path.split(/[\\/]+/).some(isExcludedProfileSegment);

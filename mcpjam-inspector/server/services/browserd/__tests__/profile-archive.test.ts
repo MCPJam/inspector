@@ -169,6 +169,23 @@ describe("browser profile archives", () => {
     },
   );
 
+  it("leaves backup copies of caches out of the archive", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-cache-"));
+    temporaryDirectories.push(source);
+    for (const directory of ["Cache.bak", "Code Cache.old", "GPUCache~"]) {
+      await mkdir(join(source, "Default", directory), { recursive: true });
+      await writeFile(join(source, "Default", directory, "data_0"), "cache");
+    }
+    await writeFile(join(source, "Default", "Preferences"), "{}");
+
+    const archived = tarEntryNames(
+      gunzipSync(await exportBrowserProfileArchive(source)),
+    );
+
+    expect(archived).toContain("Default/Preferences");
+    expect(archived.filter((entry) => /cache/i.test(entry))).toEqual([]);
+  });
+
   it("drops browser account data at the user-data root but keeps Local State", async () => {
     const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-root-"));
     temporaryDirectories.push(source);

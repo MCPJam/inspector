@@ -98,10 +98,9 @@ const PRIVATE_PROFILE_SEGMENTS = new Set([
 const STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
 
 function isExcludedProfileSegment(segment: string): boolean {
-  const lower = segment.toLowerCase();
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
   return (
-    EXCLUDED_PROFILE_SEGMENTS.has(lower) ||
-    PRIVATE_PROFILE_SEGMENTS.has(lower.replace(STORE_COPY_SUFFIX, ""))
+    EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base)
   );
 }
 
