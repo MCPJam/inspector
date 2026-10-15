@@ -5,11 +5,12 @@
  * v1 AUTH_REQUIRED), reduced where the hosted rules require.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InsufficientScopeError, SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 
 import {
+  challengedToolSecuritySchemes,
   connectionEffectiveAuth,
   readAuthChallenge,
   recordConnectionEffectiveAuth,
@@ -250,5 +251,28 @@ describe("the v1 envelope", () => {
     });
     const mapped = mapErrorToV1(error);
     expect(mapped.code).not.toBe("AUTH_REQUIRED");
+  });
+});
+
+
+describe("challenge declaration lookup", () => {
+  it("coalesces lookups but permits recovery after a temporary failure", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const source = {
+      getToolSecuritySchemes: () => ({ schemes: [], source: "unresolved" }),
+      listTools: vi.fn().mockRejectedValue(new Error("temporarily unavailable")),
+    };
+    try {
+      await Promise.all([
+        challengedToolSecuritySchemes(source, "server", "one"),
+        challengedToolSecuritySchemes(source, "server", "two"),
+      ]);
+      expect(source.listTools).toHaveBeenCalledTimes(1);
+      expect(source.listTools).toHaveBeenCalledWith("server", undefined, expect.objectContaining({ timeout: 5_000 }));
+      clock.mockReturnValue(32_000);
+      source.listTools.mockResolvedValue({ tools: [] });
+      await challengedToolSecuritySchemes(source, "server", "one");
+      expect(source.listTools).toHaveBeenCalledTimes(2);
+    } finally { clock.mockRestore(); }
   });
 });

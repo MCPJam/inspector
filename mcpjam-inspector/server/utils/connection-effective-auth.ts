@@ -21,7 +21,10 @@ import {
 
 import { logger } from "./logger.js";
 
-const byManager = new WeakMap<object, Map<string, AuthChallengeEffectiveAuth>>();
+const byManager = new WeakMap<
+  object,
+  Map<string, AuthChallengeEffectiveAuth>
+>();
 
 /** Record the method a connection was established with. */
 export function recordConnectionEffectiveAuth(
@@ -128,7 +131,16 @@ type SchemeSource = {
  * declaration. Never throws: an unknown resolution is `unresolved`, which
  * never prompts.
  */
-const schemeLoads = new WeakMap<object, Map<string, Promise<void>>>();
+const schemeLoads = new WeakMap<
+  object,
+  Map<
+    string,
+    {
+      promise: Promise<void>;
+      expiresAt: number;
+    }
+  >
+>();
 
 export async function challengedToolSecuritySchemes(
   manager: object,
@@ -154,8 +166,8 @@ export async function challengedToolSecuritySchemes(
   let loads = schemeLoads.get(manager);
   if (!loads) schemeLoads.set(manager, (loads = new Map()));
   let load = loads.get(serverId);
-  if (!load) {
-    load = source
+  if (!load || load.expiresAt <= Date.now()) {
+    const promise = source
       .listTools(serverId, undefined, {
         timeout: 5_000,
         signal: AbortSignal.timeout(5_000),
@@ -166,9 +178,10 @@ export async function challengedToolSecuritySchemes(
           logger.debug("Could not load tool sign-in metadata", { error });
         },
       );
+    load = { promise, expiresAt: Date.now() + 30_000 };
     loads.set(serverId, load);
   }
-  await load;
+  await load.promise;
   return read();
 }
 
