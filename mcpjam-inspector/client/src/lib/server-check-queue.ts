@@ -317,14 +317,9 @@ export class ServerCheckQueue {
               this.finish(job, undefined, job.controller.signal.reason);
               return;
             }
-            const reason = error?.details?.reason;
             if (
               !job.controller.signal.aborted &&
-              error?.status === 429 &&
-              [
-                "SERVER_CHECK_QUEUE_FULL",
-                "SERVER_CHECK_QUEUE_TIMEOUT",
-              ].includes(reason)
+              isRetryableQueueRefusal(error)
             ) {
               job.retryStarted ??= Date.now();
               const wait =
@@ -424,16 +419,25 @@ export function saveServerOrder(projectId: string, names: string[]) {
   serverCheckQueue.setOrder(projectId, names);
 }
 
-export function isServerCheckQueueError(error: unknown): boolean {
+/**
+ * A refusal the queue retries after `Retry-After`: busy (429) or the queue
+ * coordinator briefly unreachable (503). Neither reached the MCP server.
+ */
+function isRetryableQueueRefusal(error: unknown): boolean {
   const candidate = error as {
     status?: number;
     details?: { reason?: string };
   } | null;
+  const reason = candidate?.details?.reason ?? "";
   return (
-    isPreemptedCheck(error) ||
     (candidate?.status === 429 &&
       ["SERVER_CHECK_QUEUE_FULL", "SERVER_CHECK_QUEUE_TIMEOUT"].includes(
-        candidate.details?.reason ?? "",
-      ))
+        reason,
+      )) ||
+    (candidate?.status === 503 && reason === "SERVER_CHECK_QUEUE_UNAVAILABLE")
   );
+}
+
+export function isServerCheckQueueError(error: unknown): boolean {
+  return isPreemptedCheck(error) || isRetryableQueueRefusal(error);
 }

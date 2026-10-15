@@ -27,6 +27,11 @@ export type CheckCoordinator = (
   signal?: AbortSignal,
 ) => Promise<CheckDecision>;
 
+const COORDINATOR_CALL_TIMEOUT_MS = 5000;
+// Release runs before the response is sent; a missed release just expires.
+const RELEASE_CALL_TIMEOUT_MS = 2000;
+const QUEUE_WINDOW_MS = 30_000;
+
 function coordinatorFor(
   c: Context,
   metadata?: { requestId: string; intent?: "manual" | "automatic" },
@@ -59,8 +64,14 @@ function coordinatorFor(
         operation,
         intent: metadata?.intent,
       }),
+      // Every Convex HTTP call costs ~0.4 s before it starts, and admit waits
+      // up to 1 s for the lane worker, so 2 s left no room for network time.
       signal: AbortSignal.any([
-        AbortSignal.timeout(2000),
+        AbortSignal.timeout(
+          operation === "release"
+            ? RELEASE_CALL_TIMEOUT_MS
+            : COORDINATOR_CALL_TIMEOUT_MS,
+        ),
         ...(signal ? [signal] : []),
       ]),
     });
@@ -161,24 +172,52 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
             if (renewDue) renewedAt = Date.now();
             armWatchdog(decision.expiresAt);
             renew();
-          } catch {
-            if (!done) loseLease();
+          } catch (error) {
+            // One slow or failed heartbeat does not end a running check. The
+            // lease stays ours until it expires; the watchdog ends the check
+            // if no heartbeat succeeds before then.
+            if (done || signal.aborted) return;
+            logger.warn("[server-check.queue] heartbeat failed; retrying", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            renew();
           }
         })();
       }, 1000);
     };
+    // Admission calls are safe to repeat: Convex keeps a live request's place
+    // for the same requestId. A slow or failed call is retried inside the
+    // queue window instead of refusing the check.
+    const admissionCall = async (operation: "admit" | "poll") => {
+      for (;;) {
+        try {
+          return await coordinator(operation, signal);
+        } catch (error) {
+          signal.throwIfAborted();
+          if (Date.now() - started >= QUEUE_WINDOW_MS) throw error;
+          logger.warn("[server-check.queue] admission call failed; retrying", {
+            operation,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          await abortableSleep(
+            Math.min(500, QUEUE_WINDOW_MS - (Date.now() - started)),
+            signal,
+          );
+        }
+      }
+    };
     try {
-      let decision = await coordinator("admit", signal);
+      let decision = await admissionCall("admit");
       while (decision.state === "waiting") {
-        if (Date.now() - started >= 30_000)
+        if (Date.now() - started >= QUEUE_WINDOW_MS)
           return refused(c, "SERVER_CHECK_QUEUE_TIMEOUT", 429);
         await abortableSleep(
-          Math.min(500, 30_000 - (Date.now() - started)),
+          Math.min(500, QUEUE_WINDOW_MS - (Date.now() - started)),
           signal,
         );
-        if (Date.now() - started >= 30_000)
+        if (Date.now() - started >= QUEUE_WINDOW_MS)
           return refused(c, "SERVER_CHECK_QUEUE_TIMEOUT", 429);
-        decision = await coordinator("poll", signal);
+        decision = await admissionCall("poll");
       }
       if (decision.state === "preempted")
         return refused(c, "SERVER_CHECK_PREEMPTED", 409);
