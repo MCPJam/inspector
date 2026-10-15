@@ -105,12 +105,19 @@ export type PluginSetupRequirement =
       serverKey: string;
       name: string;
       secret: boolean;
+      /** An API key's header: how the credential the user supplies is sent. */
+      scheme?: "bearer" | "basic" | "custom_header";
     }
   | {
       kind: "oauth";
       componentKey: string;
       serverKey: string;
       timing?: "on_install" | "on_use";
+      /**
+       * From OpenAI's declared auth: `true` for `oauth`, `false` for `mixed`,
+       * which also serves public access. Absent for MCPJam's own hints.
+       */
+      required?: boolean;
     };
 
 /** `strict` is Agent Plugins 1.0; `openai-compatible` adds `layout.ts`'s rules. */

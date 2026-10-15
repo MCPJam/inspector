@@ -79,6 +79,16 @@ export {
 } from "./mcp-config.js";
 
 export {
+  pluginApiKeyHeaderName,
+  renderPluginApiKeyHeader,
+  type PluginApiKeyAuth,
+  type PluginOAuthClient,
+  type PluginOAuthDeclaration,
+  type PluginServerAuth,
+  type PluginTokenEndpointAuthMethod,
+} from "./openai-auth.js";
+
+export {
   type ParsedPluginSkill,
   type ParsedPluginSkillFile,
 } from "./skill.js";

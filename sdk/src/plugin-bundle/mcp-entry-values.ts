@@ -17,6 +17,11 @@ import {
   type PluginIssueCollector,
 } from "./validation.js";
 
+/** Loopback hosts, where plain HTTP is tolerated for local development. */
+export function isLoopbackHost(hostname: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
+}
+
 /** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
 const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 
