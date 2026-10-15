@@ -122,10 +122,7 @@ export function PluginSettingsSection({
     component.materializedServerId ? [component.materializedServerId] : [],
   );
   const offersOnboarding =
-    !!projectId &&
-    detail.enabled &&
-    !!version?.onboarding &&
-    onboardingServerIds.length > 0;
+    !!projectId && detail.enabled && !!version?.onboarding;
   const lifecycleDisabled = !canManage || pending;
 
   const runAction = async (what: string, run: () => Promise<void>) => {
@@ -414,10 +411,12 @@ export function PluginSettingsSection({
               disabled={pending}
               onClick={() => {
                 // Same path as the import dialog's "Set up": the Playground
-                // runs the onboarding skill once one of these servers offers it.
+                // runs the onboarding skill once one of these servers offers
+                // it, or the plugin if it has none.
                 usePluginOnboardingIntentStore.getState().request({
                   projectId: projectId!,
                   serverIds: onboardingServerIds,
+                  pluginId,
                   pluginName: label,
                   conversation: "new",
                 });
