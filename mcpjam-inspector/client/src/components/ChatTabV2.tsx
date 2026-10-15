@@ -31,6 +31,10 @@ import {
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
+import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
@@ -391,6 +395,15 @@ export function ChatTabV2({
   // The model picker's "Your providers" footer points at the org whose keys back
   // this chat, so hosted surfaces (no org page to reach) get no footer.
   const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
+  // A hosted page's reader is a visitor: no organization configuration.
+  const refusalHandoff = useMemo(
+    () =>
+      orgAiRefusalHandoff({
+        visitor: Boolean(hostedContext?.projectId),
+        onManageOrgProviders: manageOrgProviders,
+      }),
+    [hostedContext?.projectId, manageOrgProviders],
+  );
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
@@ -2490,7 +2503,7 @@ export function ChatTabV2({
     hostedScenarioId,
   });
 
-  return (
+  const surface = (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
       <ResizablePanelGroup
         direction="horizontal"
@@ -3331,5 +3344,13 @@ export function ChatTabV2({
         />
       )}
     </div>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }
