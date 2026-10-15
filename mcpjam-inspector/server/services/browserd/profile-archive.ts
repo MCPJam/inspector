@@ -32,9 +32,10 @@ const EXCLUDED_PROFILE_SEGMENTS = new Set([
 
 // A saved profile exists to carry signed-in sessions, which live in cookies
 // and site storage. Saved passwords, autofill (cards and addresses included),
-// browsing history and extension state are not needed for that, so they never
-// leave the browser that collected them. Names match at any depth, so every
-// profile directory (`Default`, `Profile 1`, `Guest Profile`) is covered.
+// browsing history, bookmarks, per-site network records, browser account data
+// and extension state are not needed for that, so they never leave the browser
+// that collected them. Names match at any depth, so every profile directory
+// (`Default`, `Profile 1`, `Guest Profile`) and the user-data root are covered.
 //
 // A denylist, not an allowlist of session stores: Chromium moves site storage
 // between releases (Cookies moved under `Network/`), and an allowlist that
@@ -45,6 +46,8 @@ const PRIVATE_PROFILE_SEGMENTS = new Set([
   "affiliation database",
   "web data",
   "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
   "history",
   "media history",
   "visited links",
@@ -52,6 +55,25 @@ const PRIVATE_PROFILE_SEGMENTS = new Set([
   "shortcuts",
   "favicons",
   "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
   "sessions",
   "current session",
   "last session",
@@ -68,15 +90,17 @@ const PRIVATE_PROFILE_SEGMENTS = new Set([
   "managed extension settings",
 ]);
 
-// SQLite keeps uncommitted rows in these companions, so dropping `History`
-// while keeping `History-journal` would still ship part of it.
-const SQLITE_COMPANION_SUFFIX = /-(journal|wal|shm)$/;
+// SQLite keeps uncommitted rows in -journal/-wal/-shm, and Chromium, tools and
+// people leave backup copies (`Bookmarks.bak`, `Web Data~`). Each is the store
+// under another name, so the suffixes are stripped, stacked ones included,
+// before the name is checked.
+const STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
 
 function isExcludedProfileSegment(segment: string): boolean {
   const lower = segment.toLowerCase();
   return (
     EXCLUDED_PROFILE_SEGMENTS.has(lower) ||
-    PRIVATE_PROFILE_SEGMENTS.has(lower.replace(SQLITE_COMPANION_SUFFIX, ""))
+    PRIVATE_PROFILE_SEGMENTS.has(lower.replace(STORE_COPY_SUFFIX, ""))
   );
 }
 

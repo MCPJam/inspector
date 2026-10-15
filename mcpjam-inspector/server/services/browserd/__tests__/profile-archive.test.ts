@@ -82,6 +82,8 @@ describe("browser profile archives", () => {
         "Local Extension Settings/abc",
         "Sessions",
         "Sync Data/LevelDB",
+        "Segmentation Platform",
+        "Shared Dictionary",
       ]) {
         await mkdir(join(profile, ...directory.split("/")), {
           recursive: true,
@@ -92,6 +94,7 @@ describe("browser profile archives", () => {
         "Cookies-journal",
         "Network/Cookies",
         "Network/Cookies-wal",
+        "Network/Device Bound Sessions",
         "Preferences",
         "Local Storage/leveldb/000003.log",
         "IndexedDB/https_example.com_0.indexeddb.leveldb/000003.log",
@@ -115,14 +118,29 @@ describe("browser profile archives", () => {
         "Current Tabs",
         "Last Tabs",
         "Extension Cookies",
+        "DIPS",
+        "Bookmarks",
+        "Network/Network Persistent State",
+        "Network/TransportSecurity",
+        "Network/Reporting and NEL",
+        "Network/Trust Tokens",
       ];
       const dropped = [
-        ...privateStores.flatMap((store) => [
-          store,
-          `${store}-journal`,
-          `${store}-wal`,
-          `${store}-shm`,
-        ]),
+        ...privateStores.flatMap((store) =>
+          [
+            "",
+            "-journal",
+            "-wal",
+            "-shm",
+            ".bak",
+            ".tmp",
+            ".old",
+            "~",
+            "-journal.bak",
+          ].map((suffix) => `${store}${suffix}`),
+        ),
+        "Segmentation Platform/000003.log",
+        "Shared Dictionary/db",
         "Sessions/Session_1",
         "Sync Data/LevelDB/000003.log",
         "Extensions/abc/manifest.json",
@@ -149,6 +167,23 @@ describe("browser profile archives", () => {
       }
     },
   );
+
+  it("drops browser account data at the user-data root but keeps Local State", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-root-"));
+    temporaryDirectories.push(source);
+    await mkdir(join(source, "Accounts", "Avatar Images"), { recursive: true });
+    await writeFile(join(source, "Accounts", "Avatar Images", "1234"), "png");
+    await writeFile(join(source, "Local State"), "{}");
+
+    const archived = tarEntryNames(
+      gunzipSync(await exportBrowserProfileArchive(source)),
+    );
+
+    expect(archived).toContain("Local State");
+    expect(archived.filter((entry) => entry.startsWith("Accounts"))).toEqual(
+      [],
+    );
+  });
 
   it("refuses a gzip bomb without allocating its expansion", async () => {
     const target = await mkdtemp(join(tmpdir(), "mcpjam-profile-bomb-"));

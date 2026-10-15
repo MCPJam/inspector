@@ -11123,6 +11123,8 @@ var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "affiliation database",
   "web data",
   "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
   "history",
   "media history",
   "visited links",
@@ -11130,6 +11132,25 @@ var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "shortcuts",
   "favicons",
   "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
   "sessions",
   "current session",
   "last session",
@@ -11145,10 +11166,10 @@ var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "sync extension settings",
   "managed extension settings"
 ]);
-var SQLITE_COMPANION_SUFFIX = /-(journal|wal|shm)$/;
+var STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
 function isExcludedProfileSegment(segment) {
   const lower = segment.toLowerCase();
-  return EXCLUDED_PROFILE_SEGMENTS.has(lower) || PRIVATE_PROFILE_SEGMENTS.has(lower.replace(SQLITE_COMPANION_SUFFIX, ""));
+  return EXCLUDED_PROFILE_SEGMENTS.has(lower) || PRIVATE_PROFILE_SEGMENTS.has(lower.replace(STORE_COPY_SUFFIX, ""));
 }
 function isExcludedProfilePath(path) {
   return path.split(/[\\/]+/).some(isExcludedProfileSegment);
